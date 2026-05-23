@@ -1,0 +1,41 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (ad-hoc signed)
+        run: |
+          xcodebuild \
+            -project PureSnitch.xcodeproj \
+            -scheme PureSnitch \
+            -configuration Debug \
+            -derivedDataPath build/dd \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify app bundle
+        run: |
+          APP=build/dd/Build/Products/Debug/PureSnitch.app
+          test -d "$APP"
+          test -f "$APP/Contents/MacOS/PureSnitch"
+          test -f "$APP/Contents/MacOS/PureSnitchHelper"
+          test -f "$APP/Contents/Library/LaunchDaemons/io.moamenbasel.puresnitch.helper.plist"
+          echo "App bundle structure OK"

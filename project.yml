@@ -1,0 +1,106 @@
+name: PureSnitch
+options:
+  bundleIdPrefix: io.moamenbasel.puresnitch
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  defaultConfig: Release
+  developmentLanguage: en
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: H3WXHVTP97
+    SWIFT_VERSION: "5.10"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Manual
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_OBJC_ARC: YES
+    OTHER_CODE_SIGN_FLAGS: "--timestamp"
+    SWIFT_STRICT_CONCURRENCY: minimal
+
+fileGroups:
+  - Sources
+  - Resources
+  - Scripts
+
+targets:
+  PureSnitch:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/GUI
+      - path: Sources/Shared
+    resources:
+      - Resources/Assets.xcassets
+    info:
+      path: Sources/GUI/Info.plist
+      properties:
+        CFBundleName: PureSnitch
+        CFBundleDisplayName: PureSnitch
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
+        NSHumanReadableCopyright: "© 2026 Moamen Basel. MIT License."
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSPrincipalClass: NSApplication
+        LSApplicationCategoryType: public.app-category.utilities
+    entitlements:
+      path: Sources/GUI/PureSnitch.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGN_IDENTITY: "Developer ID Application: Moamen Basel (H3WXHVTP97)"
+        CODE_SIGN_ENTITLEMENTS: Sources/GUI/PureSnitch.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    postBuildScripts:
+      - name: Embed Helper
+        runOnlyWhenInstalling: false
+        script: |
+          set -e
+          APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
+          HELPER_BIN="${BUILT_PRODUCTS_DIR}/PureSnitchHelper"
+          if [ -f "$HELPER_BIN" ]; then
+            mkdir -p "$APP/Contents/MacOS"
+            cp -f "$HELPER_BIN" "$APP/Contents/MacOS/PureSnitchHelper"
+            mkdir -p "$APP/Contents/Library/LaunchDaemons"
+            cp -f "${SRCROOT}/Sources/Helper/Launchd.plist" "$APP/Contents/Library/LaunchDaemons/io.moamenbasel.puresnitch.helper.plist"
+          else
+            echo "warning: helper binary not found, skipping embed"
+          fi
+    dependencies:
+      - target: PureSnitchHelper
+        embed: false
+        link: false
+
+  PureSnitchHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/Helper
+        excludes:
+          - "*.plist"
+          - "*.entitlements"
+      - path: Sources/Shared
+    settings:
+      base:
+        PRODUCT_NAME: PureSnitchHelper
+        PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch.helper
+        CODE_SIGN_IDENTITY: "Developer ID Application: Moamen Basel (H3WXHVTP97)"
+        CODE_SIGN_ENTITLEMENTS: Sources/Helper/Helper.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        OTHER_LDFLAGS: "-sectcreate __TEXT __info_plist $(SRCROOT)/Sources/Helper/Info.plist -sectcreate __TEXT __launchd_plist $(SRCROOT)/Sources/Helper/Launchd.plist"
