@@ -6,7 +6,7 @@
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-blue.svg)](https://www.apple.com/macos/)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
 [![Notarized](https://img.shields.io/badge/Notarized-Apple-success.svg)](https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution)
-[![Release](https://img.shields.io/github/v/release/moamenbasel/puresnitch?include_prereleases&label=release)](https://github.com/moamenbasel/puresnitch/releases)
+[![Release](https://img.shields.io/github/v/release/momenbasel/puresnitch?include_prereleases&label=release)](https://github.com/momenbasel/puresnitch/releases)
 
 PureSnitch watches every outgoing connection your Mac makes, blocks the ones you don't trust, and shows you a live world map of who's talking to whom — in the style of Little Snitch, with the same menubar, the same rules manager, the same alert popups. The difference: it's free, the source is here, and the only thing it phones home for is the blocklists you choose.
 
@@ -48,13 +48,13 @@ PureSnitch watches every outgoing connection your Mac makes, blocks the ones you
 ### Homebrew (recommended)
 
 ```bash
-brew tap moamenbasel/puresnitch
+brew tap momenbasel/puresnitch
 brew install --cask puresnitch
 ```
 
 ### Direct download
 
-Grab the latest signed + notarized `.dmg` from the [Releases](https://github.com/moamenbasel/puresnitch/releases) page, double-click, drag PureSnitch.app to `/Applications`.
+Grab the latest signed + notarized `.dmg` from the [Releases](https://github.com/momenbasel/puresnitch/releases) page, double-click, drag PureSnitch.app to `/Applications`.
 
 First launch will ask you to approve the privileged helper in System Settings → General → Login Items & Extensions → Allow in Background.
 
@@ -143,7 +143,7 @@ Requirements:
 - (For signing) a Developer ID certificate
 
 ```bash
-git clone https://github.com/moamenbasel/puresnitch.git
+git clone https://github.com/momenbasel/puresnitch.git
 cd puresnitch
 xcodegen generate
 open PureSnitch.xcodeproj
