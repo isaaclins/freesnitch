@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let state = AppState()
     var menubar: MenubarController!
     var windowManager: WindowManager!
+    var systemExtension: SystemExtensionManager!
 
     nonisolated override init() { super.init() }
 
@@ -26,8 +27,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager = WindowManager(state: state)
         menubar = MenubarController(state: state, windows: windowManager)
         menubar.install()
+        state.helper.registerDaemon()
+        // bootstrap() (rule load + monitoring) is driven by HelperClient once
+        // the helper is actually reachable — see HelperClient.setConnected.
         state.helper.connect()
-        state.bootstrap()
+        // Seed the app-group snapshot so the network extension has rules to read.
+        state.syncSharedRules()
+
+        // Per-process firewall (Network System Extension). Activation is a no-op
+        // unless this build embeds a signed, notarized extension installed in
+        // /Applications; it prompts the user for approval on first run.
+        systemExtension = SystemExtensionManager(state: state)
+        if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] != "1" {
+            systemExtension.activate()
+        }
 
         if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] == "1" {
             seedDemoState()
@@ -36,6 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.windowManager.showNetworkMonitor()
                 } else if ProcessInfo.processInfo.environment["PURESNITCH_DEMO_WINDOW"] == "rules" {
                     self.windowManager.showRulesManager()
+                } else if ProcessInfo.processInfo.environment["PURESNITCH_DEMO_WINDOW"] == "settings" {
+                    self.windowManager.showSettings()
                 }
             }
         }
@@ -82,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("ChatGPT", 2_100_000, 400_000, "brain")
         ]
         state.topProcesses = procs.map { (n, i, o, _) in
-            AppState.ProcessStats(id: n, name: n, bytesIn: i, bytesOut: o, icon: nil)
+            AppState.ProcessStats(id: n, name: n, bytesIn: i, bytesOut: o, icon: AppIcon.resolve(name: n))
         }
 
         let domains: [(String, Int64)] = [
@@ -106,6 +121,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.topCountries = countries.map { (n, c, t) in
             AppState.CountryStats(id: c, country: n, countryCode: c, bytesIn: t * 6 / 10, bytesOut: t * 4 / 10)
         }
+
+        // Synthetic rules so the demo showcases the populated Rules manager
+        state.rules = [
+            Rule(processBundleId: "com.spotify.client", processPath: "/Applications/Spotify.app", processName: "Spotify", remoteHost: "*.scdn.co", direction: .outgoing, action: .allow, scope: .domain, priority: 100, profile: "default", notes: "Allow audio streaming", lastUsedAt: now.addingTimeInterval(-120), hitCount: 482),
+            Rule(processBundleId: "com.microsoft.VSCode", processPath: "/Applications/Visual Studio Code.app", processName: "Visual Studio Code", remoteHost: "update.code.visualstudio.com", direction: .outgoing, action: .allow, scope: .domain, priority: 90, profile: "default", lastUsedAt: now.addingTimeInterval(-3600), hitCount: 31),
+            Rule(processBundleId: "com.google.Chrome", processPath: "/Applications/Google Chrome.app", processName: "Google Chrome", remoteHost: "*.googleapis.com", direction: .outgoing, action: .allow, scope: .domain, priority: 80, profile: "default", hitCount: 1290),
+            Rule(processBundleId: "com.hnc.Discord", processPath: "/Applications/Discord.app", processName: "Discord", remoteHost: "*.discord.gg", direction: .outgoing, action: .allow, scope: .domain, priority: 70, profile: "default", hitCount: 96),
+            Rule(processBundleId: "com.adobe.acc", processPath: "/Applications/Adobe Creative Cloud.app", processName: "Adobe CC", remoteHost: "*.adobe.io", direction: .outgoing, action: .deny, scope: .domain, priority: 95, profile: "default", notes: "Block telemetry", hitCount: 211),
+            Rule(processName: "Any Process", remoteHost: "*.doubleclick.net", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Ad/tracker", hitCount: 3771),
+            Rule(processName: "Any Process", remoteHost: "*.facebook.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 845),
+            Rule(processBundleId: "us.zoom.xos", processPath: "/Applications/Zoom.app", processName: "zoom.us", remoteHost: "*.zoom.us", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", temporary: true, expiresAt: now.addingTimeInterval(3600), hitCount: 12),
+            Rule(processBundleId: "ru.keepcoder.Telegram", processPath: "/Applications/Telegram.app", processName: "Telegram", remoteHost: "149.154.167.0/24", remoteIP: "149.154.167.0/24", direction: .outgoing, action: .ask, scope: .ip, priority: 40, profile: "default", hitCount: 0)
+        ]
 
         // Synthetic blocklists
         state.blocklists = [

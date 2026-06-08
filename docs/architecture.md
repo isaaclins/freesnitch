@@ -98,12 +98,13 @@ Host glob: `*.example.com`, `.example.com` both match.
 IP CIDR: `10.0.0.0/8` matches anywhere in that block.
 Process: bundle ID match wins; otherwise path prefix.
 
-## NetExt (dormant)
+## NetExt — per-process firewall (Network System Extension)
 
-`Sources/NetExt/FilterDataProvider.swift` is a `NEFilterDataProvider` subclass. It is **not part of the build**. Enabling it requires:
+`Sources/NetExt/FilterDataProvider.swift` is a `NEFilterDataProvider` content filter, built as the `PureSnitchNetExt` system-extension target and embedded at `Contents/Library/SystemExtensions/`. It gives true per-process filtering (Little Snitch's mechanism).
 
-1. `com.apple.developer.networking.networkextension` entitlement with `content-filter-provider-systemextension`.
-2. Adding a target of type `app-extension` to `project.yml`.
-3. Bundling as a System Extension inside the .app via `OSSystemExtensionRequest`.
+- `handleNewFlow` evaluates each socket flow with the shared `RuleMatcher`; allow → `.allow()`, deny → `.drop()`, ask → `.pause()` then resume with the user's verdict.
+- App ↔ extension XPC: `Shared/IPCConnection.swift` (extension vends a mach service named by `NEMachServiceName`; the app connects and receives prompts, reusing the connection-alert UI).
+- Rules reach the sandboxed extension via the app-group container (`Shared/SharedRuleBridge.swift`), mirrored by the GUI on every rule/mode change.
+- Activation: `GUI/App/SystemExtensionManager.swift` (`OSSystemExtensionRequest` + `NEFilterManager`).
 
-When active, it overrides DNS + pfctl as the source of truth for per-process verdicts. Same `RuleMatcher`, same rules.
+Shipping requires the `content-filter-provider-systemextension` entitlement (self-serve Network Extensions capability on the App ID), Developer ID signing + notarization, and the app installed in `/Applications`. See `Sources/NetExt/README.md`. The helper (pfctl + DNS) remains for rule storage and DNS blocklists.

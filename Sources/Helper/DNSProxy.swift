@@ -23,6 +23,7 @@ final class DNSProxy: @unchecked Sendable {
     var statistics: (queries: Int, blocked: Int, allowed: Int) { stats.snapshot() }
 
     func start(port: UInt16 = 53) throws {
+        if running { return }   // already listening; avoid re-binding port 53
         self.port = port
         let params = NWParameters.udp
         params.allowLocalEndpointReuse = true

@@ -6,7 +6,6 @@ struct NetworkMonitorView: View {
     @EnvironmentObject var state: AppState
     @State private var selectedProcess: String? = nil
     @State private var searchText: String = ""
-    @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: .init(latitude: 20, longitude: 0), span: .init(latitudeDelta: 130, longitudeDelta: 360)))
 
     var body: some View {
         HStack(spacing: 0) {
@@ -54,15 +53,50 @@ struct NetworkMonitorView: View {
     }
 
     private var mapPane: some View {
-        Map(position: $cameraPosition) {
-            ForEach(connectionsForMap()) { c in
-                Annotation(c.country ?? "?", coordinate: .init(latitude: c.latitude ?? 0, longitude: c.longitude ?? 0)) {
-                    NodePin(label: c.country ?? c.remoteHost)
+        Group {
+            if #available(macOS 14.0, *) {
+                ConnectionMapPane(connections: connectionsForMap())
+            } else {
+                legacyConnectionList
+            }
+        }
+    }
+
+    // Fallback for macOS 13 (Ventura), where the SwiftUI `Map` API is unavailable.
+    private var legacyConnectionList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "map").foregroundColor(PSTheme.textMuted)
+                    Text("Map view requires macOS 14 or later")
+                        .font(.system(size: 12)).foregroundColor(PSTheme.textMuted)
+                    Spacer()
+                }
+                .padding(12)
+                Divider().background(PSTheme.stroke)
+                ForEach(connectionsForMap()) { c in
+                    HStack(spacing: 8) {
+                        Image(systemName: "globe.americas").foregroundColor(PSTheme.accentBlue)
+                            .frame(width: 16)
+                        Text(legacyLabel(c))
+                            .font(.system(size: 12)).foregroundColor(PSTheme.textPrimary).lineLimit(1)
+                        Spacer()
+                        if let cc = c.countryCode, !cc.isEmpty {
+                            Text(cc).font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textSecondary)
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
                 }
             }
         }
-        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
-        .colorScheme(.dark)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PSTheme.bgPrimary)
+    }
+
+    private func legacyLabel(_ c: Connection) -> String {
+        if let country = c.country, !country.isEmpty { return country }
+        if !c.remoteHost.isEmpty { return c.remoteHost }
+        return c.remoteIP
     }
 
     private var summaryPane: some View {
@@ -185,6 +219,26 @@ struct NodePin: View {
                 .frame(width: 10, height: 10)
                 .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
         }
+    }
+}
+
+@available(macOS 14.0, *)
+private struct ConnectionMapPane: View {
+    let connections: [Connection]
+    @State private var cameraPosition: MapCameraPosition = .region(
+        MKCoordinateRegion(center: .init(latitude: 20, longitude: 0),
+                           span: .init(latitudeDelta: 130, longitudeDelta: 360)))
+
+    var body: some View {
+        Map(position: $cameraPosition) {
+            ForEach(connections) { c in
+                Annotation(c.country ?? "?", coordinate: .init(latitude: c.latitude ?? 0, longitude: c.longitude ?? 0)) {
+                    NodePin(label: c.country ?? c.remoteHost)
+                }
+            }
+        }
+        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
+        .colorScheme(.dark)
     }
 }
 

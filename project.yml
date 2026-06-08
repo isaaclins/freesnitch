@@ -2,7 +2,7 @@ name: PureSnitch
 options:
   bundleIdPrefix: io.moamenbasel.puresnitch
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "13.0"
   createIntermediateGroups: true
   defaultConfig: Release
   developmentLanguage: en
@@ -15,13 +15,19 @@ settings:
     SWIFT_VERSION: "5.10"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Manual
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    ARCHS: "arm64 x86_64"
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
     ALWAYS_SEARCH_USER_PATHS: NO
     CLANG_ENABLE_OBJC_ARC: YES
     OTHER_CODE_SIGN_FLAGS: "--timestamp"
     SWIFT_STRICT_CONCURRENCY: minimal
+  configs:
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      ONLY_ACTIVE_ARCH: NO
 
 fileGroups:
   - Sources
@@ -35,8 +41,7 @@ targets:
     sources:
       - path: Sources/GUI
       - path: Sources/Shared
-    resources:
-      - Resources/Assets.xcassets
+      - path: Resources/Assets.xcassets
     info:
       path: Sources/GUI/Info.plist
       properties:
@@ -44,7 +49,7 @@ targets:
         CFBundleDisplayName: PureSnitch
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        LSMinimumSystemVersion: "14.0"
+        LSMinimumSystemVersion: "13.0"
         LSUIElement: true
         NSHumanReadableCopyright: "© 2026 Moamen Basel. MIT License."
         NSAppTransportSecurity:
@@ -57,6 +62,11 @@ targets:
         com.apple.security.app-sandbox: false
         com.apple.security.network.client: true
         com.apple.security.network.server: true
+        com.apple.developer.networking.networkextension:
+          - content-filter-provider-systemextension
+        com.apple.developer.system-extension.install: true
+        com.apple.security.application-groups:
+          - H3WXHVTP97.io.moamenbasel.puresnitch
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch
@@ -86,6 +96,48 @@ targets:
       - target: PureSnitchHelper
         embed: false
         link: false
+      - target: PureSnitchNetExt
+        embed: true
+
+  PureSnitchNetExt:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: Sources/NetExt
+        excludes:
+          - "*.md"
+      - path: Sources/Shared
+    info:
+      path: Sources/NetExt/Info.plist
+      properties:
+        CFBundleName: PureSnitchNetExt
+        CFBundleDisplayName: PureSnitch Network Extension
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        CFBundlePackageType: SYSX
+        LSMinimumSystemVersion: "13.0"
+        NSSystemExtensionUsageDescription: "PureSnitch filters per-app network connections."
+        NetworkExtension:
+          NEMachServiceName: H3WXHVTP97.io.moamenbasel.puresnitch.ipc
+          NEProviderClasses:
+            com.apple.networkextension.filter-data: PureSnitchNetExt.FilterDataProvider
+    entitlements:
+      path: Sources/NetExt/NetExt.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - H3WXHVTP97.io.moamenbasel.puresnitch
+        com.apple.developer.networking.networkextension:
+          - content-filter-provider-systemextension
+    settings:
+      base:
+        PRODUCT_NAME: PureSnitchNetExt
+        PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch.netext
+        PRODUCT_MODULE_NAME: PureSnitchNetExt
+        CODE_SIGN_IDENTITY: "Developer ID Application: Moamen Basel (H3WXHVTP97)"
+        CODE_SIGN_ENTITLEMENTS: Sources/NetExt/NetExt.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
 
   PureSnitchHelper:
     type: tool

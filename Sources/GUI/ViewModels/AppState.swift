@@ -85,13 +85,22 @@ final class AppState: ObservableObject {
 
     func refreshRules() {
         helper.listRules { [weak self] rules in
-            self?.rules = rules
+            guard let self else { return }
+            self.rules = rules
+            self.syncSharedRules()
         }
+    }
+
+    /// Mirror the active rules + mode into the app-group container so the
+    /// Network System Extension (which can't read the helper DB) can enforce them.
+    func syncSharedRules() {
+        SharedRuleBridge.write(mode: mode, rules: rules)
     }
 
     func setMode(_ m: AppMode) {
         mode = m
         helper.setMode(m)
+        syncSharedRules()
     }
 
     func updateConnections(_ conns: [Connection]) {
@@ -133,7 +142,9 @@ final class AppState: ObservableObject {
                 groupName: nil,
                 notes: "Created from alert"
             )
+            rules.append(rule)        // optimistic: extension sees it even if the helper is down
             helper.addRule(rule)
+            syncSharedRules()
             refreshRules()
         }
     }
@@ -152,7 +163,7 @@ final class AppState: ObservableObject {
         for c in conns {
             let pkey = c.processBundleId ?? c.processPath
             let cur = byProc[pkey] ?? (0, 0, nil)
-            byProc[pkey] = (cur.0 + c.bytesIn, cur.1 + c.bytesOut, cur.2 ?? iconFor(path: c.processPath))
+            byProc[pkey] = (cur.0 + c.bytesIn, cur.1 + c.bytesOut, cur.2 ?? AppIcon.resolve(bundleId: c.processBundleId, path: c.processPath, name: c.processName))
             let dom = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
             let cd = byDom[dom] ?? (0, 0)
             byDom[dom] = (cd.0 + c.bytesIn, cd.1 + c.bytesOut)
@@ -172,13 +183,4 @@ final class AppState: ObservableObject {
         }.sorted { $0.total > $1.total }.prefix(20).map { $0 }
     }
 
-    private func iconFor(path: String) -> NSImage? {
-        guard !path.isEmpty else { return nil }
-        var p = path
-        if let r = p.range(of: ".app/") { p = String(p[..<r.upperBound]) }
-        if FileManager.default.fileExists(atPath: p) {
-            return NSWorkspace.shared.icon(forFile: p)
-        }
-        return nil
-    }
 }

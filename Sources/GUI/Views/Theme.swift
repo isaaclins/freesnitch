@@ -21,6 +21,45 @@ enum PSTheme {
     static let textMuted = Color(NSColor(white: 0.45, alpha: 1))
 }
 
+enum AppIcon {
+    /// Resolves a real application icon from a bundle id, executable/app path,
+    /// or app name. Returns nil if the app can't be located on this machine
+    /// (callers fall back to an SF Symbol). NSWorkspace caches icons, so this
+    /// is cheap enough to call from a list row.
+    static func resolve(bundleId: String? = nil, path: String? = nil, name: String? = nil) -> NSImage? {
+        let ws = NSWorkspace.shared
+        if let bid = bundleId, !bid.isEmpty,
+           let url = ws.urlForApplication(withBundleIdentifier: bid) {
+            return ws.icon(forFile: url.path)
+        }
+        if let p = path, !p.isEmpty {
+            var appPath = p
+            // Match the LAST ".app/" so nested bundles (…/Foo.app/…/Bar.app/…)
+            // resolve to the innermost app that owns the executable.
+            if let r = appPath.range(of: ".app/", options: .backwards) {
+                appPath = String(appPath[..<r.upperBound])
+            }
+            if FileManager.default.fileExists(atPath: appPath) {
+                return ws.icon(forFile: appPath)
+            }
+        }
+        if let n = name, !n.isEmpty {
+            let dirs = ["/Applications",
+                        "\(NSHomeDirectory())/Applications",
+                        "/System/Applications",
+                        "/Applications/Utilities",
+                        "/System/Applications/Utilities"]
+            for dir in dirs {
+                let candidate = "\(dir)/\(n).app"
+                if FileManager.default.fileExists(atPath: candidate) {
+                    return ws.icon(forFile: candidate)
+                }
+            }
+        }
+        return nil
+    }
+}
+
 enum PSFormat {
     static func bytes(_ n: Int64) -> String {
         let b = Double(n)

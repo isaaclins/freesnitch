@@ -13,6 +13,7 @@ final class NetMonitor: @unchecked Sendable {
     private var lastSampleTime = Date()
 
     func start() {
+        stop()   // idempotent: tear down any existing pollers before (re)starting
         startLsofPolling()
         startNettop()
     }
@@ -116,7 +117,7 @@ final class NetMonitor: @unchecked Sendable {
     private func bundleID(forPath path: String) -> String? {
         guard !path.isEmpty else { return nil }
         var p = path
-        if let r = p.range(of: ".app/") { p = String(p[..<r.upperBound]) }
+        if let r = p.range(of: ".app/", options: .backwards) { p = String(p[..<r.upperBound]) }
         let plist = (p as NSString).appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)) else { return nil }
         guard let d = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }

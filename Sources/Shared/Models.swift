@@ -235,6 +235,9 @@ public struct AppConstants {
     public static let bundleIdHelper = "io.moamenbasel.puresnitch.helper"
     public static let bundleIdNetExt = "io.moamenbasel.puresnitch.netext"
     public static let xpcMachServiceName = "io.moamenbasel.puresnitch.helper"
+    /// App<->extension XPC. Must be prefixed by an app group the process owns,
+    /// so a regular (non-daemon) app can vend it via NSXPCListener.
+    public static let ipcMachServiceName = "H3WXHVTP97.io.moamenbasel.puresnitch.ipc"
     public static let appGroup = "H3WXHVTP97.io.moamenbasel.puresnitch"
     public static let teamID = "H3WXHVTP97"
     public static let version = "0.1.0"
