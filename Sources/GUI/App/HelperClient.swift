@@ -7,7 +7,25 @@ final class HelperClient: NSObject, ObservableObject {
     @Published var status: HelperStatus?
 
     private var connection: NSXPCConnection?
+    private var didBootstrap = false
     weak var state: AppState?
+
+    /// Registers the privileged helper as a launchd daemon via SMAppService.
+    /// Without this the XPC mach service never exists, so every helper call
+    /// silently no-ops (the root cause of "no rules / no traffic"). Requires a
+    /// signed build; the user approves it in System Settings → Login Items.
+    func registerDaemon() {
+        guard #available(macOS 13.0, *) else { return }
+        let service = SMAppService.daemon(plistName: "io.moamenbasel.puresnitch.helper.plist")
+        guard service.status != .enabled else { return }
+        do {
+            try service.register()
+        } catch {
+            let message = "Helper registration failed: \(error.localizedDescription). " +
+                "Approve PureSnitch in System Settings → General → Login Items."
+            Task { @MainActor in self.state?.appendLog(level: "error", message: message) }
+        }
+    }
 
     func connect() {
         let conn = NSXPCConnection(machServiceName: AppConstants.xpcMachServiceName, options: [.privileged])
@@ -15,25 +33,44 @@ final class HelperClient: NSObject, ObservableObject {
         conn.exportedInterface = HelperBridge.exportedInterface()
         conn.exportedObject = HelperEventReceiver(state: state)
         conn.invalidationHandler = { [weak self] in
-            Task { @MainActor in self?.connected = false }
+            Task { @MainActor in self?.setConnected(false) }
         }
         conn.interruptionHandler = { [weak self] in
-            Task { @MainActor in self?.connected = false }
+            Task { @MainActor in self?.setConnected(false) }
         }
         conn.resume()
         self.connection = conn
         ping()
+        // The daemon may take a moment to come up (or be approved) after launch;
+        // retry a few times so rules/traffic populate without a manual relaunch.
+        for delay in [2.0, 5.0, 10.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.ping() }
+        }
     }
 
     var remote: HelperProtocol? {
         connection?.remoteObjectProxyWithErrorHandler { _ in } as? HelperProtocol
     }
 
+    private func setConnected(_ value: Bool) {
+        let wasConnected = connected
+        connected = value
+        state?.helperConnected = value
+        guard value, !wasConnected else { return }
+        // First reachable connection runs the full bootstrap; later
+        // reconnections only refresh rules so we don't re-run startMonitoring /
+        // installPF and duplicate the helper's monitors.
+        if didBootstrap {
+            state?.refreshRules()
+        } else {
+            didBootstrap = true
+            state?.bootstrap()
+        }
+    }
+
     func ping() {
         remote?.getVersion { [weak self] version in
-            Task { @MainActor in
-                self?.connected = !version.isEmpty
-            }
+            Task { @MainActor in self?.setConnected(!version.isEmpty) }
         }
         remote?.getStatus { [weak self] data in
             let status = try? JSONDecoder().decode(HelperStatus.self, from: data)

@@ -89,3 +89,18 @@ struct AlertOverlayContainer: View {
         }
     }
 }
+
+/// Content for the standalone floating alert panel (no dimming backdrop).
+/// Shows the first pending alert; updates to the next one as each is resolved.
+struct AlertWindowContent: View {
+    @EnvironmentObject var state: AppState
+    var body: some View {
+        Group {
+            if let alert = state.pendingAlerts.first {
+                ConnectionAlertView(alert: alert).environmentObject(state)
+            } else {
+                Color.clear.frame(width: 440, height: 1)
+            }
+        }
+    }
+}

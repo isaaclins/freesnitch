@@ -38,10 +38,10 @@ struct RulesManagerView: View {
                 navRow(.all, label: "All Rules", icon: "list.bullet", count: state.rules.count)
                 navRow(.active, label: "Active", icon: "checkmark.circle.fill", color: PSTheme.accentGreen, count: state.rules.filter { $0.enabled && $0.action == .allow }.count)
                 navRow(.deny, label: "Deny", icon: "minus.circle.fill", color: PSTheme.accentRed, count: state.rules.filter { $0.action == .deny }.count)
-                navRow(.recentChanges, label: "Recent Changes", icon: "clock.fill", count: 0)
-                navRow(.recentlyUsed, label: "Recently Used", icon: "clock.arrow.circlepath", count: 0)
+                navRow(.recentChanges, label: "Recent Changes", icon: "clock.fill", count: recentChangesCount)
+                navRow(.recentlyUsed, label: "Recently Used", icon: "clock.arrow.circlepath", count: state.rules.filter { $0.lastUsedAt != nil }.count)
                 navRow(.temporary, label: "Temporary", icon: "hourglass", color: PSTheme.accentYellow, count: state.rules.filter { $0.temporary }.count)
-                navRow(.unapproved, label: "Unapproved", icon: "questionmark.circle.fill", count: 138, badge: true)
+                navRow(.unapproved, label: "Unapproved", icon: "questionmark.circle.fill", count: state.rules.filter { $0.action == .ask }.count, badge: true)
 
                 sidebarHeader("Rule Groups").padding(.top, 8)
                 groupRow("iCloud Services", icon: "icloud.fill")
@@ -169,15 +169,64 @@ struct RulesManagerView: View {
 
             Divider().background(PSTheme.stroke)
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(filteredRules.enumerated()), id: \.element.id) { idx, r in
-                        RuleRowView(rule: r, alt: idx % 2 == 1, selected: selectedRule?.id == r.id)
-                            .onTapGesture { selectedRule = r }
+            if filteredRules.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(filteredRules.enumerated()), id: \.element.id) { idx, r in
+                            RuleRowView(rule: r, alt: idx % 2 == 1, selected: selectedRule?.id == r.id)
+                                .contentShape(Rectangle())
+                                .onTapGesture { selectedRule = r }
+                        }
                     }
                 }
             }
         }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: emptyIcon)
+                .font(.system(size: 38)).foregroundColor(PSTheme.textMuted)
+            Text(emptyTitle)
+                .font(.system(size: 15, weight: .semibold)).foregroundColor(PSTheme.textSecondary)
+            Text(emptySubtitle)
+                .font(.system(size: 12)).foregroundColor(PSTheme.textMuted)
+                .multilineTextAlignment(.center).frame(maxWidth: 360)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyIcon: String {
+        if case .blocklist = selectedCategory { return "shield.lefthalf.filled" }
+        if !state.helperConnected { return "bolt.horizontal.circle" }
+        return "list.bullet"
+    }
+
+    private var emptyTitle: String {
+        if case .blocklist(let id) = selectedCategory {
+            return state.blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
+        }
+        if !state.helperConnected { return "Helper not running" }
+        if state.rules.isEmpty { return "No rules yet" }
+        return "Nothing in \(categoryTitle)"
+    }
+
+    private var emptySubtitle: String {
+        if case .blocklist(let id) = selectedCategory {
+            let count = state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
+            return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings → Blocklists."
+        }
+        if !state.helperConnected {
+            return "Rules are managed by the PureSnitch helper. Approve it in System Settings → General → Login Items, then reopen this window."
+        }
+        if state.rules.isEmpty {
+            return "Rules are created automatically when you allow or deny a connection alert."
+        }
+        return "No rules match this filter."
     }
 
     private var categoryTitle: String {
@@ -194,15 +243,33 @@ struct RulesManagerView: View {
         }
     }
 
+    private var recentCutoff: Date { Date().addingTimeInterval(-7 * 24 * 3600) }
+    private var recentChangesCount: Int { state.rules.filter { $0.createdAt >= recentCutoff }.count }
+
     private var filteredRules: [Rule] {
         var rules = state.rules
         switch selectedCategory {
-        case .all: break
-        case .active: rules = rules.filter { $0.enabled && $0.action == .allow }
-        case .deny: rules = rules.filter { $0.action == .deny }
-        case .temporary: rules = rules.filter { $0.temporary }
-        case .unapproved: break
-        default: break
+        case .all:
+            break
+        case .active:
+            rules = rules.filter { $0.enabled && $0.action == .allow }
+        case .deny:
+            rules = rules.filter { $0.action == .deny }
+        case .temporary:
+            rules = rules.filter { $0.temporary }
+        case .unapproved:
+            rules = rules.filter { $0.action == .ask }
+        case .recentChanges:
+            rules = rules.filter { $0.createdAt >= recentCutoff }
+                .sorted { $0.createdAt > $1.createdAt }
+        case .recentlyUsed:
+            rules = rules.filter { $0.lastUsedAt != nil }
+                .sorted { ($0.lastUsedAt ?? .distantPast) > ($1.lastUsedAt ?? .distantPast) }
+        case .group(let name):
+            rules = rules.filter { $0.groupName == name }
+        case .blocklist:
+            // Blocklists are domain sets, not per-process rules; shown as info.
+            rules = []
         }
         if !searchText.isEmpty {
             rules = rules.filter {
@@ -210,25 +277,7 @@ struct RulesManagerView: View {
                 ($0.remoteHost ?? "").localizedCaseInsensitiveContains(searchText)
             }
         }
-        if rules.isEmpty {
-            return demoRules()
-        }
         return rules
-    }
-
-    private func demoRules() -> [Rule] {
-        let names = ["FireHOL", "NoCoin", "URLhaus", "Anti PopAds", "Peter Lowe", "Ad Way", "Anudeep", "KADhosts", "OISD", "HaGeZi Multi Light", "1Host Lite", "HaGeZi Threat"]
-        let counts = [3768, 313, 513, 755, 3509, 6540, 42258, 48346, 57167, 60913, 94647, 301675]
-        return zip(names, counts).map { name, n in
-            Rule(
-                processName: name,
-                remoteHost: "Any Process",
-                action: .deny,
-                priority: 50,
-                profile: "default",
-                notes: "Blocklist entry"
-            )
-        }
     }
 
     private var infoPane: some View {
@@ -238,24 +287,76 @@ struct RulesManagerView: View {
                 Text("Information").font(.system(size: 14, weight: .semibold)).foregroundColor(PSTheme.textPrimary)
                 Spacer()
             }
-            Text("The filtering behavior of PureSnitch is defined by the rules listed here.")
-                .font(.system(size: 12)).foregroundColor(PSTheme.textSecondary)
-            Text("See the PureSnitch Help, chapter [Anatomy of a rule](https://github.com/moamenbasel/puresnitch#anatomy-of-a-rule) for more information.")
-                .font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
-            Spacer()
             if let r = selectedRule {
-                Divider().background(PSTheme.stroke)
-                Text("Selected").font(.system(size: 11, weight: .semibold)).foregroundColor(PSTheme.textMuted)
-                Text(r.processName ?? "—").font(.system(size: 13, weight: .semibold)).foregroundColor(PSTheme.textPrimary)
-                Text(r.remoteHost ?? "Any Process").font(.system(size: 11)).foregroundColor(PSTheme.textSecondary)
-                Button(role: .destructive) {
-                    state.helper.removeRule(id: r.id)
-                    state.refreshRules()
-                    selectedRule = nil
-                } label: { Text("Remove Rule") }.buttonStyle(.borderedProminent).tint(.red)
+                ruleDetails(r)
+            } else {
+                Text("The filtering behavior of PureSnitch is defined by the rules listed here.")
+                    .font(.system(size: 12)).foregroundColor(PSTheme.textSecondary)
+                Text("Select a rule to see its details. See the PureSnitch Help, chapter [Anatomy of a rule](https://github.com/momenbasel/puresnitch#anatomy-of-a-rule) for more information.")
+                    .font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
+                Spacer()
             }
         }
         .padding(14)
+    }
+
+    @ViewBuilder
+    private func ruleDetails(_ r: Rule) -> some View {
+        Divider().background(PSTheme.stroke)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                infoField("Process", r.processName ?? "Any Process")
+                if let p = r.processPath, !p.isEmpty { infoField("Path", p) }
+                if let b = r.processBundleId, !b.isEmpty { infoField("Bundle ID", b) }
+                infoField("Host", ruleHost(r))
+                if let port = r.remotePort, port > 0 { infoField("Port", "\(port)") }
+                infoField("Direction", r.direction.rawValue.capitalized)
+                infoField("Action", r.action.rawValue.capitalized)
+                infoField("Scope", r.scope.rawValue.capitalized)
+                infoField("Priority", "\(r.priority)")
+                infoField("Profile", r.profile)
+                infoField("Status", r.enabled ? "Enabled" : "Disabled")
+                infoField("Hits", "\(r.hitCount)")
+                if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        HStack {
+            Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
+                .buttonStyle(.bordered)
+            Spacer()
+            Button(role: .destructive) { removeRule(r) } label: { Text("Remove") }
+                .buttonStyle(.borderedProminent).tint(.red)
+        }
+    }
+
+    private func ruleHost(_ r: Rule) -> String {
+        if let h = r.remoteHost, !h.isEmpty { return h }
+        if let ip = r.remoteIP, !ip.isEmpty { return ip }
+        return "Any"
+    }
+
+    private func infoField(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textMuted)
+            Text(value).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toggleRule(_ r: Rule) {
+        var copy = r
+        copy.enabled.toggle()
+        state.helper.addRule(copy)   // upsert
+        state.refreshRules()
+        selectedRule = copy
+    }
+
+    private func removeRule(_ r: Rule) {
+        state.helper.removeRule(id: r.id)
+        state.refreshRules()
+        selectedRule = nil
     }
 }
 
@@ -266,8 +367,12 @@ struct RuleRowView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "person.crop.circle.dashed").foregroundColor(PSTheme.textSecondary)
-                .frame(width: 16)
+            if let icon = AppIcon.resolve(bundleId: rule.processBundleId, path: rule.processPath, name: rule.processName) {
+                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "person.crop.circle.dashed").foregroundColor(PSTheme.textSecondary)
+                    .frame(width: 16)
+            }
             Text(rule.processName ?? "Any Process").font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
                 .lineLimit(1)
                 .frame(width: 160, alignment: .leading)

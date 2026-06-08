@@ -39,3 +39,39 @@ jobs:
           test -f "$APP/Contents/MacOS/PureSnitchHelper"
           test -f "$APP/Contents/Library/LaunchDaemons/io.moamenbasel.puresnitch.helper.plist"
           echo "App bundle structure OK"
+
+  universal:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build universal (Release, ad-hoc signed)
+        run: |
+          xcodebuild \
+            -project PureSnitch.xcodeproj \
+            -scheme PureSnitch \
+            -configuration Release \
+            -derivedDataPath build/rel \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify universal slices (arm64 + x86_64)
+        run: |
+          APP=build/rel/Build/Products/Release/PureSnitch.app
+          for BIN in "$APP/Contents/MacOS/PureSnitch" "$APP/Contents/MacOS/PureSnitchHelper"; do
+            echo "== $BIN =="
+            lipo -info "$BIN"
+            lipo -archs "$BIN" | grep -qw arm64
+            lipo -archs "$BIN" | grep -qw x86_64
+          done
+          echo "Universal (arm64 + x86_64) verified"

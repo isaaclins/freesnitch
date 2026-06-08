@@ -1,65 +1,141 @@
 import AppKit
 import SwiftUI
+import Combine
 
 @MainActor
 final class WindowManager {
     private let state: AppState
     private weak var networkMonitorWindow: NSWindow?
     private weak var rulesWindow: NSWindow?
-    private weak var alertWindow: NSWindow?
+    private weak var settingsWindow: NSWindow?
+    private var alertWindow: NSWindow?
+    private var alertCancellable: AnyCancellable?
 
-    init(state: AppState) { self.state = state }
+    init(state: AppState) {
+        self.state = state
+        observeAlerts()
+    }
+
+    // MARK: - Public windows
 
     func showNetworkMonitor() {
-        if let w = networkMonitorWindow {
-            w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return
-        }
-        let view = NetworkMonitorView().environmentObject(state)
-        let hosting = NSHostingController(rootView: view)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+        if let w = networkMonitorWindow { focus(w); return }
+        networkMonitorWindow = makeWindow(
+            title: "Network Monitor",
+            defaultSize: NSSize(width: 1100, height: 700),
+            minSize: NSSize(width: 900, height: 550),
+            autosaveName: "PureSnitch.NetworkMonitor",
+            content: NetworkMonitorView().environmentObject(state)
         )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.title = "Network Monitor"
-        window.contentViewController = hosting
-        window.minSize = NSSize(width: 900, height: 550)
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        networkMonitorWindow = window
     }
 
     func showRulesManager() {
-        if let w = rulesWindow {
-            w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return
-        }
-        let view = RulesManagerView().environmentObject(state)
-        let hosting = NSHostingController(rootView: view)
+        if let w = rulesWindow { focus(w); return }
+        rulesWindow = makeWindow(
+            title: "Rules",
+            defaultSize: NSSize(width: 1000, height: 650),
+            minSize: NSSize(width: 820, height: 500),
+            autosaveName: "PureSnitch.Rules",
+            content: RulesManagerView().environmentObject(state)
+        )
+    }
+
+    func showSettings() {
+        if let w = settingsWindow { focus(w); return }
+        // Created manually rather than via the SwiftUI `Settings` scene: the
+        // `showSettingsWindow:` action is unreliable for `.accessory`
+        // (menu-bar-only) apps and was the reason Settings never appeared.
+        settingsWindow = makeWindow(
+            title: "Settings",
+            defaultSize: NSSize(width: 560, height: 460),
+            minSize: NSSize(width: 560, height: 460),
+            autosaveName: "PureSnitch.Settings",
+            content: SettingsView().environmentObject(state),
+            resizable: false
+        )
+    }
+
+    // MARK: - Window factory
+
+    private func makeWindow<Content: View>(
+        title: String,
+        defaultSize: NSSize,
+        minSize: NSSize,
+        autosaveName: String,
+        content: Content,
+        resizable: Bool = true
+    ) -> NSWindow {
+        var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+        if resizable { style.insert(.resizable) }
+
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 650),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            contentRect: NSRect(origin: .zero, size: defaultSize),
+            styleMask: style,
             backing: .buffered,
             defer: false
         )
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.title = "Rules"
-        window.contentViewController = hosting
-        window.minSize = NSSize(width: 820, height: 500)
-        window.center()
+        window.title = title
         window.isReleasedWhenClosed = false
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        rulesWindow = window
+        window.minSize = minSize
+        // Use `contentView` (NSHostingView) instead of `contentViewController`.
+        // Assigning a hosting *controller* makes NSWindow resize itself to the
+        // SwiftUI view's fitting size — which collapsed these windows to a
+        // sliver. A hosting *view* keeps the size we set here.
+        window.contentView = NSHostingView(rootView: content)
+        window.setContentSize(defaultSize)
+
+        // Persist + restore the window frame across launches.
+        window.setFrameAutosaveName(autosaveName)
+        if !window.setFrameUsingName(autosaveName) {
+            window.center()
+        }
+
+        focus(window)
+        return window
     }
 
-    func showSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    private func focus(_ window: NSWindow) {
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Connection alerts
+
+    private func observeAlerts() {
+        alertCancellable = state.$pendingAlerts
+            .receive(on: RunLoop.main)
+            .sink { [weak self] alerts in
+                self?.syncAlertWindow(hasAlert: !alerts.isEmpty)
+            }
+    }
+
+    private func syncAlertWindow(hasAlert: Bool) {
+        if hasAlert {
+            if alertWindow == nil { presentAlertWindow() }
+        } else {
+            alertWindow?.close()
+            alertWindow = nil
+        }
+    }
+
+    private func presentAlertWindow() {
+        // Use a hosting *controller* so the panel auto-sizes to the alert's
+        // content — long process names / hostnames grow the card correctly.
+        // (Reading NSHostingView.fittingSize before the view is laid out
+        // returns zero and would clip the content.)
+        let hosting = NSHostingController(rootView: AlertWindowContent().environmentObject(state))
+        let window = NSPanel(contentViewController: hosting)
+        window.styleMask = [.titled, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        alertWindow = window
     }
 }
