@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let state = AppState()
     var menubar: MenubarController!
     var windowManager: WindowManager!
+    var systemExtension: SystemExtensionManager!
 
     nonisolated override init() { super.init() }
 
@@ -30,6 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // bootstrap() (rule load + monitoring) is driven by HelperClient once
         // the helper is actually reachable — see HelperClient.setConnected.
         state.helper.connect()
+        // Seed the app-group snapshot so the network extension has rules to read.
+        state.syncSharedRules()
+
+        // Per-process firewall (Network System Extension). Activation is a no-op
+        // unless this build embeds a signed, notarized extension installed in
+        // /Applications; it prompts the user for approval on first run.
+        systemExtension = SystemExtensionManager(state: state)
+        if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] != "1" {
+            systemExtension.activate()
+        }
 
         if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] == "1" {
             seedDemoState()

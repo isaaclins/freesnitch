@@ -10,6 +10,7 @@ SIGN_ID="Developer ID Application: Moamen Basel ($TEAM_ID)"
 NOTARY_PROFILE="puresnitch-notary"
 APP_ENT="$ROOT/Sources/GUI/PureSnitch.entitlements"
 HELPER_ENT="$ROOT/Sources/Helper/Helper.entitlements"
+NETEXT_ENT="$ROOT/Sources/NetExt/NetExt.entitlements"
 VERSION="${VERSION:-0.1.0}"
 
 echo ">> Cleaning previous build…"
@@ -39,6 +40,18 @@ codesign --force --options=runtime --timestamp \
   --entitlements "$HELPER_ENT" \
   --sign "$SIGN_ID" \
   "$HELPER"
+
+echo ">> Re-signing network system extension…"
+NETEXT="$APP_BUNDLE/Contents/Library/SystemExtensions/PureSnitchNetExt.systemextension"
+if [ -d "$NETEXT" ]; then
+  codesign --remove-signature "$NETEXT" || true
+  codesign --force --options=runtime --timestamp \
+    --entitlements "$NETEXT_ENT" \
+    --sign "$SIGN_ID" \
+    "$NETEXT"
+else
+  echo "warning: system extension not found, skipping"
+fi
 
 echo ">> Re-signing app without get-task-allow…"
 codesign --remove-signature "$APP_BUNDLE" || true

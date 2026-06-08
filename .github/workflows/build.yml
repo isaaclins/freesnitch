@@ -38,7 +38,9 @@ jobs:
           test -f "$APP/Contents/MacOS/PureSnitch"
           test -f "$APP/Contents/MacOS/PureSnitchHelper"
           test -f "$APP/Contents/Library/LaunchDaemons/io.moamenbasel.puresnitch.helper.plist"
-          echo "App bundle structure OK"
+          test -d "$APP/Contents/Library/SystemExtensions/PureSnitchNetExt.systemextension"
+          test -f "$APP/Contents/Resources/Assets.car"
+          echo "App bundle structure OK (helper + system extension + app icon)"
 
   universal:
     runs-on: macos-15
@@ -68,10 +70,11 @@ jobs:
       - name: Verify universal slices (arm64 + x86_64)
         run: |
           APP=build/rel/Build/Products/Release/PureSnitch.app
-          for BIN in "$APP/Contents/MacOS/PureSnitch" "$APP/Contents/MacOS/PureSnitchHelper"; do
+          EXT="$APP/Contents/Library/SystemExtensions/PureSnitchNetExt.systemextension/Contents/MacOS/PureSnitchNetExt"
+          for BIN in "$APP/Contents/MacOS/PureSnitch" "$APP/Contents/MacOS/PureSnitchHelper" "$EXT"; do
             echo "== $BIN =="
             lipo -info "$BIN"
             lipo -archs "$BIN" | grep -qw arm64
             lipo -archs "$BIN" | grep -qw x86_64
           done
-          echo "Universal (arm64 + x86_64) verified"
+          echo "Universal (arm64 + x86_64) verified for app, helper, and system extension"

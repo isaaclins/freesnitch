@@ -85,13 +85,22 @@ final class AppState: ObservableObject {
 
     func refreshRules() {
         helper.listRules { [weak self] rules in
-            self?.rules = rules
+            guard let self else { return }
+            self.rules = rules
+            self.syncSharedRules()
         }
+    }
+
+    /// Mirror the active rules + mode into the app-group container so the
+    /// Network System Extension (which can't read the helper DB) can enforce them.
+    func syncSharedRules() {
+        SharedRuleBridge.write(mode: mode, rules: rules)
     }
 
     func setMode(_ m: AppMode) {
         mode = m
         helper.setMode(m)
+        syncSharedRules()
     }
 
     func updateConnections(_ conns: [Connection]) {
@@ -133,7 +142,9 @@ final class AppState: ObservableObject {
                 groupName: nil,
                 notes: "Created from alert"
             )
+            rules.append(rule)        // optimistic: extension sees it even if the helper is down
             helper.addRule(rule)
+            syncSharedRules()
             refreshRules()
         }
     }

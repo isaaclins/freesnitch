@@ -1,29 +1,37 @@
-# NetExt (dormant)
+# NetExt — Network System Extension (per-process firewall)
 
-This directory contains the Network System Extension code path used for true
-per-process connection filtering. It is **not built** in v0.1.0 of PureSnitch
-because shipping it requires:
+This is the `NEFilterDataProvider` content filter that gives PureSnitch true
+**per-process** connection filtering — the same mechanism Little Snitch uses.
+It is now a real build target (`PureSnitchNetExt`, `type: system-extension`)
+embedded in the app at `Contents/Library/SystemExtensions/`.
 
-1. The `com.apple.developer.networking.networkextension` entitlement with
-   the `content-filter-provider-systemextension` value.
-2. Apple's approval for that entitlement (granted via the Network Extension
-   request form: https://developer.apple.com/contact/request/networking-entitlement).
-3. A provisioning profile bundling that entitlement.
+## Files
+- `main.swift` — entry point (`NEProvider.startSystemExtensionMode()`).
+- `FilterDataProvider.swift` — evaluates every new socket flow against the rule
+  set, returns allow/drop, or **pauses** the flow and asks the GUI (resuming
+  with the user's verdict). Reuses `RuleMatcher` from `Shared/`.
+- IPC: `Shared/IPCConnection.swift` (app ↔ extension XPC, modelled on Apple's
+  SimpleFirewall sample).
+- Rules: `Shared/SharedRuleBridge.swift` — the GUI mirrors the active rules +
+  mode into the app-group container; the extension reads them (the extension is
+  sandboxed and can't read the helper DB directly).
 
-Without that entitlement, the system extension cannot be loaded — installing
-it will fail with `OSSystemExtensionErrorAuthorizationRequired` or similar.
+## What it takes to run (Developer ID, outside the App Store)
+1. Enable the **Network Extensions** capability on the App ID in the Apple
+   Developer portal (self-serve since 2016 — no email request needed) and add
+   the `content-filter-provider-systemextension` entitlement to both the app and
+   the extension (already declared in `project.yml`).
+2. Two Developer ID provisioning profiles (app + extension) carrying that
+   capability.
+3. Sign with **Developer ID Application** (inside-out: extension → helper → app)
+   and **notarize** — see `Scripts/sign_and_notarize.sh`.
+4. The app must be in **`/Applications`** to activate the extension
+   (otherwise `OSSystemExtensionErrorUnsupportedParentBundleLocation`). During
+   development you can relax this with `systemextensionsctl developer on`.
+5. On first run the user approves it in **System Settings → Privacy & Security**
+   (and the network-filter prompt). Activation is driven by
+   `GUI/App/SystemExtensionManager.swift`.
 
-PureSnitch v0.1.0 ships with a **functional firewall** using pfctl + a local
-DNS proxy that runs without this entitlement. Per-process IP-direct blocking
-(traffic that doesn't go through DNS) requires this entitlement.
-
-To activate this code path:
-1. Apply for the entitlement from Apple.
-2. Add this folder as a target in `project.yml` (type: `app-extension`).
-3. Add the corresponding `com.apple.developer.networking.networkextension`
-   entitlement to the system extension.
-4. Update the GUI to call `OSSystemExtensionRequest.activationRequest(...)`
-   instead of (or in addition to) the helper daemon path.
-
-The Swift code in `FilterDataProvider.swift` shows the verdict path. It
-reuses `RuleMatcher` from `Shared/`, so the rule semantics are identical.
+The legacy helper (`Sources/Helper`, pfctl + DNS proxy) remains for rule
+storage and DNS-level blocklists; the system extension is the per-process
+enforcement layer.
