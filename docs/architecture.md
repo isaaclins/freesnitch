@@ -41,8 +41,8 @@ FreeSnitch is a 3-process application:
 
 Defined in `Sources/Shared/HelperProtocol.swift`:
 
-- **HelperProtocol** — GUI → Helper. Methods: `getStatus`, `setMode`, `addRule`, `removeRule`, `listRules`, `startMonitoring`, `installPF`, `refreshBlocklists`, `setDoHUpstream`, etc.
-- **HelperClientProtocol** — Helper → GUI. Methods: `notifyConnection`, `notifyTraffic`, `notifyAlert(connectionJSON, reply)`, `notifyLog`.
+- **HelperProtocol** - GUI → Helper. Methods: `getStatus`, `setMode`, `addRule`, `removeRule`, `listRules`, `startMonitoring`, `installPF`, `refreshBlocklists`, `setDoHUpstream`, etc.
+- **HelperClientProtocol** - Helper → GUI. Methods: `notifyConnection`, `notifyTraffic`, `notifyAlert(connectionJSON, reply)`, `notifyLog`.
 
 `notifyAlert` is the call that delivers a new connection event to the GUI in Alert mode. The GUI's `AppState.presentAlert(...)` puts up a SwiftUI sheet; the user's Allow/Deny choice is sent back through the reply block.
 
@@ -98,7 +98,7 @@ Host glob: `*.example.com`, `.example.com` both match.
 IP CIDR: `10.0.0.0/8` matches anywhere in that block.
 Process: bundle ID match wins; otherwise path prefix.
 
-## NetExt — per-process firewall (Network System Extension)
+## NetExt - per-process firewall (Network System Extension)
 
 `Sources/NetExt/FilterDataProvider.swift` is a `NEFilterDataProvider` content filter, built as the `FreeSnitchNetExt` system-extension target and embedded at `Contents/Library/SystemExtensions/`. It gives true per-process filtering (Little Snitch's mechanism).
 
