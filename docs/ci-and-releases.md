@@ -13,6 +13,20 @@ Extension and System Extension entitlements are absent. The firewall flavour
 is built only by the maintainer release command after the required profiles are
 available.
 
+## Website CSS
+
+The website stylesheet is generated before publishing and committed as
+`docs/styles.css`. GitHub Pages serves that file directly, so it does not need a
+build step or JavaScript at runtime. From the repository root, regenerate it
+with:
+
+```sh
+npx tailwindcss@3.4.17 -c docs/_tailwind/tailwind.config.js -i docs/_tailwind/input.css -o docs/styles.css
+```
+
+The Tailwind configuration and input stylesheet in `docs/_tailwind/` are the
+sources used to produce the committed CSS.
+
 ## Release command
 
 When a maintainer says **release this**, the command is:
