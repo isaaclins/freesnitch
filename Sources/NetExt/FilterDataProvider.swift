@@ -42,6 +42,10 @@ final class FilterDataProvider: NEFilterDataProvider {
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
         let conn = connection(from: socketFlow)
+        // PureSnitch must never hold up its own traffic. The helper shells out
+        // to nettop and lsof to observe connections, and pausing those to ask
+        // the user deadlocks the app that is supposed to answer the question.
+        if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
         switch matcher.decision(for: conn, rules: snapshot.rules, defaultMode: snapshot.mode) {
         case .allow:
             return .allow()
@@ -78,6 +82,37 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         // Safety net: never hold a flow forever if the GUI never answers.
         workQueue.asyncAfter(deadline: .now() + askTimeout) { resumeOnce(NEFilterNewFlowVerdict.allow()) }
+    }
+
+    // MARK: - Self exemption
+
+    /// The app bundle that contains this extension:
+    /// <app>.app/Contents/Library/SystemExtensions/<id>.systemextension
+    private static let ownBundleRoot: String = {
+        var url = Bundle.main.bundleURL
+        for _ in 0..<4 { url.deleteLastPathComponent() }
+        return url.path
+    }()
+
+    private func isOwnTraffic(_ conn: Connection) -> Bool {
+        if !conn.processPath.isEmpty, conn.processPath.hasPrefix(Self.ownBundleRoot) { return true }
+        // nettop and lsof live in /usr, so the path alone cannot identify them.
+        // They are ours only when our helper is the one that spawned them.
+        guard conn.pid > 0, let parent = parentPID(of: conn.pid), parent > 0 else { return false }
+        return pathForPID(Int(parent)).hasPrefix(Self.ownBundleRoot)
+    }
+
+    private func isLoopback(_ ip: String) -> Bool {
+        ip.hasPrefix("127.") || ip == "::1" || ip == "localhost"
+    }
+
+    private func parentPID(of pid: Int32) -> Int32? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        let result = sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0)
+        guard result == 0, size > 0 else { return nil }
+        return info.kp_eproc.e_ppid
     }
 
     // MARK: - Flow -> Connection

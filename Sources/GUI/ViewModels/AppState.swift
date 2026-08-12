@@ -182,7 +182,23 @@ final class AppState: ObservableObject {
         totalOut &+= s.bytesOut
     }
 
+    /// Beyond this many queued questions the UI stops being answerable, so the
+    /// overflow is allowed rather than piling up behind an unclickable window.
+    private static let maxPendingAlerts = 12
+
     func presentAlert(for c: Connection, reply: @escaping (Bool, Bool) -> Void) {
+        // One question per process and destination. Without this a single
+        // chatty process floods the queue with identical prompts.
+        let isDuplicate = pendingAlerts.contains {
+            $0.connection.processPath == c.processPath
+                && $0.connection.remoteHost == c.remoteHost
+                && $0.connection.remoteIP == c.remoteIP
+                && $0.connection.remotePort == c.remotePort
+        }
+        if isDuplicate || pendingAlerts.count >= Self.maxPendingAlerts {
+            reply(true, false)
+            return
+        }
         pendingAlerts.append(PendingAlert(connection: c, reply: reply))
     }
 
