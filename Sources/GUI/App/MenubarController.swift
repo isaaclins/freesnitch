@@ -63,9 +63,9 @@ final class MenubarController {
 
     private func showContextMenu() {
         let menu = NSMenu()
-        menu.addItem(makeItem("Network Monitor…", #selector(openMonitor), keyEq: "n"))
-        menu.addItem(makeItem("Rules…", #selector(openRules), keyEq: "r"))
-        menu.addItem(makeItem("Settings…", #selector(openSettings), keyEq: ","))
+        menu.addItem(makeItem("Network Monitor…", #selector(openMonitor), keyEq: "n", modifiers: [.command, .option]))
+        menu.addItem(makeItem("Rules…", #selector(openRules), keyEq: "r", modifiers: [.command, .option]))
+        menu.addItem(makeItem("Settings…", #selector(openSettings), keyEq: ",", modifiers: [.command]))
         menu.addItem(.separator())
         let modeMenu = NSMenu(title: "Mode")
         modeMenu.addItem(makeItem("Alert", #selector(modeAlert), keyEq: "", state: state.mode == .alert ? .on : .off))
@@ -81,8 +81,15 @@ final class MenubarController {
         statusItem.menu = nil
     }
 
-    private func makeItem(_ title: String, _ sel: Selector, keyEq: String, state: NSControl.StateValue = .off) -> NSMenuItem {
+    private func makeItem(
+        _ title: String,
+        _ sel: Selector,
+        keyEq: String,
+        modifiers: NSEvent.ModifierFlags = [],
+        state: NSControl.StateValue = .off
+    ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: sel, keyEquivalent: keyEq)
+        item.keyEquivalentModifierMask = modifiers
         item.target = self
         item.state = state
         return item

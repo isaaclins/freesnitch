@@ -10,6 +10,19 @@ struct PureSnitchApp: App {
             SettingsView()
                 .environmentObject(delegate.state)
         }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Divider()
+                Button("Network Monitor…") {
+                    delegate.windowManager.showNetworkMonitor()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+                Button("Rules…") {
+                    delegate.windowManager.showRulesManager()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+            }
+        }
     }
 }
 
@@ -23,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated override init() { super.init() }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         windowManager = WindowManager(state: state)
         menubar = MenubarController(state: state, windows: windowManager)
         menubar.install()
