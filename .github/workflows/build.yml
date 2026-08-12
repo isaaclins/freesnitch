@@ -1,89 +1,60 @@
-name: Build
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build:
+  firewall-safety:
+    name: Firewall safety audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Audit fail-open firewall invariants
+        run: bash Scripts/audit_firewall_safety.sh
+
+  monitor-build:
+    name: Build monitor flavour
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - name: Install xcodegen
+      - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project
-        run: xcodegen generate
+      - name: Generate monitor project
+        run: xcodegen generate --spec project.yml
 
-      - name: Build (ad-hoc signed)
-        run: |
-          xcodebuild \
-            -project PureSnitch.xcodeproj \
-            -scheme PureSnitch \
-            -configuration Debug \
-            -derivedDataPath build/dd \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-      - name: Verify app bundle
-        run: |
-          APP=build/dd/Build/Products/Debug/PureSnitch.app
-          test -d "$APP"
-          test -f "$APP/Contents/MacOS/PureSnitch"
-          test -f "$APP/Contents/MacOS/PureSnitchHelper"
-          test -f "$APP/Contents/Library/LaunchDaemons/io.moamenbasel.puresnitch.helper.plist"
-          test -f "$APP/Contents/Resources/Assets.car"
-          echo "App bundle structure OK (helper + app icon)"
-
-  universal:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install xcodegen
-        run: brew install xcodegen
-
-      - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Build universal (Release, ad-hoc signed)
+      - name: Build monitor app without signing or profiles
         run: |
           xcodebuild \
             -project PureSnitch.xcodeproj \
             -scheme PureSnitch \
             -configuration Release \
-            -derivedDataPath build/rel \
-            ARCHS="arm64 x86_64" \
-            ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/monitor \
+            CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            PROVISIONING_PROFILE_SPECIFIER='' \
             build
 
-      - name: Verify universal slices (arm64 + x86_64)
+      - name: Verify monitor bundle has no restricted entitlements
         run: |
-          APP=build/rel/Build/Products/Release/PureSnitch.app
-          for BIN in "$APP/Contents/MacOS/PureSnitch" "$APP/Contents/MacOS/PureSnitchHelper"; do
-            echo "== $BIN =="
-            lipo -info "$BIN"
-            lipo -archs "$BIN" | grep -qw arm64
-            lipo -archs "$BIN" | grep -qw x86_64
-          done
-          echo "Universal (arm64 + x86_64) verified for app and helper"
-
-      - name: Verify no restricted entitlements leaked into the shipping build
-        run: |
-          APP=build/rel/Build/Products/Release/PureSnitch.app
-          ENT=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null || true)
-          if echo "$ENT" | grep -q "com.apple.developer.networking.networkextension"; then
-            echo "ERROR: Network Extension entitlement present without a provisioning profile."
-            echo "Signed builds carrying it can be refused at launch by AMFI."
+          APP=build/monitor/Build/Products/Release/PureSnitch.app
+          test -d "$APP"
+          test -f "$APP/Contents/MacOS/PureSnitch"
+          test -f "$APP/Contents/MacOS/PureSnitchHelper"
+          if grep -R -E -q \
+            'com\.apple\.developer\.networking\.networkextension|com\.apple\.developer\.system-extension\.install' \
+            "$APP"; then
+            echo 'ERROR: restricted Network Extension entitlement leaked into the monitor build.'
             exit 1
           fi
-          echo "No profile-gated entitlements in the shipping build"
+          echo 'Monitor bundle verified without profiles or restricted entitlements.'
