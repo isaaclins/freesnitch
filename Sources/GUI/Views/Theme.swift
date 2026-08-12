@@ -9,7 +9,7 @@ enum PSTheme {
     static let bgRow = Color(NSColor(red: 0.115, green: 0.115, blue: 0.13, alpha: 1))
     static let bgRowAlt = Color(NSColor(red: 0.13, green: 0.13, blue: 0.145, alpha: 1))
     static let stroke = Color(NSColor(red: 0.22, green: 0.22, blue: 0.24, alpha: 1))
-    static let accent = Color(NSColor(red: 1.0, green: 0.45, blue: 0.30, alpha: 1)) // Little Snitch orange
+    static let accent = Color(NSColor(srgbRed: 0.231, green: 0.435, blue: 0.961, alpha: 1))
     static let accentGreen = Color(NSColor(red: 0.28, green: 0.78, blue: 0.45, alpha: 1))
     static let accentRed = Color(NSColor(red: 0.95, green: 0.30, blue: 0.30, alpha: 1))
     static let accentYellow = Color(NSColor(red: 1.0, green: 0.78, blue: 0.20, alpha: 1))
