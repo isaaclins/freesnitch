@@ -1,6 +1,6 @@
 name: PureSnitch
 options:
-  bundleIdPrefix: io.moamenbasel.puresnitch
+  bundleIdPrefix: io.isaaclins.puresnitch
   deploymentTarget:
     macOS: "13.0"
   createIntermediateGroups: true
@@ -11,7 +11,7 @@ options:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: H3WXHVTP97
+    DEVELOPMENT_TEAM: BHAF4L4726
     SWIFT_VERSION: "5.10"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Manual
@@ -70,7 +70,7 @@ targets:
         # come back only together with the two Developer ID profiles (app +
         # extension); see docs/NETWORK-EXTENSION.md.
         com.apple.security.application-groups:
-          - H3WXHVTP97.io.moamenbasel.puresnitch
+          - BHAF4L4726.io.isaaclins.puresnitch
     settings:
       base:
         # Xcode 27 no longer falls back to the target name here: without an
@@ -78,15 +78,28 @@ targets:
         # build fails with 'Module name "" is not a valid identifier'.
         PRODUCT_NAME: PureSnitch
         PRODUCT_MODULE_NAME: PureSnitch
-        PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch
         INFOPLIST_KEY_LSUIElement: YES
-        CODE_SIGN_IDENTITY: "Developer ID Application: Moamen Basel (H3WXHVTP97)"
+        CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
         CODE_SIGN_ENTITLEMENTS: Sources/GUI/PureSnitch.entitlements
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     postBuildScripts:
+      - name: Embed Provisioning Profile
+        runOnlyWhenInstalling: false
+        script: |
+          set -e
+          # Restricted entitlements (Network Extension, System Extension) are
+          # only honoured when an Apple-issued profile is embedded in the
+          # bundle. Without it AMFI can refuse to start the process at all.
+          PROFILE="${SRCROOT}/Profiles/app.provisionprofile"
+          if [ -f "$PROFILE" ]; then
+            cp -f "$PROFILE" "${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/embedded.provisionprofile"
+          else
+            echo "warning: $PROFILE not found, building without an embedded profile"
+          fi
       - name: Embed Helper
         runOnlyWhenInstalling: false
         script: |
@@ -97,7 +110,7 @@ targets:
             mkdir -p "$APP/Contents/MacOS"
             cp -f "$HELPER_BIN" "$APP/Contents/MacOS/PureSnitchHelper"
             mkdir -p "$APP/Contents/Library/LaunchDaemons"
-            cp -f "${SRCROOT}/Sources/Helper/Launchd.plist" "$APP/Contents/Library/LaunchDaemons/io.moamenbasel.puresnitch.helper.plist"
+            cp -f "${SRCROOT}/Sources/Helper/Launchd.plist" "$APP/Contents/Library/LaunchDaemons/io.isaaclins.puresnitch.helper.plist"
           else
             echo "warning: helper binary not found, skipping embed"
           fi
@@ -128,7 +141,7 @@ targets:
         LSMinimumSystemVersion: "13.0"
         NSSystemExtensionUsageDescription: "PureSnitch filters per-app network connections."
         NetworkExtension:
-          NEMachServiceName: H3WXHVTP97.io.moamenbasel.puresnitch.ipc
+          NEMachServiceName: BHAF4L4726.io.isaaclins.puresnitch.ipc
           NEProviderClasses:
             com.apple.networkextension.filter-data: PureSnitchNetExt.FilterDataProvider
     entitlements:
@@ -136,18 +149,29 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.application-groups:
-          - H3WXHVTP97.io.moamenbasel.puresnitch
+          - BHAF4L4726.io.isaaclins.puresnitch
         com.apple.developer.networking.networkextension:
           - content-filter-provider-systemextension
     settings:
       base:
         PRODUCT_NAME: PureSnitchNetExt
-        PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch.netext
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch.netext
         PRODUCT_MODULE_NAME: PureSnitchNetExt
-        CODE_SIGN_IDENTITY: "Developer ID Application: Moamen Basel (H3WXHVTP97)"
+        CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
         CODE_SIGN_ENTITLEMENTS: Sources/NetExt/NetExt.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         SKIP_INSTALL: YES
+    postBuildScripts:
+      - name: Embed Provisioning Profile
+        runOnlyWhenInstalling: false
+        script: |
+          set -e
+          PROFILE="${SRCROOT}/Profiles/netext.provisionprofile"
+          if [ -f "$PROFILE" ]; then
+            cp -f "$PROFILE" "${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/embedded.provisionprofile"
+          else
+            echo "warning: $PROFILE not found, building without an embedded profile"
+          fi
 
   PureSnitchHelper:
     type: tool
@@ -161,8 +185,8 @@ targets:
     settings:
       base:
         PRODUCT_NAME: PureSnitchHelper
-        PRODUCT_BUNDLE_IDENTIFIER: io.moamenbasel.puresnitch.helper
-        CODE_SIGN_IDENTITY: "Developer ID Application: Moamen Basel (H3WXHVTP97)"
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch.helper
+        CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
         CODE_SIGN_ENTITLEMENTS: Sources/Helper/Helper.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         OTHER_LDFLAGS: "-sectcreate __TEXT __info_plist $(SRCROOT)/Sources/Helper/Info.plist -sectcreate __TEXT __launchd_plist $(SRCROOT)/Sources/Helper/Launchd.plist"

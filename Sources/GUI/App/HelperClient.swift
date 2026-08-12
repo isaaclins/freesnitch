@@ -52,7 +52,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     private var service: SMAppService? {
         guard #available(macOS 13.0, *) else { return nil }
-        return SMAppService.daemon(plistName: "io.moamenbasel.puresnitch.helper.plist")
+        return SMAppService.daemon(plistName: "io.isaaclins.puresnitch.helper.plist")
     }
 
     /// True when the bundle lives somewhere macOS will accept a background

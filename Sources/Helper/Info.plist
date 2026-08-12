@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>io.moamenbasel.puresnitch.helper</string>
+    <string>io.isaaclins.puresnitch.helper</string>
     <key>CFBundleName</key>
     <string>PureSnitchHelper</string>
     <key>CFBundleVersion</key>
@@ -14,7 +14,7 @@
     <string>XPC!</string>
     <key>SMAuthorizedClients</key>
     <array>
-        <string>identifier "io.moamenbasel.puresnitch" and anchor apple generic and certificate leaf[subject.OU] = "H3WXHVTP97"</string>
+        <string>identifier "io.isaaclins.puresnitch" and anchor apple generic and certificate leaf[subject.OU] = "BHAF4L4726"</string>
     </array>
 </dict>
 </plist>

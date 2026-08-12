@@ -27,7 +27,7 @@
 	<key>NetworkExtension</key>
 	<dict>
 		<key>NEMachServiceName</key>
-		<string>H3WXHVTP97.io.moamenbasel.puresnitch.ipc</string>
+		<string>BHAF4L4726.io.isaaclins.puresnitch.ipc</string>
 		<key>NEProviderClasses</key>
 		<dict>
 			<key>com.apple.networkextension.filter-data</key>

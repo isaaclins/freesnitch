@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>io.moamenbasel.puresnitch.helper</string>
+    <string>io.isaaclins.puresnitch.helper</string>
     <key>MachServices</key>
     <dict>
-        <key>io.moamenbasel.puresnitch.helper</key>
+        <key>io.isaaclins.puresnitch.helper</key>
         <true/>
     </dict>
     <key>BundleProgram</key>
     <string>Contents/MacOS/PureSnitchHelper</string>
     <key>AssociatedBundleIdentifiers</key>
     <array>
-        <string>io.moamenbasel.puresnitch</string>
+        <string>io.isaaclins.puresnitch</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

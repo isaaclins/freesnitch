@@ -231,15 +231,15 @@ public struct BlocklistInfo: Codable, Sendable, Identifiable, Hashable {
 }
 
 public struct AppConstants {
-    public static let bundleIdGUI = "io.moamenbasel.puresnitch"
-    public static let bundleIdHelper = "io.moamenbasel.puresnitch.helper"
-    public static let bundleIdNetExt = "io.moamenbasel.puresnitch.netext"
-    public static let xpcMachServiceName = "io.moamenbasel.puresnitch.helper"
+    public static let bundleIdGUI = "io.isaaclins.puresnitch"
+    public static let bundleIdHelper = "io.isaaclins.puresnitch.helper"
+    public static let bundleIdNetExt = "io.isaaclins.puresnitch.netext"
+    public static let xpcMachServiceName = "io.isaaclins.puresnitch.helper"
     /// App<->extension XPC. Must be prefixed by an app group the process owns,
     /// so a regular (non-daemon) app can vend it via NSXPCListener.
-    public static let ipcMachServiceName = "H3WXHVTP97.io.moamenbasel.puresnitch.ipc"
-    public static let appGroup = "H3WXHVTP97.io.moamenbasel.puresnitch"
-    public static let teamID = "H3WXHVTP97"
+    public static let ipcMachServiceName = "BHAF4L4726.io.isaaclins.puresnitch.ipc"
+    public static let appGroup = "BHAF4L4726.io.isaaclins.puresnitch"
+    public static let teamID = "BHAF4L4726"
     public static let version: String =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
     public static let dnsProxyPort: UInt16 = 53
