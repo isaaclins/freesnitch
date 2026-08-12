@@ -3,21 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FreeSnitch — open-source application firewall for macOS</title>
-<meta name="description" content="Free, open-source application firewall for macOS. Little Snitch alternative with zero telemetry. Native SwiftUI world map, rules manager, DNS over HTTPS, pf-based blocking. Signed, notarized, MIT licensed.">
+<title>FreeSnitch: open-source application firewall for macOS</title>
+<meta name="description" content="Free, open-source application firewall for macOS. Little Snitch alternative with zero telemetry. Native SwiftUI world map, rules manager, DNS over HTTPS, pf-based blocking. MIT licensed. Source available on GitHub; no release published yet.">
 <meta name="theme-color" content="#0f0a07">
 <link rel="canonical" href="https://isaaclins.com/freesnitch/">
+<link rel="stylesheet" href="styles.css">
 <link rel="icon" href="https://raw.githubusercontent.com/isaaclins/freesnitch/main/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128%402x.png">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="FreeSnitch — open-source application firewall for macOS">
+<meta property="og:title" content="FreeSnitch: open-source application firewall for macOS">
 <meta property="og:description" content="Free, open-source Little Snitch alternative. Zero telemetry. Native SwiftUI. MIT licensed.">
 <meta property="og:url" content="https://isaaclins.com/freesnitch/">
 <meta property="og:image" content="https://raw.githubusercontent.com/isaaclins/freesnitch/main/docs/social-preview.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="FreeSnitch — open-source application firewall for macOS">
+<meta name="twitter:title" content="FreeSnitch: open-source application firewall for macOS">
 <meta name="twitter:description" content="Free Little Snitch alternative. Native SwiftUI. Zero telemetry. MIT.">
 <meta name="twitter:image" content="https://raw.githubusercontent.com/isaaclins/freesnitch/main/docs/social-preview.png">
 
@@ -28,65 +29,16 @@
   "name": "FreeSnitch",
   "applicationCategory": "SecurityApplication",
   "operatingSystem": "macOS 14+",
-  "downloadUrl": "https://github.com/isaaclins/freesnitch/releases/latest",
-  "softwareVersion": "0.1.0",
+  "downloadUrl": "https://github.com/isaaclins/freesnitch",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "url": "https://isaaclins.com/freesnitch/",
   "author": { "@type": "Organization", "name": "FreeSnitch contributors", "url": "https://github.com/isaaclins/freesnitch" },
-  "description": "Free, open-source application firewall for macOS. Little Snitch alternative with zero telemetry. Native SwiftUI world map, rules manager, DNS over HTTPS, pf-based blocking. Signed, notarized, MIT licensed.",
+  "description": "Free, open-source application firewall for macOS. Little Snitch alternative with zero telemetry. Native SwiftUI world map, rules manager, DNS over HTTPS, pf-based blocking. MIT licensed. Source available on GitHub; no release published yet.",
   "screenshot": "https://raw.githubusercontent.com/isaaclins/freesnitch/main/screenshot.png"
 }
 </script>
 
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  darkMode: 'class',
-  theme: {
-    extend: {
-      fontFamily: {
-        sans: ['-apple-system','BlinkMacSystemFont','"SF Pro Text"','"Inter"','system-ui','sans-serif'],
-        display: ['-apple-system','BlinkMacSystemFont','"SF Pro Display"','"Inter"','system-ui','sans-serif'],
-        mono: ['"SF Mono"','"JetBrains Mono"','ui-monospace','monospace']
-      },
-      colors: {
-        ember: { 50:'#fff4ed', 100:'#ffe6d4', 200:'#ffc8a8', 300:'#ffa371', 400:'#ff7838', 500:'#fa5510', 600:'#eb3d06', 700:'#c32d07', 800:'#9b260f', 900:'#7d2310' },
-        coal:  { 50:'#f7f5f3', 100:'#e9e5e1', 200:'#d0c9c2', 300:'#a89e94', 400:'#7d736a', 500:'#5d544c', 600:'#48413b', 700:'#3a3530', 800:'#2c2825', 900:'#1a1612', 950:'#0f0a07' }
-      },
-      animation: {
-        'pulse-slow': 'pulse 4s cubic-bezier(0.4,0,0.6,1) infinite',
-        'float':      'float 6s ease-in-out infinite',
-        'shimmer':    'shimmer 3s linear infinite'
-      },
-      keyframes: {
-        float:   { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
-        shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } }
-      }
-    }
-  }
-}
-</script>
-
-<style>
-  html { scroll-behavior: smooth; }
-  body { background: radial-gradient(1100px 600px at 50% -10%, rgba(250,85,16,0.18), transparent 70%),
-                     radial-gradient(800px 500px at 100% 30%, rgba(195,45,7,0.12), transparent 70%),
-                     #0f0a07; }
-  .glow-orange { box-shadow: 0 0 80px -10px rgba(250,85,16,0.35), 0 0 20px -5px rgba(250,85,16,0.25); }
-  .gradient-text { background: linear-gradient(135deg, #ffa371 0%, #fa5510 60%, #c32d07 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .shimmer-line { background: linear-gradient(90deg, transparent, rgba(250,85,16,0.4), transparent); background-size: 200% 100%; animation: shimmer 3s linear infinite; }
-  .feature-card { transition: transform 0.25s ease, border-color 0.25s ease, background 0.25s ease; }
-  .feature-card:hover { transform: translateY(-2px); border-color: rgba(250,85,16,0.4); background: rgba(250,85,16,0.04); }
-  .grid-bg {
-    background-image:
-      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
-    background-size: 48px 48px;
-  }
-  code, pre { font-feature-settings: "calt" 0; }
-  ::selection { background: rgba(250,85,16,0.4); color: white; }
-</style>
 </head>
 
 <body class="font-sans text-coal-100 antialiased min-h-screen">
@@ -119,7 +71,7 @@ tailwind.config = {
     <div class="flex flex-col items-center text-center gap-6">
       <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-ember-500/10 border border-ember-500/30 text-ember-300 text-xs font-medium">
         <span class="w-1.5 h-1.5 rounded-full bg-ember-400 animate-pulse"></span>
-        v0.1.0 — signed, notarized, free
+        Source available, release coming soon
       </div>
       <h1 class="font-display font-bold text-5xl md:text-7xl tracking-tight max-w-4xl">
         See what your Mac is talking to.<br>
@@ -129,10 +81,10 @@ tailwind.config = {
         Open-source application firewall for macOS. Built in the same style as Little Snitch. Free. MIT-licensed. Zero telemetry.
       </p>
       <div class="flex flex-wrap items-center justify-center gap-3 pt-4">
-        <a href="https://github.com/isaaclins/freesnitch/releases/latest"
+        <a href="https://github.com/isaaclins/freesnitch"
            class="group inline-flex items-center gap-2 px-6 py-3 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium shadow-lg glow-orange transition">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download for macOS
+          View source on GitHub
         </a>
         <a href="#install"
            class="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-coal-800/60 hover:bg-coal-800 border border-coal-700 text-white font-medium transition">
@@ -147,7 +99,7 @@ tailwind.config = {
       <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 pt-6 text-xs text-coal-400">
         <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>macOS 14+</span>
         <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>Apple Silicon</span>
-        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>Signed + Notarized</span>
+        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>Source available</span>
         <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>MIT License</span>
         <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>No telemetry</span>
       </div>
@@ -156,7 +108,7 @@ tailwind.config = {
     <div class="relative mt-16 md:mt-20 max-w-6xl mx-auto">
       <div class="absolute inset-0 bg-gradient-to-tr from-ember-600/20 to-ember-400/10 blur-3xl -z-10"></div>
       <div class="rounded-2xl overflow-hidden border border-coal-700 shadow-2xl glow-orange bg-coal-900">
-        <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/screenshot.png" alt="FreeSnitch Network Monitor — world map, per-process bandwidth, summary panel" class="w-full">
+        <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/screenshot.png" alt="FreeSnitch Network Monitor: world map, per-process bandwidth, summary panel" class="w-full">
       </div>
       <div class="h-px shimmer-line mt-6 max-w-3xl mx-auto"></div>
     </div>
@@ -195,7 +147,7 @@ tailwind.config = {
         <div>
           <h3 class="font-display font-bold text-2xl text-white">FreeSnitch is the fourth choice.</h3>
           <p class="text-coal-200 mt-2 leading-relaxed">
-            Little Snitch UI muscle memory. LuLu's price. Native SwiftUI, not a port. Signed and notarized by Apple. Source on GitHub, MIT, zero telemetry. Built because no one else had built it.
+            Little Snitch UI muscle memory. LuLu's price. Native SwiftUI, not a port. Source on GitHub, MIT, zero telemetry. Built because no one else had built it.
           </p>
         </div>
       </div>
@@ -241,7 +193,7 @@ tailwind.config = {
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">DNS over HTTPS</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Built-in DoH to Cloudflare, Quad9, Google, or any endpoint. Local DNS proxy on 127.0.0.1:53 — every getaddrinfo passes through.</p>
+        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Built-in DoH to Cloudflare, Quad9, Google, or any endpoint. Local DNS proxy on 127.0.0.1:53. Every getaddrinfo passes through.</p>
       </div>
 
       <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
@@ -359,18 +311,18 @@ tailwind.config = {
         <tbody class="divide-y divide-coal-800/70">
           <tr><td class="p-4 text-coal-200 font-medium">Price</td><td class="p-4 text-ember-300 font-medium">Free</td><td class="p-4 text-coal-300">$59 / Mac</td><td class="p-4 text-coal-300">Free</td><td class="p-4 text-coal-300">Bundled</td></tr>
           <tr><td class="p-4 text-coal-200 font-medium">License</td><td class="p-4 text-ember-300 font-medium">MIT, open source</td><td class="p-4 text-coal-300">Commercial</td><td class="p-4 text-coal-300">GPL, open source</td><td class="p-4 text-coal-300">Apple, closed</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">World map / traffic graph</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">—</td><td class="p-4 text-coal-500">—</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Rules manager (LS-style)</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">basic</td><td class="p-4 text-coal-500">—</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">DNS proxy + DoH</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">—</td><td class="p-4 text-coal-500">—</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Blocklists out of the box</td><td class="p-4 text-ember-300">1Hosts, OISD, StevenBlack, HaGeZi</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">—</td><td class="p-4 text-coal-500">—</td></tr>
+          <tr><td class="p-4 text-coal-200 font-medium">World map / traffic graph</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td><td class="p-4 text-coal-500">No</td></tr>
+          <tr><td class="p-4 text-coal-200 font-medium">Rules manager (LS-style)</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">basic</td><td class="p-4 text-coal-500">No</td></tr>
+          <tr><td class="p-4 text-coal-200 font-medium">DNS proxy + DoH</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td><td class="p-4 text-coal-500">No</td></tr>
+          <tr><td class="p-4 text-coal-200 font-medium">Blocklists out of the box</td><td class="p-4 text-ember-300">1Hosts, OISD, StevenBlack, HaGeZi</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td><td class="p-4 text-coal-500">No</td></tr>
           <tr><td class="p-4 text-coal-200 font-medium">pf-based IP/CIDR blocking</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">n/a</td><td class="p-4 text-coal-300">basic</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Per-process kernel filtering</td><td class="p-4 text-coal-300">gated (NE entitlement)</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">—</td></tr>
+          <tr><td class="p-4 text-coal-200 font-medium">Per-process kernel filtering</td><td class="p-4 text-coal-300">gated (NE entitlement)</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td></tr>
           <tr><td class="p-4 text-coal-200 font-medium">Telemetry</td><td class="p-4 text-ember-300">none</td><td class="p-4 text-coal-300">none</td><td class="p-4 text-coal-300">none</td><td class="p-4 text-coal-300">n/a</td></tr>
           <tr><td class="p-4 text-coal-200 font-medium">Auditable source</td><td class="p-4 text-ember-300">yes</td><td class="p-4 text-coal-300">no</td><td class="p-4 text-coal-300">yes</td><td class="p-4 text-coal-300">no</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="text-coal-400 text-sm mt-6 text-center max-w-3xl mx-auto">If per-process kernel filtering is a hard requirement today, use <a href="https://github.com/objective-see/LuLu" class="text-ember-400 hover:underline">LuLu</a> — it's free, open source and has the Network Extension entitlement. If you want the Little Snitch UI without paying $59, FreeSnitch is for you.</p>
+    <p class="text-coal-400 text-sm mt-6 text-center max-w-3xl mx-auto">If per-process kernel filtering is a hard requirement today, use <a href="https://github.com/objective-see/LuLu" class="text-ember-400 hover:underline">LuLu</a>: it's free, open source and has the Network Extension entitlement. If you want the Little Snitch UI without paying $59, FreeSnitch is for you.</p>
   </div>
 </section>
 
@@ -408,9 +360,9 @@ tailwind.config = {
       </div>
       <div class="p-6 rounded-2xl border border-coal-800 bg-coal-900/50">
         <h3 class="font-display font-semibold text-white text-lg mb-3">Direct download</h3>
-        <p class="text-coal-300 text-sm mb-4">Signed and notarized DMG from the Releases page. Drag into <code class="font-mono text-ember-300">/Applications</code>.</p>
-        <a href="https://github.com/isaaclins/freesnitch/releases/latest" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium transition">
-          Download .dmg
+        <p class="text-coal-300 text-sm mb-4">No release is published yet. Build from source for now, or watch the repository for a signed DMG.</p>
+        <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium transition">
+          View repository
         </a>
       </div>
     </div>
@@ -446,15 +398,15 @@ open build/Build/Products/Release/FreeSnitch.app</code></pre>
       </details>
       <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
         <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Does FreeSnitch send my traffic anywhere?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">No. Your DNS queries leave only as far as the DoH upstream you pick (Cloudflare by default — override in Settings). No telemetry, no analytics, no phone-home. IP→country lookups for the world map go to ip-api.com (free tier) and can be disabled.</p>
+        <p class="text-coal-300 text-sm mt-3 leading-relaxed">No. Your DNS queries leave only as far as the DoH upstream you pick (Cloudflare by default, override in Settings). No telemetry, no analytics, no phone-home. IP→country lookups for the world map go to ip-api.com (free tier) and can be disabled.</p>
       </details>
       <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
         <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Why isn't per-process blocking at parity with Little Snitch?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">Per-process blocking requires Apple's <code class="font-mono text-ember-300">com.apple.developer.networking.networkextension</code> entitlement, which is application-gated. The hook points exist in <code class="font-mono text-ember-300">Sources/NetExt/</code>; the entitlement must be granted by Apple. Until then, blocking is DNS-level + packet-level (pfctl), which catches anything that resolves a hostname — essentially everything except hardcoded-IP malware.</p>
+        <p class="text-coal-300 text-sm mt-3 leading-relaxed">Per-process blocking requires Apple's <code class="font-mono text-ember-300">com.apple.developer.networking.networkextension</code> entitlement, which is application-gated. The hook points exist in <code class="font-mono text-ember-300">Sources/NetExt/</code>; the entitlement must be granted by Apple. Until then, blocking is DNS-level + packet-level (pfctl), which catches anything that resolves a hostname: essentially everything except hardcoded-IP malware.</p>
       </details>
       <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
         <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Will this run on Intel Macs?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">The release DMG is arm64 only. To build for Intel, set <code class="font-mono text-ember-300">ARCHS = arm64 x86_64</code> in <code class="font-mono text-ember-300">project.yml</code> and rebuild.</p>
+        <p class="text-coal-300 text-sm mt-3 leading-relaxed">The project currently targets arm64. To build for Intel, set <code class="font-mono text-ember-300">ARCHS = arm64 x86_64</code> in <code class="font-mono text-ember-300">project.yml</code> and rebuild.</p>
       </details>
       <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
         <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Does it work alongside Pi-hole / AdGuard Home / NextDNS?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
@@ -475,8 +427,8 @@ open build/Build/Products/Release/FreeSnitch.app</code></pre>
     <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight text-white">Take your Mac's outbound traffic back.</h2>
     <p class="text-coal-300 mt-4 text-lg">FreeSnitch is free. Read the source. Fork it. Audit it.</p>
     <div class="flex flex-wrap justify-center gap-3 mt-8">
-      <a href="https://github.com/isaaclins/freesnitch/releases/latest" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium glow-orange transition">
-        Download for macOS
+      <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium glow-orange transition">
+        View source on GitHub
       </a>
       <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-coal-800 hover:bg-coal-700 border border-coal-700 text-white font-medium transition">
         View source on GitHub
