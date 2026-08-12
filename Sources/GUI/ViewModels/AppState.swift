@@ -138,15 +138,35 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Mirror the active rules + mode into the app-group container so the
-    /// Network System Extension (which can't read the helper DB) can enforce them.
+    /// Hand the active rules and mode to the Network System Extension, which
+    /// cannot read the helper database.
+    ///
+    /// The app group file is written for older builds, but it cannot be the
+    /// transport: the extension runs as root, so its container resolves to
+    /// /var/root/Library/Group Containers while this process writes to the
+    /// user's home. The extension read "no such file" every two seconds and
+    /// fell back to asking about everything and honouring no rules. XPC is the
+    /// channel that actually reaches it.
     func syncSharedRules() {
         SharedRuleBridge.write(mode: mode, rules: rules)
+        let snapshot = SharedRuleBridge.Snapshot(mode: mode, rules: rules)
+        if let data = try? JSONEncoder().encode(snapshot) {
+            IPCConnection.shared.sendSnapshot(data)
+        }
     }
 
     func setMode(_ m: AppMode) {
         mode = m
         helper.setMode(m)
+        syncSharedRules()
+    }
+
+    /// Applied when the helper reports the mode it restored from disk. Unlike
+    /// setMode this does not write back, so a restart cannot turn the stored
+    /// choice into the GUI's default.
+    func adoptPersistedMode(_ m: AppMode) {
+        guard mode != m else { return }
+        mode = m
         syncSharedRules()
     }
 
@@ -205,7 +225,11 @@ final class AppState: ObservableObject {
     func resolveAlert(_ alert: PendingAlert, allow: Bool, remember: Bool) {
         alert.reply(allow, remember)
         pendingAlerts.removeAll { $0.id == alert.id }
-        if remember {
+        // A rule keyed on the unspecified address matches nothing, so it would
+        // never stop the next prompt. Answer the flow, remember nothing.
+        let host = alert.connection.remoteHost.isEmpty ? alert.connection.remoteIP : alert.connection.remoteHost
+        let isUnspecified = host.isEmpty || host == "0.0.0.0" || host == "::"
+        if remember && !isUnspecified {
             let rule = Rule(
                 processBundleId: alert.connection.processBundleId,
                 processPath: alert.connection.processPath,

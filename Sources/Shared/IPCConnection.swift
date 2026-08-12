@@ -6,9 +6,15 @@ import Foundation
     func promptUser(flowJSON: Data, responseHandler: @escaping (Bool, Bool) -> Void)
 }
 
-/// Implemented by the system extension; called by the app to establish the link.
+/// Implemented by the system extension; called by the app to establish the link
+/// and to hand over the active rule set.
 @objc public protocol ProviderCommunication {
     func register(_ completionHandler: @escaping (Bool) -> Void)
+    /// The app pushes mode and rules here. The app group container cannot be
+    /// used for this: the extension runs as root, so its container resolves to
+    /// /var/root/Library/Group Containers while the app writes to the user's
+    /// home, and the two never meet.
+    func updateSnapshot(snapshotJSON: Data)
 }
 
 /// App <-> Network System Extension XPC, modelled on Apple's "SimpleFirewall"
@@ -22,6 +28,8 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     private var listener: NSXPCListener?
     private var currentConnection: NSXPCConnection?
     private weak var delegate: AppCommunication?
+    /// Extension side: invoked when the app pushes a new rule set.
+    public var onSnapshot: ((Data) -> Void)?
 
     private override init() { super.init() }
 
@@ -48,6 +56,17 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         }
         proxy.promptUser(flowJSON: flowJSON, responseHandler: responseHandler)
         return true
+    }
+
+    /// App side: hand the current mode and rules to the extension. Silently
+    /// does nothing when the extension is not running, which is the normal
+    /// case for builds without one.
+    public func sendSnapshot(_ snapshotJSON: Data) {
+        guard let connection = currentConnection,
+              let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? ProviderCommunication else {
+            return
+        }
+        proxy.updateSnapshot(snapshotJSON: snapshotJSON)
     }
 
     // MARK: - App side
@@ -94,5 +113,9 @@ extension IPCConnection: NSXPCListenerDelegate {
 extension IPCConnection: ProviderCommunication {
     public func register(_ completionHandler: @escaping (Bool) -> Void) {
         completionHandler(true)
+    }
+
+    public func updateSnapshot(snapshotJSON: Data) {
+        onSnapshot?(snapshotJSON)
     }
 }

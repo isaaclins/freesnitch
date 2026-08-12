@@ -253,7 +253,13 @@ final class HelperClient: NSObject, ObservableObject {
         }
         remote?.getStatus { [weak self] data in
             let status = try? JSONDecoder().decode(HelperStatus.self, from: data)
-            Task { @MainActor in self?.status = status }
+            Task { @MainActor in
+                self?.status = status
+                // Adopt the persisted mode instead of leaving the GUI on its
+                // pre-connection default, which would then be pushed to the
+                // extension and silently undo the user's choice.
+                if let mode = status?.mode { self?.state?.adoptPersistedMode(mode) }
+            }
         }
     }
 

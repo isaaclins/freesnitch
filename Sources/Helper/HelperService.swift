@@ -129,7 +129,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             dnsProxyActive: dns.running,
             dnsProxyPort: Int(dns.port),
             activeRules: store.allRules().count,
-            blockedToday: dns.statistics.blocked
+            blockedToday: dns.statistics.blocked,
+            mode: mode
         )
         reply((try? JSONEncoder().encode(s)) ?? Data())
     }

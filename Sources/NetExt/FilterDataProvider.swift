@@ -22,10 +22,19 @@ final class FilterDataProvider: NEFilterDataProvider {
     private let matcher = RuleMatcher()
     private var snapshot = SharedRuleBridge.Snapshot(mode: .alert, rules: [])
     private var reloadTimer: DispatchSourceTimer?
+    private var hasPushedSnapshot = false
     private let workQueue = DispatchQueue(label: "io.moamenbasel.puresnitch.netext.work")
     private let askTimeout: TimeInterval = 60
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
+        IPCConnection.shared.onSnapshot = { [weak self] data in
+            guard let self,
+                  let snapshot = try? JSONDecoder().decode(SharedRuleBridge.Snapshot.self, from: data) else { return }
+            self.workQueue.async {
+                self.snapshot = snapshot
+                self.hasPushedSnapshot = true
+            }
+        }
         IPCConnection.shared.startListener()
         loadRules()
         startReloadTimer()
@@ -130,9 +139,7 @@ final class FilterDataProvider: NEFilterDataProvider {
     // MARK: - Flow -> Connection
 
     private func connection(from flow: NEFilterSocketFlow) -> Connection {
-        let endpoint = flow.remoteEndpoint as? NWHostEndpoint
-        let host = endpoint?.hostname ?? ""
-        let port = Int(endpoint?.port ?? "0") ?? 0
+        let (host, port) = remoteAddress(of: flow)
         let pid = flow.sourceAppAuditToken.flatMap(auditTokenToPID) ?? 0
         let path = pid > 0 ? pathForPID(pid) : ""
         let name = path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
@@ -141,12 +148,32 @@ final class FilterDataProvider: NEFilterDataProvider {
             processName: name,
             processPath: path,
             processBundleId: bundleIdForApp(atPath: path),
-            remoteHost: host,
+            remoteHost: flow.remoteHostname ?? host,
             remoteIP: host,
             remotePort: port,
             direction: flow.direction == .outbound ? .outgoing : .incoming,
             status: .pending
         )
+    }
+
+    /// `remoteEndpoint` is deprecated and reports the unspecified address
+    /// (0.0.0.0 or ::) on current macOS, which is why alerts showed no
+    /// destination. `remoteFlowEndpoint` carries the real one.
+    private func remoteAddress(of flow: NEFilterSocketFlow) -> (String, Int) {
+        if #available(macOS 15.0, *), case let .hostPort(host, port) = flow.remoteFlowEndpoint {
+            let text: String
+            switch host {
+            case .ipv4(let address): text = "\(address)"
+            case .ipv6(let address): text = "\(address)"
+            case .name(let name, _): text = name
+            @unknown default: text = ""
+            }
+            // Strip the interface scope IPv6 literals carry, e.g. fe80::1%en0.
+            let bare = text.split(separator: "%").first.map(String.init) ?? text
+            return (bare, Int(port.rawValue))
+        }
+        let legacy = flow.remoteEndpoint as? NWHostEndpoint
+        return (legacy?.hostname ?? "", Int(legacy?.port ?? "0") ?? 0)
     }
 
     private func auditTokenToPID(_ data: Data) -> Int? {
@@ -179,7 +206,12 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Rules
 
-    private func loadRules() { snapshot = SharedRuleBridge.read() }
+    /// Once the app has pushed a rule set over XPC, the file is stale by
+    /// definition and re-reading it would revert to "ask about everything".
+    private func loadRules() {
+        guard !hasPushedSnapshot else { return }
+        snapshot = SharedRuleBridge.read()
+    }
 
     private func startReloadTimer() {
         let t = DispatchSource.makeTimerSource(queue: workQueue)

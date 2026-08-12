@@ -105,6 +105,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 state.appendLog(level: ok ? "info" : "error",
                                 message: ok ? "Connected to network extension." : "Extension IPC unavailable.")
+                // The extension starts with an empty rule set, so it must be
+                // handed the current one the moment the link is up, otherwise
+                // it asks about everything until the next rule change.
+                if ok { state.syncSharedRules() }
             }
         }
     }

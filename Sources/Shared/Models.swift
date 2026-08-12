@@ -215,7 +215,12 @@ public struct HelperStatus: Codable, Sendable {
     public let dnsProxyPort: Int
     public let activeRules: Int
     public let blockedToday: Int
-    public init(version: String, running: Bool, pfctlActive: Bool, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int) {
+    /// The mode the helper restored from its store. The GUI defaults to
+    /// `.alert` before it connects, so without this the two disagree after a
+    /// restart and the GUI's default overwrites the user's real choice.
+    public var mode: AppMode = .alert
+    public init(version: String, running: Bool, pfctlActive: Bool, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert) {
+        self.mode = mode
         self.version = version
         self.running = running
         self.pfctlActive = pfctlActive

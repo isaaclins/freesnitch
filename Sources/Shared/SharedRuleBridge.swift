@@ -28,18 +28,33 @@ public enum SharedRuleBridge {
     }
 
     public static func write(mode: AppMode, rules: [Rule]) {
-        guard let url = fileURL else { return }
+        guard let url = fileURL else {
+            PSLog.error(PSLog.app, "shared rule snapshot: no app group container for \(AppConstants.appGroup)")
+            return
+        }
         let snap = Snapshot(mode: mode, rules: rules)
         guard let data = try? JSONEncoder().encode(snap) else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+            PSLog.info(PSLog.app, "shared rule snapshot written: mode \(mode.rawValue), \(rules.count) rules")
+        } catch {
+            PSLog.error(PSLog.app, "shared rule snapshot write failed: \(error)")
+        }
     }
 
     public static func read() -> Snapshot {
-        guard let url = fileURL,
-              let data = try? Data(contentsOf: url),
-              let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+        guard let url = fileURL else {
+            PSLog.error(PSLog.app, "shared rule snapshot: no app group container for \(AppConstants.appGroup)")
             return Snapshot(mode: .alert, rules: [])
         }
-        return snap
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(Snapshot.self, from: data)
+        } catch {
+            // Falling back to .alert with no rules means the filter asks about
+            // everything and honours nothing, so this must be loud.
+            PSLog.error(PSLog.app, "shared rule snapshot unreadable at \(url.path): \(error)")
+            return Snapshot(mode: .alert, rules: [])
+        }
     }
 }
