@@ -321,6 +321,7 @@ struct RulesManagerView: View {
                 infoField("Status", r.enabled ? "Enabled" : "Disabled")
                 infoField("Hits", "\(r.hitCount)")
                 if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
+                internetAccessPolicyDetails(for: r)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -330,6 +331,35 @@ struct RulesManagerView: View {
             Spacer()
             Button(role: .destructive) { removeRule(r) } label: { Text("Remove") }
                 .buttonStyle(.borderedProminent).tint(.red)
+        }
+    }
+
+    @ViewBuilder
+    private func internetAccessPolicyDetails(for r: Rule) -> some View {
+        if let policy = InternetAccessPolicyLoader.shared.policy(forProcessPath: r.processPath) {
+            internetAccessPolicySection(policy, remoteHost: r.remoteHost)
+        }
+    }
+
+    private func internetAccessPolicySection(_ policy: InternetAccessPolicy, remoteHost: String?) -> some View {
+        let matches = policy.matchingConnections(for: remoteHost)
+        return VStack(alignment: .leading, spacing: 8) {
+            Divider().background(PSTheme.stroke)
+            Text("Internet Access Policy")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(PSTheme.accentBlue)
+            if let developerName = policy.developerName, !developerName.isEmpty {
+                infoField("Source", developerName)
+            }
+            infoField("Description", policy.applicationDescription)
+            ForEach(Array(matches.enumerated()), id: \.offset) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    infoField("Purpose", item.element.purpose)
+                    if let consequences = item.element.denyConsequences, !consequences.isEmpty {
+                        infoField("If blocked", consequences)
+                    }
+                }
+            }
         }
     }
 
