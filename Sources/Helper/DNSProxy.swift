@@ -4,8 +4,8 @@ import Network
 final class DNSProxy: @unchecked Sendable {
     private var udpListener: NWListener?
     private var tcpListener: NWListener?
-    private let queue = DispatchQueue(label: "io.moamenbasel.puresnitch.dns", qos: .userInitiated)
-    private let upstreamQueue = DispatchQueue(label: "io.moamenbasel.puresnitch.dns.up")
+    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.dns", qos: .userInitiated)
+    private let upstreamQueue = DispatchQueue(label: "io.isaaclins.puresnitch.dns.up")
     private(set) var port: UInt16 = 53
     private(set) var running = false
 

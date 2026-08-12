@@ -315,7 +315,7 @@ struct RulesManagerView: View {
             } else {
                 Text("The filtering behavior of PureSnitch is defined by the rules listed here.")
                     .font(.system(size: 12)).foregroundColor(PSTheme.textSecondary)
-                Text("Select a rule to see its details. See the PureSnitch Help, chapter [Anatomy of a rule](https://github.com/momenbasel/puresnitch#anatomy-of-a-rule) for more information.")
+                Text("Select a rule to see its details. See the PureSnitch Help, chapter [Anatomy of a rule](https://github.com/isaaclins/puresnitch#anatomy-of-a-rule) for more information.")
                     .font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
                 Spacer()
             }

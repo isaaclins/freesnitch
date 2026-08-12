@@ -5,7 +5,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 
 public final class RuleStore: @unchecked Sendable {
     private var db: OpaquePointer?
-    private let queue = DispatchQueue(label: "io.moamenbasel.puresnitch.rulestore")
+    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.rulestore")
     public let path: String
 
     public init(path: String) throws {

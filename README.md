@@ -19,13 +19,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/momenbasel/puresnitch/releases/latest"><img src="https://img.shields.io/github/v/release/momenbasel/puresnitch?style=flat-square&label=Download" alt="Latest Release"></a>
+  <a href="https://github.com/isaaclins/puresnitch/releases/latest"><img src="https://img.shields.io/github/v/release/isaaclins/puresnitch?style=flat-square&label=Download" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/macOS-13.0+-blue?style=flat-square" alt="macOS 13.0+">
   <img src="https://img.shields.io/badge/Swift-5.10-orange?style=flat-square" alt="Swift 5.10">
   <img src="https://img.shields.io/badge/Notarized-Apple-success?style=flat-square" alt="Notarized">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/momenbasel/puresnitch?style=flat-square" alt="MIT License"></a>
-  <a href="https://github.com/momenbasel/puresnitch/stargazers"><img src="https://img.shields.io/github/stars/momenbasel/puresnitch?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/momenbasel/puresnitch/releases"><img src="https://img.shields.io/github/downloads/momenbasel/puresnitch/total?style=flat-square&label=Downloads" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/isaaclins/puresnitch?style=flat-square" alt="MIT License"></a>
+  <a href="https://github.com/isaaclins/puresnitch/stargazers"><img src="https://img.shields.io/github/stars/isaaclins/puresnitch?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/isaaclins/puresnitch/releases"><img src="https://img.shields.io/github/downloads/isaaclins/puresnitch/total?style=flat-square&label=Downloads" alt="Downloads"></a>
 </p>
 
 <p align="center">
@@ -42,12 +42,9 @@
 
 ## Install
 
-```bash
-brew tap momenbasel/puresnitch
-brew install --cask puresnitch
-```
+Download the signed, notarized `.dmg` from [Releases](https://github.com/isaaclins/puresnitch/releases/latest) and drag PureSnitch into `/Applications`. No Gatekeeper warnings, no quarantine workaround.
 
-Or download the signed, notarized `.dmg` from [Releases](https://github.com/momenbasel/puresnitch/releases/latest) and drag PureSnitch into `/Applications`. No Gatekeeper warnings, no quarantine workaround.
+Homebrew is unavailable until a cask is published.
 
 **PureSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from the mounted disk image or from Downloads, so drag it across before opening it — PureSnitch will tell you if you forget.
 
@@ -57,7 +54,7 @@ On first launch it registers a privileged helper and opens the Network Monitor w
 
 ```bash
 brew install xcodegen
-git clone https://github.com/momenbasel/puresnitch.git
+git clone https://github.com/isaaclins/puresnitch.git
 cd puresnitch
 xcodegen generate
 xcodebuild -project PureSnitch.xcodeproj -scheme PureSnitch -configuration Release \

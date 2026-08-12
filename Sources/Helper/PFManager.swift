@@ -4,7 +4,7 @@ final class PFManager: @unchecked Sendable {
     static let anchorName = "puresnitch"
     private let anchorPath = "/etc/pf.anchors/puresnitch"
     private let pfctl = "/sbin/pfctl"
-    private let queue = DispatchQueue(label: "io.moamenbasel.puresnitch.pf")
+    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.pf")
     private var loaded = false
 
     func install() throws {

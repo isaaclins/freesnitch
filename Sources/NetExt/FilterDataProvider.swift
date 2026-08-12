@@ -23,7 +23,7 @@ final class FilterDataProvider: NEFilterDataProvider {
     private var snapshot = SharedRuleBridge.Snapshot(mode: .alert, rules: [])
     private var reloadTimer: DispatchSourceTimer?
     private var hasPushedSnapshot = false
-    private let workQueue = DispatchQueue(label: "io.moamenbasel.puresnitch.netext.work")
+    private let workQueue = DispatchQueue(label: "io.isaaclins.puresnitch.netext.work")
     private let askTimeout: TimeInterval = 60
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {

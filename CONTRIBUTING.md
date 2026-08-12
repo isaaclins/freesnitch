@@ -5,7 +5,7 @@ Thanks for considering a contribution. The bar is: ship working code, keep the d
 ## Quick start
 
 ```bash
-git clone https://github.com/momenbasel/puresnitch.git
+git clone https://github.com/isaaclins/puresnitch.git
 cd puresnitch
 brew install xcodegen
 xcodegen generate
@@ -44,7 +44,7 @@ Open an issue. Include:
 - macOS version
 - PureSnitch version (Settings → About)
 - Reproduction steps
-- Console output from `log stream --predicate 'subsystem == "io.moamenbasel.puresnitch"'`
+- Console output from `log stream --predicate 'subsystem == "io.isaaclins.puresnitch"'`
 
 ## License
 
