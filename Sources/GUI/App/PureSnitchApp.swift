@@ -4,6 +4,7 @@ import AppKit
 @main
 struct PureSnitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    private let sparkleUpdater = SparkleUpdaterController()
 
     var body: some Scene {
         Settings {
@@ -12,6 +13,7 @@ struct PureSnitchApp: App {
         }
         .commands {
             CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: sparkleUpdater.updater)
                 Divider()
                 Button("Network Monitor…") {
                     delegate.windowManager.showNetworkMonitor()
