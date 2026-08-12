@@ -56,7 +56,7 @@ targets:
         CFBundleVersion: "8"
         LSMinimumSystemVersion: "13.0"
         LSUIElement: true
-        NSHumanReadableCopyright: "© 2026 Moamen Basel. MIT License."
+        NSHumanReadableCopyright: "© 2026 PureSnitch contributors. MIT License."
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         # Only used to place the "your Mac" node on the connection map. The
