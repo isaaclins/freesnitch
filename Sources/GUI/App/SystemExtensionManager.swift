@@ -69,7 +69,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     cfg.filterSockets = true
                     cfg.filterPackets = false
                     mgr.providerConfiguration = cfg
-                    mgr.localizedDescription = "PureSnitch"
+                    mgr.localizedDescription = "FreeSnitch"
                 }
                 mgr.isEnabled = true
                 mgr.saveToPreferences { saveError in
@@ -140,7 +140,7 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
         Task { @MainActor in
             self.status = .needsApproval
             self.state?.appendLog(level: "info",
-                                  message: "Approve PureSnitch in System Settings > Privacy & Security, then it will start filtering.")
+                                  message: "Approve FreeSnitch in System Settings > Privacy & Security, then it will start filtering.")
         }
     }
 

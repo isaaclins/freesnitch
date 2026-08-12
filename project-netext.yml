@@ -1,7 +1,7 @@
 # Per-process firewall flavour: the monitor app PLUS the Network System
 # Extension. This build requires two Apple-issued Developer ID provisioning
-# profiles (one for io.isaaclins.puresnitch with the Network Extensions and
-# System Extension capabilities, one for io.isaaclins.puresnitch.netext with
+# profiles (one for io.isaaclins.freesnitch with the Network Extensions and
+# System Extension capabilities, one for io.isaaclins.freesnitch.netext with
 # Network Extensions) embedded in the respective bundles. Without them macOS
 # refuses to launch the app, which is why the shipping DMG is built from
 # project.yml instead. See docs/NETWORK-EXTENSION.md.
@@ -12,15 +12,15 @@ include:
   - project.yml
 
 targets:
-  PureSnitchNetExt:
+  FreeSnitchNetExt:
     settings:
       base:
-        PROVISIONING_PROFILE_SPECIFIER: "PureSnitch NetExt DeveloperID"
+        PROVISIONING_PROFILE_SPECIFIER: "FreeSnitch NetExt DeveloperID"
         CODE_SIGN_STYLE: Manual
 
-  PureSnitch:
+  FreeSnitch:
     entitlements:
-      path: Sources/GUI/PureSnitch-netext.entitlements
+      path: Sources/GUI/FreeSnitch-netext.entitlements
       properties:
         com.apple.security.app-sandbox: false
         com.apple.security.network.client: true
@@ -29,17 +29,17 @@ targets:
           - content-filter-provider-systemextension
         com.apple.developer.system-extension.install: true
         com.apple.security.application-groups:
-          - BHAF4L4726.io.isaaclins.puresnitch
+          - BHAF4L4726.io.isaaclins.freesnitch
     settings:
       base:
-        CODE_SIGN_ENTITLEMENTS: Sources/GUI/PureSnitch-netext.entitlements
+        CODE_SIGN_ENTITLEMENTS: Sources/GUI/FreeSnitch-netext.entitlements
         # Restricted entitlements are only accepted when the matching profile is
         # named here; copying it into the bundle afterwards is not enough.
-        PROVISIONING_PROFILE_SPECIFIER: "PureSnitch App DeveloperID"
+        PROVISIONING_PROFILE_SPECIFIER: "FreeSnitch App DeveloperID"
         CODE_SIGN_STYLE: Manual
     # project.yml already declares the helper dependency, and xcodegen merges
     # the two lists, so re-declaring it here fails spec validation with
-    # 'has the dependency "PureSnitchHelper" multiple times'.
+    # 'has the dependency "FreeSnitchHelper" multiple times'.
     dependencies:
-      - target: PureSnitchNetExt
+      - target: FreeSnitchNetExt
         embed: true

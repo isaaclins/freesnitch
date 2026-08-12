@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>PureSnitch</string>
+	<string>FreeSnitch</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>PureSnitch</string>
+	<string>FreeSnitch</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -25,7 +25,7 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>SUFeedURL</key>
-	<string>https://isaaclins.com/puresnitch/appcast.xml</string>
+	<string>https://isaaclins.com/freesnitch/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8=</string>
 	<key>SUEnableAutomaticChecks</key>
@@ -42,9 +42,9 @@
 		<true/>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 PureSnitch contributors. MIT License.</string>
+	<string>© 2026 FreeSnitch contributors. MIT License.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>PureSnitch shows your Mac on the connection map so you can see where your traffic goes.</string>
+	<string>FreeSnitch shows your Mac on the connection map so you can see where your traffic goes.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

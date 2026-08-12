@@ -1,6 +1,6 @@
 import Foundation
 
-PSLog.info(PSLog.helper, "PureSnitchHelper starting v\(AppConstants.version) pid=\(getpid())")
+PSLog.info(PSLog.helper, "FreeSnitchHelper starting v\(AppConstants.version) pid=\(getpid())")
 
 let listener = NSXPCListener(machServiceName: AppConstants.xpcMachServiceName)
 

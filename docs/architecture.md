@@ -2,25 +2,25 @@
 
 ## Process model
 
-PureSnitch is a 3-process application:
+FreeSnitch is a 3-process application:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                          PureSnitch.app                              │
+│                          FreeSnitch.app                              │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │                       PureSnitch (GUI)                         │  │
+│  │                       FreeSnitch (GUI)                         │  │
 │  │  user-space, runs as the logged-in user                        │  │
-│  │  Bundle: io.isaaclins.puresnitch                               │  │
+│  │  Bundle: io.isaaclins.freesnitch                               │  │
 │  │  - SwiftUI views (Menubar, NetworkMonitor, RulesManager, ...)  │  │
 │  │  - HelperClient (NSXPCConnection over a Mach service)          │  │
 │  │  - AppState (Observable, drives all views)                     │  │
 │  └────────────────────────────┬───────────────────────────────────┘  │
 │                               │ XPC                                  │
 │  ┌────────────────────────────▼───────────────────────────────────┐  │
-│  │                  PureSnitchHelper (daemon)                     │  │
+│  │                  FreeSnitchHelper (daemon)                     │  │
 │  │  root, registered with launchd via SMAppService.daemon         │  │
-│  │  Bundle: io.isaaclins.puresnitch.helper                        │  │
+│  │  Bundle: io.isaaclins.freesnitch.helper                        │  │
 │  │  - PFManager     (writes /etc/pf.anchors/puresnitch + pfctl)   │  │
 │  │  - DNSProxy      (NWListener on UDP/TCP 53 + DoH upstream)     │  │
 │  │  - NetMonitor    (parses nettop + lsof streams)                │  │
@@ -49,7 +49,7 @@ Defined in `Sources/Shared/HelperProtocol.swift`:
 ## DNS path
 
 ```
-app → libsystem_resolver → 127.0.0.1:53 (PureSnitch DNS proxy)
+app → libsystem_resolver → 127.0.0.1:53 (FreeSnitch DNS proxy)
                               │
                               ├─ blocklist match? ──→ NXDOMAIN
                               │
@@ -67,7 +67,7 @@ Both UDP and TCP DNS are handled. DoH is `application/dns-message` POST to a sin
 
 ## pfctl path
 
-PureSnitch maintains an anchor named `puresnitch` referenced from `/etc/pf.conf`:
+FreeSnitch maintains the established anchor named `puresnitch` referenced from `/etc/pf.conf`:
 
 ```
 anchor "puresnitch"
@@ -100,7 +100,7 @@ Process: bundle ID match wins; otherwise path prefix.
 
 ## NetExt — per-process firewall (Network System Extension)
 
-`Sources/NetExt/FilterDataProvider.swift` is a `NEFilterDataProvider` content filter, built as the `PureSnitchNetExt` system-extension target and embedded at `Contents/Library/SystemExtensions/`. It gives true per-process filtering (Little Snitch's mechanism).
+`Sources/NetExt/FilterDataProvider.swift` is a `NEFilterDataProvider` content filter, built as the `FreeSnitchNetExt` system-extension target and embedded at `Contents/Library/SystemExtensions/`. It gives true per-process filtering (Little Snitch's mechanism).
 
 - `handleNewFlow` evaluates each socket flow with the shared `RuleMatcher`; allow → `.allow()`, deny → `.drop()`, ask → `.pause()` then resume with the user's verdict.
 - App ↔ extension XPC: `Shared/IPCConnection.swift` (extension vends a mach service named by `NEMachServiceName`; the app connects and receives prompts, reusing the connection-alert UI).

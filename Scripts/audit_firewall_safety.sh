@@ -56,7 +56,7 @@ if ! allow_within_block "$FILTER" 'if !asked[[:space:]]*\{'; then
   fail "the no-GUI path does not fail open with an allow verdict"
 fi
 
-# PureSnitch, its helper, and loopback are safety-critical exemptions. They
+# FreeSnitch, its helper, and loopback are safety-critical exemptions. They
 # must be decided before the general matcher can pause or drop the flow.
 own_line="$(grep -nF 'if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }' "$FILTER" | head -1 | cut -d: -f1 || true)"
 matcher_line="$(grep -nF 'matcher.decision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"

@@ -53,7 +53,7 @@ struct MenubarPopoverView: View {
 
                 Button(action: { close(); windows.showSettings() }) {
                     HStack {
-                        Text("PureSnitch Settings…").font(.system(size: 13))
+                        Text("FreeSnitch Settings…").font(.system(size: 13))
                         Spacer()
                     }
                     .contentShape(Rectangle())
@@ -86,7 +86,7 @@ struct MenubarPopoverView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .help("PureSnitch Settings")
+            .help("FreeSnitch Settings")
             Button(action: { close(); windows.showNetworkMonitor() }) {
                 Image(systemName: "globe")
                     .font(.system(size: 14))

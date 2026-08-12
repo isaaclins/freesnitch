@@ -37,14 +37,14 @@ struct SettingsView: View {
                            isOn: $state.showSpeedsInMenuBar)
                 }
                 Section("General") {
-                    Toggle("Launch PureSnitch at login", isOn: $launchAtLogin)
+                    Toggle("Launch FreeSnitch at login", isOn: $launchAtLogin)
                         .onChange(of: launchAtLogin) { newValue in setLaunchAtLogin(newValue) }
                     Toggle("Show alerts on all Spaces", isOn: $state.showAlertsOnAllSpaces)
                 }
                 Section("Enforcement") {
                     Toggle("Block traffic, don't just watch it", isOn: $state.enforcementEnabled)
                         .disabled(!state.helperConnected)
-                    Text("Off by default. Turning this on lets PureSnitch load a pf firewall anchor and run a DNS proxy on port \(AppConstants.dnsProxyPort), which changes how this Mac resolves names and filters packets. Leave it off to use PureSnitch purely as a traffic monitor.")
+                    Text("Off by default. Turning this on lets FreeSnitch load a pf firewall anchor and run a DNS proxy on port \(AppConstants.dnsProxyPort), which changes how this Mac resolves names and filters packets. Leave it off to use FreeSnitch purely as a traffic monitor.")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 Section("Mode") {
@@ -65,7 +65,7 @@ struct SettingsView: View {
         case .enabled: return state.helperConnected ? "Connected" : "Approved, connecting…"
         case .requiresApproval: return "Waiting for your approval"
         case .notRegistered, .unknown: return "Not installed"
-        case .wrongLocation: return "Move PureSnitch to /Applications"
+        case .wrongLocation: return "Move FreeSnitch to /Applications"
         case .notFound: return "Missing from this build"
         case .failed(let m): return "Failed: \(m)"
         }
@@ -172,12 +172,12 @@ struct SettingsView: View {
         VStack(spacing: 12) {
             Image(systemName: "shield.lefthalf.filled")
                 .font(.system(size: 64)).foregroundColor(PSTheme.accent)
-            Text("PureSnitch").font(.title.bold())
+            Text("FreeSnitch").font(.title.bold())
             Text("v\(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
             Text("Open-source application firewall for macOS.").font(.caption).foregroundColor(.secondary)
-            Link("github.com/isaaclins/puresnitch", destination: URL(string: "https://github.com/isaaclins/puresnitch")!)
+            Link("github.com/isaaclins/freesnitch", destination: URL(string: "https://github.com/isaaclins/freesnitch")!)
                 .font(.caption)
-            Text("MIT License · © 2026 PureSnitch contributors")
+            Text("MIT License · © 2026 FreeSnitch contributors")
                 .font(.caption2).foregroundColor(.secondary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

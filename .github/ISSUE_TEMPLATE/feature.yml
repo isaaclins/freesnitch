@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement to PureSnitch
+description: Suggest an improvement to FreeSnitch
 title: "[Feature]: "
 labels:
   - enhancement
@@ -8,7 +8,7 @@ body:
     id: area
     attributes:
       label: Area
-      description: Which part of PureSnitch would this affect?
+      description: Which part of FreeSnitch would this affect?
       options:
         - network monitor/map
         - rules

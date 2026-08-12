@@ -3,7 +3,7 @@ import Foundation
 final class BlocklistManager: @unchecked Sendable {
     private let store: RuleStore
     private(set) var domains: Set<String> = []
-    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.blocklists")
+    private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.blocklists")
     var onUpdate: ((Int) -> Void)?
 
     init(store: RuleStore) {
@@ -38,7 +38,7 @@ final class BlocklistManager: @unchecked Sendable {
     private func fetch(_ list: BlocklistInfo) async -> Set<String>? {
         guard let url = URL(string: list.url) else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)
-        req.setValue("PureSnitch/0.1", forHTTPHeaderField: "User-Agent")
+        req.setValue("FreeSnitch/0.1", forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
             // Without this check an error page parses into junk "domains":

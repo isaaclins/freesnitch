@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>io.isaaclins.puresnitch.helper</string>
+    <string>io.isaaclins.freesnitch.helper</string>
     <key>CFBundleName</key>
-    <string>PureSnitchHelper</string>
+    <string>FreeSnitchHelper</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
@@ -14,7 +14,7 @@
     <string>XPC!</string>
     <key>SMAuthorizedClients</key>
     <array>
-        <string>identifier "io.isaaclins.puresnitch" and anchor apple generic and certificate leaf[subject.OU] = "BHAF4L4726"</string>
+        <string>identifier "io.isaaclins.freesnitch" and anchor apple generic and certificate leaf[subject.OU] = "BHAF4L4726"</string>
     </array>
 </dict>
 </plist>

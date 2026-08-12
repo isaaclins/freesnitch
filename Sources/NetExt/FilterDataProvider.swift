@@ -1,6 +1,6 @@
 //
 //  FilterDataProvider.swift
-//  PureSnitch Network System Extension
+//  FreeSnitch Network System Extension
 //
 //  A NEFilterDataProvider content filter (the same mechanism Little Snitch
 //  uses). Every new socket flow is evaluated against the rule set mirrored into
@@ -23,7 +23,7 @@ final class FilterDataProvider: NEFilterDataProvider {
     private var snapshot = SharedRuleBridge.Snapshot(mode: .alert, rules: [])
     private var reloadTimer: DispatchSourceTimer?
     private var hasPushedSnapshot = false
-    private let workQueue = DispatchQueue(label: "io.isaaclins.puresnitch.netext.work")
+    private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
     private let askTimeout: TimeInterval = 60
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
@@ -52,7 +52,7 @@ final class FilterDataProvider: NEFilterDataProvider {
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
         let conn = connection(from: socketFlow)
-        // PureSnitch must never hold up its own traffic. The helper shells out
+        // FreeSnitch must never hold up its own traffic. The helper shells out
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }

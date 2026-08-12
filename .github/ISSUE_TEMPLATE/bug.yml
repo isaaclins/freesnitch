@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with PureSnitch
+description: Report a reproducible problem with FreeSnitch
 title: "[Bug]: "
 labels:
   - bug
@@ -8,7 +8,7 @@ body:
     id: area
     attributes:
       label: Area
-      description: Which part of PureSnitch is affected?
+      description: Which part of FreeSnitch is affected?
       options:
         - network monitor/map
         - rules
@@ -30,9 +30,9 @@ body:
     validations:
       required: true
   - type: input
-    id: puresnitch-version
+    id: freesnitch-version
     attributes:
-      label: PureSnitch version/build
+      label: FreeSnitch version/build
       placeholder: 0.2.0 (8)
     validations:
       required: true

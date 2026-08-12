@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>PureSnitch Network Extension</string>
+	<string>FreeSnitch Network Extension</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>PureSnitchNetExt</string>
+	<string>FreeSnitchNetExt</string>
 	<key>CFBundlePackageType</key>
 	<string>SYSX</string>
 	<key>CFBundleShortVersionString</key>
@@ -23,15 +23,15 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSSystemExtensionUsageDescription</key>
-	<string>PureSnitch filters per-app network connections.</string>
+	<string>FreeSnitch filters per-app network connections.</string>
 	<key>NetworkExtension</key>
 	<dict>
 		<key>NEMachServiceName</key>
-		<string>BHAF4L4726.io.isaaclins.puresnitch.ipc</string>
+		<string>BHAF4L4726.io.isaaclins.freesnitch.ipc</string>
 		<key>NEProviderClasses</key>
 		<dict>
 			<key>com.apple.networkextension.filter-data</key>
-			<string>PureSnitchNetExt.FilterDataProvider</string>
+			<string>FreeSnitchNetExt.FilterDataProvider</string>
 		</dict>
 	</dict>
 </dict>

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 @main
-struct PureSnitchApp: App {
+struct FreeSnitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     private let sparkleUpdater = SparkleUpdaterController()
 
@@ -53,14 +53,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // no-op unless this build embeds one — the monitor-only release does
         // not, so no extension approval prompt appears.
         systemExtension = SystemExtensionManager(state: state)
-        if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] != "1" {
+        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
             systemExtension.activate()
         }
 
         // A menu-bar-only app that shows nothing on first launch reads as
         // broken. Open the monitor once so the helper-approval banner is
         // actually seen.
-        if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] != "1",
+        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1",
            !UserDefaults.standard.bool(forKey: "PSDidFirstRun") {
             UserDefaults.standard.set(true, forKey: "PSDidFirstRun")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -68,14 +68,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if ProcessInfo.processInfo.environment["PURESNITCH_DEMO"] == "1" {
+        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" {
             seedDemoState()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                if ProcessInfo.processInfo.environment["PURESNITCH_DEMO_WINDOW"] == "monitor" {
+                if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "monitor" {
                     self.windowManager.showNetworkMonitor()
-                } else if ProcessInfo.processInfo.environment["PURESNITCH_DEMO_WINDOW"] == "rules" {
+                } else if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "rules" {
                     self.windowManager.showRulesManager()
-                } else if ProcessInfo.processInfo.environment["PURESNITCH_DEMO_WINDOW"] == "settings" {
+                } else if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "settings" {
                     self.windowManager.showSettings()
                 }
             }

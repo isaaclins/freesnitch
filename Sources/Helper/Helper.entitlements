@@ -5,6 +5,6 @@
     <key>com.apple.security.app-sandbox</key>
     <false/>
     <key>com.apple.application-identifier</key>
-    <string>BHAF4L4726.io.isaaclins.puresnitch.helper</string>
+    <string>BHAF4L4726.io.isaaclins.freesnitch.helper</string>
 </dict>
 </plist>

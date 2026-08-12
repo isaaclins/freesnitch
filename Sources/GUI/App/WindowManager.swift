@@ -24,7 +24,7 @@ final class WindowManager {
             title: "Network Monitor",
             defaultSize: NSSize(width: 1100, height: 700),
             minSize: NSSize(width: 900, height: 550),
-            autosaveName: "PureSnitch.NetworkMonitor",
+            autosaveName: "FreeSnitch.NetworkMonitor",
             content: NetworkMonitorView().environmentObject(state)
         )
     }
@@ -35,7 +35,7 @@ final class WindowManager {
             title: "Rules",
             defaultSize: NSSize(width: 1000, height: 650),
             minSize: NSSize(width: 820, height: 500),
-            autosaveName: "PureSnitch.Rules",
+            autosaveName: "FreeSnitch.Rules",
             content: RulesManagerView().environmentObject(state)
         )
     }
@@ -49,7 +49,7 @@ final class WindowManager {
             title: "Settings",
             defaultSize: NSSize(width: 560, height: 460),
             minSize: NSSize(width: 560, height: 460),
-            autosaveName: "PureSnitch.Settings",
+            autosaveName: "FreeSnitch.Settings",
             content: SettingsView().environmentObject(state),
             resizable: false
         )
