@@ -5,7 +5,7 @@ struct RulesManagerView: View {
     @EnvironmentObject var state: AppState
     @State private var selectedCategory: Category = .all
     @State private var searchText: String = ""
-    @State private var selectedRule: Rule?
+    @State private var selectedRuleIDs: Set<UUID> = []
 
     enum Category: Hashable {
         case all
@@ -69,7 +69,7 @@ struct RulesManagerView: View {
     }
 
     private func navRow(_ cat: Category, label: String, icon: String, color: Color = PSTheme.accentBlue, count: Int, badge: Bool = false) -> some View {
-        Button(action: { selectedCategory = cat }) {
+        Button(action: { selectCategory(cat) }) {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundColor(color)
                     .font(.system(size: 12)).frame(width: 16)
@@ -92,7 +92,7 @@ struct RulesManagerView: View {
     }
 
     private func groupRow(_ label: String, icon: String) -> some View {
-        Button(action: { selectedCategory = .group(label) }) {
+        Button(action: { selectCategory(.group(label)) }) {
             HStack(spacing: 8) {
                 Toggle("", isOn: .constant(true))
                     .toggleStyle(.checkbox)
@@ -111,7 +111,7 @@ struct RulesManagerView: View {
     }
 
     private func blocklistRow(_ b: BlocklistInfo) -> some View {
-        Button(action: { selectedCategory = .blocklist(b.id) }) {
+        Button(action: { selectCategory(.blocklist(b.id)) }) {
             HStack(spacing: 8) {
                 Toggle("", isOn: Binding(get: { b.enabled }, set: { _ in }))
                     .toggleStyle(.checkbox)
@@ -141,7 +141,7 @@ struct RulesManagerView: View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundColor(PSTheme.textMuted).font(.system(size: 11))
-                TextField("Search", text: $searchText).textFieldStyle(.plain).foregroundColor(PSTheme.textPrimary)
+                TextField("Search", text: searchBinding).textFieldStyle(.plain).foregroundColor(PSTheme.textPrimary)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(PSTheme.bgTertiary)
@@ -175,15 +175,19 @@ struct RulesManagerView: View {
             if filteredRules.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(filteredRules.enumerated()), id: \.element.id) { idx, r in
-                            RuleRowView(rule: r, alt: idx % 2 == 1, selected: selectedRule?.id == r.id)
-                                .contentShape(Rectangle())
-                                .onTapGesture { selectedRule = r }
-                        }
+                List(selection: $selectedRuleIDs) {
+                    ForEach(Array(filteredRules.enumerated()), id: \.element.id) { idx, r in
+                        RuleRowView(rule: r, alt: idx % 2 == 1, selected: selectedRuleIDs.contains(r.id))
+                            .contentShape(Rectangle())
+                            .tag(r.id)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                     }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .tint(PSTheme.accent)
             }
         }
     }
@@ -249,6 +253,20 @@ struct RulesManagerView: View {
     private var recentCutoff: Date { Date().addingTimeInterval(-7 * 24 * 3600) }
     private var recentChangesCount: Int { state.rules.filter { $0.createdAt >= recentCutoff }.count }
 
+    private var selectedRules: [Rule] {
+        filteredRules.filter { selectedRuleIDs.contains($0.id) }
+    }
+
+    private var searchBinding: Binding<String> {
+        Binding(
+            get: { searchText },
+            set: {
+                searchText = $0
+                clearSelection()
+            }
+        )
+    }
+
     private var filteredRules: [Rule] {
         var rules = state.rules
         switch selectedCategory {
@@ -290,7 +308,9 @@ struct RulesManagerView: View {
                 Text("Information").font(.system(size: 14, weight: .semibold)).foregroundColor(PSTheme.textPrimary)
                 Spacer()
             }
-            if let r = selectedRule {
+            if selectedRules.count > 1 {
+                multiRuleDetails(selectedRules)
+            } else if let r = selectedRules.first {
                 ruleDetails(r)
             } else {
                 Text("The filtering behavior of PureSnitch is defined by the rules listed here.")
@@ -332,6 +352,49 @@ struct RulesManagerView: View {
             Button(role: .destructive) { removeRule(r) } label: { Text("Remove") }
                 .buttonStyle(.borderedProminent).tint(.red)
         }
+    }
+
+    @ViewBuilder
+    private func multiRuleDetails(_ rules: [Rule]) -> some View {
+        Divider().background(PSTheme.stroke)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                PSChip("\(rules.count) selected", color: PSTheme.accentBlue, icon: "checkmark.circle")
+                summarySection("Process", items: summaryItems(rules) { $0.processName ?? "Any Process" })
+                summarySection("Action", items: summaryItems(rules) { $0.action.rawValue.capitalized })
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        HStack {
+            Button(allSelectedRulesDisabled ? "Enable" : "Disable") {
+                setRulesEnabled(!allSelectedRulesDisabled)
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+            Button(role: .destructive) { removeSelectedRules() } label: { Text("Remove") }
+                .buttonStyle(.borderedProminent).tint(.red)
+        }
+    }
+
+    private func summarySection(_ title: String, items: [RuleSummaryItem]) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textMuted)
+            ForEach(items) { item in
+                HStack(spacing: 6) {
+                    Text(item.label).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text("\(item.count)").font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(PSTheme.textSecondary)
+                }
+            }
+        }
+    }
+
+    private func summaryItems(_ rules: [Rule], by key: (Rule) -> String) -> [RuleSummaryItem] {
+        Dictionary(grouping: rules, by: key)
+            .map { RuleSummaryItem(label: $0.key, count: $0.value.count) }
+            .sorted { $0.count > $1.count }
     }
 
     @ViewBuilder
@@ -378,19 +441,66 @@ struct RulesManagerView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func selectCategory(_ category: Category) {
+        selectedCategory = category
+        clearSelection()
+    }
+
+    private func clearSelection() {
+        selectedRuleIDs.removeAll()
+    }
+
+    private var allSelectedRulesDisabled: Bool {
+        !selectedRules.isEmpty && selectedRules.allSatisfy { !$0.enabled }
+    }
+
     private func toggleRule(_ r: Rule) {
         var copy = r
         copy.enabled.toggle()
         state.helper.addRule(copy)   // upsert
         state.refreshRules()
-        selectedRule = copy
+    }
+
+    private func setRulesEnabled(_ enabled: Bool) {
+        let rules = selectedRules
+        guard !rules.isEmpty else { return }
+        for rule in rules {
+            var copy = rule
+            copy.enabled = enabled
+            state.helper.addRule(copy)
+        }
+        state.rules = state.rules.map { rule in
+            guard rules.contains(where: { $0.id == rule.id }) else { return rule }
+            var copy = rule
+            copy.enabled = enabled
+            return copy
+        }
+        state.syncSharedRules()
     }
 
     private func removeRule(_ r: Rule) {
         state.helper.removeRule(id: r.id)
         state.refreshRules()
-        selectedRule = nil
+        clearSelection()
     }
+
+    private func removeSelectedRules() {
+        let rules = selectedRules
+        guard !rules.isEmpty else { return }
+        for rule in rules {
+            state.helper.removeRule(id: rule.id)
+        }
+        let removedIDs = Set(rules.map(\.id))
+        state.rules.removeAll { removedIDs.contains($0.id) }
+        state.syncSharedRules()
+        clearSelection()
+    }
+}
+
+private struct RuleSummaryItem: Identifiable {
+    let label: String
+    let count: Int
+    var id: String { label }
 }
 
 struct RuleRowView: View {
