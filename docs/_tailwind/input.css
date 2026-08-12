@@ -8,24 +8,24 @@ html {
 
 body {
   background:
-    radial-gradient(1100px 600px at 50% -10%, rgba(250, 85, 16, 0.18), transparent 70%),
-    radial-gradient(800px 500px at 100% 30%, rgba(195, 45, 7, 0.12), transparent 70%),
-    #0f0a07;
+    radial-gradient(1100px 600px at 50% -10%, rgba(59, 111, 245, 0.18), transparent 70%),
+    radial-gradient(800px 500px at 100% 30%, rgba(34, 68, 173, 0.12), transparent 70%),
+    #0e1219;
 }
 
-.glow-orange {
-  box-shadow: 0 0 80px -10px rgba(250, 85, 16, 0.35), 0 0 20px -5px rgba(250, 85, 16, 0.25);
+.glow-beam {
+  box-shadow: 0 0 80px -10px rgba(59, 111, 245, 0.35), 0 0 20px -5px rgba(59, 111, 245, 0.25);
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #ffa371 0%, #fa5510 60%, #c32d07 100%);
+  background: linear-gradient(135deg, #8fb0ff 0%, #3b6ff5 60%, #2244ad 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
 .shimmer-line {
-  background: linear-gradient(90deg, transparent, rgba(250, 85, 16, 0.4), transparent);
+  background: linear-gradient(90deg, transparent, rgba(59, 111, 245, 0.4), transparent);
   background-size: 200% 100%;
   animation: shimmer 3s linear infinite;
 }
@@ -36,8 +36,8 @@ body {
 
 .feature-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(250, 85, 16, 0.4);
-  background: rgba(250, 85, 16, 0.04);
+  border-color: rgba(59, 111, 245, 0.4);
+  background: rgba(59, 111, 245, 0.04);
 }
 
 .grid-bg {
@@ -53,7 +53,7 @@ pre {
 }
 
 ::selection {
-  background: rgba(250, 85, 16, 0.4);
+  background: rgba(59, 111, 245, 0.4);
   color: white;
 }
 

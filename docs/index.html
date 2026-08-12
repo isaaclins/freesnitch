@@ -1,26 +1,26 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FreeSnitch: open-source application firewall for macOS</title>
 <meta name="description" content="Free, open-source application firewall for macOS. Little Snitch alternative with zero telemetry. Native SwiftUI world map, rules manager, DNS over HTTPS, pf-based blocking. MIT licensed. Source available on GitHub; no release published yet.">
-<meta name="theme-color" content="#0f0a07">
+<meta name="theme-color" content="#0e1219">
 <link rel="canonical" href="https://isaaclins.com/freesnitch/">
 <link rel="stylesheet" href="styles.css">
-<link rel="icon" href="https://raw.githubusercontent.com/isaaclins/freesnitch/main/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128%402x.png">
+<link rel="icon" href="favicon.png">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="FreeSnitch: open-source application firewall for macOS">
 <meta property="og:description" content="Free, open-source Little Snitch alternative. Zero telemetry. Native SwiftUI. MIT licensed.">
 <meta property="og:url" content="https://isaaclins.com/freesnitch/">
-<meta property="og:image" content="https://raw.githubusercontent.com/isaaclins/freesnitch/main/docs/social-preview.png">
+<meta property="og:image" content="social-preview.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="FreeSnitch: open-source application firewall for macOS">
 <meta name="twitter:description" content="Free Little Snitch alternative. Native SwiftUI. Zero telemetry. MIT.">
-<meta name="twitter:image" content="https://raw.githubusercontent.com/isaaclins/freesnitch/main/docs/social-preview.png">
+<meta name="twitter:image" content="social-preview.png">
 
 <script type="application/ld+json">
 {
@@ -33,34 +33,35 @@
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "url": "https://isaaclins.com/freesnitch/",
+  "image": "icon-512.png",
   "author": { "@type": "Organization", "name": "FreeSnitch contributors", "url": "https://github.com/isaaclins/freesnitch" },
   "description": "Free, open-source application firewall for macOS. Little Snitch alternative with zero telemetry. Native SwiftUI world map, rules manager, DNS over HTTPS, pf-based blocking. MIT licensed. Source available on GitHub; no release published yet.",
-  "screenshot": "https://raw.githubusercontent.com/isaaclins/freesnitch/main/screenshot.png"
+  "screenshot": "screenshot.png"
 }
 </script>
 
 </head>
 
-<body class="font-sans text-coal-100 antialiased min-h-screen">
+<body class="font-sans text-ink-100 antialiased min-h-screen">
 
-<header class="sticky top-0 z-50 backdrop-blur-xl bg-coal-950/70 border-b border-coal-800/50">
+<header class="sticky top-0 z-50 backdrop-blur-xl bg-ink-950/70 border-b border-ink-800/50">
   <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
     <a href="#" class="flex items-center gap-2.5">
-      <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128%402x.png" class="w-8 h-8 rounded-lg" alt="">
+      <img src="icon-512.png" class="w-8 h-8 rounded-lg" alt="">
       <span class="font-display font-semibold text-lg">FreeSnitch</span>
     </a>
-    <nav class="hidden md:flex items-center gap-7 text-sm text-coal-300">
+    <nav class="hidden md:flex items-center gap-7 text-sm text-ink-300">
       <a href="#features" class="hover:text-white transition">Features</a>
       <a href="#how" class="hover:text-white transition">How it works</a>
       <a href="#compare" class="hover:text-white transition">vs Little Snitch</a>
       <a href="#install" class="hover:text-white transition">Install</a>
       <a href="#faq" class="hover:text-white transition">FAQ</a>
-      <a href="https://github.com/isaaclins/freesnitch" class="text-coal-400 hover:text-white transition flex items-center gap-1.5">
+      <a href="https://github.com/isaaclins/freesnitch" class="text-ink-400 hover:text-white transition flex items-center gap-1.5">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.69 1.25 3.34.96.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.47.11-3.05 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.79.56C20.71 21.39 24 17.08 24 12 24 5.65 18.85.5 12 .5z"/></svg>
         GitHub
       </a>
     </nav>
-    <a href="#install" class="md:hidden text-sm px-3 py-1.5 rounded-full bg-ember-500/15 text-ember-300 border border-ember-500/30">Install</a>
+    <a href="#install" class="md:hidden text-sm px-3 py-1.5 rounded-full bg-beam-500/15 text-beam-300 border border-beam-500/30">Install</a>
   </div>
 </header>
 
@@ -69,46 +70,46 @@
   <div class="absolute inset-0 grid-bg opacity-30 pointer-events-none"></div>
   <div class="relative max-w-7xl mx-auto px-6 pt-20 pb-16">
     <div class="flex flex-col items-center text-center gap-6">
-      <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-ember-500/10 border border-ember-500/30 text-ember-300 text-xs font-medium">
-        <span class="w-1.5 h-1.5 rounded-full bg-ember-400 animate-pulse"></span>
+      <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-beam-500/10 border border-beam-500/30 text-beam-300 text-xs font-medium">
+        <span class="w-1.5 h-1.5 rounded-full bg-beam-400 animate-pulse"></span>
         Source available, release coming soon
       </div>
       <h1 class="font-display font-bold text-5xl md:text-7xl tracking-tight max-w-4xl">
         See what your Mac is talking to.<br>
         <span class="gradient-text">Block what you don't trust.</span>
       </h1>
-      <p class="text-lg md:text-xl text-coal-300 max-w-2xl">
+      <p class="text-lg md:text-xl text-ink-300 max-w-2xl">
         Open-source application firewall for macOS. Built in the same style as Little Snitch. Free. MIT-licensed. Zero telemetry.
       </p>
       <div class="flex flex-wrap items-center justify-center gap-3 pt-4">
         <a href="https://github.com/isaaclins/freesnitch"
-           class="group inline-flex items-center gap-2 px-6 py-3 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium shadow-lg glow-orange transition">
+           class="group inline-flex items-center gap-2 px-6 py-3 rounded-full bg-beam-500 hover:bg-beam-400 text-white font-medium shadow-lg glow-beam transition">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           View source on GitHub
         </a>
         <a href="#install"
-           class="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-coal-800/60 hover:bg-coal-800 border border-coal-700 text-white font-medium transition">
+           class="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-ink-800/60 hover:bg-ink-800 border border-ink-700 text-white font-medium transition">
           <span class="font-mono text-sm">Homebrew cask unavailable</span>
         </a>
         <a href="https://github.com/isaaclins/freesnitch"
-           class="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-coal-800/30 hover:bg-coal-800/60 border border-coal-700/50 text-coal-200 font-medium transition">
+           class="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-ink-800/30 hover:bg-ink-800/60 border border-ink-700/50 text-ink-200 font-medium transition">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.69 1.25 3.34.96.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.47.11-3.05 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.79.56C20.71 21.39 24 17.08 24 12 24 5.65 18.85.5 12 .5z"/></svg>
           Star on GitHub
         </a>
       </div>
-      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 pt-6 text-xs text-coal-400">
-        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>macOS 14+</span>
-        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>Apple Silicon</span>
-        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>Source available</span>
-        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>MIT License</span>
-        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-ember-400"></span>No telemetry</span>
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 pt-6 text-xs text-ink-400">
+        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-beam-400"></span>macOS 14+</span>
+        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-beam-400"></span>Apple Silicon</span>
+        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-beam-400"></span>Source available</span>
+        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-beam-400"></span>MIT License</span>
+        <span class="flex items-center gap-1.5"><span class="w-1 h-1 rounded-full bg-beam-400"></span>No telemetry</span>
       </div>
     </div>
 
     <div class="relative mt-16 md:mt-20 max-w-6xl mx-auto">
-      <div class="absolute inset-0 bg-gradient-to-tr from-ember-600/20 to-ember-400/10 blur-3xl -z-10"></div>
-      <div class="rounded-2xl overflow-hidden border border-coal-700 shadow-2xl glow-orange bg-coal-900">
-        <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/screenshot.png" alt="FreeSnitch Network Monitor: world map, per-process bandwidth, summary panel" class="w-full">
+      <div class="absolute inset-0 bg-gradient-to-tr from-beam-600/20 to-beam-400/10 blur-3xl -z-10"></div>
+      <div class="rounded-2xl overflow-hidden border border-ink-700 shadow-2xl glow-beam bg-ink-900">
+        <img src="screenshot.png" alt="FreeSnitch Network Monitor: world map, per-process bandwidth, summary panel" class="w-full">
       </div>
       <div class="h-px shimmer-line mt-6 max-w-3xl mx-auto"></div>
     </div>
@@ -119,34 +120,37 @@
 <section class="py-24">
   <div class="max-w-5xl mx-auto px-6">
     <div class="text-center mb-14">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">Why this exists</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">Why this exists</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">
         Three choices.<br>None of them great.
       </h2>
     </div>
+    <p class="mx-auto mb-10 max-w-3xl text-center text-ink-300 leading-relaxed">
+      FreeSnitch is an independently maintained fork of <a href="https://github.com/momenbasel/puresnitch" class="text-beam-300 hover:text-beam-200 hover:underline">PureSnitch</a>, the original project created by <a href="https://github.com/momenbasel" class="text-beam-300 hover:text-beam-200 hover:underline">Moamen Basel</a>.
+    </p>
     <div class="grid md:grid-cols-3 gap-5">
-      <div class="p-6 rounded-2xl border border-coal-800 bg-coal-900/50">
-        <div class="text-2xl font-display font-bold text-coal-100">$59</div>
+      <div class="p-6 rounded-2xl border border-ink-800 bg-ink-900/50">
+        <div class="text-2xl font-display font-bold text-ink-100">$59</div>
         <h3 class="font-display font-semibold mt-3 text-lg text-white">Little Snitch</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Gold standard UI. World map, rules, alerts. $59 per Mac, every Mac.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Gold standard UI. World map, rules, alerts. $59 per Mac, every Mac.</p>
       </div>
-      <div class="p-6 rounded-2xl border border-coal-800 bg-coal-900/50">
-        <div class="text-2xl font-display font-bold text-coal-100">Free</div>
+      <div class="p-6 rounded-2xl border border-ink-800 bg-ink-900/50">
+        <div class="text-2xl font-display font-bold text-ink-100">Free</div>
         <h3 class="font-display font-semibold mt-3 text-lg text-white">LuLu</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Excellent per-process kernel filtering. Spartan UI. No map, no graph, no blocklists.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Excellent per-process kernel filtering. Spartan UI. No map, no graph, no blocklists.</p>
       </div>
-      <div class="p-6 rounded-2xl border border-coal-800 bg-coal-900/50">
-        <div class="text-2xl font-display font-bold text-coal-100">Bundled</div>
+      <div class="p-6 rounded-2xl border border-ink-800 bg-ink-900/50">
+        <div class="text-2xl font-display font-bold text-ink-100">Bundled</div>
         <h3 class="font-display font-semibold mt-3 text-lg text-white">macOS Firewall</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Blocks inbound only. Outbound traffic walks right out the front door.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Blocks inbound only. Outbound traffic walks right out the front door.</p>
       </div>
     </div>
-    <div class="mt-10 p-8 rounded-2xl border border-ember-500/30 bg-gradient-to-br from-ember-500/10 to-ember-700/5">
+    <div class="mt-10 p-8 rounded-2xl border border-beam-500/30 bg-gradient-to-br from-beam-500/10 to-beam-700/5">
       <div class="flex items-start gap-5">
-        <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128%402x.png" class="w-14 h-14 rounded-xl flex-shrink-0" alt="">
+        <img src="icon-512.png" class="w-14 h-14 rounded-xl flex-shrink-0" alt="">
         <div>
           <h3 class="font-display font-bold text-2xl text-white">FreeSnitch is the fourth choice.</h3>
-          <p class="text-coal-200 mt-2 leading-relaxed">
+          <p class="text-ink-200 mt-2 leading-relaxed">
             Little Snitch UI muscle memory. LuLu's price. Native SwiftUI, not a port. Source on GitHub, MIT, zero telemetry. Built because no one else had built it.
           </p>
         </div>
@@ -156,118 +160,118 @@
 </section>
 
 <!-- FEATURES -->
-<section id="features" class="py-24 border-t border-coal-800/50">
+<section id="features" class="py-24 border-t border-ink-800/50">
   <div class="max-w-7xl mx-auto px-6">
     <div class="text-center mb-16">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">Features</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">Features</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">Everything you'd expect.<br>Nothing you wouldn't.</h2>
     </div>
 
     <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Network Monitor with world map</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Live map of every active connection. Sort by process, by domain, by country. Click any process to see its last five minutes of traffic.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Live map of every active connection. Sort by process, by domain, by country. Click any process to see its last five minutes of traffic.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Rules Manager (LS-style)</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">All Rules, Active, Deny, Temporary, Unapproved categories. Glob hostnames, CIDR, port. Priority-ordered. Search every field.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">All Rules, Active, Deny, Temporary, Unapproved categories. Glob hostnames, CIDR, port. Priority-ordered. Search every field.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Connection Alerts</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Default-deny pops a clean popup. Allow / Deny. Remember. Scope: process / domain / IP / port. Duration: 5 min / 1 hr / forever.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Default-deny pops a clean popup. Allow / Deny. Remember. Scope: process / domain / IP / port. Duration: 5 min / 1 hr / forever.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">DNS over HTTPS</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Built-in DoH to Cloudflare, Quad9, Google, or any endpoint. Local DNS proxy on 127.0.0.1:53. Every getaddrinfo passes through.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Built-in DoH to Cloudflare, Quad9, Google, or any endpoint. Local DNS proxy on 127.0.0.1:53. Every getaddrinfo passes through.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Blocklists out of the box</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">1Hosts, OISD, StevenBlack, HaGeZi. Subscribe, refresh on schedule, audit matches. Bring your own list URLs too.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">1Hosts, OISD, StevenBlack, HaGeZi. Subscribe, refresh on schedule, audit matches. Bring your own list URLs too.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">pfctl kernel-level blocking</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">A puresnitch anchor in pfctl carries IP / CIDR / port rules. Kernel-level, regardless of which process initiated the connection.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">A puresnitch anchor in pfctl carries IP / CIDR / port rules. Kernel-level, regardless of which process initiated the connection.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Profiles that auto-switch</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Default, Home, Public Wi-Fi, Lockdown. Different rule sets per network. Switches automatically when the SSID changes.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Default, Home, Public Wi-Fi, Lockdown. Different rule sets per network. Switches automatically when the SSID changes.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Menubar status item</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">Live up/down throughput. 5-minute traffic graph. Recent activity. Denied-count badge. One-click mode picker.</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">Live up/down throughput. 5-minute traffic graph. Recent activity. Denied-count badge. One-click mode picker.</p>
       </div>
 
-      <div class="feature-card p-6 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="w-11 h-11 rounded-xl bg-ember-500/15 border border-ember-500/30 flex items-center justify-center mb-4">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <div class="feature-card p-6 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="w-11 h-11 rounded-xl bg-beam-500/15 border border-beam-500/30 flex items-center justify-center mb-4">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6690ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </div>
         <h3 class="font-display font-semibold text-lg text-white">Zero telemetry</h3>
-        <p class="text-coal-400 text-sm mt-2 leading-relaxed">No analytics SDK. No crash reporter. No license check. Outbound is your DoH resolver + optional IP-to-country lookup (toggle-able).</p>
+        <p class="text-ink-400 text-sm mt-2 leading-relaxed">No analytics SDK. No crash reporter. No license check. Outbound is your DoH resolver + optional IP-to-country lookup (toggle-able).</p>
       </div>
     </div>
   </div>
 </section>
 
 <!-- HOW IT WORKS -->
-<section id="how" class="py-24 border-t border-coal-800/50">
+<section id="how" class="py-24 border-t border-ink-800/50">
   <div class="max-w-6xl mx-auto px-6">
     <div class="text-center mb-16">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">How it works</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">How it works</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">Three things move bytes.</h2>
-      <p class="text-coal-300 mt-4 max-w-2xl mx-auto">FreeSnitch is a SwiftUI app talking over XPC to a small privileged daemon. The daemon does the actual work.</p>
+      <p class="text-ink-300 mt-4 max-w-2xl mx-auto">FreeSnitch is a SwiftUI app talking over XPC to a small privileged daemon. The daemon does the actual work.</p>
     </div>
 
     <div class="grid md:grid-cols-3 gap-6">
-      <div class="p-7 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="text-ember-400 font-mono text-sm font-bold mb-3">01 / DNS</div>
+      <div class="p-7 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="text-beam-400 font-mono text-sm font-bold mb-3">01 / DNS</div>
         <h3 class="font-display font-semibold text-xl text-white">DNS interception</h3>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">A local DNS proxy on <code class="text-ember-300 font-mono">127.0.0.1:53</code> answers every query. Blocklisted domains return NXDOMAIN; the rest forwards over DoH to the resolver you picked.</p>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">A local DNS proxy on <code class="text-beam-300 font-mono">127.0.0.1:53</code> answers every query. Blocklisted domains return NXDOMAIN; the rest forwards over DoH to the resolver you picked.</p>
       </div>
-      <div class="p-7 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="text-ember-400 font-mono text-sm font-bold mb-3">02 / pf</div>
+      <div class="p-7 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="text-beam-400 font-mono text-sm font-bold mb-3">02 / pf</div>
         <h3 class="font-display font-semibold text-xl text-white">pfctl anchor</h3>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">A <code class="text-ember-300 font-mono">puresnitch</code> anchor in <code class="text-ember-300 font-mono">/etc/pf.conf</code> carries IP, CIDR and port rules. Kernel-level enforcement, independent of which process started the connection.</p>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">A <code class="text-beam-300 font-mono">puresnitch</code> anchor in <code class="text-beam-300 font-mono">/etc/pf.conf</code> carries IP, CIDR and port rules. Kernel-level enforcement, independent of which process started the connection.</p>
       </div>
-      <div class="p-7 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <div class="text-ember-400 font-mono text-sm font-bold mb-3">03 / proc</div>
+      <div class="p-7 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <div class="text-beam-400 font-mono text-sm font-bold mb-3">03 / proc</div>
         <h3 class="font-display font-semibold text-xl text-white">Process observability</h3>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed"><code class="text-ember-300 font-mono">nettop</code> streams per-process bandwidth, <code class="text-ember-300 font-mono">lsof</code> snapshots active connections every 2s. Both feed the GUI's process list, map and graphs.</p>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed"><code class="text-beam-300 font-mono">nettop</code> streams per-process bandwidth, <code class="text-beam-300 font-mono">lsof</code> snapshots active connections every 2s. Both feed the GUI's process list, map and graphs.</p>
       </div>
     </div>
 
-    <div class="mt-10 rounded-2xl border border-coal-800 bg-coal-950 overflow-x-auto">
-      <pre class="p-6 font-mono text-xs md:text-sm text-coal-200 leading-relaxed"><code>┌─────────────────────────────────────────────────────────┐
+    <div class="mt-10 rounded-2xl border border-ink-800 bg-ink-950 overflow-x-auto">
+      <pre class="p-6 font-mono text-xs md:text-sm text-ink-200 leading-relaxed"><code>┌─────────────────────────────────────────────────────────┐
 │                     FreeSnitch.app                      │
 │  ┌───────────────────────────────────────────────────┐  │
 │  │  SwiftUI GUI                                      │  │
@@ -291,89 +295,89 @@
 </section>
 
 <!-- COMPARE -->
-<section id="compare" class="py-24 border-t border-coal-800/50">
+<section id="compare" class="py-24 border-t border-ink-800/50">
   <div class="max-w-6xl mx-auto px-6">
     <div class="text-center mb-12">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">Comparison</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">Comparison</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">FreeSnitch vs the alternatives</h2>
     </div>
-    <div class="overflow-x-auto rounded-2xl border border-coal-800">
+    <div class="overflow-x-auto rounded-2xl border border-ink-800">
       <table class="w-full text-sm">
         <thead>
-          <tr class="bg-coal-900/60 border-b border-coal-800 text-left">
+          <tr class="bg-ink-900/60 border-b border-ink-800 text-left">
             <th class="p-4 font-display font-semibold text-white"></th>
-            <th class="p-4 font-display font-semibold text-ember-300">FreeSnitch</th>
-            <th class="p-4 font-display font-semibold text-coal-200">Little Snitch</th>
-            <th class="p-4 font-display font-semibold text-coal-200">LuLu</th>
-            <th class="p-4 font-display font-semibold text-coal-200">macOS Firewall</th>
+            <th class="p-4 font-display font-semibold text-beam-300">FreeSnitch</th>
+            <th class="p-4 font-display font-semibold text-ink-200">Little Snitch</th>
+            <th class="p-4 font-display font-semibold text-ink-200">LuLu</th>
+            <th class="p-4 font-display font-semibold text-ink-200">macOS Firewall</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-coal-800/70">
-          <tr><td class="p-4 text-coal-200 font-medium">Price</td><td class="p-4 text-ember-300 font-medium">Free</td><td class="p-4 text-coal-300">$59 / Mac</td><td class="p-4 text-coal-300">Free</td><td class="p-4 text-coal-300">Bundled</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">License</td><td class="p-4 text-ember-300 font-medium">MIT, open source</td><td class="p-4 text-coal-300">Commercial</td><td class="p-4 text-coal-300">GPL, open source</td><td class="p-4 text-coal-300">Apple, closed</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">World map / traffic graph</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td><td class="p-4 text-coal-500">No</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Rules manager (LS-style)</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">basic</td><td class="p-4 text-coal-500">No</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">DNS proxy + DoH</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td><td class="p-4 text-coal-500">No</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Blocklists out of the box</td><td class="p-4 text-ember-300">1Hosts, OISD, StevenBlack, HaGeZi</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td><td class="p-4 text-coal-500">No</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">pf-based IP/CIDR blocking</td><td class="p-4 text-ember-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">n/a</td><td class="p-4 text-coal-300">basic</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Per-process kernel filtering</td><td class="p-4 text-coal-300">gated (NE entitlement)</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-300">✓</td><td class="p-4 text-coal-500">No</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Telemetry</td><td class="p-4 text-ember-300">none</td><td class="p-4 text-coal-300">none</td><td class="p-4 text-coal-300">none</td><td class="p-4 text-coal-300">n/a</td></tr>
-          <tr><td class="p-4 text-coal-200 font-medium">Auditable source</td><td class="p-4 text-ember-300">yes</td><td class="p-4 text-coal-300">no</td><td class="p-4 text-coal-300">yes</td><td class="p-4 text-coal-300">no</td></tr>
+        <tbody class="divide-y divide-ink-800/70">
+          <tr><td class="p-4 text-ink-200 font-medium">Price</td><td class="p-4 text-beam-300 font-medium">Free</td><td class="p-4 text-ink-300">$59 / Mac</td><td class="p-4 text-ink-300">Free</td><td class="p-4 text-ink-300">Bundled</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">License</td><td class="p-4 text-beam-300 font-medium">MIT, open source</td><td class="p-4 text-ink-300">Commercial</td><td class="p-4 text-ink-300">GPL, open source</td><td class="p-4 text-ink-300">Apple, closed</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">World map / traffic graph</td><td class="p-4 text-beam-300">✓</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-500">No</td><td class="p-4 text-ink-500">No</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">Rules manager (LS-style)</td><td class="p-4 text-beam-300">✓</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-300">basic</td><td class="p-4 text-ink-500">No</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">DNS proxy + DoH</td><td class="p-4 text-beam-300">✓</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-500">No</td><td class="p-4 text-ink-500">No</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">Blocklists out of the box</td><td class="p-4 text-beam-300">1Hosts, OISD, StevenBlack, HaGeZi</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-500">No</td><td class="p-4 text-ink-500">No</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">pf-based IP/CIDR blocking</td><td class="p-4 text-beam-300">✓</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-300">n/a</td><td class="p-4 text-ink-300">basic</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">Per-process kernel filtering</td><td class="p-4 text-ink-300">gated (NE entitlement)</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-300">✓</td><td class="p-4 text-ink-500">No</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">Telemetry</td><td class="p-4 text-beam-300">none</td><td class="p-4 text-ink-300">none</td><td class="p-4 text-ink-300">none</td><td class="p-4 text-ink-300">n/a</td></tr>
+          <tr><td class="p-4 text-ink-200 font-medium">Auditable source</td><td class="p-4 text-beam-300">yes</td><td class="p-4 text-ink-300">no</td><td class="p-4 text-ink-300">yes</td><td class="p-4 text-ink-300">no</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="text-coal-400 text-sm mt-6 text-center max-w-3xl mx-auto">If per-process kernel filtering is a hard requirement today, use <a href="https://github.com/objective-see/LuLu" class="text-ember-400 hover:underline">LuLu</a>: it's free, open source and has the Network Extension entitlement. If you want the Little Snitch UI without paying $59, FreeSnitch is for you.</p>
+    <p class="text-ink-400 text-sm mt-6 text-center max-w-3xl mx-auto">If per-process kernel filtering is a hard requirement today, use <a href="https://github.com/objective-see/LuLu" class="text-beam-400 hover:underline">LuLu</a>: it's free, open source and has the Network Extension entitlement. If you want the Little Snitch UI without paying $59, FreeSnitch is for you.</p>
   </div>
 </section>
 
 <!-- SCREENSHOTS -->
-<section id="screenshots" class="py-24 border-t border-coal-800/50">
+<section id="screenshots" class="py-24 border-t border-ink-800/50">
   <div class="max-w-6xl mx-auto px-6">
     <div class="text-center mb-14">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">Screenshots</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">Screenshots</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">A real Mac app.</h2>
     </div>
     <div class="grid md:grid-cols-2 gap-6">
-      <div class="rounded-2xl overflow-hidden border border-coal-800 bg-coal-900/40">
-        <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/docs/screenshot-monitor.png" alt="Network Monitor" class="w-full">
-        <div class="p-5"><h3 class="font-display font-semibold text-white">Network Monitor</h3><p class="text-coal-400 text-sm mt-1">Per-process bandwidth, world map, summary pane.</p></div>
+      <div class="rounded-2xl overflow-hidden border border-ink-800 bg-ink-900/40">
+        <img src="screenshot-monitor.png" alt="Network Monitor" class="w-full">
+        <div class="p-5"><h3 class="font-display font-semibold text-white">Network Monitor</h3><p class="text-ink-400 text-sm mt-1">Per-process bandwidth, world map, summary pane.</p></div>
       </div>
-      <div class="rounded-2xl overflow-hidden border border-coal-800 bg-coal-900/40">
-        <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/docs/screenshot-rules.png" alt="Rules Manager" class="w-full">
-        <div class="p-5"><h3 class="font-display font-semibold text-white">Rules Manager</h3><p class="text-coal-400 text-sm mt-1">All Rules / Active / Deny / Temporary / Unapproved, Rule Groups, Blocklists.</p></div>
+      <div class="rounded-2xl overflow-hidden border border-ink-800 bg-ink-900/40">
+        <img src="screenshot-rules.png" alt="Rules Manager" class="w-full">
+        <div class="p-5"><h3 class="font-display font-semibold text-white">Rules Manager</h3><p class="text-ink-400 text-sm mt-1">All Rules / Active / Deny / Temporary / Unapproved, Rule Groups, Blocklists.</p></div>
       </div>
     </div>
   </div>
 </section>
 
 <!-- INSTALL -->
-<section id="install" class="py-24 border-t border-coal-800/50">
+<section id="install" class="py-24 border-t border-ink-800/50">
   <div class="max-w-4xl mx-auto px-6">
     <div class="text-center mb-12">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">Install</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">Install</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">Two minutes.</h2>
     </div>
     <div class="grid md:grid-cols-2 gap-5">
-      <div class="p-6 rounded-2xl border border-coal-800 bg-coal-900/50">
+      <div class="p-6 rounded-2xl border border-ink-800 bg-ink-900/50">
         <h3 class="font-display font-semibold text-white text-lg mb-3">Homebrew</h3>
-        <p class="text-coal-300 text-sm">Homebrew is unavailable until a cask is published.</p>
+        <p class="text-ink-300 text-sm">Homebrew is unavailable until a cask is published.</p>
       </div>
-      <div class="p-6 rounded-2xl border border-coal-800 bg-coal-900/50">
+      <div class="p-6 rounded-2xl border border-ink-800 bg-ink-900/50">
         <h3 class="font-display font-semibold text-white text-lg mb-3">Direct download</h3>
-        <p class="text-coal-300 text-sm mb-4">No release is published yet. Build from source for now, or watch the repository for a signed DMG.</p>
-        <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium transition">
+        <p class="text-ink-300 text-sm mb-4">No release is published yet. Build from source for now, or watch the repository for a signed DMG.</p>
+        <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-beam-500 hover:bg-beam-400 text-white font-medium transition">
           View repository
         </a>
       </div>
     </div>
-    <div class="mt-6 p-5 rounded-2xl border border-coal-800/60 bg-coal-900/30 text-sm text-coal-300">
-      <span class="text-coal-100 font-semibold">First launch:</span> macOS will surface the privileged helper in
-      <span class="text-ember-300">System Settings → General → Login Items & Extensions</span>.
+    <div class="mt-6 p-5 rounded-2xl border border-ink-800/60 bg-ink-900/30 text-sm text-ink-300">
+      <span class="text-ink-100 font-semibold">First launch:</span> macOS will surface the privileged helper in
+      <span class="text-beam-300">System Settings → General → Login Items & Extensions</span>.
       Toggle "FreeSnitchHelper" on. FreeSnitch never asks for your password during normal operation.
     </div>
-    <div class="mt-6 p-5 rounded-2xl border border-coal-800/60 bg-coal-900/30">
+    <div class="mt-6 p-5 rounded-2xl border border-ink-800/60 bg-ink-900/30">
       <h4 class="font-display font-semibold text-white mb-2">Build from source</h4>
-      <pre class="rounded-xl bg-coal-950 p-4 font-mono text-xs md:text-sm text-coal-100 overflow-x-auto"><code>brew install xcodegen
+      <pre class="rounded-xl bg-ink-950 p-4 font-mono text-xs md:text-sm text-ink-100 overflow-x-auto"><code>brew install xcodegen
 git clone https://github.com/isaaclins/freesnitch.git
 cd freesnitch
 xcodegen generate
@@ -385,64 +389,64 @@ open build/Build/Products/Release/FreeSnitch.app</code></pre>
 </section>
 
 <!-- FAQ -->
-<section id="faq" class="py-24 border-t border-coal-800/50">
+<section id="faq" class="py-24 border-t border-ink-800/50">
   <div class="max-w-4xl mx-auto px-6">
     <div class="text-center mb-12">
-      <p class="text-ember-400 text-sm font-medium tracking-wider uppercase mb-3">FAQ</p>
+      <p class="text-beam-400 text-sm font-medium tracking-wider uppercase mb-3">FAQ</p>
       <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight">Honest answers.</h2>
     </div>
     <div class="space-y-3">
-      <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Is this a Little Snitch clone?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">An independent open-source alternative with a deliberately similar UI. The blocking engine, DNS proxy and matcher are all written from scratch. No Little Snitch source, assets or proprietary plist formats are used. "Little Snitch" is a trademark of Objective Development Software GmbH; this project is not affiliated.</p>
+      <details class="group p-5 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Is this a Little Snitch clone?<span class="text-beam-400 group-open:rotate-45 transition">+</span></summary>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">An independent open-source alternative with a deliberately similar UI. The blocking engine, DNS proxy and matcher are all written from scratch. No Little Snitch source, assets or proprietary plist formats are used. "Little Snitch" is a trademark of Objective Development Software GmbH; this project is not affiliated.</p>
       </details>
-      <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Does FreeSnitch send my traffic anywhere?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">No. Your DNS queries leave only as far as the DoH upstream you pick (Cloudflare by default, override in Settings). No telemetry, no analytics, no phone-home. IP→country lookups for the world map go to ip-api.com (free tier) and can be disabled.</p>
+      <details class="group p-5 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Does FreeSnitch send my traffic anywhere?<span class="text-beam-400 group-open:rotate-45 transition">+</span></summary>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">No. Your DNS queries leave only as far as the DoH upstream you pick (Cloudflare by default, override in Settings). No telemetry, no analytics, no phone-home. IP→country lookups for the world map go to ip-api.com (free tier) and can be disabled.</p>
       </details>
-      <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Why isn't per-process blocking at parity with Little Snitch?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">Per-process blocking requires Apple's <code class="font-mono text-ember-300">com.apple.developer.networking.networkextension</code> entitlement, which is application-gated. The hook points exist in <code class="font-mono text-ember-300">Sources/NetExt/</code>; the entitlement must be granted by Apple. Until then, blocking is DNS-level + packet-level (pfctl), which catches anything that resolves a hostname: essentially everything except hardcoded-IP malware.</p>
+      <details class="group p-5 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Why isn't per-process blocking at parity with Little Snitch?<span class="text-beam-400 group-open:rotate-45 transition">+</span></summary>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">Per-process blocking requires Apple's <code class="font-mono text-beam-300">com.apple.developer.networking.networkextension</code> entitlement, which is application-gated. The hook points exist in <code class="font-mono text-beam-300">Sources/NetExt/</code>; the entitlement must be granted by Apple. Until then, blocking is DNS-level + packet-level (pfctl), which catches anything that resolves a hostname: essentially everything except hardcoded-IP malware.</p>
       </details>
-      <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Will this run on Intel Macs?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">The project currently targets arm64. To build for Intel, set <code class="font-mono text-ember-300">ARCHS = arm64 x86_64</code> in <code class="font-mono text-ember-300">project.yml</code> and rebuild.</p>
+      <details class="group p-5 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Will this run on Intel Macs?<span class="text-beam-400 group-open:rotate-45 transition">+</span></summary>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">The project currently targets arm64. To build for Intel, set <code class="font-mono text-beam-300">ARCHS = arm64 x86_64</code> in <code class="font-mono text-beam-300">project.yml</code> and rebuild.</p>
       </details>
-      <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Does it work alongside Pi-hole / AdGuard Home / NextDNS?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">Yes. Point FreeSnitch's DoH upstream at your own DoH endpoint and FreeSnitch becomes a per-device enforcement layer on top of your network-wide blocker.</p>
+      <details class="group p-5 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Does it work alongside Pi-hole / AdGuard Home / NextDNS?<span class="text-beam-400 group-open:rotate-45 transition">+</span></summary>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">Yes. Point FreeSnitch's DoH upstream at your own DoH endpoint and FreeSnitch becomes a per-device enforcement layer on top of your network-wide blocker.</p>
       </details>
-      <details class="group p-5 rounded-2xl border border-coal-800 bg-coal-900/40">
-        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Tailscale, WireGuard, ProtonVPN?<span class="text-ember-400 group-open:rotate-45 transition">+</span></summary>
-        <p class="text-coal-300 text-sm mt-3 leading-relaxed">pfctl rules apply at the kernel level so they work alongside VPN tunnels on <code class="font-mono text-ember-300">utun*</code> interfaces. The DNS proxy is a loopback bind, so it stays out of the way of VPN-pushed DNS unless you opt in via the "use FreeSnitch as system DNS" toggle.</p>
+      <details class="group p-5 rounded-2xl border border-ink-800 bg-ink-900/40">
+        <summary class="cursor-pointer font-display font-semibold text-white flex items-center justify-between">Tailscale, WireGuard, ProtonVPN?<span class="text-beam-400 group-open:rotate-45 transition">+</span></summary>
+        <p class="text-ink-300 text-sm mt-3 leading-relaxed">pfctl rules apply at the kernel level so they work alongside VPN tunnels on <code class="font-mono text-beam-300">utun*</code> interfaces. The DNS proxy is a loopback bind, so it stays out of the way of VPN-pushed DNS unless you opt in via the "use FreeSnitch as system DNS" toggle.</p>
       </details>
     </div>
   </div>
 </section>
 
 <!-- FOOTER CTA -->
-<section class="py-24 border-t border-coal-800/50">
+<section class="py-24 border-t border-ink-800/50">
   <div class="max-w-3xl mx-auto px-6 text-center">
-    <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256%402x.png" class="w-20 h-20 rounded-2xl mx-auto mb-6 animate-float" alt="">
+    <img src="icon-512.png" class="w-20 h-20 rounded-2xl mx-auto mb-6 animate-float" alt="">
     <h2 class="font-display font-bold text-4xl md:text-5xl tracking-tight text-white">Take your Mac's outbound traffic back.</h2>
-    <p class="text-coal-300 mt-4 text-lg">FreeSnitch is free. Read the source. Fork it. Audit it.</p>
+    <p class="text-ink-300 mt-4 text-lg">FreeSnitch is free. Read the source. Fork it. Audit it.</p>
     <div class="flex flex-wrap justify-center gap-3 mt-8">
-      <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-ember-500 hover:bg-ember-400 text-white font-medium glow-orange transition">
+      <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-beam-500 hover:bg-beam-400 text-white font-medium glow-beam transition">
         View source on GitHub
       </a>
-      <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-coal-800 hover:bg-coal-700 border border-coal-700 text-white font-medium transition">
+      <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center gap-2 px-7 py-3 rounded-full bg-ink-800 hover:bg-ink-700 border border-ink-700 text-white font-medium transition">
         View source on GitHub
       </a>
     </div>
   </div>
 </section>
 
-<footer class="py-12 border-t border-coal-800/50 text-sm text-coal-400">
+<footer class="py-12 border-t border-ink-800/50 text-sm text-ink-400">
   <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
     <div class="flex items-center gap-3">
-      <img src="https://raw.githubusercontent.com/isaaclins/freesnitch/main/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128%402x.png" class="w-8 h-8 rounded-lg" alt="">
+      <img src="icon-512.png" class="w-8 h-8 rounded-lg" alt="">
       <div>
-        <p class="text-coal-200 font-medium">FreeSnitch</p>
+        <p class="text-ink-200 font-medium">FreeSnitch</p>
         <p class="text-xs">MIT licensed. © 2026 FreeSnitch contributors.</p>
       </div>
     </div>
@@ -462,7 +466,15 @@ open build/Build/Products/Release/FreeSnitch.app</code></pre>
       <a href="README.zh-Hant.md" class="hover:text-white">繁</a>
     </div>
   </div>
-  <p class="text-center text-xs text-coal-600 mt-6 px-6 max-w-4xl mx-auto">"Little Snitch" is a registered trademark of Objective Development Software GmbH. FreeSnitch is an independent open-source project, not affiliated with or endorsed by Objective Development.</p>
+  <div class="mt-8 mx-auto max-w-4xl px-6">
+    <div class="rounded-2xl border border-beam-500/20 bg-ink-900/60 p-5 text-left">
+      <p class="font-medium text-ink-200">Project origin</p>
+      <p class="mt-2 text-sm leading-relaxed text-ink-300">
+        FreeSnitch is an independently maintained fork of <a href="https://github.com/momenbasel/puresnitch" class="text-beam-300 hover:text-beam-200 hover:underline">PureSnitch</a>, the original project created by <a href="https://github.com/momenbasel" class="text-beam-300 hover:text-beam-200 hover:underline">Moamen Basel</a>. PureSnitch is MIT licensed, and FreeSnitch continues under the same license. Moamen Basel does not maintain, endorse, or affiliate with this fork.
+      </p>
+    </div>
+  </div>
+  <p class="text-center text-xs text-ink-600 mt-6 px-6 max-w-4xl mx-auto">"Little Snitch" is a registered trademark of Objective Development Software GmbH. FreeSnitch is an independent open-source project, not affiliated with or endorsed by Objective Development.</p>
 </footer>
 
 </body>
