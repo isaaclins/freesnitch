@@ -11,6 +11,17 @@ module.exports = {
         mono: ['"SF Mono"', '"JetBrains Mono"', 'ui-monospace', 'monospace']
       },
       colors: {
+        page: 'var(--page)',
+        surface: {
+          DEFAULT: 'var(--surface)',
+          raised: 'var(--surface-raised)'
+        },
+        primary: 'var(--primary)',
+        secondary: 'var(--secondary)',
+        muted: 'var(--muted)',
+        subtle: 'var(--subtle)',
+        line: 'var(--line)',
+        accent: 'var(--accent)',
         ink: {
           50: '#f6f7f9',
           100: '#e9ebf0',
@@ -37,21 +48,7 @@ module.exports = {
           900: '#1d3372'
         }
       },
-      animation: {
-        'pulse-slow': 'pulse 4s cubic-bezier(0.4,0,0.6,1) infinite',
-        'float': 'float 6s ease-in-out infinite',
-        'shimmer': 'shimmer 3s linear infinite'
-      },
-      keyframes: {
-        float: {
-          '0%,100%': { transform: 'translateY(0)' },
-          '50%': { transform: 'translateY(-10px)' }
-        },
-        shimmer: {
-          '0%': { backgroundPosition: '-200% 0' },
-          '100%': { backgroundPosition: '200% 0' }
-        }
-      }
+      animation: {}
     }
   }
 };

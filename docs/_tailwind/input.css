@@ -2,49 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: dark;
+  --page: #0e1219;
+  --surface: #121925;
+  --surface-raised: #161e2c;
+  --primary: #f6f7f9;
+  --secondary: #cfd4de;
+  --muted: #a6aebe;
+  --subtle: #78829a;
+  --line: #2f3644;
+  --accent: #8fb0ff;
+}
+
+* {
+  border-color: var(--line);
+}
+
 html {
   scroll-behavior: smooth;
+  background: var(--page);
 }
 
 body {
-  background:
-    radial-gradient(1100px 600px at 50% -10%, rgba(59, 111, 245, 0.18), transparent 70%),
-    radial-gradient(800px 500px at 100% 30%, rgba(34, 68, 173, 0.12), transparent 70%),
-    #0e1219;
+  background: var(--page);
 }
 
-.glow-beam {
-  box-shadow: 0 0 80px -10px rgba(59, 111, 245, 0.35), 0 0 20px -5px rgba(59, 111, 245, 0.25);
+.hero-title {
+  font-size: clamp(2.75rem, 6vw, 5.75rem);
 }
 
-.gradient-text {
-  background: linear-gradient(135deg, #8fb0ff 0%, #3b6ff5 60%, #2244ad 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+::selection {
+  background: rgba(59, 111, 245, 0.45);
+  color: #ffffff;
 }
 
-.shimmer-line {
-  background: linear-gradient(90deg, transparent, rgba(59, 111, 245, 0.4), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 3s linear infinite;
-}
-
-.feature-card {
-  transition: transform 0.25s ease, border-color 0.25s ease, background 0.25s ease;
-}
-
-.feature-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(59, 111, 245, 0.4);
-  background: rgba(59, 111, 245, 0.04);
-}
-
-.grid-bg {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-  background-size: 48px 48px;
+:focus-visible {
+  outline: 3px solid #8fb0ff;
+  outline-offset: 4px;
 }
 
 code,
@@ -52,17 +47,23 @@ pre {
   font-feature-settings: "calt" 0;
 }
 
-::selection {
-  background: rgba(59, 111, 245, 0.4);
-  color: white;
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --page: #f6f7f9;
+    --surface: #e9ebf0;
+    --surface-raised: #ffffff;
+    --primary: #161b24;
+    --secondary: #2f3644;
+    --muted: #414a5c;
+    --subtle: #566073;
+    --line: #cfd4de;
+    --accent: #2244ad;
+  }
 }
 
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-
-  100% {
-    background-position: 200% 0;
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }
