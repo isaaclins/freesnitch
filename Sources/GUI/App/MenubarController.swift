@@ -111,7 +111,7 @@ final class MenubarController {
         guard let button = statusItem.button else { return }
 
         let healthy = state.helperConnected
-        let symbol = healthy ? "shield.lefthalf.filled" : "shield.slash"
+        let symbol = healthy ? "record.circle" : "circle.slash"
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "FreeSnitch")?
             .withSymbolConfiguration(config)

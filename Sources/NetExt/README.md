@@ -1,7 +1,7 @@
 # NetExt — Network System Extension (per-process firewall)
 
 This is the `NEFilterDataProvider` content filter that gives FreeSnitch true
-**per-process** connection filtering — the same mechanism Little Snitch uses.
+**per-process** connection filtering, the same mechanism Little Snitch uses.
 It is now a real build target (`FreeSnitchNetExt`, `type: system-extension`)
 embedded in the app at `Contents/Library/SystemExtensions/`.
 
