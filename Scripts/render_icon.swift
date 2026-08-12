@@ -2,9 +2,14 @@ import AppKit
 import Foundation
 
 // FreeSnitch icon, drawn entirely from first principles.
-// The concentric-arc bloom was explored using SF Symbols as a sketching tool,
-// but Apple's SF Symbols license forbids shipping their glyphs inside an app
-// icon or logo, so every shape here is our own geometry.
+// Three concentric rings, each broken into three arcs, around a solid core.
+// The core is this Mac; the rings are its outbound connections; the gaps are
+// where a connection can be let through or refused. Every ring is offset from
+// the one inside it, so the openings never line up into a single channel.
+//
+// The composition was sketched with SF Symbols, but Apple's SF Symbols licence
+// forbids shipping their glyphs inside an app icon or logo, so every shape here
+// is our own geometry.
 
 func squirclePath(in rect: NSRect) -> NSBezierPath {
     let n = 5.0
@@ -57,38 +62,34 @@ func makeIcon(size: CGFloat) -> NSImage {
 
     NSGradient(colors: [
         NSColor(calibratedRed: 1.00, green: 1.00, blue: 1.00, alpha: 1),
-        NSColor(calibratedRed: 0.93, green: 0.94, blue: 0.97, alpha: 1)
+        NSColor(calibratedRed: 0.878, green: 0.898, blue: 0.937, alpha: 1)
     ])!.draw(in: plate, angle: -90)
 
     let center = NSPoint(x: plate.midX, y: plate.midY)
     let unit = plate.width
 
-    // Six directions, each a three-ring burst, overlapping into new hues.
-    let colors: [NSColor] = [
-        NSColor(calibratedRed: 0.25, green: 0.47, blue: 1.00, alpha: 1),
-        NSColor(calibratedRed: 0.35, green: 0.78, blue: 0.98, alpha: 1),
-        NSColor(calibratedRed: 0.20, green: 0.80, blue: 0.64, alpha: 1),
-        NSColor(calibratedRed: 0.98, green: 0.75, blue: 0.18, alpha: 1),
-        NSColor(calibratedRed: 0.98, green: 0.42, blue: 0.28, alpha: 1),
-        NSColor(calibratedRed: 0.72, green: 0.35, blue: 0.95, alpha: 1)
-    ]
-    let radii: [CGFloat] = [unit * 0.148, unit * 0.236, unit * 0.324]
-    let stroke = unit * 0.055
-    let sweep: CGFloat = 62
+    // Soft highlight along the top edge, the way Apple's plates catch light.
+    NSGradient(colors: [NSColor.white.withAlphaComponent(0.16), NSColor.white.withAlphaComponent(0.0)])!
+        .draw(in: NSRect(x: plate.minX, y: plate.midY, width: plate.width, height: plate.height / 2), angle: -90)
 
-    NSGraphicsContext.current?.compositingOperation = .multiply
-    for (index, color) in colors.enumerated() {
-        let heading = CGFloat(index) * 60
-        color.withAlphaComponent(0.88).setStroke()
-        for radius in radii {
-            arc(center: center, radius: radius, heading: heading, sweep: sweep, width: stroke).stroke()
+    let accent = NSColor(calibratedRed: 0.231, green: 0.435, blue: 0.961, alpha: 1)
+    let radii: [CGFloat] = [unit * 0.15, unit * 0.245, unit * 0.34]
+    let stroke = unit * 0.058
+    let sweep: CGFloat = 84
+
+    for (index, radius) in radii.enumerated() {
+        // Each ring fades slightly as it travels outward.
+        accent.withAlphaComponent(1.0 - Double(index) * 0.22).setStroke()
+        let offset = CGFloat(index) * 40
+        for slot in 0..<3 {
+            arc(center: center, radius: radius, heading: CGFloat(slot) * 120 + offset,
+                sweep: sweep, width: stroke).stroke()
         }
     }
-    NSGraphicsContext.current?.compositingOperation = .sourceOver
 
     // The Mac at the centre of its own traffic.
-    let core = unit * 0.078
-    NSColor(calibratedRed: 0.11, green: 0.13, blue: 0.19, alpha: 1).setFill()
+    let core = unit * 0.075
+    NSColor(calibratedRed: 0.055, green: 0.071, blue: 0.098, alpha: 1).setFill()
     NSBezierPath(ovalIn: NSRect(x: center.x - core, y: center.y - core,
                                 width: core * 2, height: core * 2)).fill()
 
