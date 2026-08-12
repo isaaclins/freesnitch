@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement to PureSnitch
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of PureSnitch would this affect?
+      options:
+        - network monitor/map
+        - rules
+        - alerts/filtering
+        - DNS/DoH
+        - blocklists
+        - helper/install
+        - system extension
+        - settings
+        - release/update
+        - general
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What problem or use case would this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or experience you would like.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

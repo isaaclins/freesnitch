@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible problem with PureSnitch
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of PureSnitch is affected?
+      options:
+        - network monitor/map
+        - rules
+        - alerts/filtering
+        - DNS/DoH
+        - blocklists
+        - helper/install
+        - system extension
+        - settings
+        - release/update
+        - general
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.6
+    validations:
+      required: true
+  - type: input
+    id: puresnitch-version
+    attributes:
+      label: PureSnitch version/build
+      placeholder: 0.2.0 (8)
+    validations:
+      required: true
+  - type: dropdown
+    id: current-mode
+    attributes:
+      label: Current mode
+      options:
+        - Alert
+        - Silent Allow
+        - Silent Deny
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant logs and remove sensitive information first.
+      render: text
+    validations:
+      required: false
