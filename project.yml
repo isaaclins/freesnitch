@@ -54,6 +54,9 @@ targets:
         NSHumanReadableCopyright: "© 2026 Moamen Basel. MIT License."
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # Only used to place the "your Mac" node on the connection map. The
+        # map degrades to endpoints without lines when this is refused.
+        NSLocationWhenInUseUsageDescription: "PureSnitch shows your Mac on the connection map so you can see where your traffic goes."
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.utilities
     entitlements:
