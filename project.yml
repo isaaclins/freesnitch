@@ -34,6 +34,11 @@ fileGroups:
   - Resources
   - Scripts
 
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.7.1
+
 targets:
   PureSnitch:
     type: application
@@ -59,6 +64,11 @@ targets:
         NSLocationWhenInUseUsageDescription: "PureSnitch shows your Mac on the connection map so you can see where your traffic goes."
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.utilities
+        SUFeedURL: "https://isaaclins.com/puresnitch/appcast.xml"
+        SUPublicEDKey: "4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8="
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUAllowsAutomaticUpdates: false
     entitlements:
       path: Sources/GUI/PureSnitch.entitlements
       properties:
@@ -118,6 +128,7 @@ targets:
             echo "warning: helper binary not found, skipping embed"
           fi
     dependencies:
+      - package: Sparkle
       - target: PureSnitchHelper
         embed: false
         link: false
