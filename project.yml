@@ -48,7 +48,7 @@ targets:
         CFBundleName: PureSnitch
         CFBundleDisplayName: PureSnitch
         CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "3"
+        CFBundleVersion: "4"
         LSMinimumSystemVersion: "13.0"
         LSUIElement: true
         NSHumanReadableCopyright: "© 2026 Moamen Basel. MIT License."
@@ -139,7 +139,7 @@ targets:
         CFBundleName: PureSnitchNetExt
         CFBundleDisplayName: PureSnitch Network Extension
         CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "3"
+        CFBundleVersion: "4"
         CFBundlePackageType: SYSX
         LSMinimumSystemVersion: "13.0"
         NSSystemExtensionUsageDescription: "PureSnitch filters per-app network connections."

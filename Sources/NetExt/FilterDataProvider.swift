@@ -16,6 +16,7 @@
 import NetworkExtension
 import Foundation
 import Darwin
+import Security
 
 final class FilterDataProvider: NEFilterDataProvider {
     private let matcher = RuleMatcher()
@@ -86,20 +87,31 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Self exemption
 
-    /// The app bundle that contains this extension:
-    /// <app>.app/Contents/Library/SystemExtensions/<id>.systemextension
-    private static let ownBundleRoot: String = {
-        var url = Bundle.main.bundleURL
-        for _ in 0..<4 { url.deleteLastPathComponent() }
-        return url.path
-    }()
-
+    /// Identity, not file path. macOS stages this extension under
+    /// /Library/SystemExtensions/<uuid>/, nowhere near the app bundle, so
+    /// deriving "our directory" from Bundle.main is wrong: walking up from the
+    /// staged copy lands on "/" and would exempt every process on the machine.
     private func isOwnTraffic(_ conn: Connection) -> Bool {
-        if !conn.processPath.isEmpty, conn.processPath.hasPrefix(Self.ownBundleRoot) { return true }
-        // nettop and lsof live in /usr, so the path alone cannot identify them.
-        // They are ours only when our helper is the one that spawned them.
-        guard conn.pid > 0, let parent = parentPID(of: conn.pid), parent > 0 else { return false }
-        return pathForPID(Int(parent)).hasPrefix(Self.ownBundleRoot)
+        guard conn.pid > 0 else { return false }
+        if isOwnCode(pid: conn.pid) { return true }
+        // nettop and lsof are Apple-signed binaries in /usr, so they can only be
+        // recognised as ours through the helper that spawned them.
+        guard let parent = parentPID(of: conn.pid), parent > 0 else { return false }
+        return isOwnCode(pid: parent)
+    }
+
+    private func isOwnCode(pid: Int32) -> Bool {
+        var code: SecCode?
+        let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
+        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
+              let code else { return false }
+        let requirementText = [AppConstants.bundleIdGUI, AppConstants.bundleIdHelper, AppConstants.bundleIdNetExt]
+            .map { "identifier \"\($0)\"" }
+            .joined(separator: " or ")
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,
+              let requirement else { return false }
+        return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
     }
 
     private func isLoopback(_ ip: String) -> Bool {
