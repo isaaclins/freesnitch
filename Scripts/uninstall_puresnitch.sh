@@ -8,6 +8,12 @@ readonly OLD_NETEXT_BUNDLE_ID="io.isaaclins.puresnitch.netext"
 readonly OLD_HELPER_LABEL="io.isaaclins.puresnitch.helper"
 readonly OLD_APP="/Applications/PureSnitch.app"
 readonly OLD_DAEMON_PLIST="/Library/LaunchDaemons/${OLD_HELPER_LABEL}.plist"
+
+if [[ -z "${HOME:-}" || "${HOME:-}" != /* ]]; then
+  printf 'ERROR: HOME must be a non-empty absolute path.\n' >&2
+  exit 1
+fi
+
 readonly OLD_USER_SUPPORT="${HOME}/Library/Application Support/PureSnitch"
 readonly OLD_APP_GROUP="BHAF4L4726.io.isaaclins.puresnitch"
 readonly OLD_APP_GROUP_PATH="${HOME}/Library/Group Containers/${OLD_APP_GROUP}"
@@ -49,14 +55,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if (( EUID == 0 )); then
-  sudo_cmd=()
+  run_privileged() {
+    "$@"
+  }
 else
-  sudo_cmd=(sudo)
+  run_privileged() {
+    sudo "$@"
+  }
 fi
-
-run_privileged() {
-  "${sudo_cmd[@]}" "$@"
-}
 
 assert_old_path() {
   local path="$1"
@@ -101,20 +107,15 @@ printf 'Removing the pre-FreeSnitch installation only.\n'
 printf 'FreeSnitch paths are never modified by this script.\n'
 
 if command -v systemextensionsctl >/dev/null 2>&1; then
-  printf 'Requesting deactivation of system extension %s.\n' "$OLD_NETEXT_BUNDLE_ID"
-  if run_privileged systemextensionsctl deactivate "$TEAM_ID" "$OLD_NETEXT_BUNDLE_ID"; then
-    printf 'Deactivation requested for %s.\n' "$OLD_NETEXT_BUNDLE_ID"
-  else
-    printf 'The old system extension was not active, or deactivation was unavailable.\n'
-  fi
-
   printf 'Requesting uninstall of system extension %s.\n' "$OLD_NETEXT_BUNDLE_ID"
-  if run_privileged systemextensionsctl uninstall "$TEAM_ID" "$OLD_NETEXT_BUNDLE_ID"; then
-    printf 'Uninstall requested for %s.\n' "$OLD_NETEXT_BUNDLE_ID"
+  if run_privileged systemextensionsctl uninstall "$TEAM_ID" "$OLD_NETEXT_BUNDLE_ID" >/dev/null 2>&1; then
+    printf 'Uninstall request accepted for %s; removal is not complete yet.\n' "$OLD_NETEXT_BUNDLE_ID"
   else
-    printf 'The old system extension was already absent, or uninstall was unavailable.\n'
+    printf 'systemextensionsctl cannot remove a system extension while System Integrity Protection is enabled; this is expected on a normal macOS installation.\n'
+    printf 'After the containing app is deleted, macOS removes the orphaned system extension, typically completing on reboot.\n'
+    printf 'You can also remove it under System Settings > General > Login Items and Extensions > Network Extensions.\n'
   fi
-  printf 'systemextensionsctl may require a reboot to finish deactivation or uninstall; this script does not reboot.\n'
+  printf 'A reboot is required to finish system extension removal; this script does not reboot.\n'
 else
   printf 'systemextensionsctl is unavailable; no system extension was changed.\n'
 fi
