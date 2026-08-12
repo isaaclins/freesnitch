@@ -3,7 +3,7 @@ import Foundation
 final class BlocklistManager: @unchecked Sendable {
     private let store: RuleStore
     private(set) var domains: Set<String> = []
-    private let queue = DispatchQueue(label: "io.moamenbasel.puresnitch.blocklists")
+    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.blocklists")
     var onUpdate: ((Int) -> Void)?
 
     init(store: RuleStore) {

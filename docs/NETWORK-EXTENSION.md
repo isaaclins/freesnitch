@@ -36,10 +36,11 @@ xcodegen generate --spec project-netext.yml
 ```
 
 That spec re-adds the entitlements and embeds `PureSnitchNetExt.systemextension`.
-Before it can be distributed you need, from the Apple Developer portal:
+Before it can be distributed you need, from the Apple Developer portal,
+under Team ID `BHAF4L4726`:
 
-1. The **Network Extensions** capability enabled on App ID `io.moamenbasel.puresnitch`
-   (self-serve) and on `io.moamenbasel.puresnitch.netext`.
+1. The **Network Extensions** capability enabled on App ID `io.isaaclins.puresnitch`
+   (self-serve) and on `io.isaaclins.puresnitch.netext`.
 2. The **System Extension** capability on the app's App ID.
 3. Two Developer ID provisioning profiles - one per App ID - downloaded and
    embedded as `Contents/embedded.provisionprofile` in the respective bundles.

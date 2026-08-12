@@ -48,8 +48,8 @@ public final class IPGeoCache: @unchecked Sendable {
     private static let cacheLifetime: TimeInterval = 30 * 24 * 60 * 60
 
     private let cacheDirectory: URL
-    private let loadQueue = DispatchQueue(label: "io.moamenbasel.puresnitch.geo.load", qos: .utility)
-    private let stateQueue = DispatchQueue(label: "io.moamenbasel.puresnitch.geo.state")
+    private let loadQueue = DispatchQueue(label: "io.isaaclins.puresnitch.geo.load", qos: .utility)
+    private let stateQueue = DispatchQueue(label: "io.isaaclins.puresnitch.geo.state")
     private var rangeStarts: [UInt32] = []
     private var rangeEnds: [UInt32] = []
     private var countryIndexes: [UInt16] = []

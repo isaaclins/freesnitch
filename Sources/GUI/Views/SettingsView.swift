@@ -175,9 +175,9 @@ struct SettingsView: View {
             Text("PureSnitch").font(.title.bold())
             Text("v\(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
             Text("Open-source application firewall for macOS.").font(.caption).foregroundColor(.secondary)
-            Link("github.com/momenbasel/puresnitch", destination: URL(string: "https://github.com/momenbasel/puresnitch")!)
+            Link("github.com/isaaclins/puresnitch", destination: URL(string: "https://github.com/isaaclins/puresnitch")!)
                 .font(.caption)
-            Text("MIT License · © 2026 Moamen Basel")
+            Text("MIT License · © 2026 PureSnitch contributors")
                 .font(.caption2).foregroundColor(.secondary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

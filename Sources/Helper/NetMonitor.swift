@@ -3,7 +3,7 @@ import Foundation
 final class NetMonitor: @unchecked Sendable {
     private var lsofTimer: DispatchSourceTimer?
     private var nettopProc: Process?
-    private let queue = DispatchQueue(label: "io.moamenbasel.puresnitch.netmon", qos: .utility)
+    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.netmon", qos: .utility)
 
     var onConnections: (([Connection]) -> Void)?
     var onSample: ((TrafficSample) -> Void)?

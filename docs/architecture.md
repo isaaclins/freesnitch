@@ -11,7 +11,7 @@ PureSnitch is a 3-process application:
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │                       PureSnitch (GUI)                         │  │
 │  │  user-space, runs as the logged-in user                        │  │
-│  │  Bundle: io.moamenbasel.puresnitch                             │  │
+│  │  Bundle: io.isaaclins.puresnitch                               │  │
 │  │  - SwiftUI views (Menubar, NetworkMonitor, RulesManager, ...)  │  │
 │  │  - HelperClient (NSXPCConnection over a Mach service)          │  │
 │  │  - AppState (Observable, drives all views)                     │  │
@@ -20,7 +20,7 @@ PureSnitch is a 3-process application:
 │  ┌────────────────────────────▼───────────────────────────────────┐  │
 │  │                  PureSnitchHelper (daemon)                     │  │
 │  │  root, registered with launchd via SMAppService.daemon         │  │
-│  │  Bundle: io.moamenbasel.puresnitch.helper                      │  │
+│  │  Bundle: io.isaaclins.puresnitch.helper                        │  │
 │  │  - PFManager     (writes /etc/pf.anchors/puresnitch + pfctl)   │  │
 │  │  - DNSProxy      (NWListener on UDP/TCP 53 + DoH upstream)     │  │
 │  │  - NetMonitor    (parses nettop + lsof streams)                │  │
