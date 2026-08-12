@@ -111,6 +111,12 @@ final class AppState: ObservableObject {
 
     init() {
         helper.state = self
+        IPGeoCache.shared.onReady { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updateConnections(self.connections)
+            }
+        }
     }
 
     /// Runs once the helper is reachable. Monitoring only: enabling pf and the
@@ -144,10 +150,20 @@ final class AppState: ObservableObject {
     }
 
     func updateConnections(_ conns: [Connection]) {
-        connections = conns
-        deniedCount = conns.filter { $0.status == .denied }.count
-        incomingCount = conns.filter { $0.direction == .incoming }.count
-        unconfirmedCount = conns.filter { $0.status == .pending }.count
+        let enriched = conns.map { connection -> Connection in
+            var connection = connection
+            if let geo = IPGeoCache.shared.lookup(connection.remoteIP) {
+                connection.country = geo.country
+                connection.countryCode = geo.countryCode
+                connection.latitude = geo.lat
+                connection.longitude = geo.lon
+            }
+            return connection
+        }
+        connections = enriched
+        deniedCount = enriched.filter { $0.status == .denied }.count
+        incomingCount = enriched.filter { $0.direction == .incoming }.count
+        unconfirmedCount = enriched.filter { $0.status == .pending }.count
         Task { await self.recomputeAggregates() }
     }
 
