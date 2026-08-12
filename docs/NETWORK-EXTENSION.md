@@ -18,7 +18,7 @@ just never opens.
 
 Two concrete consequences we hit while building v0.2.0:
 
-- `xcodebuild` refuses outright: *"PureSnitch requires a provisioning profile
+- `xcodebuild` refuses outright: *"FreeSnitch requires a provisioning profile
   with the Network Extensions and System Extension features."* There is no way
   to produce a signed release with those entitlements and no profile.
 - The 0.1.0 users in issue #5 already had an app that looked dead. Shipping a
@@ -35,12 +35,14 @@ Everything for the extension is still in the tree.
 xcodegen generate --spec project-netext.yml
 ```
 
-That spec re-adds the entitlements and embeds `PureSnitchNetExt.systemextension`.
+That spec re-adds the entitlements and embeds
+`io.isaaclins.freesnitch.netext.systemextension`, whose filename matches the
+system extension bundle identifier as required by sysextd.
 Before it can be distributed you need, from the Apple Developer portal,
 under Team ID `BHAF4L4726`:
 
-1. The **Network Extensions** capability enabled on App ID `io.isaaclins.puresnitch`
-   (self-serve) and on `io.isaaclins.puresnitch.netext`.
+1. The **Network Extensions** capability enabled on App ID `io.isaaclins.freesnitch`
+   (self-serve) and on `io.isaaclins.freesnitch.netext`.
 2. The **System Extension** capability on the app's App ID.
 3. Two Developer ID provisioning profiles - one per App ID - downloaded and
    embedded as `Contents/embedded.provisionprofile` in the respective bundles.

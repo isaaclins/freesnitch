@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Build, sign, notarize, publish, and release the PureSnitch firewall flavor.
+# Build, sign, notarize, publish, and release the FreeSnitch firewall flavor.
 # This is the one authoritative maintainer release command.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-REPOSITORY="isaaclins/puresnitch"
+REPOSITORY="isaaclins/freesnitch"
 PROJECT_SPEC="$ROOT/project.yml"
 NETEXT_SPEC="$ROOT/project-netext.yml"
-PROJECT_FILE="$ROOT/PureSnitch.xcodeproj"
+PROJECT_FILE="$ROOT/FreeSnitch.xcodeproj"
 TEAM_ID="BHAF4L4726"
 SIGN_ID="Developer ID Application: isaac lins (BHAF4L4726)"
-APP_BUNDLE_ID="io.isaaclins.puresnitch"
-NETEXT_BUNDLE_ID="io.isaaclins.puresnitch.netext"
-NETEXT_BUNDLE_NAME="io.isaaclins.puresnitch.netext.systemextension"
-HELPER_LABEL="io.isaaclins.puresnitch.helper"
-APP_PROFILE_NAME="PureSnitch App DeveloperID"
-NETEXT_PROFILE_NAME="PureSnitch NetExt DeveloperID"
+APP_BUNDLE_ID="io.isaaclins.freesnitch"
+NETEXT_BUNDLE_ID="io.isaaclins.freesnitch.netext"
+NETEXT_BUNDLE_NAME="io.isaaclins.freesnitch.netext.systemextension"
+HELPER_LABEL="io.isaaclins.freesnitch.helper"
+APP_PROFILE_NAME="FreeSnitch App DeveloperID"
+NETEXT_PROFILE_NAME="FreeSnitch NetExt DeveloperID"
 NOTARY_PROFILE="${NOTARY_PROFILE:-puresnitch-dev}"
 SPARKLE_VERSION="2.7.1"
 SPARKLE_ACCOUNT="puresnitch"
-FEED_URL="https://isaaclins.com/puresnitch/appcast.xml"
+FEED_URL="https://isaaclins.com/freesnitch/appcast.xml"
 
 MODE="release"
 VERSION=""
@@ -35,7 +35,7 @@ Usage:
   Scripts/release.sh [--validate-only|--dry-run] VERSION [BUILD] [NOTES_FILE]
 
 Examples:
-  Scripts/release.sh 0.3.0 12 /tmp/puresnitch-v0.3.0.md
+  Scripts/release.sh 0.3.0 12 /tmp/freesnitch-v0.3.0.md
   Scripts/release.sh --validate-only 0.3.0 12
   Scripts/release.sh --dry-run 0.3.0 12
 
@@ -179,7 +179,7 @@ validate_semver_and_build() {
     die "release version $VERSION is lower than project version $CURRENT_VERSION"
   fi
 
-  printf 'Validated PureSnitch %s, build %s, against project version %s, build %s.\n' \
+  printf 'Validated FreeSnitch %s, build %s, against project version %s, build %s.\n' \
     "$VERSION" "$BUILD_NUMBER" "$CURRENT_VERSION" "$CURRENT_BUILD"
 }
 
@@ -230,7 +230,7 @@ require_clean_main_and_pushed() {
 
   local remote_url
   remote_url="$(git remote get-url origin 2>/dev/null || true)"
-  [[ "$remote_url" == *github.com*isaaclins/puresnitch* ]] || \
+  [[ "$remote_url" == *github.com*isaaclins/freesnitch* ]] || \
     die "origin is not the canonical repository: $remote_url"
 
   local tag="v${VERSION}"
@@ -288,18 +288,18 @@ require_release_tooling() {
 
 BUILD_ROOT="$ROOT/build/release"
 DERIVED_DATA="$BUILD_ROOT/DerivedData"
-APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/PureSnitch.app"
+APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/FreeSnitch.app"
 NETEXT_BUNDLE="$APP_BUNDLE/Contents/Library/SystemExtensions/$NETEXT_BUNDLE_NAME"
-APP_BINARY="$APP_BUNDLE/Contents/MacOS/PureSnitch"
-HELPER_BINARY="$APP_BUNDLE/Contents/MacOS/PureSnitchHelper"
+APP_BINARY="$APP_BUNDLE/Contents/MacOS/FreeSnitch"
+HELPER_BINARY="$APP_BUNDLE/Contents/MacOS/FreeSnitchHelper"
 NETEXT_BINARY="$NETEXT_BUNDLE/Contents/MacOS/$NETEXT_BUNDLE_ID"
 APPCAST_ARCHIVES="$ROOT/docs/sparkle-archives"
-ZIP_NAME="PureSnitch-${VERSION}.zip"
-DMG_NAME="PureSnitch-${VERSION}.dmg"
+ZIP_NAME="FreeSnitch-${VERSION}.zip"
+DMG_NAME="FreeSnitch-${VERSION}.dmg"
 DOWNLOAD_PREFIX="https://github.com/${REPOSITORY}/releases/download/v${VERSION}/"
 ZIP_PATH="$APPCAST_ARCHIVES/$ZIP_NAME"
 DMG_PATH="$BUILD_ROOT/$DMG_NAME"
-NOTARIZE_APP_ZIP="$BUILD_ROOT/PureSnitch-${VERSION}-app-notary.zip"
+NOTARIZE_APP_ZIP="$BUILD_ROOT/FreeSnitch-${VERSION}-app-notary.zip"
 
 assert_file() {
   [[ -e "$1" ]] || die "release bundle is missing: $1"
@@ -368,8 +368,8 @@ verify_app_bundle() {
   assert_file "$NETEXT_BUNDLE/Contents/embedded.provisionprofile"
   assert_file "$APP_BUNDLE/Contents/Resources/Assets.car"
   assert_file "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
-  [[ ! -e "$APP_BUNDLE/Contents/Library/SystemExtensions/PureSnitchNetExt.systemextension" ]] || \
-    die "system extension has the stale filename PureSnitchNetExt.systemextension"
+  [[ ! -e "$APP_BUNDLE/Contents/Library/SystemExtensions/FreeSnitchNetExt.systemextension" ]] || \
+    die "system extension has the stale filename FreeSnitchNetExt.systemextension"
 
   assert_plist_value "$APP_BUNDLE/Contents/Info.plist" CFBundleIdentifier "$APP_BUNDLE_ID"
   assert_plist_value "$NETEXT_BUNDLE/Contents/Info.plist" CFBundleIdentifier "$NETEXT_BUNDLE_ID"
@@ -430,7 +430,7 @@ verify_app_bundle() {
 sign_nested_code() {
   local helper_entitlements="$ROOT/Sources/Helper/Helper.entitlements"
   local netext_entitlements="$ROOT/Sources/NetExt/NetExt.entitlements"
-  local app_entitlements="$ROOT/Sources/GUI/PureSnitch-netext.entitlements"
+  local app_entitlements="$ROOT/Sources/GUI/FreeSnitch-netext.entitlements"
   assert_file "$app_entitlements"
 
   printf 'Re-signing nested code inside-out with Developer ID...\n'
@@ -456,9 +456,9 @@ make_and_notarize_dmg() {
   local stage="$BUILD_ROOT/dmg-stage"
   rm -rf "$stage" "$DMG_PATH"
   mkdir -p "$stage"
-  ditto "$APP_BUNDLE" "$stage/PureSnitch.app"
+  ditto "$APP_BUNDLE" "$stage/FreeSnitch.app"
   ln -s /Applications "$stage/Applications"
-  hdiutil create -volname "PureSnitch $VERSION" -srcfolder "$stage" -ov -format UDZO "$DMG_PATH"
+  hdiutil create -volname "FreeSnitch $VERSION" -srcfolder "$stage" -ov -format UDZO "$DMG_PATH"
   codesign --force --timestamp --sign "$SIGN_ID" "$DMG_PATH"
   xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$DMG_PATH"
@@ -506,21 +506,21 @@ sparkle_tool() {
 rewrite_appcast_download_urls() {
   local appcast="$1"
   local tmp="$appcast.tmp"
-  local full_pattern='<enclosure url="[^"]*/download/[^"/]+/PureSnitch-[0-9]+\.[0-9]+\.[0-9]+\.zip"'
-  local delta_pattern='<enclosure url="[^"]*/download/[^"/]+/PureSnitch[0-9]+\.[0-9]+\.[0-9]+-[^"/]+\.delta"'
+  local full_pattern='<enclosure url="[^"]*/download/[^"/]+/FreeSnitch-[0-9]+\.[0-9]+\.[0-9]+\.zip"'
+  local delta_pattern='<enclosure url="[^"]*/download/[^"/]+/FreeSnitch[0-9]+\.[0-9]+\.[0-9]+-[^"/]+\.delta"'
   local full_count delta_count
   full_count="$(grep -Eoc "$full_pattern" "$appcast" || true)"
-  [[ "$full_count" != "0" ]] || die "Sparkle appcast has no PureSnitch full-zip enclosure"
+  [[ "$full_count" != "0" ]] || die "Sparkle appcast has no FreeSnitch full-zip enclosure"
 
   sed -E \
-    -e 's#(<enclosure url="[^"]*/download/)[^"/]+(/PureSnitch-([0-9]+\.[0-9]+\.[0-9]+)\.zip")#\1v\3\2#g' \
-    -e 's#(<enclosure url="[^"]*/download/)[^"/]+(/PureSnitch([0-9]+\.[0-9]+\.[0-9]+)-[^"/]+\.delta")#\1v\3\2#g' \
+    -e 's#(<enclosure url="[^"]*/download/)[^"/]+(/FreeSnitch-([0-9]+\.[0-9]+\.[0-9]+)\.zip")#\1v\3\2#g' \
+    -e 's#(<enclosure url="[^"]*/download/)[^"/]+(/FreeSnitch([0-9]+\.[0-9]+\.[0-9]+)-[^"/]+\.delta")#\1v\3\2#g' \
     "$appcast" > "$tmp"
   mv "$tmp" "$appcast"
 
   local mismatch
   mismatch="$(grep -Eo "$full_pattern" "$appcast" | \
-    sed -E 's#.*download/([^"/]+)/PureSnitch-([0-9]+\.[0-9]+\.[0-9]+)\.zip.*#\1 v\2#' | \
+    sed -E 's#.*download/([^"/]+)/FreeSnitch-([0-9]+\.[0-9]+\.[0-9]+)\.zip.*#\1 v\2#' | \
     awk '$1 != "v" $2 { print }' || true)"
   [[ -z "$mismatch" ]] || die "full-zip appcast URLs do not point to their matching release tags: $mismatch"
 
@@ -532,7 +532,7 @@ generate_appcast() {
   local generator="$1"
   local appcast_tmp_dir="$BUILD_ROOT/appcast-tmp"
   local appcast_tmp="$appcast_tmp_dir/appcast.xml"
-  local notes_txt="$APPCAST_ARCHIVES/PureSnitch-${VERSION}.txt"
+  local notes_txt="$APPCAST_ARCHIVES/FreeSnitch-${VERSION}.txt"
   local key_args=(--account "$SPARKLE_ACCOUNT")
   rm -rf "$appcast_tmp_dir"
   mkdir -p "$appcast_tmp_dir" "$APPCAST_ARCHIVES"
@@ -651,25 +651,25 @@ commit_and_publish() {
   [[ -z "$unexpected" ]] || die "release staged unexpected files:\n$unexpected"
   git diff --cached --quiet && die "release has no staged version, appcast, or notes changes"
 
-  git commit -m "chore(release): PureSnitch ${VERSION}"
-  git tag -a "$tag" -m "PureSnitch $VERSION"
+  git commit -m "chore(release): FreeSnitch ${VERSION}"
+  git tag -a "$tag" -m "FreeSnitch $VERSION"
   git push origin main
   git push origin "$tag"
 
   local assets=("$DMG_PATH" "$ZIP_PATH")
   local delta
-  for delta in "$APPCAST_ARCHIVES"/PureSnitch"${VERSION}"-*.delta; do
+  for delta in "$APPCAST_ARCHIVES"/FreeSnitch"${VERSION}"-*.delta; do
     [[ -f "$delta" ]] || continue
     assets+=("$delta")
   done
   gh release create "$tag" "${assets[@]}" \
     --repo "$REPOSITORY" \
     --verify-tag \
-    --title "PureSnitch $VERSION" \
+    --title "FreeSnitch $VERSION" \
     --notes-file "$notes_destination"
   RELEASE_PUBLISHED=1
 
-  printf 'Published PureSnitch %s.\n' "$VERSION"
+  printf 'Published FreeSnitch %s.\n' "$VERSION"
   printf '  GitHub Release: https://github.com/%s/releases/tag/%s\n' "$REPOSITORY" "$tag"
   printf '  Sparkle feed: %s\n' "$FEED_URL"
 }
@@ -710,10 +710,10 @@ xcodegen generate --spec "$NETEXT_SPEC"
 assert_only_version_files_changed
 
 XCODEBUILD_LOG="$BUILD_ROOT/xcodebuild.log"
-printf 'Building universal Release PureSnitch with Developer ID and both profiles...\n'
+printf 'Building universal Release FreeSnitch with Developer ID and both profiles...\n'
 if ! xcodebuild \
   -project "$PROJECT_FILE" \
-  -scheme PureSnitch \
+  -scheme FreeSnitch \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$DERIVED_DATA" \

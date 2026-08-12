@@ -1,6 +1,6 @@
-name: PureSnitch
+name: FreeSnitch
 options:
-  bundleIdPrefix: io.isaaclins.puresnitch
+  bundleIdPrefix: io.isaaclins.freesnitch
   deploymentTarget:
     macOS: "13.0"
   createIntermediateGroups: true
@@ -40,7 +40,7 @@ packages:
     exactVersion: 2.7.1
 
 targets:
-  PureSnitch:
+  FreeSnitch:
     type: application
     platform: macOS
     sources:
@@ -50,27 +50,27 @@ targets:
     info:
       path: Sources/GUI/Info.plist
       properties:
-        CFBundleName: PureSnitch
-        CFBundleDisplayName: PureSnitch
+        CFBundleName: FreeSnitch
+        CFBundleDisplayName: FreeSnitch
         CFBundleShortVersionString: "0.2.0"
         CFBundleVersion: "8"
         LSMinimumSystemVersion: "13.0"
         LSUIElement: true
-        NSHumanReadableCopyright: "© 2026 PureSnitch contributors. MIT License."
+        NSHumanReadableCopyright: "© 2026 FreeSnitch contributors. MIT License."
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         # Only used to place the "your Mac" node on the connection map. The
         # map degrades to endpoints without lines when this is refused.
-        NSLocationWhenInUseUsageDescription: "PureSnitch shows your Mac on the connection map so you can see where your traffic goes."
+        NSLocationWhenInUseUsageDescription: "FreeSnitch shows your Mac on the connection map so you can see where your traffic goes."
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.utilities
-        SUFeedURL: "https://isaaclins.com/puresnitch/appcast.xml"
+        SUFeedURL: "https://isaaclins.com/freesnitch/appcast.xml"
         SUPublicEDKey: "4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8="
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         SUAllowsAutomaticUpdates: false
     entitlements:
-      path: Sources/GUI/PureSnitch.entitlements
+      path: Sources/GUI/FreeSnitch.entitlements
       properties:
         com.apple.security.app-sandbox: false
         com.apple.security.network.client: true
@@ -83,18 +83,18 @@ targets:
         # come back only together with the two Developer ID profiles (app +
         # extension); see docs/NETWORK-EXTENSION.md.
         com.apple.security.application-groups:
-          - BHAF4L4726.io.isaaclins.puresnitch
+          - BHAF4L4726.io.isaaclins.freesnitch
     settings:
       base:
         # Xcode 27 no longer falls back to the target name here: without an
         # explicit PRODUCT_NAME the Swift module name resolves to "" and the
         # build fails with 'Module name "" is not a valid identifier'.
-        PRODUCT_NAME: PureSnitch
-        PRODUCT_MODULE_NAME: PureSnitch
-        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch
+        PRODUCT_NAME: FreeSnitch
+        PRODUCT_MODULE_NAME: FreeSnitch
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.freesnitch
         INFOPLIST_KEY_LSUIElement: YES
         CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
-        CODE_SIGN_ENTITLEMENTS: Sources/GUI/PureSnitch.entitlements
+        CODE_SIGN_ENTITLEMENTS: Sources/GUI/FreeSnitch.entitlements
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
@@ -118,25 +118,25 @@ targets:
         script: |
           set -e
           APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
-          HELPER_BIN="${BUILT_PRODUCTS_DIR}/PureSnitchHelper"
+          HELPER_BIN="${BUILT_PRODUCTS_DIR}/FreeSnitchHelper"
           if [ -f "$HELPER_BIN" ]; then
             mkdir -p "$APP/Contents/MacOS"
-            cp -f "$HELPER_BIN" "$APP/Contents/MacOS/PureSnitchHelper"
+            cp -f "$HELPER_BIN" "$APP/Contents/MacOS/FreeSnitchHelper"
             mkdir -p "$APP/Contents/Library/LaunchDaemons"
-            cp -f "${SRCROOT}/Sources/Helper/Launchd.plist" "$APP/Contents/Library/LaunchDaemons/io.isaaclins.puresnitch.helper.plist"
+            cp -f "${SRCROOT}/Sources/Helper/Launchd.plist" "$APP/Contents/Library/LaunchDaemons/io.isaaclins.freesnitch.helper.plist"
           else
             echo "warning: helper binary not found, skipping embed"
           fi
     dependencies:
       - package: Sparkle
-      - target: PureSnitchHelper
+      - target: FreeSnitchHelper
         embed: false
         link: false
-      # PureSnitchNetExt is intentionally NOT embedded in the shipping build —
+      # FreeSnitchNetExt is intentionally NOT embedded in the shipping build —
       # embedding it requires the restricted entitlements above. Generate the
       # firewall flavour with: xcodegen generate --spec project-netext.yml
 
-  PureSnitchNetExt:
+  FreeSnitchNetExt:
     type: system-extension
     platform: macOS
     sources:
@@ -147,23 +147,23 @@ targets:
     info:
       path: Sources/NetExt/Info.plist
       properties:
-        CFBundleName: PureSnitchNetExt
-        CFBundleDisplayName: PureSnitch Network Extension
+        CFBundleName: FreeSnitchNetExt
+        CFBundleDisplayName: FreeSnitch Network Extension
         CFBundleShortVersionString: "0.2.0"
         CFBundleVersion: "8"
         CFBundlePackageType: SYSX
         LSMinimumSystemVersion: "13.0"
-        NSSystemExtensionUsageDescription: "PureSnitch filters per-app network connections."
+        NSSystemExtensionUsageDescription: "FreeSnitch filters per-app network connections."
         NetworkExtension:
-          NEMachServiceName: BHAF4L4726.io.isaaclins.puresnitch.ipc
+          NEMachServiceName: BHAF4L4726.io.isaaclins.freesnitch.ipc
           NEProviderClasses:
-            com.apple.networkextension.filter-data: PureSnitchNetExt.FilterDataProvider
+            com.apple.networkextension.filter-data: FreeSnitchNetExt.FilterDataProvider
     entitlements:
       path: Sources/NetExt/NetExt.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.application-groups:
-          - BHAF4L4726.io.isaaclins.puresnitch
+          - BHAF4L4726.io.isaaclins.freesnitch
         com.apple.developer.networking.networkextension:
           - content-filter-provider-systemextension
     settings:
@@ -173,9 +173,9 @@ targets:
         # <bundle id>.systemextension. Named anything else, activation fails
         # with "Extension not found in App bundle" even though the bundle is
         # right there with the correct identifier, entitlements and signature.
-        PRODUCT_NAME: io.isaaclins.puresnitch.netext
-        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch.netext
-        PRODUCT_MODULE_NAME: PureSnitchNetExt
+        PRODUCT_NAME: io.isaaclins.freesnitch.netext
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.freesnitch.netext
+        PRODUCT_MODULE_NAME: FreeSnitchNetExt
         CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
         CODE_SIGN_ENTITLEMENTS: Sources/NetExt/NetExt.entitlements
         ENABLE_HARDENED_RUNTIME: YES
@@ -192,7 +192,7 @@ targets:
             echo "warning: $PROFILE not found, building without an embedded profile"
           fi
 
-  PureSnitchHelper:
+  FreeSnitchHelper:
     type: tool
     platform: macOS
     sources:
@@ -203,8 +203,8 @@ targets:
       - path: Sources/Shared
     settings:
       base:
-        PRODUCT_NAME: PureSnitchHelper
-        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch.helper
+        PRODUCT_NAME: FreeSnitchHelper
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.freesnitch.helper
         CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
         CODE_SIGN_ENTITLEMENTS: Sources/Helper/Helper.entitlements
         ENABLE_HARDENED_RUNTIME: YES

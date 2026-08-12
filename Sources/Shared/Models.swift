@@ -249,14 +249,14 @@ public struct BlocklistInfo: Codable, Sendable, Identifiable, Hashable {
 }
 
 public struct AppConstants {
-    public static let bundleIdGUI = "io.isaaclins.puresnitch"
-    public static let bundleIdHelper = "io.isaaclins.puresnitch.helper"
-    public static let bundleIdNetExt = "io.isaaclins.puresnitch.netext"
-    public static let xpcMachServiceName = "io.isaaclins.puresnitch.helper"
+    public static let bundleIdGUI = "io.isaaclins.freesnitch"
+    public static let bundleIdHelper = "io.isaaclins.freesnitch.helper"
+    public static let bundleIdNetExt = "io.isaaclins.freesnitch.netext"
+    public static let xpcMachServiceName = "io.isaaclins.freesnitch.helper"
     /// App<->extension XPC. Must be prefixed by an app group the process owns,
     /// so a regular (non-daemon) app can vend it via NSXPCListener.
-    public static let ipcMachServiceName = "BHAF4L4726.io.isaaclins.puresnitch.ipc"
-    public static let appGroup = "BHAF4L4726.io.isaaclins.puresnitch"
+    public static let ipcMachServiceName = "BHAF4L4726.io.isaaclins.freesnitch.ipc"
+    public static let appGroup = "BHAF4L4726.io.isaaclins.freesnitch"
     public static let teamID = "BHAF4L4726"
     public static let version: String =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
@@ -266,13 +266,13 @@ public struct AppConstants {
     public static var supportDir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        let dir = base.appendingPathComponent("PureSnitch", isDirectory: true)
+        let dir = base.appendingPathComponent("FreeSnitch", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
     public static var sharedDataDir: URL {
-        let dir = URL(fileURLWithPath: "/Library/Application Support/PureSnitch", isDirectory: true)
+        let dir = URL(fileURLWithPath: "/Library/Application Support/FreeSnitch", isDirectory: true)
         return dir
     }
 }

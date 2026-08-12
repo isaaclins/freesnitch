@@ -1,10 +1,11 @@
 import Foundation
 
 final class PFManager: @unchecked Sendable {
+    // Keep the established anchor name so a rename cannot strand active firewall rules.
     static let anchorName = "puresnitch"
     private let anchorPath = "/etc/pf.anchors/puresnitch"
     private let pfctl = "/sbin/pfctl"
-    private let queue = DispatchQueue(label: "io.isaaclins.puresnitch.pf")
+    private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.pf")
     private var loaded = false
 
     func install() throws {
@@ -34,7 +35,7 @@ final class PFManager: @unchecked Sendable {
 
     private func writeAnchorFile(rules: [Rule]) throws {
         var lines: [String] = []
-        lines.append("# PureSnitch pf anchor - auto-generated. Do not edit.")
+        lines.append("# FreeSnitch pf anchor - auto-generated. Do not edit.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 

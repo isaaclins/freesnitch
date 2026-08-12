@@ -33,8 +33,8 @@ jobs:
       - name: Build monitor app without signing or profiles
         run: |
           xcodebuild \
-            -project PureSnitch.xcodeproj \
-            -scheme PureSnitch \
+            -project FreeSnitch.xcodeproj \
+            -scheme FreeSnitch \
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -derivedDataPath build/monitor \
@@ -47,10 +47,10 @@ jobs:
 
       - name: Verify monitor bundle has no restricted entitlements
         run: |
-          APP=build/monitor/Build/Products/Release/PureSnitch.app
+          APP=build/monitor/Build/Products/Release/FreeSnitch.app
           test -d "$APP"
-          test -f "$APP/Contents/MacOS/PureSnitch"
-          test -f "$APP/Contents/MacOS/PureSnitchHelper"
+          test -f "$APP/Contents/MacOS/FreeSnitch"
+          test -f "$APP/Contents/MacOS/FreeSnitchHelper"
           if grep -R -E -q \
             'com\.apple\.developer\.networking\.networkextension|com\.apple\.developer\.system-extension\.install' \
             "$APP"; then

@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// The one piece of UI that keeps PureSnitch honest: when the privileged helper
+/// The one piece of UI that keeps FreeSnitch honest: when the privileged helper
 /// isn't approved or isn't reachable, every panel in the app reads zero. Before
 /// this banner existed that state was indistinguishable from "the app is
 /// broken" — which is exactly what users reported.
@@ -64,45 +64,45 @@ private struct BannerInfo {
             icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
             title = "The helper needs repairing"
-            detail = "It is approved but either not responding or left over from an older PureSnitch — usually after an in-place update. Repairing re-installs the background helper; macOS will ask you to approve it once more in Login Items."
+            detail = "It is approved but either not responding or left over from an older FreeSnitch — usually after an in-place update. Repairing re-installs the background helper; macOS will ask you to approve it once more in Login Items."
             action = BannerAction(title: "Repair Helper") { $0.helper.repairHelper() }
         case .enabled:
             icon = "hourglass"
             tint = PSTheme.accentYellow
-            title = "Connecting to the PureSnitch helper…"
+            title = "Connecting to the FreeSnitch helper…"
             detail = "The helper is approved but hasn't answered yet. This usually clears within a few seconds."
             action = nil
         case .requiresApproval:
             icon = "exclamationmark.triangle.fill"
             tint = PSTheme.accentYellow
-            title = "PureSnitch needs your approval to monitor traffic"
-            detail = "Open System Settings › General › Login Items & Extensions and switch PureSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
+            title = "FreeSnitch needs your approval to monitor traffic"
+            detail = "Open System Settings › General › Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
             action = BannerAction(title: "Open Login Items") { $0.helper.openLoginItemsSettings() }
         case .notRegistered, .unknown:
             icon = "bolt.horizontal.circle.fill"
             tint = PSTheme.accentYellow
-            title = "The PureSnitch helper isn't installed yet"
+            title = "The FreeSnitch helper isn't installed yet"
             detail = "The helper runs the traffic monitor and the firewall rules. Install it to start seeing connections."
             action = BannerAction(title: "Install Helper") { $0.helper.registerDaemon() }
         case .wrongLocation:
             icon = "arrow.down.app.fill"
             tint = PSTheme.accentRed
-            title = "Move PureSnitch to your Applications folder"
-            detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. Drag PureSnitch.app into Applications, then open it from there."
+            title = "Move FreeSnitch to your Applications folder"
+            detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. Drag FreeSnitch.app into Applications, then open it from there."
             action = BannerAction(title: "Reveal in Finder") { _ in
                 NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
             }
         case .notFound:
             icon = "xmark.octagon.fill"
             tint = PSTheme.accentRed
-            title = "The helper is missing from this copy of PureSnitch"
-            detail = "This build has no privileged helper bundled. Download PureSnitch again from the official releases page."
+            title = "The helper is missing from this copy of FreeSnitch"
+            detail = "This build has no privileged helper bundled. Download FreeSnitch again from the official releases page."
             action = nil
         case .failed(let message):
             icon = "xmark.octagon.fill"
             tint = PSTheme.accentRed
             title = "Helper installation failed"
-            detail = "\(message) Move PureSnitch into /Applications and try again."
+            detail = "\(message) Move FreeSnitch into /Applications and try again."
             action = BannerAction(title: "Retry") { $0.helper.registerDaemon() }
         }
     }

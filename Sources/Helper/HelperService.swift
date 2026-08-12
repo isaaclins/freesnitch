@@ -15,9 +15,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private var mode: AppMode = .alert
 
     init(listener: NSXPCListener) throws {
-        let dbDir = "/Library/Application Support/PureSnitch"
+        let dbDir = "/Library/Application Support/FreeSnitch"
         try? FileManager.default.createDirectory(atPath: dbDir, withIntermediateDirectories: true)
-        let dbPath = (dbDir as NSString).appendingPathComponent("puresnitch.sqlite")
+        let dbPath = (dbDir as NSString).appendingPathComponent("freesnitch.sqlite")
         self.store = try RuleStore(path: dbPath)
         self.blocklists = BlocklistManager(store: store)
         self.listener = listener
@@ -308,7 +308,7 @@ extension HelperService: NSXPCListenerDelegate {
 
     /// This daemon runs as root and can rewrite the firewall, so it must not
     /// take orders from just any local process. Accept only code signed by the
-    /// PureSnitch team with the app's identifier.
+    /// FreeSnitch team with the app's identifier.
     ///
     /// Locally built (ad-hoc signed) helpers have no Team ID, and requiring one
     /// there would make every development build unable to talk to itself, so the

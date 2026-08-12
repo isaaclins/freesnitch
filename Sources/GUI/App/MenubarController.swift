@@ -75,7 +75,7 @@ final class MenubarController {
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
         menu.addItem(.separator())
-        menu.addItem(makeItem("Quit PureSnitch", #selector(quit), keyEq: "q"))
+        menu.addItem(makeItem("Quit FreeSnitch", #selector(quit), keyEq: "q"))
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
@@ -113,7 +113,7 @@ final class MenubarController {
         let healthy = state.helperConnected
         let symbol = healthy ? "shield.lefthalf.filled" : "shield.slash"
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "PureSnitch")?
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "FreeSnitch")?
             .withSymbolConfiguration(config)
         image?.isTemplate = true
         button.image = image
@@ -130,14 +130,14 @@ final class MenubarController {
         }
 
         button.toolTip = tooltip
-        button.setAccessibilityLabel("PureSnitch — \(tooltip)")
+        button.setAccessibilityLabel("FreeSnitch — \(tooltip)")
     }
 
     private var tooltip: String {
         guard state.helperConnected else {
             switch state.helperInstallState {
             case .requiresApproval: return "Waiting for approval in System Settings › Login Items"
-            case .wrongLocation: return "Move PureSnitch to your Applications folder"
+            case .wrongLocation: return "Move FreeSnitch to your Applications folder"
             case .notFound: return "Helper missing from this build"
             case .failed(let m): return "Helper error: \(m)"
             default: return "Helper not running — no traffic is being monitored"

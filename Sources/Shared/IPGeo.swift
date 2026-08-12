@@ -48,8 +48,8 @@ public final class IPGeoCache: @unchecked Sendable {
     private static let cacheLifetime: TimeInterval = 30 * 24 * 60 * 60
 
     private let cacheDirectory: URL
-    private let loadQueue = DispatchQueue(label: "io.isaaclins.puresnitch.geo.load", qos: .utility)
-    private let stateQueue = DispatchQueue(label: "io.isaaclins.puresnitch.geo.state")
+    private let loadQueue = DispatchQueue(label: "io.isaaclins.freesnitch.geo.load", qos: .utility)
+    private let stateQueue = DispatchQueue(label: "io.isaaclins.freesnitch.geo.state")
     private var rangeStarts: [UInt32] = []
     private var rangeEnds: [UInt32] = []
     private var countryIndexes: [UInt16] = []
@@ -90,7 +90,7 @@ public final class IPGeoCache: @unchecked Sendable {
     private static func defaultCacheDirectory() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
-        return appSupport.appendingPathComponent("PureSnitch", isDirectory: true)
+        return appSupport.appendingPathComponent("FreeSnitch", isDirectory: true)
             .appendingPathComponent("geo", isDirectory: true)
     }
 
@@ -155,7 +155,7 @@ public final class IPGeoCache: @unchecked Sendable {
             return
         }
         var request = URLRequest(url: url, timeoutInterval: 60)
-        request.setValue("PureSnitch/0.2", forHTTPHeaderField: "User-Agent")
+        request.setValue("FreeSnitch/0.2", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
                 completion(error.localizedDescription)

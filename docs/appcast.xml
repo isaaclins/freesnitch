@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>PureSnitch</title>
-    <link>https://isaaclins.com/puresnitch/appcast.xml</link>
-    <description>PureSnitch software updates</description>
+    <title>FreeSnitch</title>
+    <link>https://isaaclins.com/freesnitch/appcast.xml</link>
+    <description>FreeSnitch software updates</description>
     <language>en</language>
   </channel>
 </rss>
