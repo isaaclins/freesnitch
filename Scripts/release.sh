@@ -261,7 +261,7 @@ find_profile_by_name() {
 
 require_release_tooling() {
   local command_name
-  for command_name in xcodegen xcodebuild codesign xcrun hdiutil spctl lipo ditto security plutil curl tar gh; do
+  for command_name in xcodegen xcodebuild codesign xcrun hdiutil spctl lipo ditto security plutil curl tar file gh; do
     require_command "$command_name"
   done
   [[ -x /usr/libexec/PlistBuddy ]] || die "required command not found: /usr/libexec/PlistBuddy"
@@ -356,6 +356,32 @@ assert_profile_name() {
   [[ "$name" == "$expected" ]] || die "$profile is '$name', expected provisioning profile '$expected'"
 }
 
+assert_framework_code_signatures() {
+  local frameworks_dir="$APP_BUNDLE/Contents/Frameworks"
+  local candidate details
+  local macho_count=0
+  assert_file "$frameworks_dir"
+
+  while IFS= read -r -d '' candidate; do
+    if ! file -b "$candidate" | grep -Fq 'Mach-O'; then
+      continue
+    fi
+
+    macho_count=$((macho_count + 1))
+    details="$(codesign -dvvv "$candidate" 2>&1 || true)"
+    printf '%s\n' "$details" | grep -Fq "TeamIdentifier=$TEAM_ID" || \
+      die "$candidate is not signed by team $TEAM_ID"
+    printf '%s\n' "$details" | grep -Fq "Authority=$SIGN_ID" || \
+      die "$candidate is not signed with $SIGN_ID"
+    printf '%s\n' "$details" | grep -Eq '^Timestamp=' || \
+      die "$candidate signature has no secure timestamp"
+  done < <(find "$frameworks_dir" -type f -print0)
+
+  [[ "$macho_count" -gt 0 ]] || die "no Mach-O code found under $frameworks_dir"
+  printf 'Verified %s Mach-O files under Contents/Frameworks with the Developer ID identity and secure timestamps.\n' \
+    "$macho_count"
+}
+
 verify_app_bundle() {
   printf 'Verifying the signed firewall bundle...\n'
   assert_file "$APP_BUNDLE"
@@ -420,6 +446,7 @@ verify_app_bundle() {
   assert_signed_by_team "$APP_BUNDLE"
   assert_signed_by_team "$HELPER_BINARY"
   assert_signed_by_team "$NETEXT_BUNDLE"
+  assert_framework_code_signatures
   codesign --verify --strict --verbose=2 "$HELPER_BINARY" >/dev/null || die "helper signature verification failed"
   codesign --verify --strict --verbose=2 "$NETEXT_BUNDLE" >/dev/null || die "system extension signature verification failed"
   codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE" >/dev/null || \
@@ -431,9 +458,40 @@ sign_nested_code() {
   local helper_entitlements="$ROOT/Sources/Helper/Helper.entitlements"
   local netext_entitlements="$ROOT/Sources/NetExt/NetExt.entitlements"
   local app_entitlements="$ROOT/Sources/GUI/FreeSnitch-netext.entitlements"
+  local sparkle_framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+  local sparkle_versions_dir sparkle_version_dir
+  local downloader_xpc installer_xpc updater_app autoupdate
   assert_file "$app_entitlements"
+  assert_file "$sparkle_framework"
 
-  printf 'Re-signing nested code inside-out with Developer ID...\n'
+  sparkle_versions_dir="$(cd "$sparkle_framework/Versions" 2>/dev/null && pwd -P)" || \
+    die "could not resolve Sparkle.framework Versions directory: $sparkle_framework"
+  [[ -L "$sparkle_versions_dir/Current" ]] || \
+    die "Sparkle.framework is missing its Versions/Current symlink: $sparkle_framework"
+  sparkle_version_dir="$(cd "$sparkle_versions_dir/Current" 2>/dev/null && pwd -P)" || \
+    die "could not resolve Sparkle.framework Versions/Current: $sparkle_framework"
+  case "$sparkle_version_dir" in
+    "$sparkle_versions_dir"/*) ;;
+    *) die "Sparkle.framework Versions/Current points outside Versions: $sparkle_version_dir" ;;
+  esac
+
+  downloader_xpc="$sparkle_version_dir/XPCServices/Downloader.xpc"
+  installer_xpc="$sparkle_version_dir/XPCServices/Installer.xpc"
+  updater_app="$sparkle_version_dir/Updater.app"
+  autoupdate="$sparkle_version_dir/Autoupdate"
+  assert_file "$downloader_xpc"
+  assert_file "$installer_xpc"
+  assert_file "$updater_app"
+  assert_file "$autoupdate"
+
+  printf 'Re-signing Sparkle nested code inside-out at %s...\n' "$sparkle_version_dir"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$downloader_xpc"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$installer_xpc"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$updater_app"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$autoupdate"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$sparkle_framework"
+
+  printf 'Re-signing the remaining nested code inside-out with Developer ID...\n'
   codesign --force --options runtime --timestamp --entitlements "$helper_entitlements" \
     --sign "$SIGN_ID" "$HELPER_BINARY"
   codesign --force --options runtime --timestamp --entitlements "$netext_entitlements" \
