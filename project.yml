@@ -157,7 +157,12 @@ targets:
           - content-filter-provider-systemextension
     settings:
       base:
-        PRODUCT_NAME: PureSnitchNetExt
+        # sysextd matches an embedded extension by FILENAME, not by the
+        # identifier in its Info.plist, so the bundle has to be called
+        # <bundle id>.systemextension. Named anything else, activation fails
+        # with "Extension not found in App bundle" even though the bundle is
+        # right there with the correct identifier, entitlements and signature.
+        PRODUCT_NAME: io.isaaclins.puresnitch.netext
         PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.puresnitch.netext
         PRODUCT_MODULE_NAME: PureSnitchNetExt
         CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
