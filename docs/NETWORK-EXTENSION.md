@@ -44,8 +44,8 @@ under Team ID `BHAF4L4726`:
 2. The **System Extension** capability on the app's App ID.
 3. Two Developer ID provisioning profiles - one per App ID - downloaded and
    embedded as `Contents/embedded.provisionprofile` in the respective bundles.
-4. Inside-out signing (`Scripts/sign_and_notarize.sh` already signs the
-   extension before the app), then notarization and stapling.
+4. Inside-out signing is performed by `Scripts/release.sh` (helper, extension,
+   then app), followed by notarization and stapling.
 5. The app installed in `/Applications` and approved in
    System Settings › Privacy & Security. For local development only,
    `systemextensionsctl developer on` skips the notarization requirement.

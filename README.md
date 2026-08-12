@@ -241,8 +241,7 @@ puresnitch/
 │   └── Assets.xcassets/AppIcon.appiconset/
 ├── Scripts/
 │   ├── make_icon.sh        # Generates app icon from Swift CoreGraphics
-│   ├── sign_and_notarize.sh
-│   └── make_dmg.sh
+│   └── release.sh          # Builds, signs, notarizes, and publishes releases
 ├── docs/                   # Screenshots, architecture, translations
 ├── .github/workflows/      # CI
 ├── project.yml             # XcodeGen project definition
@@ -273,6 +272,9 @@ Especially welcome:
 
 ## Acknowledgments
 
+- [Moamen Basel](https://github.com/momenbasel) is the original author of [PureSnitch](https://github.com/momenbasel/puresnitch).
+- This repository is an independently maintained continuation of that original MIT-licensed work.
+- Moamen Basel does not maintain or endorse this repository, and it is not affiliated with him.
 - [@objective-see](https://github.com/objective-see) for [LuLu](https://github.com/objective-see/LuLu), the reference free firewall for macOS
 - [Objective Development](https://www.obdev.at/) for shaping what an outbound firewall UI should feel like with Little Snitch
 - [1Hosts](https://github.com/badmojr/1Hosts), [OISD](https://oisd.nl/), [StevenBlack](https://github.com/StevenBlack/hosts) and [HaGeZi](https://github.com/hagezi/dns-blocklists) for the blocklist work everyone in this space stands on top of

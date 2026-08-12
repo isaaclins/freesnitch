@@ -42,7 +42,7 @@
 		<true/>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 Moamen Basel. MIT License.</string>
+	<string>© 2026 PureSnitch contributors. MIT License.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>PureSnitch shows your Mac on the connection map so you can see where your traffic goes.</string>
 	<key>NSPrincipalClass</key>

@@ -23,8 +23,9 @@ embedded in the app at `Contents/Library/SystemExtensions/`.
    the extension (already declared in `project.yml`).
 2. Two Developer ID provisioning profiles (app + extension) carrying that
    capability.
-3. Sign with **Developer ID Application** (inside-out: extension → helper → app)
-   and **notarize** — see `Scripts/sign_and_notarize.sh`.
+3. Sign with **Developer ID Application** (inside-out: helper → extension → app)
+   and **notarize**; `Scripts/release.sh` performs signing, notarization, and
+   stapling.
 4. The app must be in **`/Applications`** to activate the extension
    (otherwise `OSSystemExtensionErrorUnsupportedParentBundleLocation`). During
    development you can relax this with `systemextensionsctl developer on`.
