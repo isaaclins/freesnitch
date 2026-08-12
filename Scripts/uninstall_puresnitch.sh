@@ -8,6 +8,12 @@ readonly OLD_NETEXT_BUNDLE_ID="io.isaaclins.puresnitch.netext"
 readonly OLD_HELPER_LABEL="io.isaaclins.puresnitch.helper"
 readonly OLD_APP="/Applications/PureSnitch.app"
 readonly OLD_DAEMON_PLIST="/Library/LaunchDaemons/${OLD_HELPER_LABEL}.plist"
+
+if [[ -z "${HOME:-}" || "${HOME:-}" != /* ]]; then
+  printf 'ERROR: HOME must be a non-empty absolute path.\n' >&2
+  exit 1
+fi
+
 readonly OLD_USER_SUPPORT="${HOME}/Library/Application Support/PureSnitch"
 readonly OLD_APP_GROUP="BHAF4L4726.io.isaaclins.puresnitch"
 readonly OLD_APP_GROUP_PATH="${HOME}/Library/Group Containers/${OLD_APP_GROUP}"
@@ -49,14 +55,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if (( EUID == 0 )); then
-  sudo_cmd=()
+  run_privileged() {
+    "$@"
+  }
 else
-  sudo_cmd=(sudo)
+  run_privileged() {
+    sudo "$@"
+  }
 fi
-
-run_privileged() {
-  "${sudo_cmd[@]}" "$@"
-}
 
 assert_old_path() {
   local path="$1"
