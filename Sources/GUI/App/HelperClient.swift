@@ -332,6 +332,11 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
         Task { @MainActor in self.state?.appendSample(sample) }
     }
 
+    func notifyProcessUsage(usageJSON: Data) {
+        guard let usages = try? JSONDecoder().decode([ProcessUsage].self, from: usageJSON) else { return }
+        Task { @MainActor in self.state?.updateProcessUsages(usages) }
+    }
+
     func notifyAlert(connectionJSON: Data, reply: @escaping (Bool, Bool) -> Void) {
         guard let conn = try? JSONDecoder().decode(Connection.self, from: connectionJSON) else { reply(true, false); return }
         Task { @MainActor in self.state?.presentAlert(for: conn, reply: reply) }

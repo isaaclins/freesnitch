@@ -33,6 +33,7 @@ import Foundation
 @objc public protocol HelperClientProtocol {
     func notifyConnection(connectionJSON: Data)
     func notifyTraffic(sampleJSON: Data)
+    func notifyProcessUsage(usageJSON: Data)
     func notifyAlert(connectionJSON: Data, reply: @escaping (Bool, Bool) -> Void)
     func notifyLog(level: String, message: String)
 }

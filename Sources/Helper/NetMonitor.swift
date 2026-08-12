@@ -7,6 +7,7 @@ final class NetMonitor: @unchecked Sendable {
 
     var onConnections: (([Connection]) -> Void)?
     var onSample: ((TrafficSample) -> Void)?
+    var onProcessUsage: (([ProcessUsage]) -> Void)?
 
     private var lastIn: Int64 = 0
     private var lastOut: Int64 = 0
@@ -175,6 +176,7 @@ final class NetMonitor: @unchecked Sendable {
     private func completeFrame(_ lines: [String]) {
         var totalIn: Int64 = 0
         var totalOut: Int64 = 0
+        var usages: [ProcessUsage] = []
         for line in lines {
             let parts = line.split(separator: ",")
             guard parts.count >= 3,
@@ -182,8 +184,23 @@ final class NetMonitor: @unchecked Sendable {
                   let bout = Int64(parts[parts.count - 1]) else { continue }
             totalIn += bin
             totalOut += bout
+
+            let identifier = String(parts[0])
+            let separator = identifier.lastIndex(of: ".")
+            let processName: String
+            let pid: Int32?
+            if let separator,
+               let parsedPID = Int32(String(identifier[identifier.index(after: separator)...])) {
+                processName = String(identifier[..<separator])
+                pid = parsedPID
+            } else {
+                processName = identifier
+                pid = nil
+            }
+            usages.append(ProcessUsage(processName: processName, pid: pid, bytesIn: bin, bytesOut: bout))
         }
         let now = Date()
+        onProcessUsage?(usages)
 
         // The first frame is only a baseline: nettop counters are cumulative
         // since it started, so emitting a rate here would report the whole

@@ -194,6 +194,19 @@ public struct TrafficSample: Codable, Sendable {
     }
 }
 
+public struct ProcessUsage: Codable, Sendable {
+    public let processName: String
+    public let pid: Int32?
+    public let bytesIn: Int64
+    public let bytesOut: Int64
+    public init(processName: String, pid: Int32?, bytesIn: Int64, bytesOut: Int64) {
+        self.processName = processName
+        self.pid = pid
+        self.bytesIn = bytesIn
+        self.bytesOut = bytesOut
+    }
+}
+
 public struct HelperStatus: Codable, Sendable {
     public let version: String
     public let running: Bool
