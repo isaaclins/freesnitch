@@ -80,6 +80,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 }
             }
         }
+        netmon.onProcessUsage = { [weak self] usages in
+            self?.broadcast { c in
+                if let data = try? JSONEncoder().encode(usages) {
+                    c.notifyProcessUsage(usageJSON: data)
+                }
+            }
+        }
 
         listener.delegate = self
     }

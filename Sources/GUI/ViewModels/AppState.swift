@@ -66,6 +66,7 @@ final class AppState: ObservableObject {
     }
 
     let helper = HelperClient()
+    private var processUsages: [ProcessUsage] = []
     private let store: RuleStore? = {
         try? RuleStore(path: AppConstants.supportDir.appendingPathComponent("ui-cache.sqlite").path)
     }()
@@ -167,6 +168,11 @@ final class AppState: ObservableObject {
         Task { await self.recomputeAggregates() }
     }
 
+    func updateProcessUsages(_ usages: [ProcessUsage]) {
+        processUsages = usages
+        Task { await self.recomputeAggregates() }
+    }
+
     func appendSample(_ s: TrafficSample) {
         trafficHistory.append(s)
         if trafficHistory.count > 600 { trafficHistory.removeFirst(trafficHistory.count - 600) }
@@ -213,13 +219,14 @@ final class AppState: ObservableObject {
 
     func recomputeAggregates() async {
         let conns = self.connections
+        let usages = self.processUsages
         var byProc: [String: (Int64, Int64, NSImage?)] = [:]
         var byDom: [String: (Int64, Int64)] = [:]
         var byCountry: [String: (String, Int64, Int64)] = [:]
         for c in conns {
             let pkey = c.processBundleId ?? c.processPath
             let cur = byProc[pkey] ?? (0, 0, nil)
-            byProc[pkey] = (cur.0 + c.bytesIn, cur.1 + c.bytesOut, cur.2 ?? AppIcon.resolve(bundleId: c.processBundleId, path: c.processPath, name: c.processName))
+            byProc[pkey] = (cur.0, cur.1, cur.2 ?? AppIcon.resolve(bundleId: c.processBundleId, path: c.processPath, name: c.processName))
             let dom = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
             let cd = byDom[dom] ?? (0, 0)
             byDom[dom] = (cd.0 + c.bytesIn, cd.1 + c.bytesOut)
@@ -227,6 +234,19 @@ final class AppState: ObservableObject {
                 let cur = byCountry[cc] ?? (c.country ?? cc, 0, 0)
                 byCountry[cc] = (cur.0, cur.1 + c.bytesIn, cur.2 + c.bytesOut)
             }
+        }
+        for usage in usages {
+            let connection = usage.pid.flatMap { pid in
+                conns.first { $0.pid == pid }
+            } ?? conns.first { $0.processName == usage.processName }
+            guard let connection else { continue }
+            let pkey = connection.processBundleId ?? connection.processPath
+            let cur = byProc[pkey] ?? (0, 0, nil)
+            byProc[pkey] = (cur.0 + usage.bytesIn,
+                            cur.1 + usage.bytesOut,
+                            cur.2 ?? AppIcon.resolve(bundleId: connection.processBundleId,
+                                                      path: connection.processPath,
+                                                      name: connection.processName))
         }
         topProcesses = byProc.map { (k, v) in
             ProcessStats(id: k, name: (k as NSString).lastPathComponent, bytesIn: v.0, bytesOut: v.1, icon: v.2)
