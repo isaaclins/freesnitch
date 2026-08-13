@@ -1,16 +1,54 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+/// The enabled rules of one policy snapshot, already in the order the matcher
+/// consults them.
+///
+/// Ordering a rule set is O(n log n) and belongs to the moment a snapshot is
+/// applied, not to a verdict. Every new socket flow used to pay two filtered
+/// array copies and a full sort before the filter could answer, and that cost
+/// grew with the rule count, so a burst of new connections was also the most
+/// expensive moment.
+public struct PreparedRuleSet: Sendable {
+    /// Enabled rules, highest priority first.
+    public let ordered: [Rule]
+
+    public init(rules: [Rule]) {
+        // Which rule wins must never depend on a sort algorithm's tie
+        // handling, so equal priorities keep the order the snapshot delivered
+        // them in.
+        ordered = rules.enumerated()
+            .filter { $0.element.enabled }
+            .sorted { lhs, rhs in
+                lhs.element.priority == rhs.element.priority
+                    ? lhs.offset < rhs.offset
+                    : lhs.element.priority > rhs.element.priority
+            }
+            .map { $0.element }
+    }
+}
 
 public struct RuleMatcher: Sendable {
     public init() {}
 
+    /// Orders the rule set on every call. A verdict path should hold a
+    /// `PreparedRuleSet` and use the overload below instead.
     public func decision(for c: Connection, rules: [Rule], defaultMode: AppMode) -> RuleAction {
-        let sorted = rules.filter { $0.enabled }.filter { rule in
-            if let exp = rule.expiresAt, exp < Date() { return false }
-            return true
-        }.sorted { $0.priority > $1.priority }
+        decision(for: c, prepared: PreparedRuleSet(rules: rules), defaultMode: defaultMode)
+    }
 
-        for r in sorted where matches(rule: r, connection: c) {
-            return r.action
+    public func decision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> RuleAction {
+        // Expiry is the one predicate that cannot be precomputed, because it
+        // depends on when the flow arrives rather than on the snapshot. It
+        // stays a test inside the scan, which allocates nothing.
+        let now = Date()
+        for r in prepared.ordered {
+            if let exp = r.expiresAt, exp < now { continue }
+            if matches(rule: r, connection: c) { return r.action }
         }
 
         switch defaultMode {
@@ -56,6 +94,14 @@ public struct RuleMatcher: Sendable {
     public func ipMatches(pattern: String, ip: String) -> Bool {
         if pattern == ip { return true }
         if pattern.contains("/") { return cidrContains(cidr: pattern, ip: ip) }
+        // One IPv6 address has many spellings. A rule written as 2001:db8::1
+        // means the same host as the expanded form the flow reports, and a
+        // link-local address arrives carrying an interface zone, so an IPv6
+        // literal is compared as bytes rather than as text.
+        if pattern.contains(":") {
+            guard let a = ipv6Bytes(pattern), let b = ipv6Bytes(ip) else { return false }
+            return a == b
+        }
         if pattern.hasSuffix(".*") {
             let prefix = String(pattern.dropLast(2))
             return ip.hasPrefix(prefix + ".")
@@ -73,11 +119,47 @@ public struct RuleMatcher: Sendable {
         let parts = cidr.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return false }
         guard parts[1].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else { return false }
-        guard let bits = Int(parts[1]), (0...32).contains(bits) else { return false }
         let net = String(parts[0])
+        // The two families are separate address spaces. A colon in the network
+        // decides which one this rule speaks about, and neither parser accepts
+        // the other's text, so an IPv4 CIDR can never cover an IPv6 flow or the
+        // reverse.
+        if net.contains(":") { return ipv6CidrContains(network: net, prefix: parts[1], ip: ip) }
+        guard let bits = Int(parts[1]), (0...32).contains(bits) else { return false }
         guard let a = ipv4ToUInt32(net), let b = ipv4ToUInt32(ip) else { return false }
         let mask: UInt32 = bits == 0 ? 0 : UInt32.max << (32 - bits)
         return (a & mask) == (b & mask)
+    }
+
+    /// Compares the leading `prefix` bits of two 16 byte addresses.
+    ///
+    /// Ingest accepted IPv6 CIDRs long before anything could match one, so an
+    /// enabled `2001:db8::/32` rule was inert. The prefix is bounded to
+    /// 0...128 before any mask exists, for the same reason the IPv4 path bounds
+    /// its own: a mask of zero matches every address.
+    private func ipv6CidrContains(network: String, prefix: Substring, ip: String) -> Bool {
+        guard let bits = Int(prefix), (0...128).contains(bits) else { return false }
+        guard let net = ipv6Bytes(network), let addr = ipv6Bytes(ip) else { return false }
+        let wholeBytes = bits / 8
+        for i in 0..<wholeBytes where net[i] != addr[i] { return false }
+        let remainingBits = bits % 8
+        if remainingBits == 0 { return true }
+        let mask = UInt8(0xFF) << (8 - remainingBits)
+        return (net[wholeBytes] & mask) == (addr[wholeBytes] & mask)
+    }
+
+    /// Parses an IPv6 literal into its 16 bytes, or nil for anything else.
+    ///
+    /// `inet_pton` is the same parser `PFHostValidator` validates with, so the
+    /// matcher accepts exactly what ingest stored. It rejects a zone id, and
+    /// the filter sees link-local addresses as fe80::1%en0, so the zone is cut
+    /// first: it names an interface, not a different address.
+    private func ipv6Bytes(_ raw: String) -> [UInt8]? {
+        let literal = raw.prefix { $0 != "%" }
+        guard !literal.isEmpty else { return nil }
+        var v6 = in6_addr()
+        guard String(literal).withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 else { return nil }
+        return withUnsafeBytes(of: &v6) { Array($0) }
     }
 
     private func ipv4ToUInt32(_ s: String) -> UInt32? {
