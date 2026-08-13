@@ -19,11 +19,19 @@ import Darwin
 import Security
 
 final class FilterDataProvider: NEFilterDataProvider {
+    private enum SnapshotOrigin: Equatable {
+        case none
+        case boot
+        case live
+    }
+
     private let matcher = RuleMatcher()
     private let bootPolicy = BootPolicyClient()
+    private let resolverBypass = ResolverBypass()
     private let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
+    private var snapshotOrigin: SnapshotOrigin = .none
     private var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension has not received a rule snapshot from the GUI."
     )
@@ -81,8 +89,11 @@ final class FilterDataProvider: NEFilterDataProvider {
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
-        if isDNSOrDHCP(conn) { return .allow() }
-        guard let snapshot = currentSnapshot() else {
+        let policy = currentPolicy()
+        if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { return .allow() }
+        // Equivalent to `guard let snapshot = currentSnapshot() else`, but
+        // the snapshot and its boot/live origin must come from one locked read.
+        guard let snapshot = policy.snapshot else {
             // No GUI-delivered policy is a degraded state, not an alert-mode
             // policy. Allowing here keeps a missing GUI from becoming a network
             // outage while the published status tells the UI that filtering is
@@ -160,10 +171,14 @@ final class FilterDataProvider: NEFilterDataProvider {
         ip.hasPrefix("127.") || ip == "::1" || ip == "localhost"
     }
 
-    /// Do not let a cached or live policy cut off the machine's basic network
-    /// services. PFManager applies the same protection to its anchor rules.
-    private func isDNSOrDHCP(_ conn: Connection) -> Bool {
-        conn.remotePort == 53 || conn.remotePort == 67 || conn.remotePort == 68
+    /// DHCP remains exempt for every policy state. Port 53 is exempt only
+    /// while a valid helper boot snapshot is active, and only for a configured
+    /// resolver. If resolver configuration is unavailable during that boot
+    /// window, ResolverBypass fails open so name resolution still works.
+    private func isDNSOrDHCP(_ conn: Connection, snapshotOrigin: SnapshotOrigin) -> Bool {
+        if conn.remotePort == 67 || conn.remotePort == 68 { return true }
+        guard conn.remotePort == 53, snapshotOrigin == .boot else { return false }
+        return resolverBypass.allowsDNS(to: conn.remoteIP)
     }
 
     private func parentPID(of pid: Int32) -> Int32? {
@@ -300,10 +315,18 @@ final class FilterDataProvider: NEFilterDataProvider {
             }
             let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
             snapshotLock.lock()
-            snapshot = received
-            snapshotStatus = status
+            let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
+            if !liveSnapshotAlreadyLoaded {
+                snapshot = received
+                snapshotOrigin = .boot
+                snapshotStatus = status
+            }
             snapshotLock.unlock()
 
+            if liveSnapshotAlreadyLoaded {
+                PSLog.info(PSLog.netext, "ignoring boot policy snapshot because a trusted live GUI snapshot is already active")
+                return
+            }
             PSLog.info(
                 PSLog.netext,
                 "boot policy snapshot loaded from helper cache: mode \(received.mode.rawValue), \(received.rules.count) rules"
@@ -313,9 +336,17 @@ final class FilterDataProvider: NEFilterDataProvider {
                 "Network extension boot policy cache was invalid: \(error.localizedDescription)"
             )
             snapshotLock.lock()
-            snapshot = nil
-            snapshotStatus = status
+            let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
+            if !liveSnapshotAlreadyLoaded {
+                snapshot = nil
+                snapshotOrigin = .none
+                snapshotStatus = status
+            }
             snapshotLock.unlock()
+            if liveSnapshotAlreadyLoaded {
+                PSLog.info(PSLog.netext, "ignoring invalid boot policy snapshot because a trusted live GUI snapshot is already active")
+                return
+            }
             PSLog.error(PSLog.netext, status.message ?? "Network extension boot policy cache was invalid.")
         }
     }
@@ -326,6 +357,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
             snapshotLock.lock()
             snapshot = received
+            snapshotOrigin = .live
             snapshotStatus = status
             snapshotLock.unlock()
 
@@ -352,10 +384,10 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
     }
 
-    private func currentSnapshot() -> SharedRuleBridge.Snapshot? {
+    private func currentPolicy() -> (snapshot: SharedRuleBridge.Snapshot?, origin: SnapshotOrigin) {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
-        return snapshot
+        return (snapshot, snapshotOrigin)
     }
 
     private func readSnapshotStatus() -> SharedRuleBridge.SnapshotStatus {
