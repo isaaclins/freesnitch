@@ -261,7 +261,7 @@ public struct AppConstants {
     public static let ipcMachServiceName = "BHAF4L4726.io.isaaclins.freesnitch.ipc"
     /// Read-only boot-policy transport between the sandboxed extension and the
     /// privileged helper. It is separate from the helper's state-changing API.
-    public static let bootPolicyMachServiceName = "io.isaaclins.freesnitch.boot"
+    public static let bootPolicyMachServiceName = "BHAF4L4726.io.isaaclins.freesnitch.boot"
     public static let appGroup = "BHAF4L4726.io.isaaclins.freesnitch"
     public static let teamID = "BHAF4L4726"
     public static let version: String =
