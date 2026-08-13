@@ -219,14 +219,13 @@ What FreeSnitch does **not** do:
 
 FreeSnitch's firewall flavour provides per-process kernel filtering alongside its rules UI. LuLu remains a free, open-source alternative with its own Network Extension implementation. If you want the Little Snitch-style UI without paying $59, that is what FreeSnitch is for.
 
-## Roadmap
+## Status
 
-- [x] **Current codebase**: signed Network System Extension for per-process filtering in the shipping build, DNS-level and pfctl-level enforcement, rules UI, command line interface, Sparkle updater integration, and Internet Access Policy (`.lsiap`) parsing and display.
-- [ ] **Next**: Expand Internet Access Policy support and coverage.
-- [ ] **Later**: iCloud sync of rule sets between Macs.
-- [ ] **Later**: Endpoint Security Framework integration for process-event awareness.
+Per-process outbound filtering works today, through a signed Network System Extension that evaluates every new socket flow. Alongside it: DNS-level filtering with blocklists and DNS over HTTPS, `pfctl` enforcement, a rules manager, a live traffic monitor, a command line interface that mirrors the GUI, and Sparkle update support.
 
-No public release has been published. Version values in the project files identify the current build, not a downloadable release.
+No public release has been published. The version values in the project files identify the current build, not a downloadable release. Build it from source, see [Install](#install).
+
+There is no fixed roadmap here, and pretending otherwise ages badly. Direction is decided in the open on the [issue tracker](https://github.com/isaaclins/freesnitch/issues), where proposed work carries the reasoning behind it and the constraints it has to respect.
 
 ## FAQ
 
