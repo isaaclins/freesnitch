@@ -19,4 +19,10 @@ do {
 }
 service.start()
 
+let bootPolicyListener = NSXPCListener(machServiceName: AppConstants.bootPolicyMachServiceName)
+let bootPolicyDelegate = BootPolicyListener(service: service)
+bootPolicyListener.delegate = bootPolicyDelegate
+bootPolicyListener.resume()
+
+// Both listeners are intentionally kept alive for the lifetime of the daemon.
 dispatchMain()

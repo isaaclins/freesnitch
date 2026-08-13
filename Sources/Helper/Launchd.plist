@@ -8,6 +8,8 @@
     <dict>
         <key>io.isaaclins.freesnitch.helper</key>
         <true/>
+        <key>io.isaaclins.freesnitch.boot</key>
+        <true/>
     </dict>
     <key>BundleProgram</key>
     <string>Contents/MacOS/FreeSnitchHelper</string>
