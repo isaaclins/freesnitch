@@ -597,8 +597,11 @@ rewrite_appcast_download_urls() {
   mv "$tmp" "$appcast"
 
   local mismatch
+  # Emit the BARE version here. The awk comparison builds the expected tag by
+  # prefixing "v", so prefixing it in sed as well compared v0.3.0 against
+  # vv0.3.0 and reported every correct URL as a mismatch.
   mismatch="$(grep -Eo "$full_pattern" "$appcast" | \
-    sed -E 's#.*download/([^"/]+)/FreeSnitch-([0-9]+\.[0-9]+\.[0-9]+)\.zip.*#\1 v\2#' | \
+    sed -E 's#.*download/([^"/]+)/FreeSnitch-([0-9]+\.[0-9]+\.[0-9]+)\.zip.*#\1 \2#' | \
     awk '$1 != "v" $2 { print }' || true)"
   [[ -z "$mismatch" ]] || die "full-zip appcast URLs do not point to their matching release tags: $mismatch"
 
