@@ -4,7 +4,8 @@ import ServiceManagement
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
-    @State private var doh = AppConstants.defaultDoHUpstream
+    @State private var doh = ""
+    @State private var dohError: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -17,6 +18,10 @@ struct SettingsView: View {
         }
         .padding(16)
         .frame(width: 520, height: 420)
+        .onAppear { loadDoHUpstream() }
+        .onChange(of: state.helperConnected) { connected in
+            if connected { loadDoHUpstream() }
+        }
     }
 
     private var generalTab: some View {
@@ -85,11 +90,43 @@ struct SettingsView: View {
         }
     }
 
+    private func loadDoHUpstream() {
+        state.helper.getDoHUpstream { value, error in
+            Task { @MainActor in
+                if let value {
+                    doh = value
+                    dohError = nil
+                } else {
+                    // Keep the field empty rather than putting a sentinel such
+                    // as "Unknown" into editable state, where pressing Return
+                    // would try to save the sentinel as a resolver URL.
+                    doh = ""
+                    dohError = error ?? "The effective DoH upstream is unavailable."
+                }
+            }
+        }
+    }
+
+    private func saveDoHUpstream() {
+        state.helper.remote?.setDoHUpstream(url: doh) { ok, message in
+            Task { @MainActor in
+                if ok {
+                    dohError = nil
+                } else {
+                    dohError = message ?? "The helper refused the DoH upstream."
+                }
+            }
+        }
+    }
+
     private var dnsTab: some View {
         Form {
             Section("DNS over HTTPS upstream") {
                 TextField("DoH URL", text: $doh)
-                    .onSubmit { state.helper.remote?.setDoHUpstream(url: doh) { _, _ in } }
+                    .onSubmit { saveDoHUpstream() }
+                if let dohError {
+                    Text(dohError).font(.caption).foregroundColor(.red)
+                }
                 Text("Examples:").font(.caption).foregroundColor(.secondary)
                 Text("https://cloudflare-dns.com/dns-query").font(.caption.monospaced())
                 Text("https://dns.quad9.net/dns-query").font(.caption.monospaced())

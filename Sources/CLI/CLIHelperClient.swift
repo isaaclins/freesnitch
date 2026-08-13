@@ -128,6 +128,22 @@ final class CLIHelperClient: NSObject {
         }
     }
 
+    func getDoH() async throws -> String {
+        let value: String? = try await perform(timeout: timeout) { proxy, reply in
+            guard proxy.getDoHUpstream != nil else {
+                reply(nil)
+                return
+            }
+            proxy.getDoHUpstream?(reply: { reply($0) })
+        }
+        guard let value else {
+            throw CLIError(.helperVersionMismatch,
+                           message: "The running helper does not support reading the effective DoH upstream.",
+                           remediation: "The helper is still running from an earlier build. Run `\(AppConstants.helperKickstartCommand)`, then rerun the command.")
+        }
+        return value
+    }
+
     func setDoH(url: String) async throws {
         try await requireSuccess(timeout: timeout) { proxy, reply in
             proxy.setDoHUpstream(url: url, reply: reply)
