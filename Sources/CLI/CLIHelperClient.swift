@@ -26,7 +26,7 @@ final class CLIHelperClient: NSObject {
         guard AppConstants.identityMatches(reported: version, expected: CLIAppBundle.expectedBuildIdentity) else {
             throw CLIError(.helperVersionMismatch,
                            message: "The helper is version \(version), but this app is version \(CLIAppBundle.expectedBuildIdentity).",
-                           remediation: "Replace or repair the FreeSnitch app so the bundled helper and CLI come from the same build.")
+                           remediation: "The helper is still running from an earlier build. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` while launchd still has the service registered, then rerun the command.")
         }
         let data: Data = try await perform { proxy, reply in
             proxy.getStatus(reply: reply)
