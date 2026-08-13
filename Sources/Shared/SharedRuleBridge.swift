@@ -5,6 +5,10 @@ import Foundation
 /// to root's home rather than the logged-in user's home. Snapshots therefore
 /// stay in memory and cross the existing app-extension XPC connection.
 public enum SharedRuleBridge {
+    /// Version the on-disk envelope separately from the live XPC payload. A
+    /// future build must reject an unknown cache instead of guessing its policy.
+    public static let bootSnapshotVersion = 1
+
     public struct Snapshot: Codable, Sendable {
         public var mode: AppMode
         public var rules: [Rule]
@@ -14,6 +18,16 @@ public enum SharedRuleBridge {
             self.mode = mode
             self.rules = rules
             self.updatedAt = updatedAt
+        }
+    }
+
+    public struct BootSnapshot: Codable, Sendable {
+        public let version: Int
+        public let snapshot: Snapshot
+
+        public init(snapshot: Snapshot, version: Int = SharedRuleBridge.bootSnapshotVersion) {
+            self.version = version
+            self.snapshot = snapshot
         }
     }
 
@@ -66,6 +80,22 @@ public enum SharedRuleBridge {
 
     public static func decode(_ data: Data) throws -> Snapshot {
         try JSONDecoder().decode(Snapshot.self, from: data)
+    }
+
+    public static func encodeBootSnapshot(_ snapshot: Snapshot) throws -> Data {
+        try JSONEncoder().encode(BootSnapshot(snapshot: snapshot))
+    }
+
+    public static func decodeBootSnapshot(_ data: Data) throws -> Snapshot {
+        let stored = try JSONDecoder().decode(BootSnapshot.self, from: data)
+        guard stored.version == bootSnapshotVersion else {
+            throw NSError(
+                domain: "SharedRuleBridge",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unsupported boot snapshot version \(stored.version)."]
+            )
+        }
+        return stored.snapshot
     }
 
     public static func encode(_ status: SnapshotStatus) throws -> Data {

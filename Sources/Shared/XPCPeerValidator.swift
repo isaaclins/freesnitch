@@ -17,20 +17,14 @@ public enum XPCPeerValidator {
     /// builds remain usable during development, matching the existing helper
     /// behavior. The bypass is inactive as soon as this process has a team ID.
     public static func isTrustedGUI(_ connection: NSXPCConnection) -> Bool {
-        switch selfSigningTeam {
-        case .failure:
-            // We could not read our own signature. That should never happen,
-            // so treat it as hostile rather than waving every client through.
-            return false
-        case .success(let team) where team == nil:
-            return true
-        case .success:
-            break
-        }
+        trustedPeer(connection, requirement: peerRequirement())
+    }
 
-        guard let code = guestCode(for: connection),
-              let requirement = peerRequirement() else { return false }
-        return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
+    /// The boot-policy listener is a separate, read-only XPC surface. Keep its
+    /// requirement separate so a network extension can never use the helper's
+    /// state-changing GUI and CLI API.
+    public static func isTrustedNetExt(_ connection: NSXPCConnection) -> Bool {
+        trustedPeer(connection, requirement: netExtRequirement())
     }
 
     /// Used by the extension to keep a CLI inspection connection from taking
@@ -57,21 +51,49 @@ public enum XPCPeerValidator {
         return dict[kSecCodeInfoIdentifier as String] as? String
     }
 
-    /// Construct the one code requirement used by every privileged XPC
-    /// listener. Keep this in shared code so the helper and extension cannot
+    /// Construct the code requirements used by the privileged XPC
+    /// listeners. Keep this in shared code so the helper and extension cannot
     /// silently accept different client identities.
     private static func peerRequirement() -> SecRequirement? {
-        let identifiers = permittedPeerIdentifiers
+        requirement(for: permittedPeerIdentifiers)
+    }
+
+    private static func netExtRequirement() -> SecRequirement? {
+        requirement(for: [AppConstants.bundleIdNetExt])
+    }
+
+    private static func requirement(for identifiers: [String]) -> SecRequirement? {
+        let identifierClause = identifiers
             .map { "identifier \"\($0)\"" }
             .joined(separator: " or ")
         let requirementText = "anchor apple generic"
-            + " and (\(identifiers))"
+            + " and (\(identifierClause))"
             + " and certificate leaf[subject.OU] = \"\(AppConstants.teamID)\""
         var requirement: SecRequirement?
         guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess else {
             return nil
         }
         return requirement
+    }
+
+    private static func trustedPeer(
+        _ connection: NSXPCConnection,
+        requirement: SecRequirement?
+    ) -> Bool {
+        switch selfSigningTeam {
+        case .failure:
+            // We could not read our own signature. That should never happen,
+            // so treat it as hostile rather than waving every client through.
+            return false
+        case .success(let team) where team == nil:
+            return true
+        case .success:
+            break
+        }
+
+        guard let code = guestCode(for: connection),
+              let requirement else { return false }
+        return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
     }
 
     private static func guestCode(for connection: NSXPCConnection) -> SecCode? {
