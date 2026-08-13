@@ -7,6 +7,10 @@ import Foundation
 /// SHA-256 fingerprints, which bound the resident index memory while retaining
 /// constant-time membership checks. A fingerprint collision is
 /// computationally infeasible for an untrusted list source.
+///
+/// Entries keep their source semantics: literal IP entries match addresses,
+/// and domain entries match a flow hostname and its parent domains. This
+/// bridge does not invent a DNS-to-IP mapping for a domain-only source.
 public enum BlocklistBridge {
     public static let version: UInt16 = 1
     public static let maxEntries = 1_000_000
