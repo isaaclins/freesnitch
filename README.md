@@ -135,7 +135,13 @@ Ships with 1Hosts Lite, OISD Small, StevenBlack, HaGeZi Multi Light, URLhaus, An
 When Enforcement is enabled, a `puresnitch` anchor in `pfctl` provides IP, CIDR, and port blocking at the kernel. These rules apply regardless of which process initiated the connection.
 
 ### Profiles
-The helper seeds `default`, `home`, `public-wifi`, and `lockdown` profiles. Rules carry a profile name, but automatic SSID switching is not implemented in the current codebase.
+A profile is a place and how strict you are there: a default strictness, a selection of deny blocklists, the networks that select it, and a few rules that only apply there. The helper seeds `default`, `home`, `public-wifi`, and `lockdown`.
+
+Rules layer exactly twice: the `Always` set plus the active profile's own rules. New rules default to `Always`, and the rule editor's `Applies to` control is where that changes. Deny blocklists stack without limit, because anything any list blocks is blocked and order cannot matter. Creating a profile copies nothing: it inherits every `Always` rule immediately.
+
+A network is recognised by the MAC address of its default gateway. FreeSnitch never reads the Wi-Fi network name and never asks for Location Services. A network only ever selects a profile after you bind it with "use this here"; an unknown network changes nothing.
+
+Switching profiles affects new connections only. Verdicts are made in `handleNewFlow`, so replacing the active rule set cannot retroactively drop an established session such as SSH. Every switch is announced with the active and paused rule counts and an Undo, and the active profile is always visible in the menu bar.
 
 ### Menubar Status Item
 Live up and down throughput when enabled, a five-minute traffic graph, a top-process list, a denied-count badge, and a one-click mode picker.
@@ -190,7 +196,7 @@ Rule(
     action:          allow | deny | ask
     scope:           process | domain | ip | port | any
     priority:        100
-    profile:         "default"
+    profile:         "always"     // or one profile name
     temporary:       false
     expiresAt:       Date?
 )

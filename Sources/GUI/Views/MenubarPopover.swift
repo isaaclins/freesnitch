@@ -6,6 +6,7 @@ struct MenubarPopoverView: View {
     @EnvironmentObject var windows: WindowManager
     let close: () -> Void
     @State private var showModePicker = false
+    @ObservedObject private var profileClient = ProfileClient.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -13,6 +14,14 @@ struct MenubarPopoverView: View {
                 .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
             HelperBanner(systemExtension: systemExtension, compact: true)
+
+            if let notice = profileClient.visibleNotice {
+                ProfileSwitchBanner(notice: notice,
+                                    canUndo: profileClient.canUndo,
+                                    onUndo: { profileClient.undoSwitch() },
+                                    onDismiss: { profileClient.dismissNotice() })
+                    .padding(.horizontal, 12).padding(.bottom, 6)
+            }
 
             trafficGraph
                 .padding(.horizontal, 12)
@@ -77,6 +86,7 @@ struct MenubarPopoverView: View {
                         showModePicker = false
                     }
                 }
+            profileChip
             Spacer()
             Button(action: { close(); windows.showSettings() }) {
                 Image(systemName: "gearshape.fill")
@@ -99,6 +109,30 @@ struct MenubarPopoverView: View {
             .buttonStyle(.plain)
             .help("Network Monitor")
         }
+    }
+
+    /// The active profile is always on screen. A strict profile applying
+    /// silently is the same failure as #12, #13 and #17.
+    private var profileChip: some View {
+        Button(action: { close(); windows.showSettings() }) {
+            HStack(spacing: 6) {
+                Image(systemName: profileClient.activeProfile?.icon ?? "person.crop.circle")
+                    .font(.system(size: 11))
+                    .foregroundColor(PSTheme.accentBlue)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Profile").font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                    Text(profileClient.menuBarLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(PSTheme.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(PSTheme.bgTertiary)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .help("The active profile. Change it in Settings under Profiles.")
     }
 
     private var trafficGraph: some View {

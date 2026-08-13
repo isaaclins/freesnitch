@@ -30,6 +30,30 @@ public final class RuleStore: @unchecked Sendable {
         case generationExhausted
     }
 
+    public enum StoreError: Error, LocalizedError, Equatable, Sendable {
+        case profileNotFound(String)
+        case profileAlreadyExists(String)
+        case cannotDeleteDefaultProfile
+        case cannotDeleteLastProfile
+        case blocklistNotFound(UUID)
+        case blocklistAlreadyExists(String)
+        case invalidBlocklistName
+        case invalidBlocklistURL(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .profileNotFound(let name): return "Profile `\(name)` was not found."
+            case .profileAlreadyExists(let name): return "Profile `\(name)` already exists."
+            case .cannotDeleteDefaultProfile: return "The default profile cannot be deleted."
+            case .cannotDeleteLastProfile: return "At least one profile must remain."
+            case .blocklistNotFound(let id): return "Blocklist `\(id.uuidString)` was not found."
+            case .blocklistAlreadyExists(let name): return "Blocklist `\(name)` already exists."
+            case .invalidBlocklistName: return "The blocklist name cannot be empty."
+            case .invalidBlocklistURL(let reason): return "Invalid blocklist URL: \(reason)."
+            }
+        }
+    }
+
     public static let policyGenerationSettingKey = "policy_generation"
     private static let modeSettingKey = "mode"
 
@@ -121,6 +145,19 @@ public final class RuleStore: @unchecked Sendable {
             entry_count INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS profile_blocklists (
+            profile_name TEXT NOT NULL,
+            blocklist_id TEXT NOT NULL,
+            PRIMARY KEY(profile_name, blocklist_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS profile_network_bindings (
+            id TEXT PRIMARY KEY,
+            profile_name TEXT NOT NULL,
+            gateway_mac TEXT NOT NULL UNIQUE,
+            created_at REAL NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -129,6 +166,9 @@ public final class RuleStore: @unchecked Sendable {
         try exec(ddl)
         try seedProfiles()
         try seedBlocklists()
+        try migrateLegacyRuleProfiles()
+        try seedDefaultProfileBlocklists()
+        try normalizeActiveProfile()
     }
 
     private func seedProfiles() throws {
@@ -160,6 +200,57 @@ public final class RuleStore: @unchecked Sendable {
             BlocklistInfo(name: "Peter Lowe", url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext")
         ]
         for b in defaults { try insertBlocklistIfMissing(b) }
+    }
+
+    /// Rules written before profiles became real used `default` for the one
+    /// global rule set. Migrate those rows once so the seeded `default` place
+    /// profile can remain a real, independently editable profile.
+    private func migrateLegacyRuleProfiles() throws {
+        guard getSettingLocked("profiles_rules_migrated") == nil else { return }
+        try exec("UPDATE rules SET profile='\(Profile.alwaysName)' WHERE profile IS NULL OR profile='' OR profile='default';")
+        try setSettingLocked("profiles_rules_migrated", "1")
+    }
+
+    /// Preserve the old all-enabled blocklist behavior for the seeded profiles
+    /// only on the first profile-selection migration. Later edits are never
+    /// overwritten on startup.
+    private func seedDefaultProfileBlocklists() throws {
+        guard getSettingLocked("profiles_blocklists_seeded") == nil else { return }
+        var blocklistIDs: [String] = []
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        // Seed from what is enabled today, so an upgrade preserves the lists
+        // the user already chose instead of switching everything back on.
+        guard sqlite3_prepare_v2(db, "SELECT id FROM blocklists WHERE enabled=1;", -1, &stmt, nil) == SQLITE_OK else { return }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            blocklistIDs.append(text(stmt, 0))
+        }
+        for profile in [Profile.defaultName, "home", "public-wifi", "lockdown"] {
+            for id in blocklistIDs {
+                try execute("INSERT OR IGNORE INTO profile_blocklists(profile_name,blocklist_id) VALUES(?,?);") { statement in
+                    sqlite3_bind_text(statement, 1, profile, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(statement, 2, id, -1, SQLITE_TRANSIENT)
+                }
+            }
+        }
+        try setSettingLocked("profiles_blocklists_seeded", "1")
+    }
+
+    private func normalizeActiveProfile() throws {
+        var activeCount = 0
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM profiles WHERE is_active=1;", -1, &stmt, nil) == SQLITE_OK,
+           sqlite3_step(stmt) == SQLITE_ROW {
+            activeCount = Int(sqlite3_column_int(stmt, 0))
+        }
+        guard activeCount == 1 else {
+            try exec("UPDATE profiles SET is_active=0;")
+            try execute("UPDATE profiles SET is_active=1 WHERE name=?;") { statement in
+                sqlite3_bind_text(statement, 1, Profile.defaultName, -1, SQLITE_TRANSIENT)
+            }
+            return
+        }
     }
 
     private func insertProfileIfMissing(_ p: Profile) throws {
@@ -233,6 +324,47 @@ public final class RuleStore: @unchecked Sendable {
 
     public func policyState() -> PolicyState {
         queue.sync { policyStateLocked() }
+    }
+
+    /// The policy that should actually be enforced: the active profile's
+    /// strictness plus exactly two rule layers, Always and that profile.
+    /// The generation is the same committed policy generation, so existing
+    /// snapshot gating is unchanged.
+    public func activePolicyState() -> PolicyState {
+        queue.sync {
+            let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
+            guard let profile = activeProfileLocked() else {
+                return policyStateLocked()
+            }
+            return PolicyState(mode: profile.mode,
+                               rules: layeredRulesLocked(profileName: profile.name),
+                               generation: generation)
+        }
+    }
+
+    public func profilePolicy(named name: String) throws -> ProfilePolicy {
+        try queue.sync {
+            guard let profile = profileLocked(named: name) else {
+                throw StoreError.profileNotFound(name)
+            }
+            return profilePolicyLocked(profile)
+        }
+    }
+
+    public func activeProfilePolicy() throws -> ProfilePolicy {
+        try queue.sync {
+            guard let profile = activeProfileLocked() else {
+                throw StoreError.profileNotFound(Profile.defaultName)
+            }
+            return profilePolicyLocked(profile)
+        }
+    }
+
+    private func profilePolicyLocked(_ profile: Profile) -> ProfilePolicy {
+        ProfilePolicy(profile: profile,
+                      alwaysRules: allRulesLocked(profile: Profile.alwaysName),
+                      profileRules: allRulesLocked(profile: profile.name),
+                      selectedBlocklistIDs: profileBlocklistIDsLocked(profileName: profile.name))
     }
 
     /// Applies one complete mode/rule mutation and its generation in a single
@@ -328,6 +460,30 @@ public final class RuleStore: @unchecked Sendable {
         queue.sync { allRulesLocked(profile: profile) }
     }
 
+    /// Returns the only allowed allow-rule composition: Always plus one
+    /// profile. Calling this for a new profile does not copy or create rules.
+    public func layeredRules(profileName: String) throws -> [Rule] {
+        try queue.sync {
+            guard profileLocked(named: profileName) != nil else {
+                throw StoreError.profileNotFound(profileName)
+            }
+            return layeredRulesLocked(profileName: profileName)
+        }
+    }
+
+    public func activeLayeredRules() -> [Rule] {
+        queue.sync {
+            guard let profile = activeProfileLocked() else { return allRulesLocked(profile: Profile.alwaysName) }
+            return layeredRulesLocked(profileName: profile.name)
+        }
+    }
+
+    private func layeredRulesLocked(profileName: String) -> [Rule] {
+        let always = allRulesLocked(profile: Profile.alwaysName)
+        guard profileName != Profile.alwaysName else { return always }
+        return always + allRulesLocked(profile: profileName)
+    }
+
     private func allRulesLocked(profile: String?) -> [Rule] {
         var rules: [Rule] = []
         let sql: String
@@ -347,56 +503,365 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     public func allProfiles() -> [Profile] {
-        queue.sync {
-            var out: [Profile] = []
-            var stmt: OpaquePointer?
-            defer { if stmt != nil { sqlite3_finalize(stmt) } }
-            guard sqlite3_prepare_v2(db, "SELECT id,name,mode,icon,is_active FROM profiles ORDER BY name;", -1, &stmt, nil) == SQLITE_OK else { return [] }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let id = UUID(uuidString: text(stmt, 0)) ?? UUID()
-                let name = text(stmt, 1)
-                let mode = AppMode(rawValue: text(stmt, 2)) ?? .alert
-                let icon = text(stmt, 3)
-                let active = sqlite3_column_int(stmt, 4) == 1
-                out.append(Profile(id: id, name: name, mode: mode, icon: icon, isActive: active))
+        queue.sync { allProfilesLocked() }
+    }
+
+    public func profile(named name: String) -> Profile? {
+        queue.sync { profileLocked(named: name) }
+    }
+
+    public func activeProfile() -> Profile? {
+        queue.sync { activeProfileLocked() }
+    }
+
+    public func activeProfileName() -> String {
+        queue.sync { activeProfileLocked()?.name ?? Profile.defaultName }
+    }
+
+    public func createProfile(
+        name: String,
+        mode: AppMode = .alert,
+        icon: String = "shield",
+        blocklistIDs: Set<UUID> = []
+    ) throws -> Profile {
+        let normalizedName = try ProfileNameValidator.normalized(name)
+        return try queue.sync {
+            guard profileLocked(named: normalizedName) == nil else {
+                throw StoreError.profileAlreadyExists(normalizedName)
             }
-            return out
+            try validateBlocklistIDsLocked(blocklistIDs)
+            let profile = Profile(name: normalizedName, mode: mode, icon: icon, blocklistIDs: blocklistIDs)
+            try insertProfileLocked(profile)
+            try replaceProfileBlocklistsLocked(profileName: normalizedName, blocklistIDs: blocklistIDs)
+            return profile
         }
     }
 
-    public func setActiveProfile(name: String) throws {
-        try exec("UPDATE profiles SET is_active=0;")
-        try execute("UPDATE profiles SET is_active=1 WHERE name=?;") { stmt in
-            sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+    public func updateProfile(_ profile: Profile) throws -> Profile {
+        let normalizedName = try ProfileNameValidator.normalized(profile.name)
+        return try queue.sync {
+            guard let current = profileLocked(id: profile.id) else {
+                throw StoreError.profileNotFound(profile.name)
+            }
+            if current.name == Profile.defaultName && normalizedName != current.name {
+                throw StoreError.profileNotFound("the default profile cannot be renamed")
+            }
+            if let duplicate = profileLocked(named: normalizedName), duplicate.id != current.id {
+                throw StoreError.profileAlreadyExists(normalizedName)
+            }
+            try validateBlocklistIDsLocked(profile.blocklistIDs)
+
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                if current.name != normalizedName {
+                    try executeLocked("UPDATE rules SET profile=? WHERE profile=?;") { stmt in
+                        sqlite3_bind_text(stmt, 1, normalizedName, -1, SQLITE_TRANSIENT)
+                        sqlite3_bind_text(stmt, 2, current.name, -1, SQLITE_TRANSIENT)
+                    }
+                    try executeLocked("UPDATE profile_network_bindings SET profile_name=? WHERE profile_name=?;") { stmt in
+                        sqlite3_bind_text(stmt, 1, normalizedName, -1, SQLITE_TRANSIENT)
+                        sqlite3_bind_text(stmt, 2, current.name, -1, SQLITE_TRANSIENT)
+                    }
+                    try executeLocked("UPDATE profile_blocklists SET profile_name=? WHERE profile_name=?;") { stmt in
+                        sqlite3_bind_text(stmt, 1, normalizedName, -1, SQLITE_TRANSIENT)
+                        sqlite3_bind_text(stmt, 2, current.name, -1, SQLITE_TRANSIENT)
+                    }
+                }
+                try executeLocked("UPDATE profiles SET name=?,mode=?,icon=? WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, normalizedName, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, profile.mode.rawValue, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 3, profile.icon, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 4, profile.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try replaceProfileBlocklistsLocked(profileName: normalizedName, blocklistIDs: profile.blocklistIDs)
+                try syncGlobalBlocklistEnabledLocked()
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+            return Profile(id: profile.id, name: normalizedName, mode: profile.mode, icon: profile.icon,
+                           isActive: current.isActive, blocklistIDs: profile.blocklistIDs)
         }
     }
 
+    @discardableResult
+    public func deleteProfile(name: String) throws -> Profile? {
+        let normalizedName = try ProfileNameValidator.normalized(name)
+        return try queue.sync {
+            guard let profile = profileLocked(named: normalizedName) else {
+                throw StoreError.profileNotFound(normalizedName)
+            }
+            guard profile.name != Profile.defaultName else {
+                throw StoreError.cannotDeleteDefaultProfile
+            }
+            guard allProfilesLocked().count > 1 else {
+                throw StoreError.cannotDeleteLastProfile
+            }
+            let replacement = profile.isActive
+                ? (profileLocked(named: Profile.defaultName) ?? allProfilesLocked().first { $0.id != profile.id })
+                : nil
+
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                try executeLocked("DELETE FROM rules WHERE profile=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profile.name, -1, SQLITE_TRANSIENT)
+                }
+                try executeLocked("DELETE FROM profile_blocklists WHERE profile_name=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profile.name, -1, SQLITE_TRANSIENT)
+                }
+                try executeLocked("DELETE FROM profile_network_bindings WHERE profile_name=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profile.name, -1, SQLITE_TRANSIENT)
+                }
+                try executeLocked("DELETE FROM profiles WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profile.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                if let replacement {
+                    try executeLocked("UPDATE profiles SET is_active=0;") { _ in }
+                    try executeLocked("UPDATE profiles SET is_active=1 WHERE id=?;") { stmt in
+                        sqlite3_bind_text(stmt, 1, replacement.id.uuidString, -1, SQLITE_TRANSIENT)
+                    }
+                }
+                try syncGlobalBlocklistEnabledLocked()
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+            return replacement
+        }
+    }
+
+    @discardableResult
+    public func setActiveProfile(name: String) throws -> Profile {
+        let normalizedName = try ProfileNameValidator.normalized(name)
+        return try queue.sync {
+            guard let profile = profileLocked(named: normalizedName) else {
+                throw StoreError.profileNotFound(normalizedName)
+            }
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                try execLocked("UPDATE profiles SET is_active=0;")
+                try executeLocked("UPDATE profiles SET is_active=1 WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profile.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try syncGlobalBlocklistEnabledLocked()
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+            return Profile(id: profile.id, name: profile.name, mode: profile.mode, icon: profile.icon,
+                           isActive: true, blocklistIDs: profile.blocklistIDs)
+        }
+    }
+
+    public func setProfileMode(name: String, mode: AppMode) throws -> Profile {
+        guard let current = profile(named: name) else { throw StoreError.profileNotFound(name) }
+        var updated = current
+        updated.mode = mode
+        return try updateProfile(updated)
+    }
+
+    /// Legacy callers receive the global enabled flag. Profile-aware callers
+    /// must use `allBlocklists(forProfile:)`, which reads the selection table.
     public func allBlocklists() -> [BlocklistInfo] {
-        queue.sync {
-            var out: [BlocklistInfo] = []
-            var stmt: OpaquePointer?
-            defer { if stmt != nil { sqlite3_finalize(stmt) } }
-            guard sqlite3_prepare_v2(db, "SELECT id,name,url,enabled,last_updated,entry_count FROM blocklists ORDER BY name;", -1, &stmt, nil) == SQLITE_OK else { return [] }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let id = UUID(uuidString: text(stmt, 0)) ?? UUID()
-                let name = text(stmt, 1)
-                let url = text(stmt, 2)
-                let enabled = sqlite3_column_int(stmt, 3) == 1
-                let last: Date? = sqlite3_column_type(stmt, 4) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4))
-                let count = Int(sqlite3_column_int(stmt, 5))
-                out.append(BlocklistInfo(id: id, name: name, url: url, enabled: enabled, lastUpdated: last, entryCount: count))
+        queue.sync { allBlocklistsLocked(selectedIDs: nil) }
+    }
+
+    public func allBlocklists(forProfile profileName: String) throws -> [BlocklistInfo] {
+        try queue.sync {
+            guard profileLocked(named: profileName) != nil else {
+                throw StoreError.profileNotFound(profileName)
             }
-            return out
+            return allBlocklistsLocked(selectedIDs: profileBlocklistIDsLocked(profileName: profileName))
+        }
+    }
+
+    public func selectedBlocklistIDs(profileName: String) throws -> Set<UUID> {
+        try queue.sync {
+            guard profileLocked(named: profileName) != nil else {
+                throw StoreError.profileNotFound(profileName)
+            }
+            return profileBlocklistIDsLocked(profileName: profileName)
+        }
+    }
+
+    public func setBlocklistEnabled(
+        id: UUID,
+        profileName: String,
+        enabled: Bool
+    ) throws {
+        try queue.sync {
+            guard profileLocked(named: profileName) != nil else {
+                throw StoreError.profileNotFound(profileName)
+            }
+            guard blocklistExistsLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
+            if enabled {
+                try executeLocked("INSERT OR IGNORE INTO profile_blocklists(profile_name,blocklist_id) VALUES(?,?);") { stmt in
+                    sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+            } else {
+                try executeLocked("DELETE FROM profile_blocklists WHERE profile_name=? AND blocklist_id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+            }
+            try syncGlobalBlocklistEnabledLocked()
+        }
+    }
+
+    public func setProfileBlocklists(profileName: String, blocklistIDs: Set<UUID>) throws {
+        try queue.sync {
+            guard profileLocked(named: profileName) != nil else {
+                throw StoreError.profileNotFound(profileName)
+            }
+            try validateBlocklistIDsLocked(blocklistIDs)
+            try replaceProfileBlocklistsLocked(profileName: profileName, blocklistIDs: blocklistIDs)
+            try syncGlobalBlocklistEnabledLocked()
+        }
+    }
+
+    public func addCustomBlocklist(
+        name: String,
+        url: String,
+        enabled: Bool = true,
+        profileName: String? = nil,
+        allowLocalhostHTTPForInjectedTest: Bool = false
+    ) throws -> BlocklistInfo {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, cleanName.utf8.count <= 256 else {
+            throw StoreError.invalidBlocklistName
+        }
+        do {
+            _ = try BlocklistURLValidator.validate(url, allowLocalhostHTTPForInjectedTest: allowLocalhostHTTPForInjectedTest)
+        } catch {
+            throw StoreError.invalidBlocklistURL(error.localizedDescription)
+        }
+        return try queue.sync {
+            if blocklistNamedLocked(cleanName) != nil {
+                throw StoreError.blocklistAlreadyExists(cleanName)
+            }
+            if let profileName, profileLocked(named: profileName) == nil {
+                throw StoreError.profileNotFound(profileName)
+            }
+            let blocklist = BlocklistInfo(name: cleanName, url: url, enabled: enabled)
+            try insertBlocklistLocked(blocklist)
+            if let profileName, enabled {
+                try executeLocked("INSERT INTO profile_blocklists(profile_name,blocklist_id) VALUES(?,?);") { stmt in
+                    sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, blocklist.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+            }
+            try syncGlobalBlocklistEnabledLocked()
+            return blocklistLocked(id: blocklist.id) ?? blocklist
+        }
+    }
+
+    public func updateBlocklistURL(
+        id: UUID,
+        url: String,
+        allowLocalhostHTTPForInjectedTest: Bool = false
+    ) throws -> BlocklistInfo {
+        do {
+            _ = try BlocklistURLValidator.validate(url, allowLocalhostHTTPForInjectedTest: allowLocalhostHTTPForInjectedTest)
+        } catch {
+            throw StoreError.invalidBlocklistURL(error.localizedDescription)
+        }
+        return try queue.sync {
+            guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
+            try executeLocked("UPDATE blocklists SET url=? WHERE id=?;") { stmt in
+                sqlite3_bind_text(stmt, 1, url, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
+            current.url = url
+            return current
+        }
+    }
+
+    public func deleteBlocklist(id: UUID) throws {
+        try queue.sync {
+            guard blocklistExistsLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                try executeLocked("DELETE FROM profile_blocklists WHERE blocklist_id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try executeLocked("DELETE FROM blocklists WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try syncGlobalBlocklistEnabledLocked()
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
         }
     }
 
     public func updateBlocklist(_ b: BlocklistInfo) throws {
-        try execute("UPDATE blocklists SET enabled=?, last_updated=?, entry_count=? WHERE id=?;") { stmt in
-            sqlite3_bind_int(stmt, 1, b.enabled ? 1 : 0)
-            if let d = b.lastUpdated { sqlite3_bind_double(stmt, 2, d.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 2) }
-            sqlite3_bind_int(stmt, 3, Int32(b.entryCount))
-            sqlite3_bind_text(stmt, 4, b.id.uuidString, -1, SQLITE_TRANSIENT)
+        try queue.sync {
+            guard blocklistExistsLocked(id: b.id) else { throw StoreError.blocklistNotFound(b.id) }
+            try executeLocked("UPDATE blocklists SET enabled=?, last_updated=?, entry_count=? WHERE id=?;") { stmt in
+                sqlite3_bind_int(stmt, 1, b.enabled ? 1 : 0)
+                if let d = b.lastUpdated { sqlite3_bind_double(stmt, 2, d.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 2) }
+                sqlite3_bind_int(stmt, 3, Int32(b.entryCount))
+                sqlite3_bind_text(stmt, 4, b.id.uuidString, -1, SQLITE_TRANSIENT)
+            }
         }
+    }
+
+    public func bindGatewayMAC(_ rawMAC: String, toProfile profileName: String) throws -> ProfileNetworkBinding {
+        let canonical: String
+        do {
+            canonical = try GatewayMAC.canonical(rawMAC)
+        } catch {
+            throw ProfileValidationError.invalidGatewayMAC(error.localizedDescription)
+        }
+        return try queue.sync {
+            guard profileLocked(named: profileName) != nil else {
+                throw StoreError.profileNotFound(profileName)
+            }
+            let binding = ProfileNetworkBinding(profileName: profileName, gatewayMAC: canonical)
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                // One gateway can select only one profile. Rebinding is an
+                // explicit user action, never a side effect of watching it.
+                try executeLocked("DELETE FROM profile_network_bindings WHERE gateway_mac=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, canonical, -1, SQLITE_TRANSIENT)
+                }
+                try insertNetworkBindingLocked(binding)
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+            return binding
+        }
+    }
+
+    public func unbindGatewayMAC(_ rawMAC: String) throws {
+        let canonical: String
+        do {
+            canonical = try GatewayMAC.canonical(rawMAC)
+        } catch {
+            throw ProfileValidationError.invalidGatewayMAC(error.localizedDescription)
+        }
+        try queue.sync {
+            try executeLocked("DELETE FROM profile_network_bindings WHERE gateway_mac=?;") { stmt in
+                sqlite3_bind_text(stmt, 1, canonical, -1, SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    public func networkBinding(forGatewayMAC rawMAC: String) -> ProfileNetworkBinding? {
+        guard let canonical = GatewayMAC.normalized(rawMAC) else { return nil }
+        return queue.sync { networkBindingLocked(gatewayMAC: canonical) }
+    }
+
+    public func allNetworkBindings() -> [ProfileNetworkBinding] {
+        queue.sync { allNetworkBindingsLocked() }
     }
 
     public func recordConnection(_ c: Connection) throws {
@@ -456,6 +921,210 @@ public final class RuleStore: @unchecked Sendable {
 
     public func getSetting(_ key: String) -> String? {
         queue.sync { getSettingLocked(key) }
+    }
+
+    // MARK: - profile and blocklist helpers
+    private func allProfilesLocked() -> [Profile] {
+        var out: [Profile] = []
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,mode,icon,is_active FROM profiles ORDER BY name;", -1, &stmt, nil) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let id = UUID(uuidString: text(stmt, 0)) ?? UUID()
+            let name = text(stmt, 1)
+            let mode = AppMode(rawValue: text(stmt, 2)) ?? .alert
+            let icon = text(stmt, 3)
+            let active = sqlite3_column_int(stmt, 4) == 1
+            out.append(Profile(id: id, name: name, mode: mode, icon: icon, isActive: active,
+                              blocklistIDs: profileBlocklistIDsLocked(profileName: name)))
+        }
+        return out
+    }
+
+    private func profileLocked(named name: String) -> Profile? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,mode,icon,is_active FROM profiles WHERE lower(name)=lower(?) LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return profileFromRow(stmt)
+    }
+
+    private func profileLocked(id: UUID) -> Profile? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,mode,icon,is_active FROM profiles WHERE id=? LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return profileFromRow(stmt)
+    }
+
+    private func activeProfileLocked() -> Profile? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,mode,icon,is_active FROM profiles WHERE is_active=1 ORDER BY name LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return profileLocked(named: Profile.defaultName) }
+        return profileFromRow(stmt)
+    }
+
+    private func profileFromRow(_ stmt: OpaquePointer?) -> Profile {
+        let id = UUID(uuidString: text(stmt, 0)) ?? UUID()
+        let name = text(stmt, 1)
+        let mode = AppMode(rawValue: text(stmt, 2)) ?? .alert
+        let icon = text(stmt, 3)
+        let active = sqlite3_column_int(stmt, 4) == 1
+        return Profile(id: id, name: name, mode: mode, icon: icon, isActive: active,
+                       blocklistIDs: profileBlocklistIDsLocked(profileName: name))
+    }
+
+    private func insertProfileLocked(_ profile: Profile) throws {
+        try executeLocked("INSERT INTO profiles(id,name,mode,icon,is_active) VALUES (?,?,?,?,?);") { stmt in
+            sqlite3_bind_text(stmt, 1, profile.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, profile.name, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, profile.mode.rawValue, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 4, profile.icon, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 5, profile.isActive ? 1 : 0)
+        }
+    }
+
+    private func profileBlocklistIDsLocked(profileName: String) -> Set<UUID> {
+        var out: Set<UUID> = []
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT blocklist_id FROM profile_blocklists WHERE profile_name=?;", -1, &stmt, nil) == SQLITE_OK else { return out }
+        sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let id = UUID(uuidString: text(stmt, 0)) { out.insert(id) }
+        }
+        return out
+    }
+
+    private func replaceProfileBlocklistsLocked(profileName: String, blocklistIDs: Set<UUID>) throws {
+        try executeLocked("DELETE FROM profile_blocklists WHERE profile_name=?;") { stmt in
+            sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+        }
+        for id in blocklistIDs {
+            try executeLocked("INSERT INTO profile_blocklists(profile_name,blocklist_id) VALUES(?,?);") { stmt in
+                sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    /// Keeps the legacy global `blocklists.enabled` column equal to the active
+    /// profile's selection, so the existing DNS blocklist loader keeps working
+    /// unchanged while selection becomes per profile. Deny sets compose, so
+    /// any number of them may be selected at once.
+    private func syncGlobalBlocklistEnabledLocked() throws {
+        guard let active = activeProfileLocked() else { return }
+        let selected = profileBlocklistIDsLocked(profileName: active.name)
+        try execLocked("UPDATE blocklists SET enabled=0;")
+        for id in selected {
+            try executeLocked("UPDATE blocklists SET enabled=1 WHERE id=?;") { stmt in
+                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    private func validateBlocklistIDsLocked(_ ids: Set<UUID>) throws {
+        for id in ids where !blocklistExistsLocked(id: id) {
+            throw StoreError.blocklistNotFound(id)
+        }
+    }
+
+    private func blocklistExistsLocked(id: UUID) -> Bool {
+        blocklistLocked(id: id) != nil
+    }
+
+    private func blocklistLocked(id: UUID) -> BlocklistInfo? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,url,enabled,last_updated,entry_count FROM blocklists WHERE id=? LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return blocklistFromRow(stmt)
+    }
+
+    private func blocklistNamedLocked(_ name: String) -> BlocklistInfo? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,url,enabled,last_updated,entry_count FROM blocklists WHERE lower(name)=lower(?) LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return blocklistFromRow(stmt)
+    }
+
+    private func blocklistFromRow(_ stmt: OpaquePointer?) -> BlocklistInfo {
+        let id = UUID(uuidString: text(stmt, 0)) ?? UUID()
+        let name = text(stmt, 1)
+        let url = text(stmt, 2)
+        let enabled = sqlite3_column_int(stmt, 3) == 1
+        let last: Date? = sqlite3_column_type(stmt, 4) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4))
+        let count = Int(sqlite3_column_int(stmt, 5))
+        return BlocklistInfo(id: id, name: name, url: url, enabled: enabled, lastUpdated: last, entryCount: count)
+    }
+
+    private func allBlocklistsLocked(selectedIDs: Set<UUID>?) -> [BlocklistInfo] {
+        var out: [BlocklistInfo] = []
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,url,enabled,last_updated,entry_count FROM blocklists ORDER BY name;", -1, &stmt, nil) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            var value = blocklistFromRow(stmt)
+            if let selectedIDs { value.enabled = selectedIDs.contains(value.id) }
+            out.append(value)
+        }
+        return out
+    }
+
+    private func insertBlocklistLocked(_ blocklist: BlocklistInfo) throws {
+        try executeLocked("INSERT INTO blocklists(id,name,url,enabled,last_updated,entry_count) VALUES (?,?,?,?,?,?);") { stmt in
+            sqlite3_bind_text(stmt, 1, blocklist.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, blocklist.name, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, blocklist.url, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 4, blocklist.enabled ? 1 : 0)
+            if let d = blocklist.lastUpdated { sqlite3_bind_double(stmt, 5, d.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 5) }
+            sqlite3_bind_int(stmt, 6, Int32(blocklist.entryCount))
+        }
+    }
+
+    private func insertNetworkBindingLocked(_ binding: ProfileNetworkBinding) throws {
+        try executeLocked("INSERT INTO profile_network_bindings(id,profile_name,gateway_mac,created_at) VALUES(?,?,?,?);") { stmt in
+            sqlite3_bind_text(stmt, 1, binding.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, binding.profileName, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, binding.gatewayMAC, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 4, binding.createdAt.timeIntervalSince1970)
+        }
+    }
+
+    private func networkBindingLocked(gatewayMAC: String) -> ProfileNetworkBinding? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,profile_name,gateway_mac,created_at FROM profile_network_bindings WHERE gateway_mac=? LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, gatewayMAC, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return ProfileNetworkBinding(
+            id: UUID(uuidString: text(stmt, 0)) ?? UUID(),
+            profileName: text(stmt, 1),
+            gatewayMAC: text(stmt, 2),
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+        )
+    }
+
+    private func allNetworkBindingsLocked() -> [ProfileNetworkBinding] {
+        var out: [ProfileNetworkBinding] = []
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,profile_name,gateway_mac,created_at FROM profile_network_bindings ORDER BY created_at DESC;", -1, &stmt, nil) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out.append(ProfileNetworkBinding(
+                id: UUID(uuidString: text(stmt, 0)) ?? UUID(),
+                profileName: text(stmt, 1),
+                gatewayMAC: text(stmt, 2),
+                createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+            ))
+        }
+        return out
     }
 
     // MARK: - helpers

@@ -60,7 +60,7 @@ public struct Rule: Identifiable, Codable, Hashable, Sendable {
         action: RuleAction = .ask,
         scope: RuleScope = .domain,
         priority: Int = 100,
-        profile: String = "default",
+        profile: String = Profile.alwaysName,
         groupName: String? = nil,
         notes: String? = nil,
         enabled: Bool = true,
@@ -169,17 +169,126 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
 }
 
 public struct Profile: Identifiable, Codable, Hashable, Sendable {
+    public static let alwaysName = "always"
+    public static let defaultName = "default"
+
     public var id: UUID
     public var name: String
     public var mode: AppMode
     public var icon: String
     public var isActive: Bool
-    public init(id: UUID = UUID(), name: String, mode: AppMode = .alert, icon: String = "shield", isActive: Bool = false) {
+    /// Blocklists selected for this profile. The set is intentionally separate
+    /// from the global BlocklistInfo.enabled field, which is retained for
+    /// compatibility with older helpers and exports.
+    public var blocklistIDs: Set<UUID>
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        mode: AppMode = .alert,
+        icon: String = "shield",
+        isActive: Bool = false,
+        blocklistIDs: Set<UUID> = []
+    ) {
         self.id = id
         self.name = name
         self.mode = mode
         self.icon = icon
         self.isActive = isActive
+        self.blocklistIDs = blocklistIDs
+    }
+}
+
+/// A network fingerprint explicitly associated with one profile by the user.
+/// The gateway MAC is stored in canonical lower-case colon notation.
+public struct ProfileNetworkBinding: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var profileName: String
+    public var gatewayMAC: String
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        profileName: String,
+        gatewayMAC: String,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.profileName = profileName
+        self.gatewayMAC = gatewayMAC
+        self.createdAt = createdAt
+    }
+}
+
+/// The result shown to the user after a profile switch. A switch is reversible
+/// once, until another switch replaces this undo point.
+public struct ProfileSwitchNotice: Codable, Hashable, Sendable {
+    public var activeProfile: String
+    public var activeRuleCount: Int
+    public var pausedProfile: String?
+    public var pausedRuleCount: Int
+    public var canUndo: Bool
+
+    public init(
+        activeProfile: String,
+        activeRuleCount: Int,
+        pausedProfile: String? = nil,
+        pausedRuleCount: Int = 0,
+        canUndo: Bool = true
+    ) {
+        self.activeProfile = activeProfile
+        self.activeRuleCount = activeRuleCount
+        self.pausedProfile = pausedProfile
+        self.pausedRuleCount = pausedRuleCount
+        self.canUndo = canUndo
+    }
+
+    public var message: String {
+        let active = "\(activeRuleCount) rules active"
+        guard let pausedProfile, pausedRuleCount > 0 else { return active }
+        return "\(active), \(pausedRuleCount) \(pausedProfile) rules paused"
+    }
+}
+
+/// One authoritative policy assembled from exactly two rule layers: Always and
+/// the selected profile. Blocklists are deny-only sets and may be accumulated
+/// independently without adding another allow layer.
+public struct ProfilePolicy: Hashable, Sendable {
+    public let profile: Profile
+    public let alwaysRules: [Rule]
+    public let profileRules: [Rule]
+    public let rules: [Rule]
+    public let selectedBlocklistIDs: Set<UUID>
+
+    public init(
+        profile: Profile,
+        alwaysRules: [Rule],
+        profileRules: [Rule],
+        selectedBlocklistIDs: Set<UUID> = []
+    ) {
+        self.profile = profile
+        self.alwaysRules = alwaysRules
+        self.profileRules = profile.name == Profile.alwaysName ? [] : profileRules
+        self.rules = self.alwaysRules + self.profileRules
+        self.selectedBlocklistIDs = selectedBlocklistIDs
+    }
+
+    /// The rule layer count is deliberately fixed. There is no profile parent
+    /// or inherited allow layer that could make precedence ambiguous.
+    public var allowLayerCount: Int {
+        profileRules.isEmpty ? 1 : 2
+    }
+
+    public var activeRuleCount: Int {
+        rules.filter(\.enabled).count
+    }
+
+    public var activeProfileRuleCount: Int {
+        profileRules.filter(\.enabled).count
+    }
+
+    public var denyRuleCount: Int {
+        rules.filter { $0.enabled && $0.action == .deny }.count
     }
 }
 

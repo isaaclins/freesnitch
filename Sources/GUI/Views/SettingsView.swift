@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var doh = ""
     @State private var dohError: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @ObservedObject private var profileClient = ProfileClient.shared
 
     var body: some View {
         TabView {
@@ -197,27 +198,7 @@ struct SettingsView: View {
     }
 
     private var profilesTab: some View {
-        VStack(alignment: .leading) {
-            Text("Profiles").font(.headline)
-            if state.profiles.isEmpty {
-                Text("No profiles yet. Profiles come from the privileged helper's rule database.")
-                    .font(.caption).foregroundColor(.secondary)
-            }
-            ForEach(state.profiles) { p in
-                HStack {
-                    Image(systemName: p.icon)
-                    Text(p.name)
-                    Spacer()
-                    if p.isActive {
-                        PSChip("Active", color: PSTheme.accentGreen)
-                    } else {
-                        Button("Activate") {
-                            state.activeProfile = p.name
-                        }
-                    }
-                }.padding(.vertical, 4)
-            }
-        }
+        ProfilesSettingsView(profileClient: profileClient)
     }
 
     /// Deliberate removal, deliberately its own tab. It must not sit next to

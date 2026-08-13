@@ -18,6 +18,7 @@ struct RulesManagerView: View {
     @State private var showingRemoveConfirmation = false
     @State private var errorMessage: String?
     @State private var showingError = false
+    @ObservedObject private var profileClient = ProfileClient.shared
 
     enum Category: Hashable {
         case all
@@ -45,7 +46,7 @@ struct RulesManagerView: View {
         .background(PSTheme.bgPrimary)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showingRuleEditor) {
-            RuleEditorView { rule in addRule(rule) }
+            RuleEditorView(activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
             importRules(from: result)
@@ -422,7 +423,7 @@ struct RulesManagerView: View {
                 infoField("Action", r.action.rawValue.capitalized)
                 infoField("Scope", r.scope.rawValue.capitalized)
                 infoField("Priority", "\(r.priority)")
-                infoField("Profile", r.profile)
+                infoField("Applies to", r.profile == Profile.alwaysName ? "Always" : "Only in \(r.profile)")
                 infoField("Status", r.enabled ? "Enabled" : "Disabled")
                 infoField("Hits", "\(r.hitCount)")
                 if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
@@ -717,7 +718,11 @@ private struct RuleJSONDocument: FileDocument {
 
 private struct RuleEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    let activeProfileName: String
     let onSave: (Rule) -> Void
+    /// New rules default to Always. Roughly all rules are location
+    /// independent, and that default is what keeps profiles small.
+    @State private var appliesTo = Profile.alwaysName
     @State private var processName = ""
     @State private var processBundleID = ""
     @State private var remoteHost = ""
@@ -764,6 +769,9 @@ private struct RuleEditorView: View {
                     Toggle("Enabled", isOn: $enabled)
                     TextField("Notes", text: $notes)
                 }
+                Section("Applies to") {
+                    RuleAppliesToPicker(profileName: $appliesTo, activeProfileName: activeProfileName)
+                }
             }
             .formStyle(.grouped)
             HStack {
@@ -796,6 +804,7 @@ private struct RuleEditorView: View {
             direction: direction,
             action: action,
             scope: scope,
+            profile: appliesTo,
             notes: optionalValue(notes),
             enabled: enabled
         )
