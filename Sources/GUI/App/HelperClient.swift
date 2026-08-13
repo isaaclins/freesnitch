@@ -199,6 +199,10 @@ final class HelperClient: NSObject, ObservableObject {
         do {
             try service.register()
             refreshInstallState()
+            if installState == .requiresApproval {
+                finishRepairFailure("macOS registered the replacement, but it still needs approval in System Settings under General > Login Items & Extensions.")
+                return
+            }
             isRepairing = false
             reconnectAndPing(force: true)
         } catch {
