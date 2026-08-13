@@ -1,13 +1,78 @@
 import Foundation
 import Network
 
+/// One complete, immutable DNS policy.
+///
+/// Mode, rules, prepared rules, blocklist and resolver are decided together
+/// and published together, so a query that copies this value once can never
+/// observe a mixture of two policies: new rules scanned in the old prepared
+/// order, or a resolver from one transition paired with a mode from the next.
+struct DNSPolicy: Sendable {
+    let mode: AppMode
+    let rules: [Rule]
+    /// Ordering the rule set per query would repeat a filter, a copy and a
+    /// sort for every name resolved. The order only changes when the rules do,
+    /// so it is prepared once here and merely scanned per query. Building it
+    /// inside the value is what makes one prepared set correspond to exactly
+    /// one rule snapshot: there is no window in which the two disagree.
+    let preparedRules: PreparedRuleSet
+    let blocklist: Set<String>
+    let dohURL: String
+
+    init(mode: AppMode = .alert,
+         rules: [Rule] = [],
+         blocklist: Set<String> = [],
+         dohURL: String = AppConstants.defaultDoHUpstream) {
+        self.mode = mode
+        self.rules = rules
+        self.preparedRules = PreparedRuleSet(rules: rules)
+        self.blocklist = blocklist
+        self.dohURL = dohURL
+    }
+
+    /// Carries an already prepared order forward. Only changes that leave the
+    /// rules alone may use it, so the pairing cannot be faked.
+    private init(mode: AppMode,
+                 rules: [Rule],
+                 preparedRules: PreparedRuleSet,
+                 blocklist: Set<String>,
+                 dohURL: String) {
+        self.mode = mode
+        self.rules = rules
+        self.preparedRules = preparedRules
+        self.blocklist = blocklist
+        self.dohURL = dohURL
+    }
+
+    func replacingMode(_ newMode: AppMode) -> DNSPolicy {
+        DNSPolicy(mode: newMode, rules: rules, preparedRules: preparedRules,
+                  blocklist: blocklist, dohURL: dohURL)
+    }
+
+    func replacingBlocklist(_ newBlocklist: Set<String>) -> DNSPolicy {
+        DNSPolicy(mode: mode, rules: rules, preparedRules: preparedRules,
+                  blocklist: newBlocklist, dohURL: dohURL)
+    }
+
+    func replacingDoHURL(_ newDoHURL: String) -> DNSPolicy {
+        DNSPolicy(mode: mode, rules: rules, preparedRules: preparedRules,
+                  blocklist: blocklist, dohURL: newDoHURL)
+    }
+
+    func replacingRules(_ newRules: [Rule]) -> DNSPolicy {
+        DNSPolicy(mode: mode, rules: newRules, blocklist: blocklist, dohURL: dohURL)
+    }
+
+    func replacing(mode newMode: AppMode, rules newRules: [Rule]) -> DNSPolicy {
+        DNSPolicy(mode: newMode, rules: newRules, blocklist: blocklist, dohURL: dohURL)
+    }
+}
+
 final class DNSProxy: @unchecked Sendable {
     private var udpListener: NWListener?
     private var tcpListener: NWListener?
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.dns", qos: .userInitiated)
     private let upstreamQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.up")
-    private let dohLock = NSLock()
-    private var storedDoHURL = AppConstants.defaultDoHUpstream
     /// Backstop timers only. Kept off `queue` so a pending ask can never wait
     /// behind DNS handling, and vice versa.
     private let askQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.ask", qos: .utility)
@@ -18,27 +83,58 @@ final class DNSProxy: @unchecked Sendable {
     private(set) var port: UInt16 = 53
     private(set) var running = false
 
-    var blocklist: Set<String> = []
-    /// Ordering the rule set per query would repeat a filter, a copy and a
-    /// sort for every name resolved. The order only changes when the rules do,
-    /// so it is prepared on assignment and merely scanned per query.
-    var rules: [Rule] = [] {
-        didSet { preparedRules = PreparedRuleSet(rules: rules) }
+    /// The whole policy lives in one value behind one lock. Writers arrive on
+    /// XPC and blocklist queues, readers on the DNS queue from `NWConnection`
+    /// callbacks, and neither may see a half applied transition.
+    private let policyLock = NSLock()
+    private var storedPolicy = DNSPolicy()
+
+    /// One coherent copy of the entire policy. A query takes this once and
+    /// answers from its own copy, so a policy change during the query cannot
+    /// change the decision halfway through it.
+    func policySnapshot() -> DNSPolicy {
+        policyLock.lock()
+        defer { policyLock.unlock() }
+        return storedPolicy
     }
-    private var preparedRules = PreparedRuleSet(rules: [])
-    var mode: AppMode = .alert
-    var matcher = RuleMatcher()
+
+    /// Publishes a new policy in a single store.
+    ///
+    /// The transform runs under the lock so that read, modify and write cannot
+    /// interleave with another writer and lose an update. It is always a pure
+    /// local computation: no network call, no upstream request and no user
+    /// callback ever runs here, so the DNS path cannot deadlock behind it.
+    private func updatePolicy(_ transform: (DNSPolicy) -> DNSPolicy) {
+        policyLock.lock()
+        storedPolicy = transform(storedPolicy)
+        policyLock.unlock()
+    }
+
+    var blocklist: Set<String> {
+        get { policySnapshot().blocklist }
+        set { updatePolicy { $0.replacingBlocklist(newValue) } }
+    }
+    var rules: [Rule] {
+        get { policySnapshot().rules }
+        set { updatePolicy { $0.replacingRules(newValue) } }
+    }
+    var mode: AppMode {
+        get { policySnapshot().mode }
+        set { updatePolicy { $0.replacingMode(newValue) } }
+    }
     var dohURL: String {
-        get {
-            dohLock.lock()
-            defer { dohLock.unlock() }
-            return storedDoHURL
-        }
-        set {
-            dohLock.lock()
-            storedDoHURL = newValue
-            dohLock.unlock()
-        }
+        get { policySnapshot().dohURL }
+        set { updatePolicy { $0.replacingDoHURL(newValue) } }
+    }
+    var matcher = RuleMatcher()
+
+    /// Applies a mode and a rule set as one transition.
+    ///
+    /// Setting the two properties in sequence publishes an intermediate policy
+    /// that pairs the new mode with the old rules, which is a state no caller
+    /// ever intended. A caller that changes both must use this.
+    func applyPolicy(mode newMode: AppMode, rules newRules: [Rule]) {
+        updatePolicy { $0.replacing(mode: newMode, rules: newRules) }
     }
     var onBlock: ((String, String?) -> Void)?
     var onResolve: ((String, [String]) -> Void)?
@@ -137,9 +233,13 @@ final class DNSProxy: @unchecked Sendable {
         }
         let domain = q.name.lowercased()
         let connStub = Connection(pid: 0, processName: "", processPath: "", remoteHost: domain, direction: .outgoing, status: .pending)
-        let action = matcher.decision(for: connStub, prepared: preparedRules, defaultMode: mode)
+        // One snapshot decides this query from here on, including the resolver
+        // it is eventually forwarded to. A policy change that lands mid query
+        // applies to the next query, never to half of this one.
+        let policy = policySnapshot()
+        let action = matcher.decision(for: connStub, prepared: policy.preparedRules, defaultMode: policy.mode)
 
-        if action == .deny || isBlocklisted(domain) {
+        if action == .deny || isBlocklisted(domain, in: policy.blocklist) {
             stats.incrBlocked()
             onBlock?(domain, nil)
             if let resp = DNSWire.nxResponse(for: payload) { reply(resp) } else { reply(nil) }
@@ -164,7 +264,7 @@ final class DNSProxy: @unchecked Sendable {
                     if let resp = DNSWire.nxResponse(for: payload) { reply(resp) } else { reply(nil) }
                     return
                 }
-                self.forwardDoH(payload: payload, domain: domain, reply: reply)
+                self.forwardDoH(payload: payload, domain: domain, resolver: policy.dohURL, reply: reply)
             }
             let isAnswered: () -> Bool = {
                 answerLock.lock(); defer { answerLock.unlock() }
@@ -186,10 +286,10 @@ final class DNSProxy: @unchecked Sendable {
             return
         }
 
-        forwardDoH(payload: payload, domain: domain, reply: reply)
+        forwardDoH(payload: payload, domain: domain, resolver: policy.dohURL, reply: reply)
     }
 
-    private func isBlocklisted(_ domain: String) -> Bool {
+    private func isBlocklisted(_ domain: String, in blocklist: Set<String>) -> Bool {
         if blocklist.contains(domain) { return true }
         var parts = domain.split(separator: ".")
         while parts.count >= 2 {
@@ -200,9 +300,9 @@ final class DNSProxy: @unchecked Sendable {
         return false
     }
 
-    private func forwardDoH(payload: Data, domain: String, reply: @escaping (Data?) -> Void) {
+    private func forwardDoH(payload: Data, domain: String, resolver: String, reply: @escaping (Data?) -> Void) {
         stats.incrAllowed()
-        guard let url = URL(string: dohURL) else { reply(nil); return }
+        guard let url = URL(string: resolver) else { reply(nil); return }
         var req = URLRequest(url: url, timeoutInterval: 5)
         req.httpMethod = "POST"
         req.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")
