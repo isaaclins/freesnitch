@@ -1,10 +1,9 @@
 import Foundation
 
 /// The rule snapshot exchanged between the GUI and the Network System
-/// Extension. The extension runs in a sandbox, so an app-group file would
-/// resolve to the wrong home for the root process. Live snapshots cross the
-/// existing app-extension XPC connection; the GUI persists the same
-/// versioned envelope in the filter provider configuration for extension startup.
+/// Extension. Live snapshots cross the existing app-extension XPC connection;
+/// the versioned boot envelope is persisted in the provider configuration for
+/// extension startup.
 public enum SharedRuleBridge {
     /// Version the persisted provider-configuration envelope separately from
     /// the live XPC payload. A future build must reject an unknown snapshot
