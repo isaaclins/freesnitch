@@ -150,6 +150,8 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func connection(from flow: NEFilterSocketFlow) -> Connection {
         let (host, port) = remoteAddress(of: flow)
+        let remoteHost = usableRemoteHost(flow.remoteHostname, address: host)
+        let remoteIP = literalRemoteAddress(host, fallback: flow.remoteHostname)
         let pid = flow.sourceAppAuditToken.flatMap(auditTokenToPID) ?? 0
         let path = pid > 0 ? pathForPID(pid) : ""
         let name = path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
@@ -158,12 +160,50 @@ final class FilterDataProvider: NEFilterDataProvider {
             processName: name,
             processPath: path,
             processBundleId: bundleIdForApp(atPath: path),
-            remoteHost: flow.remoteHostname ?? host,
-            remoteIP: host,
+            remoteHost: remoteHost,
+            remoteIP: remoteIP,
             remotePort: port,
             direction: flow.direction == .outbound ? .outgoing : .incoming,
             status: .pending
         )
+    }
+
+    /// `remoteHostname` can contain the result of a reverse lookup. A PTR
+    /// query name is not a destination, so discard it and retain the endpoint
+    /// address instead. This keeps bad data out of alerts and remembered rules,
+    /// rather than relying only on the later PF anchor check.
+    private func usableRemoteHost(_ candidate: String?, address: String) -> String {
+        if let candidate, !candidate.isEmpty {
+            if let kind = PFHostValidator.kind(for: candidate) {
+                switch kind {
+                case .hostname, .ip:
+                    return candidate
+                case .cidr:
+                    break
+                }
+            }
+            PSLog.error(
+                PSLog.netext,
+                "Ignoring unusable remote hostname '\(candidate)': \(PFHostValidator.rejectionReason(for: candidate)); using the endpoint address instead."
+            )
+        }
+
+        guard let kind = PFHostValidator.kind(for: address) else { return "" }
+        switch kind {
+        case .hostname, .ip:
+            return address
+        case .cidr:
+            return ""
+        }
+    }
+
+    private func literalRemoteAddress(_ address: String, fallback: String?) -> String {
+        if PFHostValidator.kind(for: address) == .ip { return address }
+        if let fallback, PFHostValidator.kind(for: fallback) == .ip { return fallback }
+        let normalized = address.lowercased().hasSuffix(".")
+            ? String(address.dropLast()).lowercased()
+            : address.lowercased()
+        return normalized == "localhost" ? address : ""
     }
 
     /// `remoteEndpoint` is deprecated and reports the unspecified address
