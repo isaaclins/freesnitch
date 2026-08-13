@@ -653,8 +653,13 @@ generate_appcast() {
     die "generated appcast does not contain the current release URL"
   grep -Fq 'sparkle:edSignature' "$appcast_tmp" || \
     die "generated appcast has no Sparkle EdDSA signature"
-  grep -Fq '<description>' "$appcast_tmp" || \
+  # Sparkle writes the element with attributes, for example
+  # <description sparkle:format="plain-text">, so match the tag rather than a
+  # bare <description>, which never appears and failed every release.
+  grep -Eq '<description[ >]' "$appcast_tmp" || \
     die "generated appcast does not embed release notes"
+  grep -Fq 'CDATA' "$appcast_tmp" || \
+    die "generated appcast has an empty release notes description"
   cp "$appcast_tmp" "$BUILD_ROOT/appcast.xml"
   printf 'Generated appcast staged at %s (published feed: %s).\n' "$BUILD_ROOT/appcast.xml" "$FEED_URL"
 }
