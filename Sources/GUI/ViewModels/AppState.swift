@@ -35,6 +35,8 @@ final class AppState: ObservableObject {
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
     )
+    @Published var filterPersistenceDegraded = false
+    @Published var filterPersistenceMessage: String?
     /// Set by SystemExtensionManager so the published snapshot state can also
     /// drive the extension lifecycle status without making the view model own
     /// that lifecycle.
@@ -207,6 +209,17 @@ final class AppState: ObservableObject {
     private func publishFilterSnapshotStatus(_ status: SharedRuleBridge.SnapshotStatus) {
         filterSnapshotStatus = status
         filterSnapshotStatusHandler?(status)
+    }
+
+    func recordFilterPersistenceFailure(_ message: String) {
+        filterPersistenceDegraded = true
+        filterPersistenceMessage = message
+        appendLog(level: "error", message: message)
+    }
+
+    func clearFilterPersistenceFailure() {
+        filterPersistenceDegraded = false
+        filterPersistenceMessage = nil
     }
 
     func setMode(_ m: AppMode) {
