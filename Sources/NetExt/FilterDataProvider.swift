@@ -18,6 +18,98 @@ import Foundation
 import Darwin
 import Security
 
+/// What the extension actually knows about a flow's destination.
+///
+/// The macOS 27.0 SDK is explicit that this can be nothing at all:
+/// `NEFilterSocketFlow.remoteFlowEndpoint` "may be nil when
+/// [NEFilterDataProvider handleNewFlow:] is invoked and if so will be populated
+/// upon receiving network data. In such a case, filtering on the flow may still
+/// be performed based on its socket type, socket family or socket protocol."
+/// (macOS 27.0 SDK, NEFilterFlow.h:123-128, identical wording for
+/// `remoteEndpoint` at :130-135 and for the local endpoints at :143-155.)
+///
+/// In practice the property is often non-nil and still carries the wildcard the
+/// socket was created with, so `::` and `0.0.0.0` mean "no destination yet",
+/// never "the destination is ::". Recording the wildcard as a destination made
+/// a third of all flows look attributable when they were not, so a wildcard is
+/// classified as unknown here, once, for the verdict, the alert, and the
+/// evidence store alike.
+struct FlowDestination: Equatable {
+    /// Host for host rules and for the UI: the flow's hostname when it carries
+    /// one, otherwise the endpoint address. Empty when nothing is usable.
+    let host: String
+    /// Literal address for IP and CIDR rules. Empty when none is known.
+    let ip: String
+    /// A `remoteHostname` that cannot be a destination, for example a
+    /// reverse-DNS query name. Reported by the caller, never used.
+    let rejectedHostname: String?
+
+    /// False when neither a host rule nor an IP rule can be evaluated for the
+    /// flow. Process, bundle, port, and direction rules still apply.
+    var isKnown: Bool { !host.isEmpty || !ip.isEmpty }
+
+    static let unknown = FlowDestination(host: "", ip: "", rejectedHostname: nil)
+
+    /// Deliberately not a stored destination: used only to ask ResolverBypass
+    /// about a flow with no address, because an empty address is its
+    /// unconditional fail-open answer.
+    static let unspecifiedLookupToken = "::"
+
+    /// Pure, allocation-light, and the single place that decides what counts as
+    /// a destination. No I/O, so it is safe on the verdict path.
+    static func resolve(endpointHost: String, remoteHostname: String?) -> FlowDestination {
+        let address = isUnspecifiedAddress(endpointHost) ? "" : endpointHost
+        var candidate = ""
+        var rejected: String?
+        if let remoteHostname, !remoteHostname.isEmpty, !isUnspecifiedAddress(remoteHostname) {
+            switch PFHostValidator.kind(for: remoteHostname) {
+            case .hostname, .ip: candidate = remoteHostname
+            case .cidr, nil: rejected = remoteHostname
+            }
+        }
+        return FlowDestination(host: host(candidate: candidate, address: address),
+                               ip: literalAddress(address, fallback: candidate),
+                               rejectedHostname: rejected)
+    }
+
+    /// True for the wildcard addresses a socket carries before it has a peer:
+    /// `0.0.0.0`, `::`, every spelling of them, and the IPv4-mapped wildcard
+    /// `::ffff:0.0.0.0`.
+    static func isUnspecifiedAddress(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        var v4 = in_addr()
+        if text.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 { return v4.s_addr == 0 }
+        var v6 = in6_addr()
+        guard text.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 else { return false }
+        let bytes = withUnsafeBytes(of: &v6) { Array($0) }
+        guard bytes.count == 16 else { return false }
+        if bytes.allSatisfy({ $0 == 0 }) { return true }
+        let mapped = bytes[0..<10].allSatisfy { $0 == 0 } && bytes[10] == 0xff && bytes[11] == 0xff
+        return mapped && bytes[12...].allSatisfy { $0 == 0 }
+    }
+
+    /// A PTR query name is not a destination, so a rejected hostname falls back
+    /// to the endpoint address instead. This keeps bad data out of alerts and
+    /// remembered rules, rather than relying only on the later PF anchor check.
+    private static func host(candidate: String, address: String) -> String {
+        if !candidate.isEmpty { return candidate }
+        guard let kind = PFHostValidator.kind(for: address) else { return "" }
+        switch kind {
+        case .hostname, .ip: return address
+        case .cidr: return ""
+        }
+    }
+
+    private static func literalAddress(_ address: String, fallback: String) -> String {
+        if PFHostValidator.kind(for: address) == .ip { return address }
+        if PFHostValidator.kind(for: fallback) == .ip { return fallback }
+        let normalized = address.lowercased().hasSuffix(".")
+            ? String(address.dropLast()).lowercased()
+            : address.lowercased()
+        return normalized == "localhost" ? address : ""
+    }
+}
+
 final class FilterDataProvider: NEFilterDataProvider {
     private enum SnapshotOrigin: Equatable {
         case none
@@ -42,16 +134,29 @@ final class FilterDataProvider: NEFilterDataProvider {
     private var observationStopped = false
     private var lastObservationDropLog = Date.distantPast
     private let askTimeout: TimeInterval = 60
+    /// Accounting for flows whose destination is unknown when the verdict is
+    /// required. Held at a stable address, taken with trylock only, and never
+    /// held across a log call, so the verdict path can never wait on it.
+    private let destinationAccountingLock: UnsafeMutablePointer<os_unfair_lock_s>
+    private var unknownDestinationFlows: UInt64 = 0
+    private var lateDestinationAtVerdictReport: UInt64 = 0
+    private var lateDestinationAtFlowClose: UInt64 = 0
+    private var lastDestinationLogNanos: UInt64 = 0
+    private let destinationLogIntervalNanos: UInt64 = 60 * 1_000_000_000
 
     override init() {
         self.observationSignalLock = .allocate(capacity: 1)
         self.observationSignalLock.initialize(to: os_unfair_lock_s())
+        self.destinationAccountingLock = .allocate(capacity: 1)
+        self.destinationAccountingLock.initialize(to: os_unfair_lock_s())
         super.init()
     }
 
     deinit {
         observationSignalLock.deinitialize(count: 1)
         observationSignalLock.deallocate()
+        destinationAccountingLock.deinitialize(count: 1)
+        destinationAccountingLock.deallocate()
     }
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
@@ -129,6 +234,11 @@ final class FilterDataProvider: NEFilterDataProvider {
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
+        // Decided once, before any rule is consulted: a flow can reach this
+        // point with no destination at all, and that limitation is reported
+        // rather than hidden behind a wildcard address.
+        let destinationKnown = !conn.remoteIP.isEmpty || !conn.remoteHost.isEmpty
+        if !destinationKnown { noteUnknownDestination(socketFlow, port: conn.remotePort) }
         let policy = currentPolicy()
         if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { return .allow() }
         // Equivalent to `guard let snapshot = currentSnapshot() else`, but
@@ -142,13 +252,83 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         switch matcher.decision(for: conn, rules: snapshot.rules, defaultMode: snapshot.mode) {
         case .allow:
-            return .allow()
+            return reportingLateDestination(.allow(), destinationKnown: destinationKnown)
         case .deny:
-            return .drop()
+            return reportingLateDestination(.drop(), destinationKnown: destinationKnown)
         case .ask:
             promptAndResume(flow: flow, conn: conn)
             return .pause()
         }
+    }
+
+    // MARK: - Late destination
+
+    /// Asks the framework to hand a flow back later, and only for flows whose
+    /// destination was unknown when the verdict was made.
+    ///
+    /// `shouldReport` is a flag on a verdict that has already been decided:
+    /// "the data provider does not need to wait for a response from the control
+    /// provider before continuing to process the flow" and "setting this flag
+    /// on a verdict for a socket flow will also cause the data provider's
+    /// -[NEFilterProvider handleReport:] method to be called when the flow is
+    /// closed" (macOS 27.0 SDK, NEFilterProvider.h:121-130). The reply lands in
+    /// `handleReport(_:)`, which returns no verdict at all, so nothing on this
+    /// path can delay a flow or revise a verdict.
+    ///
+    /// The alternative, `filterDataVerdictWithFilterInbound:...`, would hold
+    /// the flow's first bytes until this extension answered again. That is
+    /// waiting for an address, so it is deliberately not used.
+    private func reportingLateDestination(_ verdict: NEFilterNewFlowVerdict,
+                                          destinationKnown: Bool) -> NEFilterNewFlowVerdict {
+        guard !destinationKnown else { return verdict }
+        verdict.shouldReport = true
+        return verdict
+    }
+
+    /// Observation only. The verdict for this flow was returned long ago and is
+    /// not revisited here: this callback returns Void, and the framework
+    /// delivers it after the verdict it describes has been applied.
+    override func handle(_ report: NEFilterReport) {
+        guard let socketFlow = report.flow as? NEFilterSocketFlow else { return }
+        let destination = FlowDestination.resolve(endpointHost: remoteAddress(of: socketFlow).host,
+                                                  remoteHostname: socketFlow.remoteHostname)
+        guard destination.isKnown else { return }
+        noteLateDestination(event: report.event)
+    }
+
+    /// An IP or CIDR rule that cannot be evaluated is a limitation to state,
+    /// not to paper over. Counting is trylock-only, so a contended verdict
+    /// skips the tally instead of waiting, and the summary is emitted at most
+    /// once a minute.
+    private func noteUnknownDestination(_ flow: NEFilterSocketFlow, port: Int) {
+        guard os_unfair_lock_trylock(destinationAccountingLock) else { return }
+        unknownDestinationFlows &+= 1
+        let now = DispatchTime.now().uptimeNanoseconds
+        let due = now &- lastDestinationLogNanos >= destinationLogIntervalNanos
+        if due { lastDestinationLogNanos = now }
+        let unknown = unknownDestinationFlows
+        let lateAtVerdict = lateDestinationAtVerdictReport
+        let lateAtClose = lateDestinationAtFlowClose
+        os_unfair_lock_unlock(destinationAccountingLock)
+        guard due else { return }
+        PSLog.error(
+            PSLog.netext,
+            "\(unknown) flows had no destination at verdict time: IP and CIDR rules cannot be evaluated for them, "
+            + "only process, bundle, port, and direction rules apply. "
+            + "Latest such flow: socket family \(flow.socketFamily), type \(flow.socketType), "
+            + "protocol \(flow.socketProtocol), remote port \(port). "
+            + "A destination arrived later for \(lateAtVerdict) of them at verdict report and \(lateAtClose) at flow close."
+        )
+    }
+
+    private func noteLateDestination(event: NEFilterReport.Event) {
+        guard os_unfair_lock_trylock(destinationAccountingLock) else { return }
+        if event == .flowClosed {
+            lateDestinationAtFlowClose &+= 1
+        } else {
+            lateDestinationAtVerdictReport &+= 1
+        }
+        os_unfair_lock_unlock(destinationAccountingLock)
     }
 
     // MARK: - Observation drain
@@ -213,11 +393,12 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         var settled = false
         let lock = NSLock()
+        let destinationKnown = !conn.remoteIP.isEmpty || !conn.remoteHost.isEmpty
         let resumeOnce: (NEFilterNewFlowVerdict) -> Void = { [weak self] verdict in
             lock.lock(); defer { lock.unlock() }
             guard let self, !settled else { return }
             settled = true
-            self.resumeFlow(flow, with: verdict)
+            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, destinationKnown: destinationKnown))
         }
 
         let asked = IPCConnection.shared.promptUser(flowJSON: data) { allow, _ in
@@ -269,10 +450,18 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// while a valid helper boot snapshot is active, and only for a configured
     /// resolver. If resolver configuration is unavailable during that boot
     /// window, ResolverBypass fails open so name resolution still works.
+    ///
+    /// A flow with no destination is looked up as the wildcard address rather
+    /// than as an empty string on purpose: ResolverBypass answers an empty
+    /// address with an unconditional yes, which would turn every
+    /// unattributable port-53 flow into a blanket boot-window exemption. The
+    /// wildcard is never a configured resolver, so such a flow keeps exactly
+    /// the answer it received before the destination was recorded honestly.
     private func isDNSOrDHCP(_ conn: Connection, snapshotOrigin: SnapshotOrigin) -> Bool {
         if conn.remotePort == 67 || conn.remotePort == 68 { return true }
         guard conn.remotePort == 53, snapshotOrigin == .boot else { return false }
-        return resolverBypass.allowsDNS(to: conn.remoteIP)
+        let lookup = conn.remoteIP.isEmpty ? FlowDestination.unspecifiedLookupToken : conn.remoteIP
+        return resolverBypass.allowsDNS(to: lookup)
     }
 
     private func parentPID(of pid: Int32) -> Int32? {
@@ -288,8 +477,15 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func connection(from flow: NEFilterSocketFlow) -> Connection {
         let (host, port) = remoteAddress(of: flow)
-        let remoteHost = usableRemoteHost(flow.remoteHostname, address: host)
-        let remoteIP = literalRemoteAddress(host, fallback: flow.remoteHostname)
+        let destination = FlowDestination.resolve(endpointHost: host, remoteHostname: flow.remoteHostname)
+        if let rejected = destination.rejectedHostname {
+            PSLog.error(
+                PSLog.netext,
+                "Ignoring unusable remote hostname '\(rejected)': \(PFHostValidator.rejectionReason(for: rejected)); using the endpoint address instead."
+            )
+        }
+        let remoteHost = destination.host
+        let remoteIP = destination.ip
         let pid = flow.sourceAppAuditToken.flatMap(auditTokenToPID) ?? 0
         let path = pid > 0 ? pathForPID(pid) : ""
         let name = path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
@@ -306,48 +502,11 @@ final class FilterDataProvider: NEFilterDataProvider {
         )
     }
 
-    /// `remoteHostname` can contain the result of a reverse lookup. A PTR
-    /// query name is not a destination, so discard it and retain the endpoint
-    /// address instead. This keeps bad data out of alerts and remembered rules,
-    /// rather than relying only on the later PF anchor check.
-    private func usableRemoteHost(_ candidate: String?, address: String) -> String {
-        if let candidate, !candidate.isEmpty {
-            if let kind = PFHostValidator.kind(for: candidate) {
-                switch kind {
-                case .hostname, .ip:
-                    return candidate
-                case .cidr:
-                    break
-                }
-            }
-            PSLog.error(
-                PSLog.netext,
-                "Ignoring unusable remote hostname '\(candidate)': \(PFHostValidator.rejectionReason(for: candidate)); using the endpoint address instead."
-            )
-        }
-
-        guard let kind = PFHostValidator.kind(for: address) else { return "" }
-        switch kind {
-        case .hostname, .ip:
-            return address
-        case .cidr:
-            return ""
-        }
-    }
-
-    private func literalRemoteAddress(_ address: String, fallback: String?) -> String {
-        if PFHostValidator.kind(for: address) == .ip { return address }
-        if let fallback, PFHostValidator.kind(for: fallback) == .ip { return fallback }
-        let normalized = address.lowercased().hasSuffix(".")
-            ? String(address.dropLast()).lowercased()
-            : address.lowercased()
-        return normalized == "localhost" ? address : ""
-    }
-
     /// `remoteEndpoint` is deprecated and reports the unspecified address
     /// (0.0.0.0 or ::) on current macOS, which is why alerts showed no
-    /// destination. `remoteFlowEndpoint` carries the real one.
-    private func remoteAddress(of flow: NEFilterSocketFlow) -> (String, Int) {
+    /// destination. `remoteFlowEndpoint` carries the real one when there is
+    /// one; see `FlowDestination` for what happens when there is not.
+    private func remoteAddress(of flow: NEFilterSocketFlow) -> (host: String, port: Int) {
         if #available(macOS 15.0, *), case let .hostPort(host, port) = flow.remoteFlowEndpoint {
             let text: String
             switch host {

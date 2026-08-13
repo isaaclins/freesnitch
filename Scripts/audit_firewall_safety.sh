@@ -298,6 +298,107 @@ if printf '%s\n' "$bundle_id_body" | grep -Eq 'Data\(contentsOf:|PropertyListSer
   fail "the verdict path reads and parses an Info.plist synchronously"
 fi
 
+# A flow can reach handleNewFlow with no destination at all: the SDK states
+# that remoteFlowEndpoint "may be nil when [NEFilterDataProvider
+# handleNewFlow:] is invoked and if so will be populated upon receiving network
+# data" (NEFilterFlow.h), and in practice the endpoint carries the socket's
+# wildcard address instead. A wildcard is not a destination: recording it as
+# one makes an unattributable flow look attributed while IP and CIDR rules
+# still cannot match it. It must be refused before it becomes a Connection,
+# and the resulting limitation must be logged rather than hidden.
+require_text "$FILTER" "static func isUnspecifiedAddress" \
+  "the extension no longer classifies the unspecified address"
+require_text "$FILTER" "FlowDestination.resolve(endpointHost: host, remoteHostname: flow.remoteHostname)" \
+  "the flow to connection mapping no longer goes through the destination classifier"
+destination_body="$(awk '
+  /static func resolve\(endpointHost/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$FILTER")"
+[[ -n "$destination_body" ]] || fail "the destination classifier no longer has a resolve function to audit"
+unspecified_line="$(printf '%s\n' "$destination_body" | grep -nF 'isUnspecifiedAddress(endpointHost)' | head -1 | cut -d: -f1 || true)"
+construct_line="$(printf '%s\n' "$destination_body" | grep -nF 'return FlowDestination(' | head -1 | cut -d: -f1 || true)"
+[[ -n "$unspecified_line" && -n "$construct_line" ]] \
+  || fail "the destination classifier does not reject the unspecified endpoint address"
+(( unspecified_line < construct_line )) \
+  || fail "the destination classifier builds a destination before rejecting the unspecified address"
+if printf '%s\n' "$destination_body" | grep -Eq 'host: "(::|0\.0\.0\.0)"|ip: "(::|0\.0\.0\.0)"'; then
+  fail "the destination classifier stores a wildcard address as a destination"
+fi
+require_text "$FILTER" "IP and CIDR rules cannot be evaluated for them" \
+  "the extension does not report flows whose destination is unknown at verdict time"
+
+# The destination can arrive after the verdict. Learning it is observation
+# only: shouldReport is set on an already-decided verdict, and the report
+# callback returns no verdict, so it can neither delay a flow nor revise one.
+require_text "$FILTER" "verdict.shouldReport = true" \
+  "the extension no longer asks for a report on flows with no destination"
+reporting_body="$(awk '
+  /private func reportingLateDestination\(/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (opens > 0) opened = 1
+    if (opened && depth == 0) exit
+  }
+' "$FILTER")"
+[[ -n "$reporting_body" ]] || fail "the late-destination reporting helper is missing"
+guard_line="$(printf '%s\n' "$reporting_body" | grep -nF 'guard !destinationKnown else { return verdict }' | head -1 | cut -d: -f1 || true)"
+flag_line="$(printf '%s\n' "$reporting_body" | grep -nF 'verdict.shouldReport = true' | head -1 | cut -d: -f1 || true)"
+[[ -n "$guard_line" && -n "$flag_line" ]] \
+  || fail "late-destination reporting is not restricted to flows whose destination was unknown"
+(( guard_line < flag_line )) \
+  || fail "late-destination reporting is requested before checking that the destination was unknown"
+report_body="$(awk '
+  /override func handle\(_ report: NEFilterReport\)/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$FILTER")"
+[[ -n "$report_body" ]] || fail "the extension no longer handles flow reports"
+if printf '%s\n' "$report_body" | grep -Eq 'resumeFlow|updateFlow|Verdict|pause|sleep|DispatchSemaphore|\.sync'; then
+  fail "the flow report path touches a verdict or blocks, so a late destination could delay or change a flow"
+fi
+
+# Nothing on the verdict path may wait, for a destination or for anything else.
+new_flow_body="$(awk '
+  /override func handleNewFlow\(/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$FILTER")"
+[[ -n "$new_flow_body" ]] || fail "the extension no longer implements handleNewFlow"
+if printf '%s\n' "$new_flow_body" | grep -Eq 'DispatchSemaphore|\.sync|sleep|\.wait\(|filterDataVerdict'; then
+  fail "handleNewFlow waits or defers its decision instead of returning a verdict immediately"
+fi
+
 # A missing GUI must never leave a socket flow paused forever or turn a GUI
 # outage into a network outage. Keep this check tied to the actual branch that
 # handles the false result from promptUser, not only to a comment.
