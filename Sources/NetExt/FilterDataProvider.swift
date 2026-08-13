@@ -547,24 +547,41 @@ final class BundleIdentifierCache: @unchecked Sendable {
         lock.deallocate()
     }
 
-    /// Verdict path. Never reads from disk, and answers nil for a path that has
-    /// not been resolved yet.
+    /// Verdict path. A known path is answered from memory with no I/O. A path
+    /// seen for the first time is resolved inline, because `RuleMatcher`
+    /// treats a nil bundle identifier as "does not match", so answering nil
+    /// here would silently exempt an app's first flows from every
+    /// bundle-id-scoped rule. #38 is about reading the plist once per app
+    /// rather than once per flow, not about never reading it on this path.
     func cachedBundleId(forExecutablePath path: String) -> String? {
         guard !path.isEmpty else { return nil }
         let now = DispatchTime.now().uptimeNanoseconds
         os_unfair_lock_lock(lock)
         let entry = entries[path]
-        let stale = entry.map { now &- $0.resolvedAtNanos >= lifetimeNanos } ?? true
-        // The pending set is bounded by the same capacity, so a flood of
-        // distinct paths can neither grow it without limit nor schedule the
-        // same read twice.
-        let shouldResolve = stale && !pending.contains(path) && pending.count < capacity
-        if shouldResolve { pending.insert(path) }
+        let stale = entry.map { now &- $0.resolvedAtNanos >= lifetimeNanos } ?? false
+        // A present entry is refreshed in the background, which can never
+        // regress an answer to nil. The pending set is bounded by the same
+        // capacity, so a flood of distinct paths cannot grow it without limit
+        // or schedule the same read twice.
+        let shouldRefresh = entry != nil && stale && !pending.contains(path) && pending.count < capacity
+        if shouldRefresh { pending.insert(path) }
         os_unfair_lock_unlock(lock)
-        if shouldResolve {
+        if shouldRefresh {
             resolveQueue.async { [weak self] in self?.resolve(path) }
         }
-        return entry?.bundleId
+        if let entry { return entry.bundleId }
+        return resolveInline(path, now: now)
+    }
+
+    /// First sighting of a path. The lock is not held across the filesystem
+    /// read, and a concurrent resolver that won the race is preferred.
+    private func resolveInline(_ path: String, now: UInt64) -> String? {
+        let bundleId = Self.appBundlePath(forExecutablePath: path).flatMap(read)
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        if let existing = entries[path] { return existing.bundleId }
+        insertLocked(path, entry: Entry(bundleId: bundleId, resolvedAtNanos: now))
+        return bundleId
     }
 
     /// Background only.
@@ -574,13 +591,18 @@ final class BundleIdentifierCache: @unchecked Sendable {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
         pending.remove(path)
+        insertLocked(path, entry: Entry(bundleId: bundleId, resolvedAtNanos: now))
+    }
+
+    /// Caller must hold the lock.
+    private func insertLocked(_ path: String, entry: Entry) {
         if entries[path] == nil {
             if entries.count >= capacity, !evictionOrder.isEmpty {
                 entries.removeValue(forKey: evictionOrder.removeFirst())
             }
             evictionOrder.append(path)
         }
-        entries[path] = Entry(bundleId: bundleId, resolvedAtNanos: now)
+        entries[path] = entry
     }
 
     /// The enclosing .app for an executable path, or nil when there is none.
