@@ -335,4 +335,18 @@ final class AppCommunicationBridge: NSObject, AppCommunication {
             state.presentAlert(for: conn, reply: responseHandler)
         }
     }
+
+    func recordObservationBatch(observationBatch: Data, responseHandler: @escaping (Bool) -> Void) {
+        guard observationBatch.count <= InsightsLimits.maxBatchBytes else {
+            responseHandler(false)
+            return
+        }
+        guard let state else {
+            responseHandler(false)
+            return
+        }
+        Task { @MainActor in
+            responseHandler(state.helper.ingestObservationBatch(observationBatch))
+        }
+    }
 }

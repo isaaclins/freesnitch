@@ -34,7 +34,24 @@ final class FilterDataProvider: NEFilterDataProvider {
         "Network extension has not received a rule snapshot from the GUI."
     )
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
+    private let observationQueue = FlowObservationQueue(capacity: 1024)
+    private let observationDrainQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.observations", qos: .utility)
+    private let observationSignalLock: UnsafeMutablePointer<os_unfair_lock_s>
+    private var observationDrainScheduled = false
+    private var observationStopped = false
+    private var lastObservationDropLog = Date.distantPast
     private let askTimeout: TimeInterval = 60
+
+    override init() {
+        self.observationSignalLock = .allocate(capacity: 1)
+        self.observationSignalLock.initialize(to: os_unfair_lock_s())
+        super.init()
+    }
+
+    deinit {
+        observationSignalLock.deinitialize(count: 1)
+        observationSignalLock.deallocate()
+    }
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
         IPCConnection.shared.onSnapshot = { [weak self] data in
@@ -96,12 +113,17 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     override func stopFilter(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        os_unfair_lock_lock(observationSignalLock)
+        observationStopped = true
+        os_unfair_lock_unlock(observationSignalLock)
         completionHandler()
     }
 
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
         let conn = connection(from: socketFlow)
+        _ = observationQueue.enqueue(FlowObservation(connection: conn))
+        signalObservationDrain()
         // FreeSnitch must never hold up its own traffic. The helper shells out
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
@@ -126,6 +148,60 @@ final class FilterDataProvider: NEFilterDataProvider {
             promptAndResume(flow: flow, conn: conn)
             return .pause()
         }
+    }
+
+    // MARK: - Observation drain
+
+    private func drainObservationBatch() {
+        while true {
+            os_unfair_lock_lock(observationSignalLock)
+            let stopped = observationStopped
+            os_unfair_lock_unlock(observationSignalLock)
+            guard !stopped else { return }
+
+            let observations = observationQueue.drain(maximum: InsightsLimits.maxBatchCount)
+            logObservationDropsIfNeeded()
+            guard !observations.isEmpty else {
+                finishObservationDrainIfIdle()
+                return
+            }
+
+            var candidate = observations
+            var payload: Data?
+            repeat {
+                payload = try? FreeSnitchWireCodec.encode(FlowObservationBatch(observations: candidate))
+                if let payload, payload.count <= InsightsLimits.maxBatchBytes { break }
+                candidate.removeLast()
+            } while !candidate.isEmpty
+
+            if let payload, payload.count <= InsightsLimits.maxBatchBytes {
+                _ = IPCConnection.shared.sendObservationBatch(payload)
+            }
+        }
+    }
+
+    private func signalObservationDrain() {
+        guard os_unfair_lock_trylock(observationSignalLock) else { return }
+        let shouldSchedule = !observationStopped && !observationDrainScheduled
+        if shouldSchedule { observationDrainScheduled = true }
+        os_unfair_lock_unlock(observationSignalLock)
+        guard shouldSchedule else { return }
+        observationDrainQueue.async { [weak self] in self?.drainObservationBatch() }
+    }
+
+    private func finishObservationDrainIfIdle() {
+        os_unfair_lock_lock(observationSignalLock)
+        observationDrainScheduled = false
+        os_unfair_lock_unlock(observationSignalLock)
+        if !observationQueue.isEmpty { signalObservationDrain() }
+    }
+
+    private func logObservationDropsIfNeeded() {
+        let dropped = observationQueue.takeFullDropCount()
+        guard dropped > 0, Date().timeIntervalSince(lastObservationDropLog) >= 60 else { return }
+        lastObservationDropLog = Date()
+        PSLog.error(PSLog.netext,
+                    "insights observation queue dropped \(dropped) full-ring observations; contention drops are immediate and uncounted")
     }
 
     // MARK: - Ask flow

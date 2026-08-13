@@ -4,6 +4,7 @@ import Foundation
 /// an interactive decision. `responseHandler(allow, remember)`.
 @objc public protocol AppCommunication {
     func promptUser(flowJSON: Data, responseHandler: @escaping (Bool, Bool) -> Void)
+    @objc optional func recordObservationBatch(observationBatch: Data, responseHandler: @escaping (Bool) -> Void)
 }
 
 /// Implemented by the system extension; called by the app to establish the link
@@ -27,6 +28,7 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
 
     private var listener: NSXPCListener?
     private var currentConnection: NSXPCConnection?
+    private let connectionLock = NSLock()
     private weak var delegate: AppCommunication?
     /// Extension side: invoked when the app pushes a rule set. It returns the
     /// provider's resulting status synchronously so the app can publish it.
@@ -64,13 +66,27 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     /// app is currently connected (caller should then fail open).
     @discardableResult
     public func promptUser(flowJSON: Data, responseHandler: @escaping (Bool, Bool) -> Void) -> Bool {
-        guard let connection = currentConnection else { return false }
+        guard let connection = connectionSnapshot() else { return false }
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ [weak self, weak connection] _ in
             self?.clearCurrentConnection(connection)
         }) as? AppCommunication else {
             return false
         }
         proxy.promptUser(flowJSON: flowJSON, responseHandler: responseHandler)
+        return true
+    }
+
+    /// Extension side: hand a bounded observation batch to the connected GUI.
+    /// A missing GUI or transport error drops the batch. The extension never
+    /// waits for the acknowledgement and never retries an individual flow.
+    @discardableResult
+    public func sendObservationBatch(_ data: Data) -> Bool {
+        guard data.count <= InsightsLimits.maxBatchBytes else { return false }
+        guard let connection = connectionSnapshot(),
+              let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? AppCommunication else {
+            return false
+        }
+        proxy.recordObservationBatch?(observationBatch: data) { _ in }
         return true
     }
 
@@ -94,7 +110,7 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
             completionHandler(status)
         }
 
-        guard let connection = currentConnection else {
+        guard let connection = connectionSnapshot() else {
             finish(Self.unavailableStatus("Network extension IPC is not connected."))
             return
         }
@@ -142,12 +158,14 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         newConnection.exportedInterface = NSXPCInterface(with: AppCommunication.self)
         newConnection.exportedObject = delegate
         newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
-        newConnection.invalidationHandler = { [weak self] in
-            self?.currentConnection = nil
+        newConnection.invalidationHandler = { [weak self, weak newConnection] in
+            self?.clearCurrentConnection(newConnection)
             finish(false, Self.unavailableStatus("Network extension rejected or invalidated the GUI XPC peer."))
         }
-        newConnection.interruptionHandler = { [weak self] in self?.currentConnection = nil }
-        currentConnection = newConnection
+        newConnection.interruptionHandler = { [weak self, weak newConnection] in
+            self?.clearCurrentConnection(newConnection)
+        }
+        setCurrentConnection(newConnection)
         newConnection.resume()
 
         guard let proxy = newConnection.remoteObjectProxyWithErrorHandler({ error in
@@ -185,15 +203,29 @@ extension IPCConnection: NSXPCListenerDelegate {
         // A CLI connection is allowed to inspect and update snapshots, but it
         // must not replace the GUI connection that answers interactive alerts.
         if !XPCPeerValidator.isCLI(newConnection) {
-            currentConnection = newConnection
+            setCurrentConnection(newConnection)
         }
         newConnection.resume()
         return true
     }
 
+    private func connectionSnapshot() -> NSXPCConnection? {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        return currentConnection
+    }
+
+    private func setCurrentConnection(_ connection: NSXPCConnection?) {
+        connectionLock.lock()
+        currentConnection = connection
+        connectionLock.unlock()
+    }
+
     private func clearCurrentConnection(_ connection: NSXPCConnection?) {
-        guard let connection, currentConnection === connection else { return }
-        currentConnection = nil
+        guard let connection else { return }
+        connectionLock.lock()
+        if currentConnection === connection { currentConnection = nil }
+        connectionLock.unlock()
     }
 }
 

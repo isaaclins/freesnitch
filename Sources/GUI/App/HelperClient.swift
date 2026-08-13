@@ -450,6 +450,63 @@ final class HelperClient: NSObject, ObservableObject {
         remote?.setMode(rawValue: m.rawValue) { _, _ in }
     }
 
+    @discardableResult
+    func ingestObservationBatch(_ data: Data) -> Bool {
+        guard data.count <= InsightsLimits.maxBatchBytes else {
+            state?.appendLog(level: "error", message: "Insights batch exceeded the transport limit and was dropped by the GUI.")
+            return false
+        }
+        let proxy = connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
+            Task { @MainActor in
+                self?.state?.appendLog(level: "error",
+                                       message: "Insights batch transport failed: \(error.localizedDescription).")
+            }
+        } as? HelperProtocol
+        guard let proxy else {
+            state?.appendLog(level: "error", message: "Insights batch dropped because the privileged helper is unavailable.")
+            return false
+        }
+        proxy.ingestObservationBatch(observationBatch: data) { [weak self] ok, message in
+            guard !ok else { return }
+            Task { @MainActor in
+                self?.state?.appendLog(level: "error",
+                                       message: "The helper rejected an insights batch: \(message ?? "unknown error").")
+            }
+        }
+        return true
+    }
+
+    func queryInsightsRecordingEnabled(completion: @MainActor @escaping (Bool) -> Void) {
+        guard let proxy = remote else {
+            completion(false)
+            return
+        }
+        proxy.getInsightsRecordingEnabled { enabled in
+            Task { @MainActor in completion(enabled) }
+        }
+    }
+
+    func setInsightsRecordingEnabled(_ enabled: Bool,
+                                     completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.setInsightsRecordingEnabled(enabled) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
+    func purgeInsights(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.purgeInsights { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
     func addRule(_ rule: Rule) {
         addRule(rule) { _, _ in }
     }
