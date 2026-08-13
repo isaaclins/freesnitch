@@ -39,6 +39,10 @@ final class AppState: ObservableObject {
     /// drive the extension lifecycle status without making the view model own
     /// that lifecycle.
     var filterSnapshotStatusHandler: ((SharedRuleBridge.SnapshotStatus) -> Void)?
+    /// SystemExtensionManager owns persisted provider configuration. Keeping
+    /// this callback separate from live XPC lets a save failure leave the
+    /// active in-memory policy untouched.
+    var filterSnapshotPersistenceHandler: ((SharedRuleBridge.Snapshot) -> Void)?
 
     /// Menu-bar speed readout. Off by default: the status item is a plain
     /// template glyph unless the user asks for numbers.
@@ -176,11 +180,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The current policy envelope used by both the live XPC update and the
+    /// persisted NetworkExtension provider configuration.
+    func currentFilterSnapshot() -> SharedRuleBridge.Snapshot {
+        SharedRuleBridge.Snapshot(mode: mode, rules: rules)
+    }
+
     /// Hand the active rules and mode to the Network System Extension over the
-    /// existing XPC channel. No app-group file is used because the extension
-    /// runs as root and would resolve that container under /var/root.
+    /// existing XPC channel and ask SystemExtensionManager to persist the same
+    /// versioned snapshot in vendorConfiguration.
     func syncSharedRules() {
-        let snapshot = SharedRuleBridge.Snapshot(mode: mode, rules: rules)
+        let snapshot = currentFilterSnapshot()
+        filterSnapshotPersistenceHandler?(snapshot)
         guard let data = try? SharedRuleBridge.encode(snapshot) else {
             let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the filter rule snapshot.")
             publishFilterSnapshotStatus(status)
