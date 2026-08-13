@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
 BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
 IPC="$ROOT/Sources/Shared/IPCConnection.swift"
+PEER_VALIDATOR="$ROOT/Sources/Shared/XPCPeerValidator.swift"
+HELPER="$ROOT/Sources/Helper/HelperService.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 
@@ -24,6 +26,8 @@ require_text() {
 [[ -f "$FILTER" ]] || fail "missing $FILTER"
 [[ -f "$BRIDGE" ]] || fail "missing $BRIDGE"
 [[ -f "$IPC" ]] || fail "missing $IPC"
+[[ -f "$PEER_VALIDATOR" ]] || fail "missing $PEER_VALIDATOR"
+[[ -f "$HELPER" ]] || fail "missing $HELPER"
 [[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
 [[ -f "$SYSTEM_EXTENSION_MANAGER" ]] || fail "missing $SYSTEM_EXTENSION_MANAGER"
 
@@ -42,6 +46,42 @@ require_text "$FILTER" "filter snapshot received over XPC" \
   "the extension does not log received snapshots"
 require_text "$IPC" "func updateSnapshot(snapshotJSON: Data, completionHandler: @escaping (Data) -> Void)" \
   "the XPC provider interface has no snapshot update acknowledgement"
+require_text "$IPC" "guard XPCPeerValidator.isTrustedGUI(newConnection) else" \
+  "the network extension accepts XPC peers without validating the GUI identity"
+require_text "$HELPER" "guard XPCPeerValidator.isTrustedGUI(newConnection) else" \
+  "the privileged helper no longer shares the GUI peer validator"
+require_text "$PEER_VALIDATOR" "kSecGuestAttributeAudit" \
+  "the shared XPC peer validator does not prefer audit-token identity"
+require_text "$PEER_VALIDATOR" "kSecGuestAttributePid" \
+  "the shared XPC peer validator has no pid fallback"
+require_text "$PEER_VALIDATOR" "SecCodeCheckValidity" \
+  "the shared XPC peer validator does not check the code requirement"
+requirement_count="$(grep -RohF 'let requirementText = "anchor apple generic"' "$ROOT/Sources" --include='*.swift' | wc -l | tr -d ' ')"
+[[ "$requirement_count" == "1" ]] || fail "the GUI XPC requirement is duplicated or missing"
+accept_body="$(awk '
+  /shouldAcceptNewConnection newConnection: NSXPCConnection/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$IPC")"
+validation_line="$(printf '%s\n' "$accept_body" | grep -nF 'XPCPeerValidator.isTrustedGUI(newConnection)' | head -1 | cut -d: -f1 || true)"
+resume_line="$(printf '%s\n' "$accept_body" | grep -nF 'newConnection.resume()' | head -1 | cut -d: -f1 || true)"
+accept_line="$(printf '%s\n' "$accept_body" | grep -nF 'return true' | head -1 | cut -d: -f1 || true)"
+reject_line="$(printf '%s\n' "$accept_body" | grep -nF 'return false' | head -1 | cut -d: -f1 || true)"
+[[ -n "$validation_line" && -n "$resume_line" && -n "$accept_line" && -n "$reject_line" ]] \
+  || fail "the XPC accept path is missing a rejecting validation guard"
+(( validation_line < resume_line && validation_line < accept_line && reject_line < resume_line )) \
+  || fail "the XPC accept path can resume or accept before peer validation"
+if printf '%s\n' "$accept_body" | grep -Fq 'newConnection.resume(); return true'; then
+  fail "the XPC accept path is unconditionally accepting peers"
+fi
 require_text "$APP_STATE" "IPCConnection.shared.sendSnapshot(data)" \
   "the GUI does not push snapshots over XPC"
 if grep -Fq "SharedRuleBridge.read" "$FILTER" \
@@ -140,4 +180,4 @@ if printf '%s\n' "$activation_body" | grep -Fq "enableFilter"; then
   fail "filter configuration is still enabled optimistically during activate()"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, and activation ordering are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, and activation ordering are present.\n'

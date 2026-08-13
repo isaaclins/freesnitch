@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
@@ -288,8 +287,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
 extension HelperService: NSXPCListenerDelegate {
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        guard Self.isTrustedClient(newConnection) else {
-            PSLog.error(PSLog.helper, "rejected XPC client failing the code requirement (pid \(newConnection.processIdentifier))")
+        guard XPCPeerValidator.isTrustedGUI(newConnection) else {
+            PSLog.error(PSLog.helper, "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement (pid \(newConnection.processIdentifier))")
             return false
         }
         newConnection.exportedInterface = HelperBridge.remoteInterface()
@@ -306,72 +305,4 @@ extension HelperService: NSXPCListenerDelegate {
         return true
     }
 
-    /// This daemon runs as root and can rewrite the firewall, so it must not
-    /// take orders from just any local process. Accept only code signed by the
-    /// FreeSnitch team with the app's identifier.
-    ///
-    /// Locally built (ad-hoc signed) helpers have no Team ID, and requiring one
-    /// there would make every development build unable to talk to itself, so the
-    /// check is enforced exactly when this helper is itself Developer ID signed
-    /// - i.e. in anything users receive.
-    static func isTrustedClient(_ connection: NSXPCConnection) -> Bool {
-        switch selfSigningTeam {
-        case .failure:
-            // We could not read our own signature. That should never happen, so
-            // treat it as hostile rather than waving every client through.
-            return false
-        case .success(let team) where team == nil:
-            return true          // ad-hoc/local development build
-        case .success:
-            break
-        }
-
-        var code: SecCode?
-        let attributes: [String: Any]
-        if let tokenData = auditTokenData(for: connection) {
-            attributes = [kSecGuestAttributeAudit as String: tokenData]
-        } else {
-            attributes = [kSecGuestAttributePid as String: connection.processIdentifier]
-        }
-        guard SecCodeCopyGuestWithAttributes(nil, attributes as CFDictionary, [], &code) == errSecSuccess,
-              let code else { return false }
-
-        let requirementText = "anchor apple generic"
-            + " and identifier \"\(AppConstants.bundleIdGUI)\""
-            + " and certificate leaf[subject.OU] = \"\(AppConstants.teamID)\""
-        var requirement: SecRequirement?
-        guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,
-              let requirement else { return false }
-        return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
-    }
-
-    /// NSXPCConnection exposes the audit token only through KVC; fall back to
-    /// the (racier) pid when that is unavailable.
-    private static func auditTokenData(for connection: NSXPCConnection) -> Data? {
-        guard connection.responds(to: NSSelectorFromString("auditToken")) else { return nil }
-        guard let value = connection.value(forKey: "auditToken") as? NSValue else { return nil }
-        var raw = audit_token_t()
-        value.getValue(&raw, size: MemoryLayout<audit_token_t>.size)
-        return withUnsafeBytes(of: &raw) { Data($0) }
-    }
-
-    /// This helper's own team identifier: `nil` for an ad-hoc/local build,
-    /// a failure if the signature cannot be read at all.
-    private static let selfSigningTeam: Result<String?, NSError> = {
-        var code: SecCode?
-        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
-            return .failure(NSError(domain: NSOSStatusErrorDomain, code: -1))
-        }
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else {
-            return .failure(NSError(domain: NSOSStatusErrorDomain, code: -2))
-        }
-        var info: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let dict = info as? [String: Any] else {
-            return .failure(NSError(domain: NSOSStatusErrorDomain, code: -3))
-        }
-        let team = dict["teamid"] as? String
-        return .success((team?.isEmpty ?? true) ? nil : team)
-    }()
 }

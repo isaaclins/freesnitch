@@ -45,6 +45,10 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
             ?? .unavailable("Network extension returned an unreadable snapshot status.")
     }
 
+    private static func unavailableStatus(_ detail: String) -> SharedRuleBridge.SnapshotStatus {
+        .unavailable("\(detail) No rule snapshot was delivered; filtering remains fail-open.")
+    }
+
     // MARK: - Extension side
 
     /// Called from the provider's `startFilter`. Vends the mach service the app
@@ -91,13 +95,13 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         }
 
         guard let connection = currentConnection else {
-            finish(.unavailable("Network extension IPC is not connected."))
+            finish(Self.unavailableStatus("Network extension IPC is not connected."))
             return
         }
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-            finish(.unavailable("Network extension IPC failed: \(error.localizedDescription)"))
+            finish(Self.unavailableStatus("Network extension IPC failed: \(error.localizedDescription)."))
         }) as? ProviderCommunication else {
-            finish(.unavailable("Network extension IPC proxy is unavailable."))
+            finish(Self.unavailableStatus("Network extension IPC proxy is unavailable."))
             return
         }
         proxy.updateSnapshot(snapshotJSON: snapshotJSON) { statusJSON in
@@ -115,15 +119,6 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     ) {
         self.delegate = delegate
 
-        let newConnection = NSXPCConnection(machServiceName: AppConstants.ipcMachServiceName, options: [])
-        newConnection.exportedInterface = NSXPCInterface(with: AppCommunication.self)
-        newConnection.exportedObject = delegate
-        newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
-        newConnection.invalidationHandler = { [weak self] in self?.currentConnection = nil }
-        newConnection.interruptionHandler = { [weak self] in self?.currentConnection = nil }
-        currentConnection = newConnection
-        newConnection.resume()
-
         var completed = false
         let completionLock = NSLock()
         let finish: (Bool, SharedRuleBridge.SnapshotStatus) -> Void = { ok, status in
@@ -137,10 +132,22 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
             completionHandler(ok, status)
         }
 
+        let newConnection = NSXPCConnection(machServiceName: AppConstants.ipcMachServiceName, options: [])
+        newConnection.exportedInterface = NSXPCInterface(with: AppCommunication.self)
+        newConnection.exportedObject = delegate
+        newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
+        newConnection.invalidationHandler = { [weak self] in
+            self?.currentConnection = nil
+            finish(false, Self.unavailableStatus("Network extension rejected or invalidated the GUI XPC peer."))
+        }
+        newConnection.interruptionHandler = { [weak self] in self?.currentConnection = nil }
+        currentConnection = newConnection
+        newConnection.resume()
+
         guard let proxy = newConnection.remoteObjectProxyWithErrorHandler({ error in
-            finish(false, .unavailable("Network extension IPC failed: \(error.localizedDescription)"))
+            finish(false, Self.unavailableStatus("Network extension IPC rejected the GUI peer or failed: \(error.localizedDescription)."))
         }) as? ProviderCommunication else {
-            finish(false, .unavailable("Network extension IPC proxy is unavailable."))
+            finish(false, Self.unavailableStatus("Network extension IPC proxy is unavailable."))
             return
         }
         proxy.register { ok, statusJSON in
@@ -151,8 +158,15 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
 
 extension IPCConnection: NSXPCListenerDelegate {
     public func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        // Extension side: the app connected. Export ProviderCommunication and
-        // keep the connection so we can call promptUser on it later.
+        guard XPCPeerValidator.isTrustedGUI(newConnection) else {
+            PSLog.error(PSLog.netext,
+                        "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement "
+                        + "(pid \(newConnection.processIdentifier)); no snapshot was accepted and "
+                        + "filtering will fail open if no trusted GUI is connected.")
+            return false
+        }
+        // Extension side: the signed GUI connected. Export ProviderCommunication
+        // and keep the connection so we can call promptUser on it later.
         newConnection.exportedInterface = NSXPCInterface(with: ProviderCommunication.self)
         newConnection.exportedObject = self
         newConnection.remoteObjectInterface = NSXPCInterface(with: AppCommunication.self)
