@@ -689,7 +689,7 @@ fi
 # No parentheses in this pattern on purpose: awk -v processes escapes in the
 # value, so an escaped paren never reaches the regex engine intact and the
 # block would silently never be found.
-if ! text_within_block "$FILTER" 'override func handle.*NEFilterReport' 'claimFlaggedFlow'; then
+if ! text_within_block "$FILTER" 'override func handle.*NEFilterReport' 'classifyFlaggedReport'; then
   fail "the network extension counts filter reports without checking that it flagged the flow"
 fi
 if ! text_within_block "$FILTER" 'private func reportingLateDestination' 'rememberFlaggedFlow'; then
