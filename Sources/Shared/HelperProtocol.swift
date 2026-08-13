@@ -32,6 +32,9 @@ import Foundation
     func recentDenied(limit: Int, reply: @escaping (Data) -> Void)
 
     func ingestObservationBatch(observationBatch: Data, reply: @escaping (Bool, String?) -> Void)
+    func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void)
+    func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void)
+    func purgeInsights(reply: @escaping (Bool, String?) -> Void)
 }
 
 @objc public protocol HelperClientProtocol {

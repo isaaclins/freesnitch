@@ -470,6 +470,37 @@ final class HelperClient: NSObject, ObservableObject {
         return true
     }
 
+    func queryInsightsRecordingEnabled(completion: @MainActor @escaping (Bool) -> Void) {
+        guard let proxy = remote else {
+            completion(false)
+            return
+        }
+        proxy.getInsightsRecordingEnabled { enabled in
+            Task { @MainActor in completion(enabled) }
+        }
+    }
+
+    func setInsightsRecordingEnabled(_ enabled: Bool,
+                                     completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.setInsightsRecordingEnabled(enabled) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
+    func purgeInsights(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.purgeInsights { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
     func addRule(_ rule: Rule) {
         addRule(rule) { _, _ in }
     }

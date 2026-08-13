@@ -8,6 +8,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let netmon = NetMonitor()
     private let blocklists: BlocklistManager
     private let listener: NSXPCListener
+    private let insightsMaintenanceQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-maintenance", qos: .utility)
+    private var insightsMaintenanceTimer: DispatchSourceTimer?
     private var clientConnections: [NSXPCConnection] = []
     private let clientLock = NSLock()
     private var pendingAsks: [String: (Bool) -> Void] = [:]
@@ -30,6 +32,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         self.blocklists = BlocklistManager(store: store)
         self.listener = listener
         super.init()
+
+        if let insights {
+            do { try insights.prune() }
+            catch { PSLog.error(PSLog.helper, "Initial insights prune failed: \(error.localizedDescription)") }
+        }
 
         pf.onWarning = { [weak self] message in
             self?.broadcast { client in
@@ -136,7 +143,21 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func start() {
         listener.resume()
         netmon.start()
+        startInsightsMaintenance()
         Task { await blocklists.refresh() }
+    }
+
+    private func startInsightsMaintenance() {
+        guard insights != nil, insightsMaintenanceTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: insightsMaintenanceQueue)
+        timer.schedule(deadline: .now() + 6 * 60 * 60, repeating: 6 * 60 * 60)
+        timer.setEventHandler { [weak self] in
+            guard let self, let insights = self.insights else { return }
+            do { try insights.prune() }
+            catch { PSLog.error(PSLog.helper, "Scheduled insights prune failed: \(error.localizedDescription)") }
+        }
+        insightsMaintenanceTimer = timer
+        timer.resume()
     }
 
     func registerClient(_ conn: NSXPCConnection) {
@@ -418,6 +439,37 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
+            reply(false, error.localizedDescription)
+        }
+    }
+
+    func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void) {
+        reply(insights?.recordingEnabled ?? false)
+    }
+
+    func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
+        guard let insights else {
+            reply(false, "insights store is unavailable")
+            return
+        }
+        do {
+            try insights.setRecordingEnabled(enabled)
+            reply(true, nil)
+        } catch {
+            reply(false, error.localizedDescription)
+        }
+    }
+
+    func purgeInsights(reply: @escaping (Bool, String?) -> Void) {
+        guard let insights else {
+            reply(false, "insights store is unavailable")
+            return
+        }
+        do {
+            try insights.purge()
+            reply(true, nil)
+        } catch {
+            PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
             reply(false, error.localizedDescription)
         }
     }
