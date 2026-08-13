@@ -4,7 +4,7 @@ import AppKit
 /// The one piece of UI that keeps FreeSnitch honest: when the privileged helper
 /// isn't approved or isn't reachable, every panel in the app reads zero. Before
 /// this banner existed that state was indistinguishable from "the app is
-/// broken" — which is exactly what users reported.
+/// broken", which is exactly what users reported.
 struct HelperBanner: View {
     @EnvironmentObject var state: AppState
     /// Compact variant for the menu-bar popover.
@@ -55,7 +55,7 @@ private struct BannerInfo {
     let detail: String
     let action: BannerAction?
 
-    /// Returns nil when everything is healthy — no banner, no noise.
+    /// Returns nil when everything is healthy, so there is no banner or noise.
     init?(installState: HelperInstallState, connected: Bool, needsRepair: Bool) {
         switch installState {
         case .enabled where connected:
@@ -64,7 +64,7 @@ private struct BannerInfo {
             icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
             title = "The helper needs repairing"
-            detail = "It is approved but either not responding or left over from an older FreeSnitch — usually after an in-place update. Repairing re-installs the background helper; macOS will ask you to approve it once more in Login Items."
+            detail = "It is approved but either not responding or left over from an older FreeSnitch, usually after an in-place update. Repairing re-installs the background helper; macOS will ask you to approve it once more in Login Items."
             action = BannerAction(title: "Repair Helper") { $0.helper.repairHelper() }
         case .enabled:
             icon = "hourglass"
@@ -76,7 +76,7 @@ private struct BannerInfo {
             icon = "exclamationmark.triangle.fill"
             tint = PSTheme.accentYellow
             title = "FreeSnitch needs your approval to monitor traffic"
-            detail = "Open System Settings › General › Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
+            detail = "Open System Settings under General > Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
             action = BannerAction(title: "Open Login Items") { $0.helper.openLoginItemsSettings() }
         case .notRegistered, .unknown:
             icon = "bolt.horizontal.circle.fill"

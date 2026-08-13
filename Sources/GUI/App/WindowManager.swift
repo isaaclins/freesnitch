@@ -81,7 +81,7 @@ final class WindowManager {
         window.minSize = minSize
         // Use `contentView` (NSHostingView) instead of `contentViewController`.
         // Assigning a hosting *controller* makes NSWindow resize itself to the
-        // SwiftUI view's fitting size — which collapsed these windows to a
+        // SwiftUI view's fitting size, which collapsed these windows to a
         // sliver. A hosting *view* keeps the size we set here, but only if we
         // also stop it exporting an intrinsic size: with `sizingOptions`
         // left at its default the window grew to the content's ideal height
@@ -135,7 +135,7 @@ final class WindowManager {
 
     private func presentAlertWindow() {
         // Use a hosting *controller* so the panel auto-sizes to the alert's
-        // content — long process names / hostnames grow the card correctly.
+        // content. Long process names and hostnames grow the card correctly.
         // (Reading NSHostingView.fittingSize before the view is laid out
         // returns zero and would clip the content.)
         let hosting = NSHostingController(rootView: AlertWindowContent().environmentObject(state))

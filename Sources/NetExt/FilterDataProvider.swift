@@ -190,7 +190,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         guard data.count >= MemoryLayout<audit_token_t>.size else { return nil }
         var token = audit_token_t()
         _ = withUnsafeMutableBytes(of: &token) { data.copyBytes(to: $0, count: $0.count) }
-        // token.val.5 is the pid — avoids linking libbsm for audit_token_to_pid.
+        // token.val.5 is the pid. This avoids linking libbsm for audit_token_to_pid.
         return Int(token.val.5)
     }
 

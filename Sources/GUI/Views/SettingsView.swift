@@ -117,7 +117,7 @@ struct SettingsView: View {
                         .font(.body).foregroundColor(.secondary)
                     Text(state.helperConnected
                          ? "Press Refresh All to download the default blocklists."
-                         : "Blocklists live in the privileged helper. Approve the helper first — see the General tab.")
+                         : "Blocklists live in the privileged helper. Approve the helper first. See the General tab.")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

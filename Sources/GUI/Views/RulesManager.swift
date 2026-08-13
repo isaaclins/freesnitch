@@ -225,10 +225,10 @@ struct RulesManagerView: View {
     private var emptySubtitle: String {
         if case .blocklist(let id) = selectedCategory {
             let count = state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
-            return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings → Blocklists."
+            return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings under Blocklists."
         }
         if !state.helperConnected {
-            return "Rules are managed by the FreeSnitch helper. Approve it in System Settings → General → Login Items — this window fills in on its own once it connects."
+            return "Rules are managed by the FreeSnitch helper. Approve it in System Settings under General > Login Items. This window fills in on its own once it connects."
         }
         if state.rules.isEmpty {
             return "Rules are created automatically when you allow or deny a connection alert."
