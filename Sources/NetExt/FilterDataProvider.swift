@@ -137,6 +137,8 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// Accounting for flows whose destination is unknown when the verdict is
     /// required. Held at a stable address, taken with trylock only, and never
     /// held across a log call, so the verdict path can never wait on it.
+    private var rejectedHostnameCount: UInt64 = 0
+    private var lastRejectedHostnameLogNanos: UInt64 = 0
     private let destinationAccountingLock: UnsafeMutablePointer<os_unfair_lock_s>
     private var unknownDestinationFlows: UInt64 = 0
     private var lateDestinationAtVerdictReport: UInt64 = 0
@@ -300,6 +302,26 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// not to paper over. Counting is trylock-only, so a contended verdict
     /// skips the tally instead of waiting, and the summary is emitted at most
     /// once a minute.
+    /// A reverse-DNS query name arriving as `remoteHostname` is ordinary on a
+    /// busy machine, so it is summarised on the same one minute cadence as the
+    /// other destination accounting. Logging every occurrence put several error
+    /// lines per second into the unified log, which buries the diagnostics that
+    /// matter. Counting is trylock-only, so the verdict path never waits.
+    private func noteRejectedHostname(_ rejected: String) {
+        guard os_unfair_lock_trylock(destinationAccountingLock) else { return }
+        rejectedHostnameCount &+= 1
+        let now = DispatchTime.now().uptimeNanoseconds
+        let due = now &- lastRejectedHostnameLogNanos >= destinationLogIntervalNanos
+        if due { lastRejectedHostnameLogNanos = now }
+        let count = rejectedHostnameCount
+        os_unfair_lock_unlock(destinationAccountingLock)
+        guard due else { return }
+        PSLog.error(
+            PSLog.netext,
+            "Ignored \(count) unusable remote hostnames so far, most recently '\(rejected)': \(PFHostValidator.rejectionReason(for: rejected)); the endpoint address is used instead."
+        )
+    }
+
     private func noteUnknownDestination(_ flow: NEFilterSocketFlow, port: Int) {
         guard os_unfair_lock_trylock(destinationAccountingLock) else { return }
         unknownDestinationFlows &+= 1
@@ -479,10 +501,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         let (host, port) = remoteAddress(of: flow)
         let destination = FlowDestination.resolve(endpointHost: host, remoteHostname: flow.remoteHostname)
         if let rejected = destination.rejectedHostname {
-            PSLog.error(
-                PSLog.netext,
-                "Ignoring unusable remote hostname '\(rejected)': \(PFHostValidator.rejectionReason(for: rejected)); using the endpoint address instead."
-            )
+            noteRejectedHostname(rejected)
         }
         let remoteHost = destination.host
         let remoteIP = destination.ip
