@@ -133,7 +133,10 @@ public final class RuleStore: @unchecked Sendable {
 
     private func seedProfiles() throws {
         let defaults: [Profile] = [
-            Profile(name: "default", mode: .alert, icon: "shield", isActive: true),
+            // A fresh install learns quietly instead of training the user to
+            // reflexively click Allow through dozens of first-run prompts.
+            // Insights says plainly that Silent Allow blocks nothing (D9).
+            Profile(name: "default", mode: .silentAllow, icon: "shield", isActive: true),
             Profile(name: "home", mode: .silentAllow, icon: "house"),
             Profile(name: "public-wifi", mode: .alert, icon: "wifi.exclamationmark"),
             Profile(name: "lockdown", mode: .silentDeny, icon: "lock.shield")
@@ -264,7 +267,10 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     private func policyStateLocked() -> PolicyState {
-        let mode = AppMode(rawValue: getSettingLocked(Self.modeSettingKey) ?? "") ?? .alert
+        // Missing means a genuinely fresh database. Existing installs retain
+        // their stored choice, while a new user starts honestly in Silent
+        // Allow and can move to Alert once Insights has a real picture.
+        let mode = AppMode(rawValue: getSettingLocked(Self.modeSettingKey) ?? "") ?? .silentAllow
         let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
         return PolicyState(mode: mode, rules: allRulesLocked(profile: nil), generation: generation)
     }

@@ -5,7 +5,10 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var mode: AppMode = .alert
+    /// Honest first-launch default. The helper's persisted policy replaces this
+    /// as soon as it connects; until then the UI must not imply a fresh install
+    /// is blocking when it is allowing and learning.
+    @Published var mode: AppMode = .silentAllow
     @Published var connections: [Connection] = []
     @Published var rules: [Rule] = []
     @Published var blocklists: [BlocklistInfo] = []

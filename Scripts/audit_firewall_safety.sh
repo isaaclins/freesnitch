@@ -22,6 +22,9 @@ LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
 MODELS="$ROOT/Sources/Shared/Models.swift"
 WIRE_CODEC="$ROOT/Sources/Shared/WireCodec.swift"
 RULE_TRANSPORT="$ROOT/Sources/Shared/RuleTransport.swift"
+INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
+INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
+INSIGHTS_VIEW="$ROOT/Sources/GUI/Views/InsightsView.swift"
 CLI_CONTRACT="$ROOT/Sources/CLI/CLIContract.swift"
 INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
 INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
@@ -912,4 +915,27 @@ if grep -Eq '^[[:space:]]+dns\.(mode|rules) = ' "$HELPER"; then
   fail "the helper still assigns DNS mode and rules separately, which publishes a torn policy"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, and atomic DNS policy publication are present.\n'
+# Insights is always-on recording, but querying it must stay bounded and off the
+# flow-verdict path. The UI must also say when Silent Allow blocks nothing.
+for required in "$INSIGHTS_MODELS" "$INSIGHTS_STORE" "$INSIGHTS_VIEW"; do
+  [[ -f "$required" ]] || fail "missing Insights component: $required"
+done
+require_text "$INSIGHTS_MODELS" "maxQueryPageSize = 200" \
+  "Insights query pages are not bounded"
+require_text "$INSIGHTS_MODELS" "maxQueryRequestBytes" \
+  "Insights query requests have no byte bound"
+require_text "$INSIGHTS_MODELS" "maxReportBytes" \
+  "Insights query responses have no byte bound"
+require_text "$GUI_HELPER" "payload.count <= InsightsLimits.maxReportBytes" \
+  "the GUI decodes Insights data before bounding the response"
+require_text "$HELPER" "insightsQueryQueue.async" \
+  "the helper runs Insights queries on its XPC connection queue"
+require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection is permitted" \
+  "Insights does not say plainly that Silent Allow blocks nothing"
+require_text "$RULE_STORE" "?? .silentAllow" \
+  "a fresh rules database does not default honestly to Silent Allow"
+if grep -Eq 'URLSession|CFHost|GetAddrInfo|gethostby' "$INSIGHTS_STORE"; then
+  fail "Insights performs an online or reverse-DNS lookup instead of using local DNS answers"
+fi
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, and bounded offline Insights queries are present.\n'

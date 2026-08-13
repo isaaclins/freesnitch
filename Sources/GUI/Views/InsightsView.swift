@@ -622,7 +622,11 @@ final class InsightsViewModel: ObservableObject {
             self.isLoading = false
             guard let report else { self.errorMessage = error; return }
             self.source = report.source
-            self.proposals = offset == 0 ? report.proposals : self.proposals + report.proposals
+            // Do not keep proposing something the user already decided. The
+            // helper remains the authority at acceptance time, but filtering
+            // here keeps the screen honest while preserving the bounded query.
+            let novel = report.proposals.filter { !self.isCoveredByExistingRule($0) }
+            self.proposals = offset == 0 ? novel : self.proposals + novel
             self.hasMoreProposals = report.hasMore
         }
     }
@@ -682,10 +686,37 @@ final class InsightsViewModel: ObservableObject {
                                             connectionCount: destination.connectionCount,
                                             otherAppCount: destination.otherAppCount,
                                             lastSeen: destination.lastSeen)
+        guard !isCoveredByExistingRule(proposal) else {
+            acceptMessage = "A rule already covers \(proposal.destinationLabel) for \(proposal.appDisplayName)."
+            return
+        }
         if !proposals.contains(where: { $0.id == proposal.id }) {
             proposals.insert(proposal, at: 0)
         }
         section = .proposals
+    }
+
+    private func isCoveredByExistingRule(_ proposal: InsightsProposedRule) -> Bool {
+        guard let rules = state?.rules else { return false }
+        return rules.contains { rule in
+            guard rule.enabled else { return false }
+            let destinationMatches: Bool
+            if let domain = proposal.domain {
+                destinationMatches = rule.remoteHost?.lowercased() == domain.lowercased()
+            } else if let remoteIP = proposal.remoteIP {
+                destinationMatches = rule.remoteIP == remoteIP || rule.remoteHost == remoteIP
+            } else {
+                return false
+            }
+            guard destinationMatches else { return false }
+
+            // A selector-free rule is wider and therefore covers this app too.
+            let hasAppSelector = rule.processBundleId != nil || rule.processPath != nil || rule.processName != nil
+            guard hasAppSelector else { return true }
+            if let bundle = proposal.processBundleId, rule.processBundleId == bundle { return true }
+            if let path = proposal.processPath, rule.processPath == path { return true }
+            return rule.processName == proposal.appDisplayName
+        }
     }
 
     /// D2: this is the only path from a proposal to a rule, and a person is
