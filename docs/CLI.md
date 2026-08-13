@@ -240,6 +240,8 @@ freesnitch blocklist BLOCKLIST_ID off
 freesnitch blocklist BLOCKLIST_ID on
 ```
 
+Blocklists are DNS-name filters enforced by the helper's local DNS proxy only when Enforcement is enabled. They apply to names sent to that proxy, not hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.
+
 ## Recovery operations
 
 The CLI has the same enforcement capability as the GUI. It does not implement

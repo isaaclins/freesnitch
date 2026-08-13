@@ -107,7 +107,7 @@ Alert mode can show a decision window for a new connection, with Allow or Deny, 
 Built-in DoH client with example upstreams for Cloudflare, Quad9, and Google, plus support for a custom DoH endpoint. When Enforcement is enabled, the helper can run a local DNS proxy on `127.0.0.1:53` and filter queries sent to that proxy before forwarding allowed queries over DoH.
 
 ### Blocklist Library
-Ships with 1Hosts Lite, OISD Small, StevenBlack, HaGeZi Multi Light, URLhaus, Anti-PopAds, Peter Lowe, and AdGuard DNS sources. Refresh the enabled sources from Settings and inspect their entry counts.
+Ships with 1Hosts Lite, OISD Small, StevenBlack, HaGeZi Multi Light, URLhaus, Anti-PopAds, Peter Lowe, and AdGuard DNS sources. When Enforcement is enabled, the helper's local DNS proxy filters DNS names against enabled lists. Blocklists do not stop connections to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.
 
 ### Packet-Level Blocking
 When Enforcement is enabled, a `puresnitch` anchor in `pfctl` provides IP, CIDR, and port blocking at the kernel. These rules apply regardless of which process initiated the connection.
@@ -150,7 +150,7 @@ Live up and down throughput when enabled, a five-minute traffic graph, a top-pro
 
 Four parts make up the monitoring and enforcement path:
 
-1. **DNS interception.** When Enforcement is enabled, a local DNS proxy on `127.0.0.1:53` answers queries. Blocklisted domains return NXDOMAIN. Everything else forwards over DoH to the resolver of your choice.
+1. **DNS interception.** When Enforcement is enabled, a local DNS proxy on `127.0.0.1:53` answers queries sent to it. Blocklisted domains return NXDOMAIN. Everything else forwards over DoH to the resolver of your choice. This is the only blocklist enforcement path: the Network Extension and `pfctl` do not receive blocklist entries, so hardcoded IP connections and names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH, are not covered.
 2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports.
 3. **Process and connection observability.** `nettop -P -L 0 -x -J bytes_in,bytes_out` is parsed continuously for per-process bandwidth. `lsof -i -n -P -F pcnT` snapshots active connections every two seconds. Both feed the GUI's process list, world map, and traffic graph.
 4. **Per-process filtering.** In the firewall flavour, the Network System Extension evaluates each new socket flow against the shared rule set and can allow, drop, or pause it for a GUI decision.

@@ -44,8 +44,8 @@ PureSnitch es la cuarta opción:
 - Monitor de Red con mapa mundial de cada conexión activa y ranking de procesos, dominios y países
 - Gestor de Reglas completo al estilo Little Snitch - grupos, blocklists, búsqueda
 - DNS sobre HTTPS a Cloudflare, Quad9, Google o cualquier endpoint DoH
-- Proxy DNS local en `127.0.0.1:53` que intercepta cada consulta
-- Bloqueo por dominio mediante 1Hosts, OISD, StevenBlack, HaGeZi
+- Proxy DNS local en `127.0.0.1:53` que filtra las consultas que pasan por él cuando Enforcement está activado
+- Blocklists de dominio mediante 1Hosts, OISD, StevenBlack y HaGeZi. Solo filtran nombres DNS que pasan por el proxy cuando Enforcement está activado. No bloquean conexiones a direcciones IP codificadas directamente ni nombres resueltos por el DNS cifrado propio de una app, como el DoH de Chrome o Firefox
 - Bloqueo por IP, CIDR y puerto a nivel kernel mediante el ancla `pfctl`
 - Perfiles (default, home, public-wifi, lockdown) que cambian automáticamente con la red
 

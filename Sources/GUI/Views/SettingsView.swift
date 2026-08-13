@@ -115,6 +115,16 @@ struct SettingsView: View {
                 Spacer()
                 Button("Refresh All") { state.helper.refreshBlocklists() }
             }
+            Text("Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !state.enforcementEnabled && state.blocklists.contains(where: { $0.enabled }) {
+                Text("Enforcement is off, so enabled blocklists are currently blocking nothing.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if state.blocklists.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No blocklists loaded")
