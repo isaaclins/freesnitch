@@ -85,7 +85,12 @@ public struct RuleMatcher: Sendable {
         guard octs.count == 4 else { return nil }
         var v: UInt32 = 0
         for o in octs {
+            // A leading zero is ambiguous: inet_pton rejects it and other
+            // parsers read it as octal. Ingest validation already refuses it,
+            // so the matcher agrees rather than inventing a third reading of
+            // the same text.
             guard !o.isEmpty, o.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+                  o.count == 1 || o.first != "0",
                   let n = UInt32(o), n < 256 else { return nil }
             v = (v << 8) | n
         }
