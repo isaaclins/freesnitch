@@ -220,6 +220,12 @@ enum CLIHelp {
 
     Lists every configured blocklist with ID, URL, enabled state, last update,
     and entry count. `refresh` downloads all enabled lists.
+
+    Blocklists filter DNS names only, and only while enforcement is on, because
+    the helper's DNS proxy is what enforces them. They do not stop connections
+    made to hardcoded IP addresses or names resolved by an app's own encrypted
+    DNS, such as Chrome and Firefox DoH. Per-process, IP, CIDR, and port rules
+    still apply in those cases.
     """
 
     private static let blocklist = """

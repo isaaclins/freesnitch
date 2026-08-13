@@ -401,19 +401,19 @@ final class CLIRunner {
 
     private func listBlocklists() async throws -> CommandResult {
         let helper = CLIHelperClient()
-        _ = try await helper.prepare()
+        let status = try await helper.prepare()
         let values = try await helper.blocklists()
         let report = values.map { BlocklistReport(id: $0.id, name: $0.name, url: $0.url, enabled: $0.enabled, lastUpdated: $0.lastUpdated, entryCount: $0.entryCount) }
-        return CommandResult(data: report, human: humanBlocklists(report))
+        return CommandResult(data: report, human: humanBlocklists(report, dnsProxyActive: status.dnsProxyActive))
     }
 
     private func refreshBlocklists() async throws -> CommandResult {
         let helper = CLIHelperClient()
-        _ = try await helper.prepare()
+        let status = try await helper.prepare()
         try await helper.refreshBlocklists()
         let values = try await helper.blocklists()
         let report = values.map { BlocklistReport(id: $0.id, name: $0.name, url: $0.url, enabled: $0.enabled, lastUpdated: $0.lastUpdated, entryCount: $0.entryCount) }
-        return CommandResult(data: report, human: "Refreshed blocklists.\n" + humanBlocklists(report))
+        return CommandResult(data: report, human: "Refreshed blocklists.\n" + humanBlocklists(report, dnsProxyActive: status.dnsProxyActive))
     }
 
     private func setBlocklist(id reference: String, enabled: Bool) async throws -> CommandResult {
@@ -890,10 +890,21 @@ final class CLIRunner {
         return "Top processes\n\(processes.isEmpty ? "  none" : processes)\n\nTop domains\n\(domains.isEmpty ? "  none" : domains)\n\nTop countries\n\(countries.isEmpty ? "  none" : countries)\n\n\(report.countryData)"
     }
 
-    private func humanBlocklists(_ values: [BlocklistReport]) -> String {
+    /// Blocklists are enforced only by the helper's DNS proxy, so a list that
+    /// reads `on` is not evidence that anything is being blocked. The GUI says
+    /// this in both places it shows blocklists; the CLI must not be the one
+    /// surface that implies more protection than exists.
+    private func humanBlocklists(_ values: [BlocklistReport], dnsProxyActive: Bool) -> String {
         if values.isEmpty { return "Blocklists: none." }
-        return values.map { "  \($0.id.uuidString)  \($0.name)  \($0.enabled ? "on" : "off")  entries=\($0.entryCount)\($0.lastUpdated.map { " updated=\(formatDate($0))" } ?? "")" }.joined(separator: "\n")
+        let listing = values.map { "  \($0.id.uuidString)  \($0.name)  \($0.enabled ? "on" : "off")  entries=\($0.entryCount)\($0.lastUpdated.map { " updated=\(formatDate($0))" } ?? "")" }.joined(separator: "\n")
+        var notes = [Self.blocklistScopeNote]
+        if !dnsProxyActive && values.contains(where: { $0.enabled }) {
+            notes.append("The DNS proxy is not running, so enabled blocklists are currently blocking nothing. Turn on enforcement with `freesnitch enforcement on` to activate them.")
+        }
+        return listing + "\n\n" + notes.joined(separator: "\n")
     }
+
+    static let blocklistScopeNote = "Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH."
 
     private func humanPF(_ report: PFReport) -> String {
         "PF anchor \(report.anchor): installed=\(report.installed), valid=\(report.valid), helper-loaded=\(report.helperLoaded.map(humanBool) ?? "unknown")\(report.message.map { "\n  \($0)" } ?? "")"
