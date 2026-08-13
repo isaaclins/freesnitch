@@ -268,7 +268,9 @@ require_release_tooling() {
   done
   [[ -x /usr/libexec/PlistBuddy ]] || die "required command not found: /usr/libexec/PlistBuddy"
 
-  security find-identity -v -p codesigning | grep -Fq "\"$SIGN_ID\"" || \
+  local codesigning_identities
+  codesigning_identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  grep -Fq "\"$SIGN_ID\"" <<<"$codesigning_identities" || \
     die "Developer ID identity is not installed: $SIGN_ID"
   xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || \
     die "notarytool keychain profile is unavailable: $NOTARY_PROFILE"
@@ -452,7 +454,12 @@ verify_app_bundle() {
   assert_signed_by_team "$HELPER_BINARY"
   assert_signed_by_team "$CLI_BINARY"
   assert_signed_by_team "$NETEXT_BUNDLE"
-  codesign -dv --verbose=4 "$CLI_BINARY" 2>&1 | grep -Fq "Identifier=io.isaaclins.freesnitch.cli" || \
+  # Capture first, then match. Piping a still-running codesign into an
+  # early-exiting grep -q kills codesign with SIGPIPE, and under pipefail that
+  # 141 failed the release for a bundle that was signed correctly.
+  local cli_signature
+  cli_signature="$(codesign -dv --verbose=4 "$CLI_BINARY" 2>&1 || true)"
+  grep -Fq "Identifier=$APP_BUNDLE_ID.cli" <<<"$cli_signature" || \
     die "$CLI_BINARY has the wrong signing identifier"
   assert_framework_code_signatures
   codesign --verify --strict --verbose=2 "$HELPER_BINARY" >/dev/null || die "helper signature verification failed"
