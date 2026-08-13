@@ -20,6 +20,8 @@ import Security
 
 final class FilterDataProvider: NEFilterDataProvider {
     private let matcher = RuleMatcher()
+    private let bootPolicy = BootPolicyClient()
+    private let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
     private var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
@@ -39,11 +41,31 @@ final class FilterDataProvider: NEFilterDataProvider {
             self?.readSnapshotStatus()
                 ?? .unavailable("Network extension stopped before receiving the rule snapshot.")
         }
-        PSLog.error(PSLog.netext,
-                    "FILTER NOT READY: no rule snapshot received over XPC; allowing flows until the GUI delivers one.")
+        PSLog.error(
+            PSLog.netext,
+            "FILTER NOT READY: no rule snapshot received over XPC; loading the helper boot cache before allowing flows."
+        )
+        bootPolicy.load { [weak self] data in
+            guard let self else {
+                completionHandler(nil)
+                return
+            }
+            if let data {
+                self.loadBootSnapshot(data)
+            } else {
+                PSLog.error(
+                    PSLog.netext,
+                    "boot policy cache missing or unreadable; allowing flows until a trusted GUI snapshot arrives"
+                )
+            }
+            self.startFilterAfterBootSnapshot(completionHandler: completionHandler)
+        }
+    }
+
+    private func startFilterAfterBootSnapshot(completionHandler: @escaping (Error?) -> Void) {
         IPCConnection.shared.startListener()
         // Empty rule list + .filterData default => every flow reaches handleNewFlow.
-        // handleNewFlow explicitly allows flows until a valid XPC snapshot exists.
+        // handleNewFlow explicitly allows flows until a valid snapshot exists.
         let settings = NEFilterSettings(rules: [], defaultAction: .filterData)
         apply(settings) { error in completionHandler(error) }
     }
@@ -256,6 +278,41 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Rule snapshot
 
+    private func loadBootSnapshot(_ data: Data) {
+        do {
+            var received = try SharedRuleBridge.decode(data)
+            if received.mode == .silentDeny {
+                let age = Date().timeIntervalSince(received.updatedAt)
+                if age < 0 || age > staleSilentDenyAge {
+                    received.mode = .alert
+                    PSLog.error(
+                        PSLog.netext,
+                        "stale silent-deny boot policy downgraded to alert; explicit deny rules remain active and unanswered asks fail open"
+                    )
+                }
+            }
+            let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
+            snapshotLock.lock()
+            snapshot = received
+            snapshotStatus = status
+            snapshotLock.unlock()
+
+            PSLog.info(
+                PSLog.netext,
+                "boot policy snapshot loaded from helper cache: mode \(received.mode.rawValue), \(received.rules.count) rules"
+            )
+        } catch {
+            let status = SharedRuleBridge.SnapshotStatus.invalid(
+                "Network extension boot policy cache was invalid: \(error.localizedDescription)"
+            )
+            snapshotLock.lock()
+            snapshot = nil
+            snapshotStatus = status
+            snapshotLock.unlock()
+            PSLog.error(PSLog.netext, status.message ?? "Network extension boot policy cache was invalid.")
+        }
+    }
+
     private func receiveSnapshot(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
         do {
             let received = try SharedRuleBridge.decode(data)
@@ -271,6 +328,10 @@ final class FilterDataProvider: NEFilterDataProvider {
             PSLog.info(PSLog.netext,
                        "filter snapshot received over XPC: mode \(received.mode.rawValue), "
                        + "\(received.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))")
+            // The helper validates and atomically stores only this already
+            // decoded snapshot. A cache write failure does not affect the
+            // currently active policy.
+            bootPolicy.store(data)
             return status
         } catch {
             let status = SharedRuleBridge.SnapshotStatus.invalid(
