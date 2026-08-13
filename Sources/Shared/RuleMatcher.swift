@@ -5,17 +5,50 @@ import Darwin
 import Glibc
 #endif
 
+/// The enabled rules of one policy snapshot, already in the order the matcher
+/// consults them.
+///
+/// Ordering a rule set is O(n log n) and belongs to the moment a snapshot is
+/// applied, not to a verdict. Every new socket flow used to pay two filtered
+/// array copies and a full sort before the filter could answer, and that cost
+/// grew with the rule count, so a burst of new connections was also the most
+/// expensive moment.
+public struct PreparedRuleSet: Sendable {
+    /// Enabled rules, highest priority first.
+    public let ordered: [Rule]
+
+    public init(rules: [Rule]) {
+        // Which rule wins must never depend on a sort algorithm's tie
+        // handling, so equal priorities keep the order the snapshot delivered
+        // them in.
+        ordered = rules.enumerated()
+            .filter { $0.element.enabled }
+            .sorted { lhs, rhs in
+                lhs.element.priority == rhs.element.priority
+                    ? lhs.offset < rhs.offset
+                    : lhs.element.priority > rhs.element.priority
+            }
+            .map { $0.element }
+    }
+}
+
 public struct RuleMatcher: Sendable {
     public init() {}
 
+    /// Orders the rule set on every call. A verdict path should hold a
+    /// `PreparedRuleSet` and use the overload below instead.
     public func decision(for c: Connection, rules: [Rule], defaultMode: AppMode) -> RuleAction {
-        let sorted = rules.filter { $0.enabled }.filter { rule in
-            if let exp = rule.expiresAt, exp < Date() { return false }
-            return true
-        }.sorted { $0.priority > $1.priority }
+        decision(for: c, prepared: PreparedRuleSet(rules: rules), defaultMode: defaultMode)
+    }
 
-        for r in sorted where matches(rule: r, connection: c) {
-            return r.action
+    public func decision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> RuleAction {
+        // Expiry is the one predicate that cannot be precomputed, because it
+        // depends on when the flow arrives rather than on the snapshot. It
+        // stays a test inside the scan, which allocates nothing.
+        let now = Date()
+        for r in prepared.ordered {
+            if let exp = r.expiresAt, exp < now { continue }
+            if matches(rule: r, connection: c) { return r.action }
         }
 
         switch defaultMode {
