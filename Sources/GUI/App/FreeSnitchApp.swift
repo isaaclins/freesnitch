@@ -7,9 +7,13 @@ struct FreeSnitchApp: App {
     private let sparkleUpdater = SparkleUpdaterController()
 
     var body: some Scene {
+        // An App needs a scene, and the app menu's Settings item plus ⌘, come
+        // from this one existing. Its content is a redirector rather than the
+        // settings UI: Settings is a page of the main window now (#63), so
+        // this scene hands the request over and closes itself before it is
+        // ever seen.
         Settings {
-            SettingsView(systemExtension: delegate.systemExtension)
-                .environmentObject(delegate.state)
+            SettingsSceneRedirect { delegate.windowManager?.showSettings() }
         }
         .commands {
             CommandGroup(after: .appInfo) {
@@ -23,6 +27,43 @@ struct FreeSnitchApp: App {
                     delegate.windowManager.showRulesManager()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .option])
+            }
+        }
+    }
+}
+
+/// Sends the standard Settings action to the Settings page of the main window.
+///
+/// SwiftUI opens the settings scene's window before any SwiftUI lifecycle
+/// callback runs, so the window is hidden the moment this view is installed in
+/// it and closed on the next turn of the run loop. The user sees the main
+/// window switch to Settings, never a second window.
+struct SettingsSceneRedirect: NSViewRepresentable {
+    let openSettingsPage: () -> Void
+
+    func makeNSView(context: Context) -> NSView { RedirectingView(open: openSettingsPage) }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class RedirectingView: NSView {
+        private let open: () -> Void
+
+        init(open: @escaping () -> Void) {
+            self.open = open
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window = window else { return }
+            window.alphaValue = 0
+            window.setIsVisible(false)
+            DispatchQueue.main.async { [weak window, open] in
+                window?.close()
+                open()
             }
         }
     }
@@ -79,12 +120,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" {
             seedDemoState()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "monitor" {
-                    self.windowManager.showNetworkMonitor()
-                } else if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "rules" {
-                    self.windowManager.showRulesManager()
-                } else if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "settings" {
-                    self.windowManager.showSettings()
+                switch ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] {
+                case "monitor": self.windowManager.showNetworkMonitor()
+                case "rules": self.windowManager.showRulesManager()
+                case "insights": self.windowManager.showInsights()
+                case "profiles": self.windowManager.showProfiles()
+                case "settings": self.windowManager.showSettings()
+                default: break
                 }
             }
         }
@@ -187,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        windowManager.showNetworkMonitor()
+        windowManager.showMainWindow()
         return true
     }
 }

@@ -19,58 +19,77 @@ final class MenuActionTarget: NSObject {
 final class WindowManager {
     private let state: AppState
     private let systemExtension: SystemExtensionManager
-    private weak var networkMonitorWindow: NSWindow?
-    private weak var rulesWindow: NSWindow?
-    private weak var settingsWindow: NSWindow?
-    private weak var insightsWindow: NSWindow?
+    /// One window, five pages. Retained rather than weak so closing it and
+    /// re-opening from the menu bar returns to the page you left.
+    private var mainWindow: NSWindow?
+    private let mainModel: MainWindowModel
     private var alertWindow: NSWindow?
     private var alertCancellable: AnyCancellable?
+    private var pageCancellable: AnyCancellable?
     /// Menu items do not retain their target, so the Insights action object
     /// lives here for as long as the menu does.
     private var insightsMenuTarget: MenuActionTarget?
     private var menuTrackingObserver: NSObjectProtocol?
     private static let insightsMenuTitle = "Insights…"
+    private static let mainWindowAutosaveName = "FreeSnitch.MainWindow"
+    private static let selectedPageKey = "FreeSnitch.SelectedPage"
 
     init(state: AppState, systemExtension: SystemExtensionManager) {
         self.state = state
         self.systemExtension = systemExtension
+        let stored = UserDefaults.standard.string(forKey: Self.selectedPageKey)
+        self.mainModel = MainWindowModel(page: stored.flatMap(MainPage.init(rawValue:)) ?? .monitor)
         observeAlerts()
+        observeSelectedPage()
         installInsightsMenuItem()
     }
 
-    // MARK: - Public windows
+    // MARK: - The one main window
 
-    func showNetworkMonitor() {
-        if let w = networkMonitorWindow { focus(w); return }
-        networkMonitorWindow = makeWindow(
-            title: "Network Monitor",
-            defaultSize: NSSize(width: 1100, height: 700),
-            minSize: NSSize(width: 900, height: 550),
-            autosaveName: "FreeSnitch.NetworkMonitor",
-            content: NetworkMonitorView(systemExtension: systemExtension).environmentObject(state)
+    /// Brings the main window back on the page it was last left on.
+    func showMainWindow() { show(mainModel.page) }
+
+    func showNetworkMonitor() { show(.monitor) }
+
+    func showRulesManager() { show(.rules) }
+
+    func showInsights() { show(.insights) }
+
+    func showProfiles() { show(.profiles) }
+
+    func showSettings() { show(.settings) }
+
+    /// Every entry point lands here: switch the existing window to the page
+    /// and focus it. A second window is never created.
+    private func show(_ page: MainPage) {
+        mainModel.page = page
+        let window = mainWindow ?? makeMainWindow()
+        mainWindow = window
+        window.subtitle = page.title
+        focus(window)
+    }
+
+    private func makeMainWindow() -> NSWindow {
+        makeWindow(
+            title: "FreeSnitch",
+            defaultSize: NSSize(width: 1200, height: 780),
+            minSize: NSSize(width: 1040, height: 620),
+            autosaveName: Self.mainWindowAutosaveName,
+            content: MainWindowView(model: mainModel, systemExtension: systemExtension)
+                .environmentObject(state)
         )
     }
 
-    func showRulesManager() {
-        if let w = rulesWindow { focus(w); return }
-        rulesWindow = makeWindow(
-            title: "Rules",
-            defaultSize: NSSize(width: 1000, height: 650),
-            minSize: NSSize(width: 820, height: 500),
-            autosaveName: "FreeSnitch.Rules",
-            content: RulesManagerView(systemExtension: systemExtension).environmentObject(state)
-        )
-    }
-
-    func showInsights() {
-        if let w = insightsWindow { focus(w); return }
-        insightsWindow = makeWindow(
-            title: "Insights",
-            defaultSize: NSSize(width: 1040, height: 680),
-            minSize: NSSize(width: 860, height: 520),
-            autosaveName: "FreeSnitch.Insights",
-            content: InsightsView().environmentObject(state)
-        )
+    /// The page outlives the window, so it is persisted as it changes rather
+    /// than on close: quitting with the window shut still reopens where the
+    /// user was.
+    private func observeSelectedPage() {
+        pageCancellable = mainModel.$page
+            .receive(on: RunLoop.main)
+            .sink { [weak self] page in
+                UserDefaults.standard.set(page.rawValue, forKey: Self.selectedPageKey)
+                self?.mainWindow?.subtitle = page.title
+            }
     }
 
     /// The app menu is built by SwiftUI commands, so the Insights item is
@@ -105,21 +124,6 @@ final class WindowManager {
         appMenu.insertItem(item, at: anchor.map { $0 + 1 } ?? appMenu.items.count)
     }
 
-    func showSettings() {
-        if let w = settingsWindow { focus(w); return }
-        // Created manually rather than via the SwiftUI `Settings` scene: the
-        // `showSettingsWindow:` action is unreliable for `.accessory`
-        // (menu-bar-only) apps and was the reason Settings never appeared.
-        settingsWindow = makeWindow(
-            title: "Settings",
-            defaultSize: NSSize(width: 560, height: 460),
-            minSize: NSSize(width: 560, height: 460),
-            autosaveName: "FreeSnitch.Settings",
-            content: SettingsView(systemExtension: systemExtension).environmentObject(state),
-            resizable: false
-        )
-    }
-
     // MARK: - Window factory
 
     private func makeWindow<Content: View>(
@@ -127,21 +131,20 @@ final class WindowManager {
         defaultSize: NSSize,
         minSize: NSSize,
         autosaveName: String,
-        content: Content,
-        resizable: Bool = true
+        content: Content
     ) -> NSWindow {
-        var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
-        if resizable { style.insert(.resizable) }
-
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: defaultSize),
-            styleMask: style,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        // A real title bar, because this is now the app's window rather than a
+        // floating pane: the Dock, Mission Control and the Window menu all read
+        // it. The app draws a fixed dark interface, so the frame is told to be
+        // dark too instead of leaving a light title bar over dark content.
         window.title = title
+        window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         window.minSize = minSize
         // Use `contentView` (NSHostingView) instead of `contentViewController`.
@@ -170,7 +173,6 @@ final class WindowManager {
             window.center()
         }
 
-        focus(window)
         return window
     }
 

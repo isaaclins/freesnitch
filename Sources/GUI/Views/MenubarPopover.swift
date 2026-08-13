@@ -114,7 +114,7 @@ struct MenubarPopoverView: View {
     /// The active profile is always on screen. A strict profile applying
     /// silently is the same failure as #12, #13 and #17.
     private var profileChip: some View {
-        Button(action: { close(); windows.showSettings() }) {
+        Button(action: { close(); windows.showProfiles() }) {
             HStack(spacing: 6) {
                 Image(systemName: profileClient.activeProfile?.icon ?? "person.crop.circle")
                     .font(.system(size: 11))
@@ -132,7 +132,7 @@ struct MenubarPopoverView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .help("The active profile. Change it in Settings under Profiles.")
+        .help("The active profile. Change it on the Profiles page.")
     }
 
     private var trafficGraph: some View {

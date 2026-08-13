@@ -7,19 +7,19 @@ struct SettingsView: View {
     @State private var doh = ""
     @State private var dohError: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @ObservedObject private var profileClient = ProfileClient.shared
 
     var body: some View {
         TabView {
             generalTab.tabItem { Label("General", systemImage: "gear") }
             dnsTab.tabItem { Label("DNS", systemImage: "globe") }
             blocklistsTab.tabItem { Label("Blocklists", systemImage: "shield.lefthalf.filled") }
-            profilesTab.tabItem { Label("Profiles", systemImage: "person.crop.circle") }
             uninstallTab.tabItem { Label("Uninstall", systemImage: "trash") }
             aboutTab.tabItem { Label("About", systemImage: "info.circle") }
         }
         .padding(16)
-        .frame(width: 520, height: 420)
+        // Settings is a page of the main window now, so it fills the page
+        // instead of being pinned to its old window size.
+        .frame(minWidth: 520, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
         .onAppear { loadDoHUpstream() }
         .onChange(of: state.helperConnected) { connected in
             if connected { loadDoHUpstream() }
@@ -195,10 +195,6 @@ struct SettingsView: View {
                 }
             }
         }
-    }
-
-    private var profilesTab: some View {
-        ProfilesSettingsView(profileClient: profileClient)
     }
 
     /// Deliberate removal, deliberately its own tab. It must not sit next to
