@@ -501,7 +501,11 @@ text_within_block() {
       n = gsub(/\{/, "{")
       m = gsub(/\}/, "}")
       depth += n - m
-      if (depth <= 0) active = 0
+      # A multi-line signature has no brace on its first line. Without waiting
+      # for the block to actually open, depth is 0 there and the scan stops
+      # before reading any of the body, so the gate checks nothing at all.
+      if (n > 0) opened = 1
+      if (opened && depth <= 0) active = 0
     }
     END { exit(found ? 0 : 1) }
   ' "$file"
@@ -682,7 +686,10 @@ fi
 # A report may only be counted for a flow this provider actually flagged.
 # Counting every report made the late-destination tally describe ordinary
 # traffic and overstate by more than two orders of magnitude.
-if ! text_within_block "$FILTER" 'override func handle\(_ report: NEFilterReport\)' 'claimFlaggedFlow'; then
+# No parentheses in this pattern on purpose: awk -v processes escapes in the
+# value, so an escaped paren never reaches the regex engine intact and the
+# block would silently never be found.
+if ! text_within_block "$FILTER" 'override func handle.*NEFilterReport' 'claimFlaggedFlow'; then
   fail "the network extension counts filter reports without checking that it flagged the flow"
 fi
 if ! text_within_block "$FILTER" 'private func reportingLateDestination' 'rememberFlaggedFlow'; then
