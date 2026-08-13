@@ -85,8 +85,14 @@ final class InsightsStore: @unchecked Sendable {
                 try executeLocked("DELETE FROM flow_observations WHERE observed_at < ?;") { statement in
                     try self.bindDouble(statement, index: 1, value: rawCutoff)
                 }
-                try executeLocked("DELETE FROM dns_mappings WHERE expires_at < ?;") { statement in
-                    try self.bindDouble(statement, index: 1, value: now.timeIntervalSince1970)
+                // The DNS answer map is evidence, not a resolver cache. Its
+                // TTL says when the answer stops being routable, not when the
+                // observation stops being true, and deleting it at TTL would
+                // erase every destination name minutes after it was learned and
+                // make almost every address look unresolved. It therefore ages
+                // out with the raw events it explains.
+                try executeLocked("DELETE FROM dns_mappings WHERE observed_at < ?;") { statement in
+                    try self.bindDouble(statement, index: 1, value: rawCutoff)
                 }
                 try executeLocked("DELETE FROM daily_rollups WHERE utc_day < ?;") { statement in
                     try self.bindText(statement, index: 1, value: dayCutoff)
@@ -181,6 +187,8 @@ final class InsightsStore: @unchecked Sendable {
                 );
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_domain ON dns_mappings(domain);
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_expiry ON dns_mappings(expires_at);
+                CREATE INDEX IF NOT EXISTS idx_insights_dns_ip ON dns_mappings(ip);
+                CREATE INDEX IF NOT EXISTS idx_insights_destination ON flow_observations(remote_host, remote_ip);
                 CREATE TABLE IF NOT EXISTS daily_rollups (
                     app_identity TEXT NOT NULL,
                     destination_key TEXT NOT NULL,
@@ -195,6 +203,11 @@ final class InsightsStore: @unchecked Sendable {
                 );
                 INSERT OR IGNORE INTO settings(key,value) VALUES('recording_enabled','1');
                 """)
+            // Rollups carry bytes as well as counts. Older stores were created
+            // before those columns existed, so they are added in place rather
+            // than requiring a purge.
+            try addColumnIfMissingLocked(table: "daily_rollups", column: "bytes_in")
+            try addColumnIfMissingLocked(table: "daily_rollups", column: "bytes_out")
             try verifyDatabaseFilesLocked()
         } catch {
             sqlite3_close(handle)
@@ -250,15 +263,28 @@ final class InsightsStore: @unchecked Sendable {
             : observation.remoteIP
         guard !app.isEmpty, !destination.isEmpty else { return }
         try executeLocked("""
-            INSERT INTO daily_rollups(app_identity,destination_key,utc_day,connection_count)
-            VALUES (?,?,?,1)
+            INSERT INTO daily_rollups(app_identity,destination_key,utc_day,connection_count,bytes_in,bytes_out)
+            VALUES (?,?,?,1,?,?)
             ON CONFLICT(app_identity,destination_key,utc_day)
-            DO UPDATE SET connection_count=connection_count+1;
+            DO UPDATE SET connection_count=connection_count+1,
+                          bytes_in=bytes_in+excluded.bytes_in,
+                          bytes_out=bytes_out+excluded.bytes_out;
             """) { statement in
                 try self.bindText(statement, index: 1, value: app)
                 try self.bindText(statement, index: 2, value: destination)
                 try self.bindText(statement, index: 3, value: self.utcDay(for: observation.observedAt))
+                try self.bindInt64(statement, index: 4, value: observation.bytesIn ?? 0)
+                try self.bindInt64(statement, index: 5, value: observation.bytesOut ?? 0)
             }
+    }
+
+    private func addColumnIfMissingLocked(table: String, column: String) throws {
+        var present = false
+        try queryLocked("PRAGMA table_info(\(table));") { statement in
+            if let name = self.columnText(statement, index: 1), name == column { present = true }
+        }
+        guard !present else { return }
+        try execLocked("ALTER TABLE \(table) ADD COLUMN \(column) INTEGER NOT NULL DEFAULT 0;")
     }
 
     private func settingLocked(_ key: String) throws -> String? {
@@ -316,9 +342,12 @@ final class InsightsStore: @unchecked Sendable {
     }
 
     private func bindOptionalInt64(_ statement: OpaquePointer?, index: Int32, value: Int64?) throws {
-        if let value {
-            guard sqlite3_bind_int64(statement, index, value) == SQLITE_OK else { throw storeError(sqliteMessage()) }
-        } else { try bindNull(statement, index: index) }
+        if let value { try bindInt64(statement, index: index, value: value) }
+        else { try bindNull(statement, index: index) }
+    }
+
+    private func bindInt64(_ statement: OpaquePointer?, index: Int32, value: Int64) throws {
+        guard sqlite3_bind_int64(statement, index, value) == SQLITE_OK else { throw storeError(sqliteMessage()) }
     }
 
     private func bindNull(_ statement: OpaquePointer?, index: Int32) throws {
@@ -406,5 +435,546 @@ final class InsightsStore: @unchecked Sendable {
 
     private func storeError(_ message: String) -> NSError {
         NSError(domain: "InsightsStore", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+}
+
+// MARK: - Bounded read API
+//
+// Every query here is paginated and every range is bounded by the caller's
+// validated `InsightsQuery`. A year of rollups is never materialised: rows are
+// aggregated by SQLite and one page at a time is handed back.
+//
+// Nothing in this section re-validates the CONTENT of stored rows. Bounds are
+// enforced on the request and on the encoded payload; judging stored content on
+// the way out is what hid every rule from the user in #57.
+extension InsightsStore {
+    /// Raw events carry per-flow detail for 14 days. Older ranges can only be
+    /// answered by the daily rollups.
+    private static func source(for query: InsightsQuery, now: Date) -> InsightsDataSource {
+        query.since >= now.addingTimeInterval(-InsightsLimits.rawRetention) ? .rawEvents : .dailyRollups
+    }
+
+    private static let appIdentitySQL = "COALESCE(NULLIF(process_bundle_id,''), process_path)"
+    /// The hostname the app asked for when one was recorded, otherwise the
+    /// address it connected to.
+    private static let destinationSQL =
+        "CASE WHEN remote_host <> '' AND remote_host <> remote_ip THEN remote_host ELSE remote_ip END"
+
+    func report(for query: InsightsQuery, now: Date = Date()) throws -> InsightsReport {
+        try query.validate(now: now)
+        return try queue.sync {
+            let source = Self.source(for: query, now: now)
+            let recording = (try? settingLocked("recording_enabled")) != "0"
+            let page: (apps: [InsightsAppSummary],
+                       destinations: [InsightsDestinationSummary],
+                       unresolved: [InsightsUnresolvedDestination],
+                       proposals: [InsightsProposedRule],
+                       overview: InsightsOverview?,
+                       hasMore: Bool)
+            switch query.kind {
+            case .apps:
+                let result = try appsLocked(query, source: source)
+                page = (result.rows, [], [], [], nil, result.hasMore)
+            case .destinations:
+                let result = try destinationsLocked(query, source: source)
+                page = ([], result.rows, [], [], nil, result.hasMore)
+            case .unresolved:
+                let result = try unresolvedLocked(query, source: source)
+                page = ([], [], result.rows, [], nil, result.hasMore)
+            case .proposals:
+                let result = try proposalsLocked(query, source: source)
+                page = ([], [], [], result.rows, nil, result.hasMore)
+            case .overview:
+                page = ([], [], [], [], try overviewLocked(recordingEnabled: recording), false)
+            }
+            return InsightsReport(kind: query.kind,
+                                  generatedAt: now,
+                                  rangeStart: query.since,
+                                  rangeEnd: query.until,
+                                  source: source,
+                                  recordingEnabled: recording,
+                                  limit: query.limit,
+                                  offset: query.offset,
+                                  hasMore: page.hasMore,
+                                  apps: page.apps,
+                                  destinations: page.destinations,
+                                  unresolved: page.unresolved,
+                                  proposals: page.proposals,
+                                  overview: page.overview)
+        }
+    }
+
+    // MARK: Apps
+
+    private func appsLocked(_ query: InsightsQuery,
+                            source: InsightsDataSource) throws -> (rows: [InsightsAppSummary], hasMore: Bool) {
+        var rows: [InsightsAppSummary] = []
+        switch source {
+        case .rawEvents:
+            let sql = """
+                SELECT \(Self.appIdentitySQL) AS app,
+                       MAX(process_name), MAX(process_bundle_id), MAX(process_path),
+                       COUNT(DISTINCT \(Self.destinationSQL)),
+                       COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
+                FROM flow_observations
+                WHERE observed_at >= ? AND observed_at <= ?
+                GROUP BY app
+                ORDER BY COUNT(*) DESC, app ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindRawRange(statement, query: query)
+                try self.bindPage(statement, query: query, firstIndex: 3)
+            }) { statement in
+                guard let identity = self.columnText(statement, index: 0), !identity.isEmpty else { return }
+                rows.append(InsightsAppSummary(
+                    appIdentity: identity,
+                    displayName: self.columnText(statement, index: 1) ?? Self.fallbackName(for: identity),
+                    processBundleId: self.columnText(statement, index: 2),
+                    processPath: self.columnText(statement, index: 3),
+                    destinationCount: Int(self.columnInt64(statement, index: 4)),
+                    connectionCount: Int(self.columnInt64(statement, index: 5)),
+                    bytesIn: self.columnInt64(statement, index: 6),
+                    bytesOut: self.columnInt64(statement, index: 7),
+                    lastSeen: self.columnDate(statement, index: 8)))
+            }
+        case .dailyRollups:
+            let sql = """
+                SELECT app_identity, COUNT(DISTINCT destination_key), SUM(connection_count),
+                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day)
+                FROM daily_rollups
+                WHERE utc_day >= ? AND utc_day <= ?
+                GROUP BY app_identity
+                ORDER BY SUM(connection_count) DESC, app_identity ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindDayRange(statement, query: query)
+                try self.bindPage(statement, query: query, firstIndex: 3)
+            }) { statement in
+                guard let identity = self.columnText(statement, index: 0), !identity.isEmpty else { return }
+                rows.append(InsightsAppSummary(
+                    appIdentity: identity,
+                    displayName: Self.fallbackName(for: identity),
+                    processBundleId: identity.hasPrefix("/") ? nil : identity,
+                    processPath: identity.hasPrefix("/") ? identity : nil,
+                    destinationCount: Int(self.columnInt64(statement, index: 1)),
+                    connectionCount: Int(self.columnInt64(statement, index: 2)),
+                    bytesIn: self.columnInt64(statement, index: 3),
+                    bytesOut: self.columnInt64(statement, index: 4),
+                    lastSeen: self.columnText(statement, index: 5).flatMap(self.date(fromUTCDay:))))
+            }
+        }
+        return trim(rows, limit: query.limit)
+    }
+
+    // MARK: Destinations
+
+    private func destinationsLocked(_ query: InsightsQuery,
+                                    source: InsightsDataSource) throws -> (rows: [InsightsDestinationSummary], hasMore: Bool) {
+        guard let app = query.appIdentity else { return ([], false) }
+        var raw: [(key: String, ip: String?, count: Int, bytesIn: Int64, bytesOut: Int64, lastSeen: Date?)] = []
+        switch source {
+        case .rawEvents:
+            let sql = """
+                SELECT \(Self.destinationSQL) AS dest, MAX(remote_ip),
+                       COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
+                FROM flow_observations
+                WHERE observed_at >= ? AND observed_at <= ? AND \(Self.appIdentitySQL) = ?
+                GROUP BY dest
+                ORDER BY COUNT(*) DESC, dest ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindRawRange(statement, query: query)
+                try self.bindText(statement, index: 3, value: app)
+                try self.bindPage(statement, query: query, firstIndex: 4)
+            }) { statement in
+                guard let key = self.columnText(statement, index: 0), !key.isEmpty else { return }
+                raw.append((key,
+                            self.columnText(statement, index: 1),
+                            Int(self.columnInt64(statement, index: 2)),
+                            self.columnInt64(statement, index: 3),
+                            self.columnInt64(statement, index: 4),
+                            self.columnDate(statement, index: 5)))
+            }
+        case .dailyRollups:
+            let sql = """
+                SELECT destination_key, SUM(connection_count),
+                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day)
+                FROM daily_rollups
+                WHERE utc_day >= ? AND utc_day <= ? AND app_identity = ?
+                GROUP BY destination_key
+                ORDER BY SUM(connection_count) DESC, destination_key ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindDayRange(statement, query: query)
+                try self.bindText(statement, index: 3, value: app)
+                try self.bindPage(statement, query: query, firstIndex: 4)
+            }) { statement in
+                guard let key = self.columnText(statement, index: 0), !key.isEmpty else { return }
+                raw.append((key,
+                            nil,
+                            Int(self.columnInt64(statement, index: 1)),
+                            self.columnInt64(statement, index: 2),
+                            self.columnInt64(statement, index: 3),
+                            self.columnText(statement, index: 4).flatMap(self.date(fromUTCDay:))))
+            }
+        }
+
+        var rows: [InsightsDestinationSummary] = []
+        rows.reserveCapacity(raw.count)
+        for entry in raw {
+            rows.append(InsightsDestinationSummary(
+                appIdentity: app,
+                destinationKey: entry.key,
+                resolvedDomain: try resolvedDomainLocked(key: entry.key, remoteIP: entry.ip),
+                remoteIP: entry.ip?.isEmpty == false ? entry.ip : (PFHostValidator.kind(for: entry.key) == .ip ? entry.key : nil),
+                connectionCount: entry.count,
+                bytesIn: entry.bytesIn,
+                bytesOut: entry.bytesOut,
+                otherAppCount: try otherAppCountLocked(destination: entry.key, excluding: app, query: query, source: source),
+                lastSeen: entry.lastSeen))
+        }
+        return trim(rows, limit: query.limit)
+    }
+
+    /// Co-occurrence only: how many OTHER apps reached the same destination in
+    /// the same range. It reports what was observed and claims nothing else.
+    private func otherAppCountLocked(destination: String,
+                                     excluding app: String,
+                                     query: InsightsQuery,
+                                     source: InsightsDataSource) throws -> Int {
+        var count = 0
+        switch source {
+        case .rawEvents:
+            let sql = """
+                SELECT COUNT(DISTINCT \(Self.appIdentitySQL))
+                FROM flow_observations
+                WHERE observed_at >= ? AND observed_at <= ?
+                  AND \(Self.destinationSQL) = ? AND \(Self.appIdentitySQL) <> ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindRawRange(statement, query: query)
+                try self.bindText(statement, index: 3, value: destination)
+                try self.bindText(statement, index: 4, value: app)
+            }) { statement in
+                count = Int(self.columnInt64(statement, index: 0))
+            }
+        case .dailyRollups:
+            let sql = """
+                SELECT COUNT(DISTINCT app_identity)
+                FROM daily_rollups
+                WHERE utc_day >= ? AND utc_day <= ?
+                  AND destination_key = ? AND app_identity <> ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindDayRange(statement, query: query)
+                try self.bindText(statement, index: 3, value: destination)
+                try self.bindText(statement, index: 4, value: app)
+            }) { statement in
+                count = Int(self.columnInt64(statement, index: 0))
+            }
+        }
+        return count
+    }
+
+    // MARK: Unresolved addresses
+
+    private func unresolvedLocked(_ query: InsightsQuery,
+                                  source: InsightsDataSource) throws -> (rows: [InsightsUnresolvedDestination], hasMore: Bool) {
+        var rows: [InsightsUnresolvedDestination] = []
+        switch source {
+        case .rawEvents:
+            let sql = """
+                SELECT remote_ip, COUNT(*), COUNT(DISTINCT \(Self.appIdentitySQL)),
+                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
+                FROM flow_observations
+                WHERE observed_at >= ? AND observed_at <= ?
+                  AND remote_ip <> ''
+                  AND (remote_host = '' OR remote_host = remote_ip)
+                  AND NOT EXISTS (SELECT 1 FROM dns_mappings WHERE dns_mappings.ip = flow_observations.remote_ip)
+                GROUP BY remote_ip
+                ORDER BY COUNT(*) DESC, remote_ip ASC
+                LIMIT ? OFFSET ?;
+                """
+            var pending: [(ip: String, count: Int, apps: Int, bytesIn: Int64, bytesOut: Int64, lastSeen: Date?)] = []
+            try queryLocked(sql, bind: { statement in
+                try self.bindRawRange(statement, query: query)
+                try self.bindPage(statement, query: query, firstIndex: 3)
+            }) { statement in
+                guard let ip = self.columnText(statement, index: 0), !ip.isEmpty else { return }
+                pending.append((ip,
+                                Int(self.columnInt64(statement, index: 1)),
+                                Int(self.columnInt64(statement, index: 2)),
+                                self.columnInt64(statement, index: 3),
+                                self.columnInt64(statement, index: 4),
+                                self.columnDate(statement, index: 5)))
+            }
+            for entry in pending {
+                rows.append(InsightsUnresolvedDestination(
+                    remoteIP: entry.ip,
+                    connectionCount: entry.count,
+                    appCount: entry.apps,
+                    appNames: try unresolvedAppNamesLocked(ip: entry.ip, query: query),
+                    bytesIn: entry.bytesIn,
+                    bytesOut: entry.bytesOut,
+                    lastSeen: entry.lastSeen))
+            }
+        case .dailyRollups:
+            let sql = """
+                SELECT destination_key, SUM(connection_count), COUNT(DISTINCT app_identity),
+                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day)
+                FROM daily_rollups
+                WHERE utc_day >= ? AND utc_day <= ?
+                  AND NOT EXISTS (SELECT 1 FROM dns_mappings WHERE dns_mappings.ip = daily_rollups.destination_key)
+                GROUP BY destination_key
+                ORDER BY SUM(connection_count) DESC, destination_key ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindDayRange(statement, query: query)
+                try self.bindPage(statement, query: query, firstIndex: 3)
+            }) { statement in
+                // A rollup key is a hostname when one was known, and SQLite
+                // cannot tell the two apart, so the address test happens here.
+                guard let key = self.columnText(statement, index: 0),
+                      PFHostValidator.kind(for: key) == .ip else { return }
+                rows.append(InsightsUnresolvedDestination(
+                    remoteIP: key,
+                    connectionCount: Int(self.columnInt64(statement, index: 1)),
+                    appCount: Int(self.columnInt64(statement, index: 2)),
+                    appNames: [],
+                    bytesIn: self.columnInt64(statement, index: 3),
+                    bytesOut: self.columnInt64(statement, index: 4),
+                    lastSeen: self.columnText(statement, index: 5).flatMap(self.date(fromUTCDay:))))
+            }
+        }
+        return trim(rows, limit: query.limit)
+    }
+
+    private func unresolvedAppNamesLocked(ip: String, query: InsightsQuery) throws -> [String] {
+        var names: [String] = []
+        let sql = """
+            SELECT DISTINCT process_name FROM flow_observations
+            WHERE observed_at >= ? AND observed_at <= ? AND remote_ip = ?
+            ORDER BY process_name ASC LIMIT ?;
+            """
+        try queryLocked(sql, bind: { statement in
+            try self.bindRawRange(statement, query: query)
+            try self.bindText(statement, index: 3, value: ip)
+            try self.bindInt(statement, index: 4, value: Int32(InsightsLimits.maxUnresolvedAppNames))
+        }) { statement in
+            if let name = self.columnText(statement, index: 0), !name.isEmpty { names.append(name) }
+        }
+        return names
+    }
+
+    // MARK: Proposals
+
+    private func proposalsLocked(_ query: InsightsQuery,
+                                 source: InsightsDataSource) throws -> (rows: [InsightsProposedRule], hasMore: Bool) {
+        var candidates: [(app: String, name: String?, bundle: String?, path: String?,
+                          key: String, ip: String?, count: Int, lastSeen: Date?)] = []
+        switch source {
+        case .rawEvents:
+            let sql = """
+                SELECT \(Self.appIdentitySQL) AS app, MAX(process_name), MAX(process_bundle_id), MAX(process_path),
+                       \(Self.destinationSQL) AS dest, MAX(remote_ip), COUNT(*), MAX(observed_at)
+                FROM flow_observations
+                WHERE observed_at >= ? AND observed_at <= ?
+                GROUP BY app, dest
+                ORDER BY COUNT(*) DESC, app ASC, dest ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindRawRange(statement, query: query)
+                try self.bindPage(statement, query: query, firstIndex: 3)
+            }) { statement in
+                guard let app = self.columnText(statement, index: 0), !app.isEmpty,
+                      let key = self.columnText(statement, index: 4), !key.isEmpty else { return }
+                candidates.append((app,
+                                   self.columnText(statement, index: 1),
+                                   self.columnText(statement, index: 2),
+                                   self.columnText(statement, index: 3),
+                                   key,
+                                   self.columnText(statement, index: 5),
+                                   Int(self.columnInt64(statement, index: 6)),
+                                   self.columnDate(statement, index: 7)))
+            }
+        case .dailyRollups:
+            let sql = """
+                SELECT app_identity, destination_key, SUM(connection_count), MAX(utc_day)
+                FROM daily_rollups
+                WHERE utc_day >= ? AND utc_day <= ?
+                GROUP BY app_identity, destination_key
+                ORDER BY SUM(connection_count) DESC, app_identity ASC, destination_key ASC
+                LIMIT ? OFFSET ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindDayRange(statement, query: query)
+                try self.bindPage(statement, query: query, firstIndex: 3)
+            }) { statement in
+                guard let app = self.columnText(statement, index: 0), !app.isEmpty,
+                      let key = self.columnText(statement, index: 1), !key.isEmpty else { return }
+                candidates.append((app,
+                                   nil,
+                                   app.hasPrefix("/") ? nil : app,
+                                   app.hasPrefix("/") ? app : nil,
+                                   key,
+                                   nil,
+                                   Int(self.columnInt64(statement, index: 2)),
+                                   self.columnText(statement, index: 3).flatMap(self.date(fromUTCDay:))))
+            }
+        }
+
+        var rows: [InsightsProposedRule] = []
+        rows.reserveCapacity(candidates.count)
+        for candidate in candidates {
+            let domain = try resolvedDomainLocked(key: candidate.key, remoteIP: candidate.ip)
+            let address = candidate.ip?.isEmpty == false
+                ? candidate.ip
+                : (PFHostValidator.kind(for: candidate.key) == .ip ? candidate.key : nil)
+            // An address-pinned proposal is only offered when no name was ever
+            // seen. With neither a name nor a usable address there is nothing
+            // a rule could match, so no proposal is made at all.
+            guard domain != nil || address != nil else { continue }
+            rows.append(InsightsProposedRule(
+                appIdentity: candidate.app,
+                appDisplayName: candidate.name ?? Self.fallbackName(for: candidate.app),
+                processBundleId: candidate.bundle?.isEmpty == false ? candidate.bundle : nil,
+                processPath: candidate.path?.isEmpty == false ? candidate.path : nil,
+                domain: domain,
+                remoteIP: address,
+                connectionCount: candidate.count,
+                otherAppCount: try otherAppCountLocked(destination: candidate.key,
+                                                       excluding: candidate.app,
+                                                       query: query,
+                                                       source: source),
+                lastSeen: candidate.lastSeen))
+        }
+        let trimmed = trim(rows, limit: query.limit)
+        // Breadth first: a destination several apps reach is the one worth
+        // looking at, and the page itself is already bounded.
+        let ordered = trimmed.rows.sorted {
+            if $0.otherAppCount != $1.otherAppCount { return $0.otherAppCount > $1.otherAppCount }
+            if $0.connectionCount != $1.connectionCount { return $0.connectionCount > $1.connectionCount }
+            if $0.appIdentity != $1.appIdentity { return $0.appIdentity < $1.appIdentity }
+            return $0.destinationLabel < $1.destinationLabel
+        }
+        return (ordered, trimmed.hasMore)
+    }
+
+    // MARK: Overview
+
+    private func overviewLocked(recordingEnabled: Bool) throws -> InsightsOverview {
+        var observations = 0
+        var oldest: Date?
+        var newest: Date?
+        var apps = 0
+        var mappings = 0
+        var rollups = 0
+        try queryLocked("SELECT COUNT(*), MIN(observed_at), MAX(observed_at), COUNT(DISTINCT \(Self.appIdentitySQL)) FROM flow_observations;") { statement in
+            observations = Int(self.columnInt64(statement, index: 0))
+            oldest = self.columnDate(statement, index: 1)
+            newest = self.columnDate(statement, index: 2)
+            apps = Int(self.columnInt64(statement, index: 3))
+        }
+        try queryLocked("SELECT COUNT(*) FROM dns_mappings;") { statement in
+            mappings = Int(self.columnInt64(statement, index: 0))
+        }
+        try queryLocked("SELECT COUNT(*) FROM daily_rollups;") { statement in
+            rollups = Int(self.columnInt64(statement, index: 0))
+        }
+        return InsightsOverview(recordingEnabled: recordingEnabled,
+                                rawObservationCount: observations,
+                                dnsMappingCount: mappings,
+                                rollupRowCount: rollups,
+                                appCount: apps,
+                                oldestObservation: oldest,
+                                newestObservation: newest)
+    }
+
+    // MARK: Naming
+
+    /// Names come from the DNS answers this Mac actually saw. There is no
+    /// reverse lookup and no online lookup here, by design (D5).
+    private func resolvedDomainLocked(key: String, remoteIP: String?) throws -> String? {
+        if PFHostValidator.kind(for: key) == .hostname { return key }
+        let address = remoteIP?.isEmpty == false ? remoteIP! : key
+        guard PFHostValidator.kind(for: address) == .ip else { return nil }
+        var domain: String?
+        try queryLocked("SELECT domain FROM dns_mappings WHERE ip = ? ORDER BY observed_at DESC LIMIT 1;",
+                        bind: { statement in try self.bindText(statement, index: 1, value: address) }) { statement in
+            if let value = self.columnText(statement, index: 0), !value.isEmpty { domain = value }
+        }
+        return domain
+    }
+
+    // MARK: Plumbing
+
+    private func trim<Row>(_ rows: [Row], limit: Int) -> (rows: [Row], hasMore: Bool) {
+        guard rows.count > limit else { return (rows, false) }
+        return (Array(rows.prefix(limit)), true)
+    }
+
+    private static func fallbackName(for identity: String) -> String {
+        identity.hasPrefix("/") ? (identity as NSString).lastPathComponent : identity
+    }
+
+    private func bindRawRange(_ statement: OpaquePointer?, query: InsightsQuery) throws {
+        try bindDouble(statement, index: 1, value: query.since.timeIntervalSince1970)
+        try bindDouble(statement, index: 2, value: query.until.timeIntervalSince1970)
+    }
+
+    private func bindDayRange(_ statement: OpaquePointer?, query: InsightsQuery) throws {
+        try bindText(statement, index: 1, value: utcDay(for: query.since))
+        try bindText(statement, index: 2, value: utcDay(for: query.until))
+    }
+
+    /// One row over the page size proves there is a next page without ever
+    /// fetching it.
+    private func bindPage(_ statement: OpaquePointer?, query: InsightsQuery, firstIndex: Int32) throws {
+        try bindInt(statement, index: firstIndex, value: Int32(min(query.limit, InsightsLimits.maxQueryPageSize) + 1))
+        try bindInt(statement, index: firstIndex + 1, value: Int32(min(query.offset, InsightsLimits.maxQueryOffset)))
+    }
+
+    private func queryLocked(_ sql: String,
+                             bind: ((OpaquePointer?) throws -> Void)? = nil,
+                             row: (OpaquePointer?) throws -> Void) throws {
+        var statement: OpaquePointer?
+        defer { if let statement { sqlite3_finalize(statement) } }
+        try prepareLocked(sql, statement: &statement)
+        try bind?(statement)
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { return }
+            guard result == SQLITE_ROW else { throw storeError(sqliteMessage()) }
+            try row(statement)
+        }
+    }
+
+    private func columnText(_ statement: OpaquePointer?, index: Int32) -> String? {
+        guard let value = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: value)
+    }
+
+    private func columnInt64(_ statement: OpaquePointer?, index: Int32) -> Int64 {
+        sqlite3_column_int64(statement, index)
+    }
+
+    private func columnDate(_ statement: OpaquePointer?, index: Int32) -> Date? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        let seconds = sqlite3_column_double(statement, index)
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    private func date(fromUTCDay day: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter.date(from: day)
     }
 }

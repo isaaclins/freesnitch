@@ -47,6 +47,11 @@ import Foundation
     func recentDenied(limit: Int, reply: @escaping (Data) -> Void)
 
     func ingestObservationBatch(observationBatch: Data, reply: @escaping (Bool, String?) -> Void)
+    /// Bounded, paginated Insights read. Optional because a helper from before
+    /// this feature does not have it; the GUI reports that rather than
+    /// pretending it has no data. The reply carries an encoded `InsightsReport`
+    /// and an error string, never both.
+    @objc optional func queryInsights(request: Data, reply: @escaping (Data, String?) -> Void)
     func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void)
     func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void)
     func purgeInsights(reply: @escaping (Bool, String?) -> Void)

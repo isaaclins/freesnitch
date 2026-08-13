@@ -647,6 +647,68 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
+    /// Bounded Insights read. The request is encoded through the shared wire
+    /// codec and byte-capped on both sides; the reply is bounds-checked before
+    /// it is decoded and never re-judged for content.
+    func insightsReport(_ query: InsightsQuery,
+                        completion: @MainActor @escaping (InsightsReport?, String?) -> Void) {
+        let lock = NSLock()
+        var finished = false
+        var timeoutWork: DispatchWorkItem?
+        let finish: (InsightsReport?, String?) -> Void = { report, error in
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            lock.unlock()
+            timeoutWork?.cancel()
+            Task { @MainActor in completion(report, error) }
+        }
+        let work = DispatchWorkItem {
+            finish(nil, "The helper did not answer the Insights query within 10 seconds.")
+        }
+        timeoutWork = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: work)
+
+        guard let data = try? FreeSnitchWireCodec.encode(query), data.count <= InsightsLimits.maxQueryRequestBytes else {
+            finish(nil, "Could not encode the Insights query within the transport limit.")
+            return
+        }
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            finish(nil, "Could not read Insights: \(error.localizedDescription).")
+        }) as? HelperProtocol else {
+            finish(nil, "The privileged helper is unavailable.")
+            return
+        }
+        guard proxy.queryInsights != nil else {
+            finish(nil, "The running helper is too old to answer Insights queries. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            return
+        }
+        proxy.queryInsights?(request: data, reply: { payload, message in
+            if let message, !message.isEmpty {
+                finish(nil, message)
+                return
+            }
+            guard !payload.isEmpty else {
+                finish(nil, "The helper returned an empty Insights report.")
+                return
+            }
+            guard payload.count <= InsightsLimits.maxReportBytes else {
+                finish(nil, "The helper returned an oversized Insights report: \(payload.count) bytes.")
+                return
+            }
+            do {
+                let report = try FreeSnitchWireCodec.decode(InsightsReport.self, from: payload)
+                try report.validateBounds(payloadBytes: payload.count)
+                finish(report, nil)
+            } catch {
+                finish(nil, "The helper returned an unreadable Insights report: \(error.localizedDescription).")
+            }
+        })
+    }
+
     func purgeInsights(completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = remote else {
             completion(false, "The FreeSnitch helper is not connected.")

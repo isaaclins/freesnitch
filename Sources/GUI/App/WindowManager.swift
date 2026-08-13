@@ -2,6 +2,19 @@ import AppKit
 import SwiftUI
 import Combine
 
+/// A menu action needs an Objective-C target. WindowManager is a plain Swift
+/// type, so the selector lives on this small object instead of reshaping the
+/// window manager around AppKit's dispatch.
+final class MenuActionTarget: NSObject {
+    private let handler: () -> Void
+
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func perform(_ sender: Any?) { handler() }
+}
+
 @MainActor
 final class WindowManager {
     private let state: AppState
@@ -9,13 +22,20 @@ final class WindowManager {
     private weak var networkMonitorWindow: NSWindow?
     private weak var rulesWindow: NSWindow?
     private weak var settingsWindow: NSWindow?
+    private weak var insightsWindow: NSWindow?
     private var alertWindow: NSWindow?
     private var alertCancellable: AnyCancellable?
+    /// Menu items do not retain their target, so the Insights action object
+    /// lives here for as long as the menu does.
+    private var insightsMenuTarget: MenuActionTarget?
+    private var menuTrackingObserver: NSObjectProtocol?
+    private static let insightsMenuTitle = "Insights…"
 
     init(state: AppState, systemExtension: SystemExtensionManager) {
         self.state = state
         self.systemExtension = systemExtension
         observeAlerts()
+        installInsightsMenuItem()
     }
 
     // MARK: - Public windows
@@ -40,6 +60,49 @@ final class WindowManager {
             autosaveName: "FreeSnitch.Rules",
             content: RulesManagerView(systemExtension: systemExtension).environmentObject(state)
         )
+    }
+
+    func showInsights() {
+        if let w = insightsWindow { focus(w); return }
+        insightsWindow = makeWindow(
+            title: "Insights",
+            defaultSize: NSSize(width: 1040, height: 680),
+            minSize: NSSize(width: 860, height: 520),
+            autosaveName: "FreeSnitch.Insights",
+            content: InsightsView().environmentObject(state)
+        )
+    }
+
+    /// The app menu is built by SwiftUI commands, so the Insights item is
+    /// inserted next to the other window commands here rather than competing
+    /// with them for ownership of that menu. SwiftUI can rebuild that menu
+    /// afterwards, so the item is also re-checked whenever a menu opens: an
+    /// entry point that quietly disappears is the same as not having one.
+    private func installInsightsMenuItem() {
+        insightsMenuTarget = MenuActionTarget { [weak self] in
+            Task { @MainActor in self?.showInsights() }
+        }
+        DispatchQueue.main.async { [weak self] in self?.ensureInsightsMenuItem() }
+        menuTrackingObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.ensureInsightsMenuItem() }
+        }
+    }
+
+    private func ensureInsightsMenuItem() {
+        guard let target = insightsMenuTarget,
+              let appMenu = NSApp.mainMenu?.items.first?.submenu,
+              !appMenu.items.contains(where: { $0.title == Self.insightsMenuTitle }) else { return }
+        let item = NSMenuItem(title: Self.insightsMenuTitle,
+                              action: #selector(MenuActionTarget.perform(_:)),
+                              keyEquivalent: "i")
+        item.keyEquivalentModifierMask = [.command, .option]
+        item.target = target
+        let anchor = appMenu.items.firstIndex { $0.title.hasPrefix("Rules") }
+        appMenu.insertItem(item, at: anchor.map { $0 + 1 } ?? appMenu.items.count)
     }
 
     func showSettings() {

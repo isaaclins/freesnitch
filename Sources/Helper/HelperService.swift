@@ -175,6 +175,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let insightsObservationSlots = DispatchSemaphore(value: 64)
     private let insightsDNSQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-dns", qos: .utility)
     private let insightsDNSSlots = DispatchSemaphore(value: 256)
+    /// Reads are answered off the XPC connection queue so a slow disk cannot
+    /// stall the connection that also carries policy calls.
+    private let insightsQueryQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-queries", qos: .userInitiated)
+    private let insightsQuerySlots = DispatchSemaphore(value: 8)
     private let insightsDropLock = NSLock()
     private var insightsDropCount = 0
     private var lastInsightsDropLog = Date.distantPast
@@ -910,6 +914,46 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         } catch {
             PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
             reply(false, error.localizedDescription)
+        }
+    }
+
+    /// The request is bounded and its content validated, because it is an
+    /// instruction arriving from another process. The rows going back out are
+    /// bounded but never content-judged: this store's own data must not be
+    /// hidden from the user because one row looks unusual (#57).
+    func queryInsights(request: Data, reply: @escaping (Data, String?) -> Void) {
+        guard request.count <= InsightsLimits.maxQueryRequestBytes else {
+            reply(Data(), "insights query exceeds the request byte limit")
+            return
+        }
+        guard let insights else {
+            reply(Data(), "insights store is unavailable")
+            return
+        }
+        let query: InsightsQuery
+        do {
+            query = try FreeSnitchWireCodec.decode(InsightsQuery.self, from: request)
+            try query.validate(payloadBytes: request.count)
+        } catch {
+            reply(Data(), error.localizedDescription)
+            return
+        }
+        // Never block the XPC connection queue: it also carries policy calls.
+        guard insightsQuerySlots.wait(timeout: .now()) == .success else {
+            reply(Data(), "too many Insights queries are already running; try again")
+            return
+        }
+        insightsQueryQueue.async { [weak self] in
+            defer { self?.insightsQuerySlots.signal() }
+            do {
+                let report = try insights.report(for: query)
+                let data = try FreeSnitchWireCodec.encode(report)
+                try report.validateBounds(payloadBytes: data.count)
+                reply(data, nil)
+            } catch {
+                PSLog.error(PSLog.helper, "Insights query failed: \(error.localizedDescription)")
+                reply(Data(), error.localizedDescription)
+            }
         }
     }
 
