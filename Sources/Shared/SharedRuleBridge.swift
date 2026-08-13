@@ -201,9 +201,13 @@ public enum SharedRuleBridge {
     }
 
     public static func decode(_ data: Data) throws -> Snapshot {
+        // Bounds only. Rejecting a delivered policy because one persisted rule
+        // predates a later content rule would stop the extension receiving any
+        // policy at all, and the filter fails open. Content is judged where
+        // rules enter the store, not where an existing policy is delivered.
         try RuleTransportBoundary.validateSnapshotBytes(data)
         let snapshot = try FreeSnitchWireCodec.decode(Snapshot.self, from: data)
-        try RuleTransportBoundary.validate(snapshot: snapshot)
+        try RuleTransportBoundary.validateBounds(rules: snapshot.rules)
         return snapshot
     }
 
@@ -236,7 +240,7 @@ public enum SharedRuleBridge {
         guard stored.version == bootSnapshotVersion else {
             throw validationError("Unsupported boot snapshot version \(stored.version).")
         }
-        try RuleTransportBoundary.validate(snapshot: stored.snapshot)
+        try RuleTransportBoundary.validateBounds(rules: stored.snapshot.rules)
         guard stored.snapshot.rules.count <= maximumBootSnapshotRuleCount else {
             throw validationError("Boot snapshot contains too many rules.")
         }

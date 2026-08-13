@@ -528,7 +528,16 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void) {
         let snapshot = authoritativeSnapshot()
-        reply((try? SharedRuleBridge.encode(snapshot)) ?? Data())
+        do {
+            reply(try SharedRuleBridge.encode(snapshot))
+        } catch {
+            // Never answer with empty data and no reason. An empty reply reads
+            // to the caller as a corrupt payload, which sent users chasing a
+            // version mismatch that did not exist. See #57.
+            PSLog.error(PSLog.helper,
+                        "authoritative snapshot could not be encoded: \(error.localizedDescription)")
+            reply(Data())
+        }
     }
 
     func getStatus(reply: @escaping (Data) -> Void) {
@@ -685,7 +694,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func listRules(profile: String, reply: @escaping (Data) -> Void) {
         let rules = store.allRules(profile: profile.isEmpty ? nil : profile)
-        reply((try? RuleTransportBoundary.encodeRuleBatch(rules)) ?? Data())
+        do {
+            reply(try RuleTransportBoundary.encodeRuleBatch(rules))
+        } catch {
+            PSLog.error(PSLog.helper,
+                        "rule list could not be encoded for a caller: \(error.localizedDescription)")
+            reply(Data())
+        }
     }
 
     /// Passive monitoring only. Starting the DNS proxy (which binds port 53 and

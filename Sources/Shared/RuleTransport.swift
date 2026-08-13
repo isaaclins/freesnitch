@@ -122,22 +122,37 @@ public enum RuleTransportBoundary {
         }
     }
 
+    /// Bounding a payload and judging its content are different jobs.
+    ///
+    /// Bounds protect every process from an oversized or absurd payload and
+    /// therefore apply to everything crossing a process boundary. Content rules
+    /// decide what may ENTER the policy, and belong on the ingest paths only.
+    /// Applying content rules when reading our OWN store back out meant a
+    /// single legacy row, such as a reverse-DNS rule created before that rule
+    /// existed, made the helper return nothing at all and hid every rule from
+    /// the user. See #57.
+    public static func validateBounds(rules: [Rule]) throws {
+        guard rules.count <= maximumDecodedRuleCount else {
+            throw ValidationError.tooManyRules(actualCount: rules.count,
+                                               maximumCount: maximumDecodedRuleCount)
+        }
+    }
+
     public static func encodeSnapshot(_ snapshot: SharedRuleBridge.Snapshot) throws -> Data {
-        try validate(snapshot: snapshot)
+        try validateBounds(rules: snapshot.rules)
         let data = try FreeSnitchWireCodec.encode(snapshot)
         try validateSnapshotBytes(data)
         return data
     }
 
     public static func encodeRuleBatch(_ rules: [Rule]) throws -> Data {
-        try validate(rules: rules)
+        try validateBounds(rules: rules)
         let data = try FreeSnitchWireCodec.encode(rules)
         try validateRuleBatchBytes(data)
         return data
     }
 
     public static func encodeSingleRule(_ rule: Rule) throws -> Data {
-        try validate(rule: rule)
         let data = try FreeSnitchWireCodec.encode(rule)
         try validateSingleRuleBytes(data)
         return data
