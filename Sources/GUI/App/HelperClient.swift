@@ -517,7 +517,8 @@ final class HelperClient: NSObject, ObservableObject {
                 return
             }
             do {
-                finish(try FreeSnitchWireCodec.decode(SharedRuleBridge.Snapshot.self, from: data), nil)
+                try RuleTransportBoundary.validateSnapshotBytes(data)
+                finish(try SharedRuleBridge.decode(data), nil)
             } catch {
                 finish(nil, "The helper returned an invalid authoritative rule snapshot: \(error.localizedDescription). Run `\(AppConstants.helperKickstartCommand)`, then retry.")
             }
@@ -600,8 +601,8 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     func addRule(_ rule: Rule, completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let data = try? FreeSnitchWireCodec.encode(rule) else {
-            completion(false, "Could not encode the rule JSON object.")
+        guard let data = try? RuleTransportBoundary.encodeSingleRule(rule) else {
+            completion(false, "Could not encode the rule within the single-rule transport limits.")
             return
         }
         guard let proxy = remote else {
@@ -614,8 +615,8 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     func reloadRules(_ rules: [Rule], completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let data = try? FreeSnitchWireCodec.encode(rules) else {
-            completion(false, "Could not encode the rule JSON array.")
+        guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules) else {
+            completion(false, "Could not encode the rule batch within the transport limits.")
             return
         }
         guard let proxy = remote else {
@@ -646,8 +647,8 @@ final class HelperClient: NSObject, ObservableObject {
     func replaceRules(_ rules: [Rule],
                       existing _: [Rule],
                       completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let data = try? FreeSnitchWireCodec.encode(rules) else {
-            completion(false, "Could not encode the rule JSON array.")
+        guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules) else {
+            completion(false, "Could not encode the rule batch within the transport limits.")
             return
         }
         guard let proxy = remote else {

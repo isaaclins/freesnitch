@@ -88,15 +88,19 @@ final class CLIHelperClient: NSObject {
                            message: "The helper returned an empty authoritative rule snapshot.",
                            remediation: "Run `\(AppConstants.helperKickstartCommand)`, then retry.")
         }
-        return try decode(SharedRuleBridge.Snapshot.self,
-                          data: response.data,
-                          what: "authoritative rule snapshot")
+        do {
+            return try SharedRuleBridge.decode(response.data)
+        } catch {
+            throw CLIError(.operationFailed,
+                           message: "The helper returned invalid authoritative rule snapshot data: \(error.localizedDescription).",
+                           remediation: "Run `freesnitch doctor` and check that the app and helper versions match.")
+        }
     }
 
     func addRule(_ rule: Rule) async throws {
         try await requireSuccess(timeout: timeout) { proxy, reply in
-            guard let data = try? FreeSnitchWireCodec.encode(rule) else {
-                reply(false, "could not encode rule")
+            guard let data = try? RuleTransportBoundary.encodeSingleRule(rule) else {
+                reply(false, "could not encode rule within the single-rule transport limits")
                 return
             }
             proxy.addRule(ruleJSON: data, reply: reply)
@@ -111,8 +115,8 @@ final class CLIHelperClient: NSObject {
 
     func importRules(_ rules: [Rule]) async throws {
         try await requireSuccess(timeout: timeout) { proxy, reply in
-            guard let data = try? FreeSnitchWireCodec.encode(rules) else {
-                reply(false, "could not encode imported rules")
+            guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules) else {
+                reply(false, "could not encode imported rules within the rule-batch transport limits")
                 return
             }
             proxy.reloadRules(rulesJSON: data, reply: reply)

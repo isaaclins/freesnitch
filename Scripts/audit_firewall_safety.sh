@@ -21,6 +21,7 @@ SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
 MODELS="$ROOT/Sources/Shared/Models.swift"
 WIRE_CODEC="$ROOT/Sources/Shared/WireCodec.swift"
+RULE_TRANSPORT="$ROOT/Sources/Shared/RuleTransport.swift"
 CLI_CONTRACT="$ROOT/Sources/CLI/CLIContract.swift"
 INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
 INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
@@ -58,6 +59,7 @@ require_text() {
 [[ -f "$LAUNCHD_PLIST" ]] || fail "missing $LAUNCHD_PLIST"
 [[ -f "$MODELS" ]] || fail "missing $MODELS"
 [[ -f "$WIRE_CODEC" ]] || fail "missing $WIRE_CODEC"
+[[ -f "$RULE_TRANSPORT" ]] || fail "missing $RULE_TRANSPORT"
 [[ -f "$CLI_CONTRACT" ]] || fail "missing $CLI_CONTRACT"
 [[ -f "$INSIGHTS_STORE" ]] || fail "missing $INSIGHTS_STORE"
 [[ -f "$INSIGHTS_MODELS" ]] || fail "missing $INSIGHTS_MODELS"
@@ -239,6 +241,53 @@ if grep -Fq "CLIJSON.decode(SharedRuleBridge.SnapshotStatus" "$CLI_EXTENSION"; t
 fi
 require_text "$HELPER" "FreeSnitchWireCodec.decode" \
   "helper rule requests do not use the explicit wire date codec"
+require_text "$RULE_TRANSPORT" "maximumEncodedSnapshotBytes" \
+  "shared rule snapshot byte limit is missing"
+require_text "$RULE_TRANSPORT" "maximumEncodedRuleBatchBytes" \
+  "shared rule batch byte limit is missing"
+require_text "$RULE_TRANSPORT" "maximumEncodedSingleRuleBytes" \
+  "shared single-rule byte limit is missing"
+require_text "$RULE_TRANSPORT" "maximumDecodedRuleCount" \
+  "shared decoded rule count limit is missing"
+require_text "$RULE_TRANSPORT" "fieldTooLong" \
+  "shared bounded rule field failure is missing"
+rule_transport_gate() {
+  local file="$1"
+  local function_start="$2"
+  local byte_check="$3"
+  local decode_call="$4"
+  local label="$5"
+  local body
+  body="$(swift_function_body "$file" "$function_start")"
+  [[ -n "$body" ]] || fail "$label receiver is missing"
+  local byte_line decode_line
+  byte_line="$(printf '%s\n' "$body" | grep -nF "$byte_check" | head -1 | cut -d: -f1 || true)"
+  decode_line="$(printf '%s\n' "$body" | grep -nF "$decode_call" | head -1 | cut -d: -f1 || true)"
+  [[ -n "$byte_line" ]] || fail "$label receiver does not validate bytes"
+  [[ -n "$decode_line" ]] || fail "$label receiver no longer has its rule decode"
+  (( byte_line < decode_line )) || fail "$label receiver decodes before validating bytes"
+}
+
+rule_transport_gate "$FILTER" \
+  'private func receiveSnapshot(_ data: Data)' \
+  'try RuleTransportBoundary.validateSnapshotBytes(data)' \
+  'SharedRuleBridge.decode(data)' \
+  'network extension live snapshot'
+rule_transport_gate "$HELPER" \
+  'func reloadRules(rulesJSON: Data' \
+  'try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)' \
+  'FreeSnitchWireCodec.decode([Rule].self' \
+  'helper reload-rules'
+rule_transport_gate "$HELPER" \
+  'func replaceRules(rulesJSON: Data' \
+  'try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)' \
+  'FreeSnitchWireCodec.decode([Rule].self' \
+  'helper replace-rules'
+rule_transport_gate "$HELPER" \
+  'func addRule(ruleJSON: Data' \
+  'try RuleTransportBoundary.validateSingleRuleBytes(ruleJSON)' \
+  'FreeSnitchWireCodec.decode(Rule.self' \
+  'helper add-rule'
 
 # Slice 1 evidence transport and store invariants.
 require_text "$INSIGHTS_STORE" "static let defaultPath = \"/Library/Application Support/FreeSnitch/Insights/insights.sqlite\"" \

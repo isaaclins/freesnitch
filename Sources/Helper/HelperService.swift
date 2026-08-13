@@ -521,13 +521,20 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func reloadRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
+            try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)
             let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
             // Validate the whole batch before the helper opens its transaction.
+            try RuleTransportBoundary.validate(rules: rules)
             if let reason = rules.compactMap({ rejectionReason(for: $0) }).first {
                 reply(false, reason)
                 return
             }
-            _ = try mutatePolicy { draft in mergedRules(rules, into: &draft.rules) }
+            _ = try mutatePolicy { draft in
+                var merged = draft.rules
+                mergedRules(rules, into: &merged)
+                try RuleTransportBoundary.validate(rules: merged)
+                draft.rules = merged
+            }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()
@@ -538,13 +545,15 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
             reply(true, nil)
         } catch {
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
     func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
+            try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)
             let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
+            try RuleTransportBoundary.validate(rules: rules)
             if let reason = rules.compactMap({ rejectionReason(for: $0) }).first {
                 reply(false, reason)
                 return
@@ -560,23 +569,28 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
             reply(true, nil)
         } catch {
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
     func addRule(ruleJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
+            try RuleTransportBoundary.validateSingleRuleBytes(ruleJSON)
             let rule = try FreeSnitchWireCodec.decode(Rule.self, from: ruleJSON)
+            try RuleTransportBoundary.validate(rule: rule)
             if let reason = rejectionReason(for: rule) {
                 reply(false, reason)
                 return
             }
             _ = try mutatePolicy { draft in
-                if let index = draft.rules.firstIndex(where: { $0.id == rule.id }) {
-                    draft.rules[index] = rule
+                var updated = draft.rules
+                if let index = updated.firstIndex(where: { $0.id == rule.id }) {
+                    updated[index] = rule
                 } else {
-                    draft.rules.append(rule)
+                    updated.append(rule)
                 }
+                try RuleTransportBoundary.validate(rules: updated)
+                draft.rules = updated
             }
             // Saved but not enforced is a real difference; say so instead of
             // reporting plain success.
@@ -587,7 +601,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
             reply(true, nil)
         } catch {
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
@@ -610,7 +624,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func listRules(profile: String, reply: @escaping (Data) -> Void) {
         let rules = store.allRules(profile: profile.isEmpty ? nil : profile)
-        reply((try? FreeSnitchWireCodec.encode(rules)) ?? Data())
+        reply((try? RuleTransportBoundary.encodeRuleBatch(rules)) ?? Data())
     }
 
     /// Passive monitoring only. Starting the DNS proxy (which binds port 53 and

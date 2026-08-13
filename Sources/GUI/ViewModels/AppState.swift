@@ -205,8 +205,8 @@ final class AppState: ObservableObject {
             AppPreferences.set(snapshot.mode.rawValue, forKey: AppPreferences.Key.mode, notify: false)
             self.filterSnapshotPersistenceHandler?(snapshot)
 
-            guard let data = try? SharedRuleBridge.encode(snapshot) else {
-                let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the helper authoritative rule snapshot.", generation: snapshot.generation)
+            guard let data = try? RuleTransportBoundary.encodeSnapshot(snapshot) else {
+                let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the helper authoritative rule snapshot within the transport limits.", generation: snapshot.generation)
                 self.publishFilterSnapshotStatus(status)
                 return
             }

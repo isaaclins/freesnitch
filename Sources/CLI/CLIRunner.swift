@@ -658,7 +658,7 @@ final class CLIRunner {
 
     private func syncSnapshot(_ snapshot: SharedRuleBridge.Snapshot) async -> (state: String, message: String?, generation: UInt64?) {
         do {
-            let data = try SharedRuleBridge.encode(snapshot)
+            let data = try RuleTransportBoundary.encodeSnapshot(snapshot)
             let status = try await CLIExtensionClient().updateSnapshot(data)
             if status.state == "ready" {
                 return ("ready", nil, status.generation ?? snapshot.generation)

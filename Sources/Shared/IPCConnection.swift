@@ -110,6 +110,12 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
             completionHandler(status)
         }
 
+        do {
+            try RuleTransportBoundary.validateSnapshotBytes(snapshotJSON)
+        } catch {
+            finish(.invalid("Network extension rejected the oversized or invalid rule snapshot: \(error.localizedDescription)"))
+            return
+        }
         guard let connection = connectionSnapshot() else {
             finish(Self.unavailableStatus("Network extension IPC is not connected."))
             return

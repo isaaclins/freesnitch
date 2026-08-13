@@ -724,6 +724,7 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func receiveSnapshot(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
         do {
+            try RuleTransportBoundary.validateSnapshotBytes(data)
             let received = try SharedRuleBridge.decode(data)
             snapshotLock.lock()
             let current = snapshot

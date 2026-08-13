@@ -13,8 +13,8 @@ public enum SharedRuleBridge {
     public static let bootSnapshotVendorConfigurationKey = "io.isaaclins.freesnitch.bootSnapshot"
     /// Keep provider preferences bounded because they are persisted by the
     /// system, not streamed like the live XPC payload.
-    public static let maximumBootSnapshotEncodedBytes = 512 * 1024
-    public static let maximumBootSnapshotRuleCount = 4096
+    public static let maximumBootSnapshotEncodedBytes = RuleTransportBoundary.maximumEncodedSnapshotBytes
+    public static let maximumBootSnapshotRuleCount = RuleTransportBoundary.maximumDecodedRuleCount
     public static let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
 
     /// Pure state for the asynchronous provider-preference writer. A caller
@@ -197,28 +197,27 @@ public enum SharedRuleBridge {
     }
 
     public static func encode(_ snapshot: Snapshot) throws -> Data {
-        try FreeSnitchWireCodec.encode(snapshot)
+        try RuleTransportBoundary.encodeSnapshot(snapshot)
     }
 
     public static func decode(_ data: Data) throws -> Snapshot {
-        try FreeSnitchWireCodec.decode(Snapshot.self, from: data)
+        try RuleTransportBoundary.validateSnapshotBytes(data)
+        let snapshot = try FreeSnitchWireCodec.decode(Snapshot.self, from: data)
+        try RuleTransportBoundary.validate(snapshot: snapshot)
+        return snapshot
     }
 
     public static func encodeBootSnapshot(_ snapshot: Snapshot, now: Date = Date()) throws -> Data {
         let stored = BootSnapshot(snapshot: snapshot)
         try validateBootSnapshot(stored, now: now)
         let data = try FreeSnitchWireCodec.encode(stored)
-        guard data.count <= maximumBootSnapshotEncodedBytes else {
-            throw validationError("Boot snapshot exceeds the \(maximumBootSnapshotEncodedBytes)-byte limit.")
-        }
+        try RuleTransportBoundary.validateSnapshotBytes(data)
         return data
     }
 
     public static func decodeBootSnapshot(_ data: Data, now: Date = Date()) throws -> Snapshot {
         guard !data.isEmpty else { throw validationError("Boot snapshot is missing.") }
-        guard data.count <= maximumBootSnapshotEncodedBytes else {
-            throw validationError("Boot snapshot exceeds the \(maximumBootSnapshotEncodedBytes)-byte limit.")
-        }
+        try RuleTransportBoundary.validateBootSnapshotBytes(data)
         let stored = try FreeSnitchWireCodec.decode(BootSnapshot.self, from: data)
         try validateBootSnapshot(stored, now: now)
         return stored.snapshot
@@ -237,6 +236,7 @@ public enum SharedRuleBridge {
         guard stored.version == bootSnapshotVersion else {
             throw validationError("Unsupported boot snapshot version \(stored.version).")
         }
+        try RuleTransportBoundary.validate(snapshot: stored.snapshot)
         guard stored.snapshot.rules.count <= maximumBootSnapshotRuleCount else {
             throw validationError("Boot snapshot contains too many rules.")
         }
