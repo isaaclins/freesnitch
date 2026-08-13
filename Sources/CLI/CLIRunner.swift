@@ -86,16 +86,17 @@ final class CLIRunner {
         _ = try await helper.prepare()
         try await helper.setMode(mode)
         AppPreferences.set(mode.rawValue, forKey: AppPreferences.Key.mode)
-        let rules = try await helper.listRules()
-        let sync = await syncSnapshot(mode: mode, rules: rules)
+        let snapshot = try await helper.authoritativeSnapshot()
+        let sync = await syncSnapshot(snapshot)
         let report = PolicyChangeReport(operation: "mode",
-                                        mode: canonicalMode(mode),
-                                        ruleCount: rules.count,
+                                        mode: canonicalMode(snapshot.mode),
+                                        ruleCount: snapshot.rules.count,
+                                        generation: snapshot.generation,
                                         extensionSync: sync.state,
                                         extensionMessage: sync.message)
         let warning = sync.message.map { "\nWarning: \($0)" } ?? ""
         return CommandResult(data: report,
-                             human: "Mode: \(modeLabel(mode)) (\(canonicalMode(mode)))\nRules synchronized: \(sync.state)\(warning)")
+                             human: "Mode: \(modeLabel(snapshot.mode)) (\(canonicalMode(snapshot.mode)))\nRules synchronized: \(sync.state) (generation \(snapshot.generation))\(warning)")
     }
 
     private func rules(_ command: RulesCommand) async throws -> CommandResult {
@@ -148,19 +149,22 @@ final class CLIRunner {
 
     private func addRule(_ rule: Rule) async throws -> CommandResult {
         let helper = CLIHelperClient()
-        let status = try await helper.prepare()
+        _ = try await helper.prepare()
         try await helper.addRule(rule)
-        let rules = try await helper.listRules()
-        let sync = await syncSnapshot(mode: status.mode, rules: rules)
-        let report = RuleAddedReport(rule: rule, extensionSync: sync.state, extensionMessage: sync.message)
+        let snapshot = try await helper.authoritativeSnapshot()
+        let sync = await syncSnapshot(snapshot)
+        let report = RuleAddedReport(rule: rule,
+                                     generation: snapshot.generation,
+                                     extensionSync: sync.state,
+                                     extensionMessage: sync.message)
         let warning = sync.message.map { "\nWarning: \($0)" } ?? ""
         return CommandResult(data: report,
-                             human: "Added rule \(rule.id.uuidString).\n\(humanRule(rule))\nExtension synchronization: \(sync.state).\(warning)")
+                             human: "Added rule \(rule.id.uuidString).\n\(humanRule(rule))\nExtension synchronization: \(sync.state) (generation \(snapshot.generation)).\(warning)")
     }
 
     private func setRulesEnabled(_ ids: [UUID], enabled: Bool) async throws -> CommandResult {
         let helper = CLIHelperClient()
-        let status = try await helper.prepare()
+        _ = try await helper.prepare()
         var succeeded: [UUID] = []
         var failures: [RuleMutationFailure] = []
         for id in ids {
@@ -180,12 +184,18 @@ final class CLIRunner {
                 failures.append(RuleMutationFailure(id: id, message: error.message))
             }
         }
-        let currentRules = try await helper.listRules()
-        let sync = succeeded.isEmpty ? (state: "not-needed", message: nil) : await syncSnapshot(mode: status.mode, rules: currentRules)
+        let snapshot = succeeded.isEmpty ? nil : try await helper.authoritativeSnapshot()
+        let sync: (state: String, message: String?, generation: UInt64?)
+        if let snapshot {
+            sync = await syncSnapshot(snapshot)
+        } else {
+            sync = ("not-needed", nil, nil)
+        }
         let report = RuleMutationReport(operation: enabled ? "enable" : "disable",
                                         requested: ids,
                                         succeeded: succeeded,
                                         failed: failures,
+                                        generation: snapshot?.generation,
                                         extensionSync: sync.state,
                                         extensionMessage: sync.message)
         let failureText = failures.isEmpty ? "" : "\nFailures: " + failures.map { "\($0.id): \($0.message)" }.joined(separator: "; ")
@@ -197,14 +207,14 @@ final class CLIRunner {
                        message: "One or more rule mutations failed.",
                        remediation: "Review the failed IDs in the response and rerun the operation after fixing the helper error.")
         return CommandResult(data: report,
-                             human: "\(enabled ? "Enabled" : "Disabled") \(succeeded.count) of \(ids.count) rules.\(failureText)\nExtension synchronization: \(sync.state).\(warning)",
+                             human: "\(enabled ? "Enabled" : "Disabled") \(succeeded.count) of \(ids.count) rules.\(failureText)\nExtension synchronization: \(sync.state)\(sync.generation.map { " (generation \($0))" } ?? "").\(warning)",
                              exitCode: failures.isEmpty ? .success : .operationFailed,
                              error: mutationError)
     }
 
     private func removeRules(_ ids: [UUID]) async throws -> CommandResult {
         let helper = CLIHelperClient()
-        let status = try await helper.prepare()
+        _ = try await helper.prepare()
         var succeeded: [UUID] = []
         var failures: [RuleMutationFailure] = []
         for id in ids {
@@ -218,12 +228,18 @@ final class CLIRunner {
                 failures.append(RuleMutationFailure(id: id, message: error.message))
             }
         }
-        let currentRules = try await helper.listRules()
-        let sync = succeeded.isEmpty ? (state: "not-needed", message: nil) : await syncSnapshot(mode: status.mode, rules: currentRules)
+        let snapshot = succeeded.isEmpty ? nil : try await helper.authoritativeSnapshot()
+        let sync: (state: String, message: String?, generation: UInt64?)
+        if let snapshot {
+            sync = await syncSnapshot(snapshot)
+        } else {
+            sync = ("not-needed", nil, nil)
+        }
         let report = RuleMutationReport(operation: "remove",
                                         requested: ids,
                                         succeeded: succeeded,
                                         failed: failures,
+                                        generation: snapshot?.generation,
                                         extensionSync: sync.state,
                                         extensionMessage: sync.message)
         let failureText = failures.isEmpty ? "" : "\nFailures: " + failures.map { "\($0.id): \($0.message)" }.joined(separator: "; ")
@@ -235,7 +251,7 @@ final class CLIRunner {
                        message: "One or more rule removals failed.",
                        remediation: "Review the failed IDs in the response and rerun the operation after fixing the helper error.")
         return CommandResult(data: report,
-                             human: "Removed \(succeeded.count) of \(ids.count) rules.\(failureText)\nExtension synchronization: \(sync.state).\(warning)",
+                             human: "Removed \(succeeded.count) of \(ids.count) rules.\(failureText)\nExtension synchronization: \(sync.state)\(sync.generation.map { " (generation \($0))" } ?? "").\(warning)",
                              exitCode: failures.isEmpty ? .success : .operationFailed,
                              error: mutationError)
     }
@@ -261,18 +277,19 @@ final class CLIRunner {
                            remediation: "Create a file with `freesnitch rules export` or provide a JSON array of Rule objects.")
         }
         let helper = CLIHelperClient()
-        let status = try await helper.prepare()
+        _ = try await helper.prepare()
         try await helper.importRules(rules)
-        let currentRules = try await helper.listRules()
-        let sync = await syncSnapshot(mode: status.mode, rules: currentRules)
+        let snapshot = try await helper.authoritativeSnapshot()
+        let sync = await syncSnapshot(snapshot)
         let report = RuleImportReport(imported: rules.count,
                                       ids: rules.map(\.id),
                                       source: path,
+                                      generation: snapshot.generation,
                                       extensionSync: sync.state,
                                       extensionMessage: sync.message)
         let warning = sync.message.map { "\nWarning: \($0)" } ?? ""
         return CommandResult(data: report,
-                             human: "Imported \(rules.count) rules from \(path) as an upsert/merge.\nExtension synchronization: \(sync.state).\(warning)")
+                             human: "Imported \(rules.count) rules from \(path) as an upsert/merge.\nExtension synchronization: \(sync.state) (generation \(snapshot.generation)).\(warning)")
     }
 
     private func exportRules(_ path: String?) async throws -> CommandResult {
@@ -616,19 +633,20 @@ final class CLIRunner {
         "unknown-from-cli"
     }
 
-    private func syncSnapshot(mode: AppMode, rules: [Rule]) async -> (state: String, message: String?) {
+    private func syncSnapshot(_ snapshot: SharedRuleBridge.Snapshot) async -> (state: String, message: String?, generation: UInt64?) {
         do {
-            let snapshot = SharedRuleBridge.Snapshot(mode: mode, rules: rules)
             let data = try SharedRuleBridge.encode(snapshot)
             let status = try await CLIExtensionClient().updateSnapshot(data)
             if status.state == "ready" {
-                return ("ready", nil)
+                return ("ready", nil, status.generation ?? snapshot.generation)
             }
-            return (status.state, status.message ?? "The extension acknowledged the connection but did not accept a ready rule snapshot.")
+            return (status.state,
+                    status.message ?? "The extension acknowledged the connection but did not accept a ready rule snapshot.",
+                    status.generation ?? snapshot.generation)
         } catch let error as ExtensionClientError {
-            return ("not-delivered", "Rules remain saved in the helper, but the network extension did not receive the snapshot: \(error.message)")
+            return ("not-delivered", "Rules remain saved in the helper, but the network extension did not receive the snapshot: \(error.message)", snapshot.generation)
         } catch {
-            return ("not-delivered", "Rules remain saved in the helper, but the network extension snapshot could not be encoded or delivered: \(error.localizedDescription)")
+            return ("not-delivered", "Rules remain saved in the helper, but the network extension snapshot could not be encoded or delivered: \(error.localizedDescription)", snapshot.generation)
         }
     }
 
@@ -653,7 +671,8 @@ final class CLIRunner {
                      dnsProxyActive: status.dnsProxyActive,
                      dnsProxyPort: status.dnsProxyPort,
                      activeRules: status.activeRules,
-                     blockedToday: status.blockedToday)
+                     blockedToday: status.blockedToday,
+                     policyGeneration: status.policyGeneration)
     }
 
     private func filterRules(_ rules: [Rule], options: RulesListOptions) -> [Rule] {
@@ -791,7 +810,7 @@ final class CLIRunner {
           Extension approval: \(report.extensionStatus.approval)
           Extension XPC running: \(report.extensionStatus.running)
           Filter configuration: \(report.extensionStatus.filterConfiguration) (enabled \(report.extensionStatus.filterEnabled))
-          Rule snapshot (direct extension XPC): \(report.extensionStatus.snapshot.state)\(report.extensionStatus.snapshot.ruleCount.map { " (\($0) rules)" } ?? "")
+          Rule snapshot (direct extension XPC): \(report.extensionStatus.snapshot.state)\(report.extensionStatus.snapshot.ruleCount.map { " (\($0) rules)" } ?? "")\(report.extensionStatus.snapshot.generation.map { " generation \($0)" } ?? "")
         \(report.extensionStatus.message.map { "  Detail: \($0)" } ?? "")
         """
     }

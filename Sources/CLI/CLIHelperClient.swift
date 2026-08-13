@@ -5,6 +5,11 @@ struct HelperOperationReply: Encodable {
     let message: String?
 }
 
+private struct AuthoritativeSnapshotReply {
+    let supported: Bool
+    let data: Data
+}
+
 /// Direct client for the root daemon. The connection construction deliberately
 /// mirrors GUI/App/HelperClient.swift, including the privileged lookup option.
 final class CLIHelperClient: NSObject {
@@ -56,6 +61,36 @@ final class CLIHelperClient: NSObject {
             proxy.listRules(profile: profile, reply: reply)
         }
         return try decode([Rule].self, data: data, what: "rules")
+    }
+
+    /// The helper owns policy mode, rules, and generation. A helper that does
+    /// not implement this optional getter is too old to participate in a safe
+    /// live snapshot sync, so there is deliberately no cached fallback.
+    func authoritativeSnapshot() async throws -> SharedRuleBridge.Snapshot {
+        let response: AuthoritativeSnapshotReply = try await perform { proxy, reply in
+            guard proxy.getAuthoritativeSnapshot != nil else {
+                reply(AuthoritativeSnapshotReply(supported: false, data: Data()))
+                return
+            }
+            proxy.getAuthoritativeSnapshot?(reply: { data in
+                reply(AuthoritativeSnapshotReply(supported: true, data: data))
+            })
+        }
+        guard response.supported else {
+            throw CLIError(.helperVersionMismatch,
+                           code: "authoritative_snapshot_unsupported",
+                           message: "The running helper does not support authoritative rule snapshots.",
+                           remediation: AppConstants.helperKickstartCommand)
+        }
+        guard !response.data.isEmpty else {
+            throw CLIError(.operationFailed,
+                           code: "authoritative_snapshot_invalid",
+                           message: "The helper returned an empty authoritative rule snapshot.",
+                           remediation: "Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+        }
+        return try decode(SharedRuleBridge.Snapshot.self,
+                          data: response.data,
+                          what: "authoritative rule snapshot")
     }
 
     func addRule(_ rule: Rule) async throws {

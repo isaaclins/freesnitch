@@ -580,8 +580,6 @@ struct RulesManagerView: View {
                 showError("Could not replace rules: \(message ?? "the helper rejected the import")")
                 return
             }
-            state.rules = rules
-            state.syncSharedRules()
             state.refreshRules()
             clearSelection()
         }
@@ -615,25 +613,35 @@ struct RulesManagerView: View {
     private func toggleRule(_ r: Rule) {
         var copy = r
         copy.enabled.toggle()
-        state.helper.addRule(copy)   // upsert
-        state.refreshRules()
+        state.helper.addRule(copy) { ok, message in
+            guard ok else {
+                showError("Could not change the rule: \(message ?? "the helper rejected the update")")
+                return
+            }
+            state.refreshRules()
+        }
     }
 
     private func setRulesEnabled(_ enabled: Bool) {
         let rules = selectedRules
         guard !rules.isEmpty else { return }
-        for rule in rules {
-            var copy = rule
+
+        func updateNext(_ index: Int) {
+            guard index < rules.count else {
+                state.refreshRules()
+                return
+            }
+            var copy = rules[index]
             copy.enabled = enabled
-            state.helper.addRule(copy)
+            state.helper.addRule(copy) { ok, message in
+                if !ok {
+                    showError("Could not change rule \(copy.id): \(message ?? "the helper rejected the update")")
+                }
+                updateNext(index + 1)
+            }
         }
-        state.rules = state.rules.map { rule in
-            guard rules.contains(where: { $0.id == rule.id }) else { return rule }
-            var copy = rule
-            copy.enabled = enabled
-            return copy
-        }
-        state.syncSharedRules()
+
+        updateNext(0)
     }
 
     private func removeRule(_ r: Rule) {
@@ -653,13 +661,24 @@ struct RulesManagerView: View {
 
     private func removeRules(withIDs ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
-        for id in ids {
-            state.helper.removeRule(id: id)
+        let orderedIDs = Array(ids)
+
+        func removeNext(_ index: Int) {
+            guard index < orderedIDs.count else {
+                pendingRemovalIDs.removeAll()
+                state.refreshRules()
+                clearSelection()
+                return
+            }
+            state.helper.removeRule(id: orderedIDs[index]) { ok, message in
+                if !ok {
+                    showError("Could not remove rule \(orderedIDs[index]): \(message ?? "the helper rejected the removal")")
+                }
+                removeNext(index + 1)
+            }
         }
-        state.rules.removeAll { ids.contains($0.id) }
-        pendingRemovalIDs.removeAll()
-        state.syncSharedRules()
-        clearSelection()
+
+        removeNext(0)
     }
 }
 

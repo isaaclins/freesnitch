@@ -4,6 +4,35 @@ import SQLite3
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 public final class RuleStore: @unchecked Sendable {
+    public struct PolicyState: Sendable {
+        public let mode: AppMode
+        public let rules: [Rule]
+        public let generation: UInt64
+
+        public init(mode: AppMode, rules: [Rule], generation: UInt64) {
+            self.mode = mode
+            self.rules = rules
+            self.generation = generation
+        }
+    }
+
+    public struct PolicyDraft {
+        public var mode: AppMode
+        public var rules: [Rule]
+
+        public init(mode: AppMode, rules: [Rule]) {
+            self.mode = mode
+            self.rules = rules
+        }
+    }
+
+    public enum PolicyStoreError: Error {
+        case generationExhausted
+    }
+
+    public static let policyGenerationSettingKey = "policy_generation"
+    private static let modeSettingKey = "mode"
+
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.rulestore")
     public let path: String
@@ -154,6 +183,10 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     private func exec(_ sql: String) throws {
+        try queue.sync { try execLocked(sql) }
+    }
+
+    private func execLocked(_ sql: String) throws {
         var err: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
             let msg = err.map { String(cString: $0) } ?? "unknown"
@@ -163,21 +196,89 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     private func execute(_ sql: String, _ bind: (OpaquePointer?) -> Void) throws {
-        try queue.sync {
-            var stmt: OpaquePointer?
-            defer { if stmt != nil { sqlite3_finalize(stmt) } }
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw NSError(domain: "RuleStore", code: 3, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
-            }
-            bind(stmt)
-            let rc = sqlite3_step(stmt)
-            if rc != SQLITE_DONE && rc != SQLITE_ROW {
-                throw NSError(domain: "RuleStore", code: 4, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
-            }
+        try queue.sync { try executeLocked(sql, bind) }
+    }
+
+    private func executeLocked(_ sql: String, _ bind: (OpaquePointer?) -> Void) throws {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "RuleStore", code: 3, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+        }
+        bind(stmt)
+        let rc = sqlite3_step(stmt)
+        if rc != SQLITE_DONE && rc != SQLITE_ROW {
+            throw NSError(domain: "RuleStore", code: 4, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
         }
     }
 
+    private func setSettingLocked(_ key: String, _ value: String) throws {
+        try executeLocked("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?);") { stmt in
+            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
+        }
+    }
+
+    private func getSettingLocked(_ key: String) -> String? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        if sqlite3_step(stmt) == SQLITE_ROW { return text(stmt, 0) }
+        return nil
+    }
+
+    public func policyState() -> PolicyState {
+        queue.sync { policyStateLocked() }
+    }
+
+    /// Applies one complete mode/rule mutation and its generation in a single
+    /// SQLite transaction. The helper owns the closure, so a reload can
+    /// validate the complete batch before this method commits anything.
+    @discardableResult
+    public func mutatePolicy(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
+        try queue.sync {
+            let current = policyStateLocked()
+            var draft = PolicyDraft(mode: current.mode, rules: current.rules)
+            try change(&draft)
+            guard current.generation < UInt64.max else {
+                throw PolicyStoreError.generationExhausted
+            }
+            let nextGeneration = current.generation + 1
+
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                try replaceRulesLocked(draft.rules)
+                try setSettingLocked(Self.modeSettingKey, draft.mode.rawValue)
+                try setSettingLocked(Self.policyGenerationSettingKey, String(nextGeneration))
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+            // Read the committed ordering back so the helper runtime and
+            // every later authoritative snapshot use the same persisted rule
+            // order, including priority tie-breaks.
+            return policyStateLocked()
+        }
+    }
+
+    private func policyStateLocked() -> PolicyState {
+        let mode = AppMode(rawValue: getSettingLocked(Self.modeSettingKey) ?? "") ?? .alert
+        let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
+        return PolicyState(mode: mode, rules: allRulesLocked(profile: nil), generation: generation)
+    }
+
+    private func replaceRulesLocked(_ rules: [Rule]) throws {
+        try execLocked("DELETE FROM rules;")
+        for rule in rules { try upsertRuleLocked(rule) }
+    }
+
     public func upsertRule(_ r: Rule) throws {
+        try queue.sync { try upsertRuleLocked(r) }
+    }
+
+    private func upsertRuleLocked(_ r: Rule) throws {
         let sql = """
         INSERT OR REPLACE INTO rules(
             id, process_bundle_id, process_path, process_name, remote_host, remote_ip,
@@ -185,7 +286,7 @@ public final class RuleStore: @unchecked Sendable {
             enabled, temporary, created_at, expires_at, last_used_at, hit_count
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
         """
-        try execute(sql) { stmt in
+        try executeLocked(sql) { stmt in
             sqlite3_bind_text(stmt, 1, r.id.uuidString, -1, SQLITE_TRANSIENT)
             bindOpt(stmt, 2, r.processBundleId)
             bindOpt(stmt, 3, r.processPath)
@@ -210,29 +311,33 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     public func deleteRule(id: UUID) throws {
-        try execute("DELETE FROM rules WHERE id=?;") { stmt in
-            sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        try queue.sync {
+            try executeLocked("DELETE FROM rules WHERE id=?;") { stmt in
+                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
         }
     }
 
     public func allRules(profile: String? = nil) -> [Rule] {
-        queue.sync {
-            var rules: [Rule] = []
-            let sql: String
-            if profile != nil {
-                sql = "SELECT * FROM rules WHERE profile=? ORDER BY priority DESC, created_at DESC;"
-            } else {
-                sql = "SELECT * FROM rules ORDER BY priority DESC, created_at DESC;"
-            }
-            var stmt: OpaquePointer?
-            defer { if stmt != nil { sqlite3_finalize(stmt) } }
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            if let profile = profile { sqlite3_bind_text(stmt, 1, profile, -1, SQLITE_TRANSIENT) }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if let r = readRule(stmt) { rules.append(r) }
-            }
-            return rules
+        queue.sync { allRulesLocked(profile: profile) }
+    }
+
+    private func allRulesLocked(profile: String?) -> [Rule] {
+        var rules: [Rule] = []
+        let sql: String
+        if profile != nil {
+            sql = "SELECT * FROM rules WHERE profile=? ORDER BY priority DESC, created_at DESC;"
+        } else {
+            sql = "SELECT * FROM rules ORDER BY priority DESC, created_at DESC;"
         }
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        if let profile = profile { sqlite3_bind_text(stmt, 1, profile, -1, SQLITE_TRANSIENT) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let r = readRule(stmt) { rules.append(r) }
+        }
+        return rules
     }
 
     public func allProfiles() -> [Profile] {
@@ -340,20 +445,11 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     public func setSetting(_ key: String, _ value: String) throws {
-        try execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?);") { stmt in
-            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
-        }
+        try queue.sync { try setSettingLocked(key, value) }
     }
+
     public func getSetting(_ key: String) -> String? {
-        queue.sync {
-            var stmt: OpaquePointer?
-            defer { if stmt != nil { sqlite3_finalize(stmt) } }
-            guard sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?;", -1, &stmt, nil) == SQLITE_OK else { return nil }
-            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
-            if sqlite3_step(stmt) == SQLITE_ROW { return text(stmt, 0) }
-            return nil
-        }
+        queue.sync { getSettingLocked(key) }
     }
 
     // MARK: - helpers

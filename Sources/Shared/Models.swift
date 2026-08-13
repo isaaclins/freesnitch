@@ -220,8 +220,11 @@ public struct HelperStatus: Codable, Sendable {
     /// `.alert` before it connects, so without this the two disagree after a
     /// restart and the GUI's default overwrites the user's real choice.
     public var mode: AppMode = .alert
-    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert) {
+    /// Optional for decoding status payloads from older helpers.
+    public var policyGeneration: UInt64?
+    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil) {
         self.mode = mode
+        self.policyGeneration = policyGeneration
         self.version = version
         self.running = running
         self.pfctlActive = pfctlActive

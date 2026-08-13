@@ -5,10 +5,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
 BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
+RULE_STORE="$ROOT/Sources/Shared/RuleStore.swift"
+HELPER_PROTOCOL="$ROOT/Sources/Shared/HelperProtocol.swift"
 IPC="$ROOT/Sources/Shared/IPCConnection.swift"
 PEER_VALIDATOR="$ROOT/Sources/Shared/XPCPeerValidator.swift"
 CLI_HELPER="$ROOT/Sources/CLI/CLIHelperClient.swift"
+CLI_RUNNER="$ROOT/Sources/CLI/CLIRunner.swift"
 CLI_EXTENSION="$ROOT/Sources/CLI/CLIExtensionClient.swift"
+GUI_HELPER="$ROOT/Sources/GUI/App/HelperClient.swift"
 PROJECT_SPEC="$ROOT/project.yml"
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
 DNS_PROXY="$ROOT/Sources/Helper/DNSProxy.swift"
@@ -39,10 +43,14 @@ require_text() {
 
 [[ -f "$FILTER" ]] || fail "missing $FILTER"
 [[ -f "$BRIDGE" ]] || fail "missing $BRIDGE"
+[[ -f "$RULE_STORE" ]] || fail "missing $RULE_STORE"
+[[ -f "$HELPER_PROTOCOL" ]] || fail "missing $HELPER_PROTOCOL"
 [[ -f "$IPC" ]] || fail "missing $IPC"
 [[ -f "$PEER_VALIDATOR" ]] || fail "missing $PEER_VALIDATOR"
 [[ -f "$CLI_HELPER" ]] || fail "missing $CLI_HELPER"
+[[ -f "$CLI_RUNNER" ]] || fail "missing $CLI_RUNNER"
 [[ -f "$CLI_EXTENSION" ]] || fail "missing $CLI_EXTENSION"
+[[ -f "$GUI_HELPER" ]] || fail "missing $GUI_HELPER"
 [[ -f "$PROJECT_SPEC" ]] || fail "missing $PROJECT_SPEC"
 [[ -f "$HELPER" ]] || fail "missing $HELPER"
 [[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
@@ -204,10 +212,10 @@ for ingest_func in 'func addRule[(]' 'func reloadRules[(]'; do
     }
   ' "$HELPER")"
   reason_line="$(printf '%s\n' "$ingest_body" | grep -nF 'rejectionReason(for:' | head -1 | cut -d: -f1 || true)"
-  upsert_line="$(printf '%s\n' "$ingest_body" | grep -nF 'store.upsertRule' | head -1 | cut -d: -f1 || true)"
-  [[ -n "$reason_line" && -n "$upsert_line" ]] \
+  persist_line="$(printf '%s\n' "$ingest_body" | grep -nE 'store\.upsertRule|mutatePolicy' | head -1 | cut -d: -f1 || true)"
+  [[ -n "$reason_line" && -n "$persist_line" ]] \
     || fail "a helper rule ingest path stores rules without an address rejection check"
-  (( reason_line < upsert_line )) \
+  (( reason_line < persist_line )) \
     || fail "a helper rule ingest path stores the rule before validating its address"
 done
 
@@ -555,8 +563,8 @@ text_within_block() {
 # Persisted helper settings must be restored together. Restoring the mode but
 # not the DoH upstream silently changes the user's resolver after every helper
 # restart.
-if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'store.getSetting("mode")'; then
-  fail "the helper no longer restores its persisted mode"
+if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'store.policyState()'; then
+  fail "the helper no longer restores its persisted mode and policy generation"
 fi
 if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))'; then
   fail "the helper restores mode without also restoring and validating the persisted DoH upstream"
@@ -769,4 +777,63 @@ if rg -q 'decision\(for:[^)]*rules:' "$DNS_PROXY"; then
   fail "the DNS proxy orders the rule set per query instead of scanning a prepared set"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, and activation ordering are present.\n'
+# Authoritative policy snapshots. The helper is the only source allowed to
+# construct a policy payload for the extension; cached GUI rules and client
+# clocks must never become policy authority.
+require_text "$HELPER_PROTOCOL" "@objc optional func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void)" \
+  "the helper protocol has no backward-compatible authoritative snapshot getter"
+require_text "$HELPER" "func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void)" \
+  "the helper does not vend an authoritative encoded policy snapshot"
+require_text "$HELPER" "store.policyState()" \
+  "the helper snapshot path does not read persisted mode and rules together"
+require_text "$HELPER" "store.mutatePolicy" \
+  "helper policy mutations do not use the serialized RuleStore transaction"
+require_text "$RULE_STORE" "BEGIN IMMEDIATE" \
+  "RuleStore policy mutations are not transactionally serialized"
+require_text "$RULE_STORE" "policyGenerationSettingKey" \
+  "RuleStore does not persist the authoritative policy generation"
+require_text "$BRIDGE" "generation: UInt64" \
+  "snapshots have no helper-owned generation field"
+require_text "$BRIDGE" "decodeIfPresent(UInt64.self, forKey: .generation) ?? 0" \
+  "snapshot generation decoding is not backward compatible"
+require_text "$BRIDGE" "LiveSnapshotGate" \
+  "the production snapshot ordering gate is missing"
+require_text "$GUI_HELPER" "getAuthoritativeSnapshot != nil" \
+  "the GUI does not refuse an old helper that lacks the authoritative getter"
+require_text "$GUI_HELPER" "AppConstants.helperKickstartCommand" \
+  "the GUI authoritative snapshot failure does not provide the exact helper kickstart remediation"
+require_text "$CLI_HELPER" "authoritative_snapshot_unsupported" \
+  "the CLI does not diagnose an old helper without the authoritative getter"
+require_text "$CLI_HELPER" "AppConstants.helperKickstartCommand" \
+  "the CLI authoritative snapshot failure does not provide the exact helper kickstart remediation"
+require_text "$APP_STATE" "helper.authoritativeSnapshot" \
+  "the GUI sync path does not fetch the helper authoritative snapshot"
+require_text "$APP_STATE" "snapshotRequestSequence" \
+  "the GUI has no request sequencing for authoritative snapshot replies"
+require_text "$APP_STATE" "filterSnapshotPersistenceHandler?(snapshot)" \
+  "the GUI does not persist the exact helper snapshot it accepted"
+if rg -n "SharedRuleBridge\\.Snapshot\\(" "$ROOT/Sources/GUI" >/dev/null; then
+  fail "the GUI constructs a sendable SharedRuleBridge.Snapshot instead of using the helper"
+fi
+if rg -n "SharedRuleBridge\\.Snapshot\\(" "$CLI_RUNNER" "$CLI_HELPER" >/dev/null; then
+  fail "the CLI constructs a sendable SharedRuleBridge.Snapshot instead of using the helper"
+fi
+if grep -Fq 'syncSnapshot(mode:' "$CLI_RUNNER"; then
+  fail "the CLI sync path still accepts independently fetched mode and rules"
+fi
+require_text "$CLI_RUNNER" "private func syncSnapshot(_ snapshot: SharedRuleBridge.Snapshot)" \
+  "the CLI does not sync the exact helper-owned snapshot"
+require_text "$CLI_RUNNER" "try await helper.authoritativeSnapshot()" \
+  "the CLI mutation paths do not fetch an authoritative helper snapshot"
+require_text "$FILTER" "received.generation < current.generation" \
+  "the extension does not reject a lower-generation live snapshot before assignment"
+require_text "$FILTER" "received.generation == current.generation" \
+  "the extension does not check equal-generation split-brain content"
+require_text "$FILTER" "setSnapshotLocked(accepted)" \
+  "the extension does not assign only after the generation gate"
+generation_check_line="$(grep -nF 'received.generation < current.generation' "$FILTER" | head -1 | cut -d: -f1 || true)"
+generation_assignment_line="$(grep -nF 'setSnapshotLocked(accepted)' "$FILTER" | head -1 | cut -d: -f1 || true)"
+[[ -n "$generation_check_line" && -n "$generation_assignment_line" && "$generation_check_line" -lt "$generation_assignment_line" ]] \
+  || fail "the extension assigns a live snapshot before comparing its generation"
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, and authoritative helper-owned policy snapshots are present.\n'

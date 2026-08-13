@@ -39,6 +39,7 @@ final class CLIExtensionClient: NSObject {
                        mode: status.mode.map(canonicalMode),
                        ruleCount: status.isReady ? status.ruleCount : nil,
                        updatedAt: status.updatedAt,
+                       generation: status.generation,
                        message: status.message)
     }
 
