@@ -35,6 +35,7 @@ final class AppState: ObservableObject {
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
     )
+    @Published var authoritativeSnapshotGeneration: UInt64?
     @Published var filterPersistenceDegraded = false
     @Published var filterPersistenceMessage: String?
     /// Set by SystemExtensionManager so the published snapshot state can also
@@ -72,6 +73,9 @@ final class AppState: ObservableObject {
     private var suppressEnforcementSideEffect = false
     private var applyingExternalPreferences = false
     private var preferencesObserver: NSObjectProtocol?
+    /// Only the newest helper getter response may update the GUI cache or
+    /// publish a snapshot. This protects against out-of-order XPC replies.
+    private var snapshotRequestSequence: UInt64 = 0
 
     /// Puts the toggle back where reality is after the helper refuses or rolls
     /// back an enforcement change, without bouncing another request off it.
@@ -90,9 +94,6 @@ final class AppState: ObservableObject {
 
     let helper = HelperClient()
     private var processUsages: [ProcessUsage] = []
-    private let store: RuleStore? = {
-        try? RuleStore(path: AppConstants.supportDir.appendingPathComponent("ui-cache.sqlite").path)
-    }()
 
     struct PendingAlert: Identifiable {
         let id = UUID()
@@ -155,13 +156,15 @@ final class AppState: ObservableObject {
         showSpeedsInMenuBar = AppPreferences.bool(forKey: AppPreferences.Key.showSpeeds)
         showAlertsOnAllSpaces = AppPreferences.defaults.object(forKey: AppPreferences.Key.alertsAllSpaces) as? Bool ?? true
         enforcementEnabled = AppPreferences.bool(forKey: AppPreferences.Key.enforcement)
-        if let rawMode = AppPreferences.string(forKey: AppPreferences.Key.mode),
-           let externalMode = AppMode(rawValue: rawMode),
-           mode != externalMode {
-            mode = externalMode
+        let externalMode = AppPreferences.string(forKey: AppPreferences.Key.mode).flatMap(AppMode.init(rawValue:))
+        applyingExternalPreferences = false
+
+        // The distributed preference says that a policy change happened, not
+        // what rules the GUI should send. Ask the helper for both mode and
+        // rules, and never construct a replacement from this cache.
+        if externalMode != nil, externalMode != mode {
             syncSharedRules()
         }
-        applyingExternalPreferences = false
     }
 
     /// Runs once the helper is reachable. Monitoring only: enabling pf and the
@@ -174,34 +177,44 @@ final class AppState: ObservableObject {
         if enforcementEnabled { helper.setEnforcementEnabled(true) }
     }
 
+    /// Refreshes the display cache and synchronizes the extension from one
+    /// helper-owned snapshot. A getter failure leaves the extension and boot
+    /// persistence untouched, so stale GUI rules cannot be sent.
     func refreshRules() {
-        helper.listRules { [weak self] rules in
-            guard let self else { return }
-            self.rules = rules
-            self.syncSharedRules()
-        }
+        syncSharedRules()
     }
 
-    /// The current policy envelope used by both the live XPC update and the
-    /// persisted NetworkExtension provider configuration.
-    func currentFilterSnapshot() -> SharedRuleBridge.Snapshot {
-        SharedRuleBridge.Snapshot(mode: mode, rules: rules)
-    }
-
-    /// Hand the active rules and mode to the Network System Extension over the
-    /// existing XPC channel and ask SystemExtensionManager to persist the same
-    /// versioned snapshot in vendorConfiguration.
+    /// Ask the helper for its authoritative mode, rules, and generation before
+    /// either live delivery or boot persistence. No caller supplies policy
+    /// content to this method.
     func syncSharedRules() {
-        let snapshot = currentFilterSnapshot()
-        filterSnapshotPersistenceHandler?(snapshot)
-        guard let data = try? SharedRuleBridge.encode(snapshot) else {
-            let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the filter rule snapshot.")
-            publishFilterSnapshotStatus(status)
-            return
-        }
-        IPCConnection.shared.sendSnapshot(data) { [weak self] status in
-            Task { @MainActor in
-                self?.publishFilterSnapshotStatus(status)
+        snapshotRequestSequence &+= 1
+        let request = snapshotRequestSequence
+        helper.authoritativeSnapshot { [weak self] snapshot, error in
+            guard let self, request == self.snapshotRequestSequence else { return }
+            guard let snapshot else {
+                let message = error ?? "The helper did not return an authoritative rule snapshot."
+                self.publishFilterSnapshotStatus(.unavailable(message))
+                self.appendLog(level: "error", message: message)
+                return
+            }
+
+            self.mode = snapshot.mode
+            self.rules = snapshot.rules
+            self.authoritativeSnapshotGeneration = snapshot.generation
+            AppPreferences.set(snapshot.mode.rawValue, forKey: AppPreferences.Key.mode, notify: false)
+            self.filterSnapshotPersistenceHandler?(snapshot)
+
+            guard let data = try? SharedRuleBridge.encode(snapshot) else {
+                let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the helper authoritative rule snapshot.", generation: snapshot.generation)
+                self.publishFilterSnapshotStatus(status)
+                return
+            }
+            IPCConnection.shared.sendSnapshot(data) { [weak self] status in
+                Task { @MainActor in
+                    guard let self, request == self.snapshotRequestSequence else { return }
+                    self.publishFilterSnapshotStatus(status)
+                }
             }
         }
     }
@@ -223,19 +236,20 @@ final class AppState: ObservableObject {
     }
 
     func setMode(_ m: AppMode) {
-        mode = m
-        AppPreferences.set(m.rawValue, forKey: AppPreferences.Key.mode)
-        helper.setMode(m)
-        syncSharedRules()
+        helper.setMode(m) { [weak self] ok, message in
+            guard let self else { return }
+            guard ok else {
+                self.appendLog(level: "error", message: "The helper rejected the mode change: \(message ?? "unknown error")")
+                return
+            }
+            self.syncSharedRules()
+        }
     }
 
-    /// Applied when the helper reports the mode it restored from disk. Unlike
-    /// setMode this does not write back, so a restart cannot turn the stored
-    /// choice into the GUI's default.
+    /// The status response is only a reachability hint. Refreshing the
+    /// persisted mode also fetches the helper's complete authoritative policy.
     func adoptPersistedMode(_ m: AppMode) {
         guard mode != m else { return }
-        mode = m
-        AppPreferences.set(m.rawValue, forKey: AppPreferences.Key.mode, notify: false)
         syncSharedRules()
     }
 
@@ -313,10 +327,14 @@ final class AppState: ObservableObject {
                 groupName: nil,
                 notes: "Created from alert"
             )
-            rules.append(rule)        // optimistic: extension sees it even if the helper is down
-            helper.addRule(rule)
-            syncSharedRules()
-            refreshRules()
+            helper.addRule(rule) { [weak self] ok, message in
+                guard let self else { return }
+                guard ok else {
+                    self.appendLog(level: "error", message: "The helper rejected the remembered rule: \(message ?? "unknown error")")
+                    return
+                }
+                self.refreshRules()
+            }
         }
     }
 

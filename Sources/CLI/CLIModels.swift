@@ -5,6 +5,7 @@ struct SnapshotReport: Encodable {
     let mode: String?
     let ruleCount: Int?
     let updatedAt: Date?
+    let generation: UInt64?
     let message: String?
 }
 
@@ -40,6 +41,7 @@ struct HelperReport: Encodable {
     let dnsProxyPort: Int
     let activeRules: Int
     let blockedToday: Int
+    let policyGeneration: UInt64?
 }
 
 struct BlocklistReport: Encodable {
@@ -67,6 +69,7 @@ struct RuleMutationReport: Encodable {
     let requested: [UUID]
     let succeeded: [UUID]
     let failed: [RuleMutationFailure]
+    let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
 }
@@ -78,6 +81,7 @@ struct RuleMutationFailure: Encodable {
 
 struct RuleAddedReport: Encodable {
     let rule: Rule
+    let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
 }
@@ -86,6 +90,7 @@ struct RuleImportReport: Encodable {
     let imported: Int
     let ids: [UUID]
     let source: String
+    let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
 }
@@ -94,6 +99,7 @@ struct PolicyChangeReport: Encodable {
     let operation: String
     let mode: String
     let ruleCount: Int
+    let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
 }

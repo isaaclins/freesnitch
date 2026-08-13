@@ -37,6 +37,7 @@ enum ExtensionInspector {
                                       mode: nil,
                                       ruleCount: nil,
                                       updatedAt: nil,
+                                      generation: nil,
                                       message: xpcMessage)
         let message = [system.detail, filter.detail, xpcMessage]
             .filter { !$0.isEmpty }

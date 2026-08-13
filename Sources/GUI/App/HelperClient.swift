@@ -480,8 +480,62 @@ final class HelperClient: NSObject, ObservableObject {
         proxy.getDoHUpstream?(reply: { finish($0, nil) })
     }
 
+    func authoritativeSnapshot(completion: @MainActor @escaping (SharedRuleBridge.Snapshot?, String?) -> Void) {
+        let lock = NSLock()
+        var finished = false
+        var timeoutWork: DispatchWorkItem?
+        let finish: (SharedRuleBridge.Snapshot?, String?) -> Void = { snapshot, error in
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            lock.unlock()
+            timeoutWork?.cancel()
+            Task { @MainActor in completion(snapshot, error) }
+        }
+        let work = DispatchWorkItem {
+            finish(nil, "The helper did not return an authoritative rule snapshot within 5 seconds. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+        }
+        timeoutWork = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
+
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            finish(nil, "Could not read the authoritative rule snapshot: \(error.localizedDescription). Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+        }) as? HelperProtocol else {
+            finish(nil, "The privileged helper is unavailable. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            return
+        }
+        guard proxy.getAuthoritativeSnapshot != nil else {
+            finish(nil, "The running helper does not support authoritative rule snapshots. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            return
+        }
+        proxy.getAuthoritativeSnapshot?(reply: { data in
+            guard !data.isEmpty else {
+                finish(nil, "The helper returned an empty authoritative rule snapshot. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+                return
+            }
+            do {
+                finish(try FreeSnitchWireCodec.decode(SharedRuleBridge.Snapshot.self, from: data), nil)
+            } catch {
+                finish(nil, "The helper returned an invalid authoritative rule snapshot: \(error.localizedDescription). Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            }
+        })
+    }
+
     func setMode(_ m: AppMode) {
-        remote?.setMode(rawValue: m.rawValue) { _, _ in }
+        setMode(m) { _, _ in }
+    }
+
+    func setMode(_ m: AppMode, completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.setMode(rawValue: m.rawValue) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
     }
 
     @discardableResult
@@ -587,35 +641,26 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
-    /// Replaces the helper's stored rules using the existing CRUD protocol.
-    /// `reloadRules` upserts its JSON array, so remove the current IDs first
-    /// rather than presenting a merge as an import replacement.
+    /// Replaces the helper's stored rules in one transaction. There is no
+    /// fallback to cached GUI rules or to a sequence of removals.
     func replaceRules(_ rules: [Rule],
-                      existing: [Rule],
+                      existing _: [Rule],
                       completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let data = try? FreeSnitchWireCodec.encode(rules) else {
+            completion(false, "Could not encode the rule JSON array.")
+            return
+        }
         guard let proxy = remote else {
             completion(false, "The FreeSnitch helper is not connected.")
             return
         }
-        let ids = existing.map(\.id)
-
-        func removeNext(_ index: Int) {
-            guard index < ids.count else {
-                reloadRules(rules, completion: completion)
-                return
-            }
-            proxy.removeRule(idString: ids[index].uuidString) { ok, message in
-                Task { @MainActor in
-                    guard ok else {
-                        completion(false, message ?? "The helper rejected a rule removal.")
-                        return
-                    }
-                    removeNext(index + 1)
-                }
-            }
+        guard proxy.replaceRules != nil else {
+            completion(false, "The running helper does not support atomic rule replacement. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            return
         }
-
-        removeNext(0)
+        proxy.replaceRules?(rulesJSON: data) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
     }
 
     func listRules(profile: String = "", completion: @MainActor @escaping ([Rule]) -> Void) {

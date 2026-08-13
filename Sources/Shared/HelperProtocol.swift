@@ -8,6 +8,13 @@ import Foundation
     func reloadRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void)
     func addRule(ruleJSON: Data, reply: @escaping (Bool, String?) -> Void)
     func removeRule(idString: String, reply: @escaping (Bool, String?) -> Void)
+    /// Optional so an already-running older helper can answer other requests;
+    /// clients must refuse policy sync when this getter is absent.
+    @objc optional func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void)
+    /// Atomic replacement for the GUI import path. Older helpers do not have a
+    /// safe replacement operation, so the GUI reports that rather than doing a
+    /// sequence of stale-prone removals.
+    @objc optional func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void)
     func listRules(profile: String, reply: @escaping (Data) -> Void)
 
     func startMonitoring(reply: @escaping (Bool, String?) -> Void)

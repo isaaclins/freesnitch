@@ -725,23 +725,74 @@ final class FilterDataProvider: NEFilterDataProvider {
     private func receiveSnapshot(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
         do {
             let received = try SharedRuleBridge.decode(data)
-            let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
             snapshotLock.lock()
-            setSnapshotLocked(received)
-            snapshotOrigin = .live
-            snapshotStatus = status
-            snapshotLock.unlock()
+            let current = snapshot
 
-            let allowCount = received.rules.filter { $0.action == .allow }.count
-            let denyCount = received.rules.filter { $0.action == .deny }.count
-            let askCount = received.rules.filter { $0.action == .ask }.count
-            PSLog.info(PSLog.netext,
-                       "filter snapshot received over XPC: mode \(received.mode.rawValue), "
-                       + "\(received.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))")
-            // Persistence is owned by the GUI through NEFilterManager. A live
-            // XPC update changes only this in-memory policy and never waits on
-            // disk, XPC, or another transport.
-            return status
+            // Generation is checked while the policy lock is held and before
+            // setSnapshotLocked can assign the candidate. Boot policy is also
+            // compared here so a stale live client cannot replace a newer
+            // persisted policy during extension startup.
+            if let current, received.generation < current.generation {
+                let status = SharedRuleBridge.SnapshotStatus.invalid(
+                    "Network extension rejected an older live rule snapshot (generation \(received.generation); current generation \(current.generation)).",
+                    generation: current.generation
+                )
+                snapshotStatus = status
+                snapshotLock.unlock()
+                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older live rule snapshot.")
+                return status
+            }
+            let legacyBootGeneration = snapshotOrigin == .boot && current?.generation == 0 && received.generation == 0
+            if let current,
+               received.generation == current.generation,
+               (received.mode != current.mode || received.rules != current.rules),
+               !legacyBootGeneration {
+                let status = SharedRuleBridge.SnapshotStatus.invalid(
+                    "Network extension rejected an invalid split-brain snapshot: generation \(received.generation) has different policy content.",
+                    generation: current.generation
+                )
+                snapshotStatus = status
+                snapshotLock.unlock()
+                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an invalid split-brain snapshot.")
+                return status
+            }
+
+            // A generation-less boot envelope decodes as generation zero for
+            // backward compatibility. The first helper-owned live snapshot is
+            // allowed to replace that legacy boot policy; equal-generation
+            // conflicts remain invalid once a live snapshot exists.
+            var gate = SharedRuleBridge.LiveSnapshotGate(current: legacyBootGeneration ? nil : current)
+            let decision = gate.apply(received)
+            switch decision {
+            case .accepted, .idempotent:
+                let accepted = gate.current ?? received
+                let status = SharedRuleBridge.SnapshotStatus.ready(for: accepted)
+                setSnapshotLocked(accepted)
+                snapshotOrigin = .live
+                snapshotStatus = status
+                snapshotLock.unlock()
+
+                let allowCount = accepted.rules.filter { $0.action == .allow }.count
+                let denyCount = accepted.rules.filter { $0.action == .deny }.count
+                let askCount = accepted.rules.filter { $0.action == .ask }.count
+                let idempotentNote = decision == .idempotent ? " (idempotent)" : ""
+                PSLog.info(PSLog.netext,
+                           "filter snapshot received over XPC: generation \(accepted.generation), mode \(accepted.mode.rawValue), "
+                           + "\(accepted.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))\(idempotentNote)")
+                // Persistence is owned by the GUI through NEFilterManager. A
+                // live XPC update changes only this in-memory policy and never
+                // waits on disk, XPC, or another transport.
+                return status
+            case .rejectedOlder(let currentGeneration), .rejectedConflict(let currentGeneration):
+                let status = SharedRuleBridge.SnapshotStatus.invalid(
+                    "Network extension rejected an invalid live snapshot at generation \(received.generation); current generation is \(currentGeneration).",
+                    generation: currentGeneration
+                )
+                snapshotStatus = status
+                snapshotLock.unlock()
+                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an invalid live snapshot.")
+                return status
+            }
         } catch {
             let status = SharedRuleBridge.SnapshotStatus.invalid(
                 "Network extension received an invalid rule snapshot: \(error.localizedDescription)"

@@ -93,11 +93,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func enableFilter() {
         enableFilterRequested = true
-        if let state {
-            requestPersistedSnapshot(state.currentFilterSnapshot(), immediate: true)
-        } else {
-            schedulePersistence(immediate: true)
-        }
+        // AppState fetches the helper-owned snapshot and invokes the
+        // persistence callback only after it has updated its display cache.
+        // There is no cached-rule fallback during activation.
+        state?.syncSharedRules()
     }
 
     /// Queue the newest policy for NEFilterManager.providerConfiguration. The
@@ -108,7 +107,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                           immediate: Bool = false) {
         do {
             persistenceQueue.enqueue(try SharedRuleBridge.encodeBootSnapshot(snapshot))
-            schedulePersistence(immediate: immediate)
+            schedulePersistence(immediate: immediate || enableFilterRequested)
         } catch {
             recordPersistenceFailure("encode", error: error)
             if immediate {
@@ -132,7 +131,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func flushPersistence() {
         guard !persistenceInFlight else { return }
-        guard persistenceQueue.hasPending || enableFilterRequested else { return }
+        // Activation waits for a successful helper getter before it can save
+        // or enable the filter. An enable request without a pending snapshot
+        // is a fetch failure, not permission to persist stale GUI state.
+        guard persistenceQueue.hasPending else { return }
         persistenceInFlight = true
         let generationAtLoad = persistenceQueue.generation
         let mgr = NEFilterManager.shared()
@@ -260,6 +262,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
         self.snapshotStatus = snapshotStatus
+        if !snapshotStatus.isReady,
+           enableFilterRequested,
+           !persistenceQueue.hasPending,
+           !persistenceInFlight {
+            enableFilterRequested = false
+            fail("filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")")
+            return
+        }
         guard filterConfigurationActive else { return }
         if snapshotStatus.isReady {
             status = .active

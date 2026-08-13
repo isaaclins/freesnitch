@@ -181,11 +181,16 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private var clientConnections: [NSXPCConnection] = []
     private let clientLock = NSLock()
     private let asks = DNSAskCoordinator()
+    /// The helper is the sole owner of policy mutation and snapshot
+    /// construction. This queue is never held across XPC replies, PF work, or
+    /// other network operations.
+    private let policyQueue = DispatchQueue(label: "io.isaaclins.freesnitch.policy")
     private var latestProcessUsage: [ProcessUsage] = []
     private var latestTrafficSample: TrafficSample?
     private var lastPFError: String?
     private let diagnosticsLock = NSLock()
     private var mode: AppMode = .alert
+    private var policyGeneration: UInt64 = 0
 
     init(listener: NSXPCListener) throws {
         let dbDir = "/Library/Application Support/FreeSnitch"
@@ -196,6 +201,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         if self.insights == nil {
             PSLog.error(PSLog.helper, "Insights store failed to open; observation recording is unavailable.")
         }
+        let persistedPolicy = store.policyState()
+        self.mode = persistedPolicy.mode
+        self.policyGeneration = persistedPolicy.generation
         self.blocklists = BlocklistManager(store: store)
         self.listener = listener
         super.init()
@@ -206,13 +214,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
         }
 
-        if let modeStr = store.getSetting("mode"), let m = AppMode(rawValue: modeStr) {
-            self.mode = m
-        }
         dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))
 
-        dns.rules = store.allRules()
-        dns.mode = mode
+        dns.rules = persistedPolicy.rules
+        dns.mode = persistedPolicy.mode
         dns.onBlock = { [weak self] domain, reason in
             self?.broadcast { c in
                 let payload: [String: Any] = ["domain": domain, "reason": reason ?? ""]
@@ -424,10 +429,53 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         reply(AppBundleIdentity.current ?? AppConstants.version)
     }
 
+    private func authoritativePolicyState() -> RuleStore.PolicyState {
+        policyQueue.sync {
+            let state = store.policyState()
+            mode = state.mode
+            policyGeneration = state.generation
+            return state
+        }
+    }
+
+    /// Snapshot construction is serialized with every policy mutation and
+    /// reads the persisted helper state, never a GUI or CLI cache.
+    private func authoritativeSnapshot() -> SharedRuleBridge.Snapshot {
+        policyQueue.sync {
+            let state = store.policyState()
+            mode = state.mode
+            policyGeneration = state.generation
+            return SharedRuleBridge.Snapshot(mode: state.mode,
+                                             rules: state.rules,
+                                             generation: state.generation)
+        }
+    }
+
+    /// The database commit, generation advance, and runtime policy assignment
+    /// are one ordered owner. PF work happens only after this returns.
+    private func mutatePolicy(_ change: (inout RuleStore.PolicyDraft) throws -> Void) throws -> SharedRuleBridge.Snapshot {
+        try policyQueue.sync {
+            let state = try store.mutatePolicy(change)
+            mode = state.mode
+            policyGeneration = state.generation
+            dns.mode = state.mode
+            dns.rules = state.rules
+            return SharedRuleBridge.Snapshot(mode: state.mode,
+                                             rules: state.rules,
+                                             generation: state.generation)
+        }
+    }
+
+    func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void) {
+        let snapshot = authoritativeSnapshot()
+        reply((try? SharedRuleBridge.encode(snapshot)) ?? Data())
+    }
+
     func getStatus(reply: @escaping (Data) -> Void) {
         diagnosticsLock.lock()
         let pfctlError = lastPFError
         diagnosticsLock.unlock()
+        let policy = authoritativePolicyState()
         let s = HelperStatus(
             version: AppBundleIdentity.current ?? AppConstants.version,
             running: netmon.isRunning,
@@ -435,19 +483,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             pfctlError: pfctlError,
             dnsProxyActive: dns.running,
             dnsProxyPort: Int(dns.port),
-            activeRules: store.allRules().count,
+            activeRules: policy.rules.count,
             blockedToday: dns.statistics.blocked,
-            mode: mode
+            mode: policy.mode,
+            policyGeneration: policy.generation
         )
         reply((try? FreeSnitchWireCodec.encode(s)) ?? Data())
     }
 
     func setMode(rawValue: String, reply: @escaping (Bool, String?) -> Void) {
         guard let m = AppMode(rawValue: rawValue) else { reply(false, "invalid mode"); return }
-        self.mode = m
-        dns.mode = m
-        try? store.setSetting("mode", rawValue)
-        reply(true, nil)
+        do {
+            _ = try mutatePolicy { draft in draft.mode = m }
+            reply(true, nil)
+        } catch {
+            reply(false, "could not persist mode: \(error)")
+        }
     }
 
     // The helper is the trust boundary for rules. The CLI and the GUI validate
@@ -458,22 +509,54 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         return "rule \(rule.id.uuidString) has an invalid remote IP `\(rule.remoteIP ?? "")`: \(reason). \(RuleAddressValidator.remediation)"
     }
 
+    private func mergedRules(_ incoming: [Rule], into existing: inout [Rule]) {
+        for rule in incoming {
+            if let index = existing.firstIndex(where: { $0.id == rule.id }) {
+                existing[index] = rule
+            } else {
+                existing.append(rule)
+            }
+        }
+    }
+
     func reloadRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
             let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
-            // Reject the whole batch instead of storing a partial import.
+            // Validate the whole batch before the helper opens its transaction.
             if let reason = rules.compactMap({ rejectionReason(for: $0) }).first {
                 reply(false, reason)
                 return
             }
-            for r in rules { try store.upsertRule(r) }
-            dns.rules = store.allRules()
+            _ = try mutatePolicy { draft in mergedRules(rules, into: &draft.rules) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()
             } catch {
                 recordPFError(error)
-                throw error
+                reply(false, "rules saved but the firewall refused the update: \(error)")
+                return
+            }
+            reply(true, nil)
+        } catch {
+            reply(false, "\(error)")
+        }
+    }
+
+    func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
+        do {
+            let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
+            if let reason = rules.compactMap({ rejectionReason(for: $0) }).first {
+                reply(false, reason)
+                return
+            }
+            _ = try mutatePolicy { draft in draft.rules = rules }
+            do {
+                try applyRulesIfEnforcing()
+                clearPFError()
+            } catch {
+                recordPFError(error)
+                reply(false, "rules saved but the firewall refused the update: \(error)")
+                return
             }
             reply(true, nil)
         } catch {
@@ -488,8 +571,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 reply(false, reason)
                 return
             }
-            try store.upsertRule(rule)
-            dns.rules = store.allRules()
+            _ = try mutatePolicy { draft in
+                if let index = draft.rules.firstIndex(where: { $0.id == rule.id }) {
+                    draft.rules[index] = rule
+                } else {
+                    draft.rules.append(rule)
+                }
+            }
             // Saved but not enforced is a real difference; say so instead of
             // reporting plain success.
             do { try applyRulesIfEnforcing() } catch {
@@ -506,8 +594,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func removeRule(idString: String, reply: @escaping (Bool, String?) -> Void) {
         guard let id = UUID(uuidString: idString) else { reply(false, "bad uuid"); return }
         do {
-            try store.deleteRule(id: id)
-            dns.rules = store.allRules()
+            _ = try mutatePolicy { draft in
+                draft.rules.removeAll { $0.id == id }
+            }
             do { try applyRulesIfEnforcing() } catch {
                 recordPFError(error)
                 reply(false, "rule removed but the firewall refused the update: \(error)")
