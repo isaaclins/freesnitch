@@ -109,6 +109,19 @@ require_text "$HELPER" "ingestObservationBatch" \
   "the helper observation boundary is missing"
 require_text "$HELPER" "batch.validate(payloadBytes: observationBatch.count)" \
   "the helper does not validate the decoded observation batch"
+require_text "$HELPER" "insightsObservationQueue.async" \
+  "observation writes are not handed to a background helper queue"
+require_text "$HELPER" "insightsDNSQueue.async" \
+  "DNS mapping writes are not handed to a background helper queue"
+require_text "$HELPER" "insightsMaintenanceQueue.async" \
+  "startup prune is not asynchronous"
+if awk '
+  /func ingestObservationBatch\(/ { active = 1 }
+  active { print }
+  active && /^    func getInsightsRecordingEnabled/ { exit }
+' "$HELPER" | grep -Fq 'insights.record'; then
+  fail "recordObservationBatch performs SQLite recording on the XPC reply path"
+fi
 require_text "$HELPER" "recordDNSMappings" \
   "DNSProxy answers are not written directly by the helper"
 require_text "$UNINSTALL" "readonly INSIGHTS=\"\${SUPPORT}/Insights\"" \
