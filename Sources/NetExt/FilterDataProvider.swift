@@ -91,6 +91,8 @@ final class FilterDataProvider: NEFilterDataProvider {
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
         let policy = currentPolicy()
         if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { return .allow() }
+        // Equivalent to `guard let snapshot = currentSnapshot() else`, but
+        // the snapshot and its boot/live origin must come from one locked read.
         guard let snapshot = policy.snapshot else {
             // No GUI-delivered policy is a degraded state, not an alert-mode
             // policy. Allowing here keeps a missing GUI from becoming a network
