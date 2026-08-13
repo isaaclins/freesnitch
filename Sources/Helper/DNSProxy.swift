@@ -17,7 +17,13 @@ final class DNSProxy: @unchecked Sendable {
     private(set) var running = false
 
     var blocklist: Set<String> = []
-    var rules: [Rule] = []
+    /// Ordering the rule set per query would repeat a filter, a copy and a
+    /// sort for every name resolved. The order only changes when the rules do,
+    /// so it is prepared on assignment and merely scanned per query.
+    var rules: [Rule] = [] {
+        didSet { preparedRules = PreparedRuleSet(rules: rules) }
+    }
+    private var preparedRules = PreparedRuleSet(rules: [])
     var mode: AppMode = .alert
     var matcher = RuleMatcher()
     var dohURL: String = AppConstants.defaultDoHUpstream
@@ -118,7 +124,7 @@ final class DNSProxy: @unchecked Sendable {
         }
         let domain = q.name.lowercased()
         let connStub = Connection(pid: 0, processName: "", processPath: "", remoteHost: domain, direction: .outgoing, status: .pending)
-        let action = matcher.decision(for: connStub, rules: rules, defaultMode: mode)
+        let action = matcher.decision(for: connStub, prepared: preparedRules, defaultMode: mode)
 
         if action == .deny || isBlocklisted(domain) {
             stats.incrBlocked()
