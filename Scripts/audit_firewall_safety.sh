@@ -152,6 +152,35 @@ if ! grep -Fq '<key>io.isaaclins.freesnitch.helper</key>' "$LAUNCHD_PLIST" \
   fail "helper launchd plist does not contain only the main helper MachService"
 fi
 
+# A verdict must never wait on the filesystem. The bundle identifier comes from
+# a bounded in-memory cache, and the Info.plist read happens on a background
+# queue, so a cold page cache or a slow volume cannot become filter latency.
+require_text "$FILTER" "bundleIdentifierCache.cachedBundleId(forExecutablePath: path)" \
+  "the verdict path no longer answers bundle identifiers from the bounded cache"
+require_text "$FILTER" "capacity: Int = 512" \
+  "the bundle identifier cache capacity is not explicit and bounded"
+require_text "$FILTER" "resolveQueue.async" \
+  "bundle identifier plist reads are not handed to a background queue"
+require_text "$FILTER" "private let lock: UnsafeMutablePointer<os_unfair_lock_s>" \
+  "the bundle identifier cache does not hold its lock at a stable address"
+bundle_id_body="$(awk '
+  /private func bundleIdForApp\(atPath path: String\)/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$FILTER")"
+[[ -n "$bundle_id_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
+if printf '%s\n' "$bundle_id_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization'; then
+  fail "the verdict path reads and parses an Info.plist synchronously"
+fi
+
 # A missing GUI must never leave a socket flow paused forever or turn a GUI
 # outage into a network outage. Keep this check tied to the actual branch that
 # handles the false result from promptUser, not only to a comment.
