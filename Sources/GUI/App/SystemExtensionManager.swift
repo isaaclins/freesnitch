@@ -35,8 +35,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var bridge: AppCommunicationBridge?
     private var requestKind: RequestKind = .activation
     private var filterConfigurationActive = false
-    private var pendingBootSnapshotData: Data?
-    private var persistenceGeneration = 0
+    private var persistenceQueue = SharedRuleBridge.NewestWriteWinsQueue()
     private var persistenceInFlight = false
     private var persistenceWorkItem: DispatchWorkItem?
     private var enableFilterRequested = false
@@ -108,8 +107,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func requestPersistedSnapshot(_ snapshot: SharedRuleBridge.Snapshot,
                                           immediate: Bool = false) {
         do {
-            pendingBootSnapshotData = try SharedRuleBridge.encodeBootSnapshot(snapshot)
-            persistenceGeneration += 1
+            persistenceQueue.enqueue(try SharedRuleBridge.encodeBootSnapshot(snapshot))
             schedulePersistence(immediate: immediate)
         } catch {
             recordPersistenceFailure("encode", error: error)
@@ -134,9 +132,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func flushPersistence() {
         guard !persistenceInFlight else { return }
-        guard pendingBootSnapshotData != nil || enableFilterRequested else { return }
+        guard persistenceQueue.hasPending || enableFilterRequested else { return }
         persistenceInFlight = true
-        let generationAtLoad = persistenceGeneration
+        let generationAtLoad = persistenceQueue.generation
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
@@ -147,18 +145,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     if self.enableFilterRequested {
                         self.fail("filter load: \(loadError.localizedDescription)")
                     }
-                    let hasNewerSnapshot = self.persistenceGeneration != generationAtLoad
-                    if !hasNewerSnapshot {
-                        self.pendingBootSnapshotData = nil
-                    }
-                    if hasNewerSnapshot {
+                    if self.persistenceQueue.hasNewerWork(since: generationAtLoad) {
                         self.schedulePersistence(immediate: true)
                     }
                     return
                 }
 
-                let snapshotData = self.pendingBootSnapshotData
-                self.pendingBootSnapshotData = nil
+                let snapshotData = self.persistenceQueue.takeNewest()?.data
                 let shouldEnable = self.enableFilterRequested
                 self.enableFilterRequested = false
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
@@ -198,8 +191,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                         // A request that arrived while load/save was in flight
                         // cannot be folded into the completed system write.
                         // Start another serialized cycle for that newer data.
-                        if self.persistenceGeneration != generationAtLoad
-                            || self.pendingBootSnapshotData != nil
+                        if self.persistenceQueue.hasNewerWork(since: generationAtLoad)
                             || self.enableFilterRequested {
                             self.schedulePersistence(immediate: true)
                         }

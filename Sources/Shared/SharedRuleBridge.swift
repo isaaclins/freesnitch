@@ -17,6 +17,40 @@ public enum SharedRuleBridge {
     public static let maximumBootSnapshotRuleCount = 4096
     public static let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
 
+    /// Pure state for the asynchronous provider-preference writer. A caller
+    /// may take only the newest pending payload after a load completes; any
+    /// request arriving during a save remains visible as newer work.
+    public struct NewestWriteWinsQueue: Sendable {
+        public struct Pending: Sendable {
+            public let generation: Int
+            public let data: Data
+        }
+
+        private(set) public var generation = 0
+        private var pendingData: Data?
+
+        public init() {}
+
+        public var hasPending: Bool { pendingData != nil }
+
+        @discardableResult
+        public mutating func enqueue(_ data: Data) -> Int {
+            generation += 1
+            pendingData = data
+            return generation
+        }
+
+        public mutating func takeNewest() -> Pending? {
+            guard let pendingData else { return nil }
+            self.pendingData = nil
+            return Pending(generation: generation, data: pendingData)
+        }
+
+        public func hasNewerWork(since generation: Int) -> Bool {
+            self.generation != generation || pendingData != nil
+        }
+    }
+
     public struct Snapshot: Codable, Sendable {
         public var mode: AppMode
         public var rules: [Rule]
