@@ -149,8 +149,25 @@ final class FilterDataProvider: NEFilterDataProvider {
     private var unknownDestinationFlows: UInt64 = 0
     private var lateDestinationAtVerdictReport: UInt64 = 0
     private var lateDestinationAtFlowClose: UInt64 = 0
+    private var stillUnknownAtFlowClose: UInt64 = 0
     private var lastDestinationLogNanos: UInt64 = 0
     private let destinationLogIntervalNanos: UInt64 = 60 * 1_000_000_000
+    /// Identifiers of the flows this provider actually asked to hear about.
+    ///
+    /// The framework delivers reports for flows that were never flagged, so
+    /// without this the late-destination tally counts ordinary traffic that had
+    /// an address from its first packet and reads as though addresses arrive
+    /// late constantly. Only a flow whose verdict carried `shouldReport` may be
+    /// counted here.
+    private var flaggedFlows: Set<UUID> = []
+    /// Insertion order, so a flow whose close report never arrives is evicted
+    /// oldest first instead of growing this set without bound.
+    private var flaggedFlowOrder: [UUID] = []
+    private var flaggedFlowEvictions: UInt64 = 0
+    /// Cumulative count of flows flagged, taken under the blocking lock, so it
+    /// is exact. The tallies below can only ever be a subset of it.
+    private var flaggedFlowsTotal: UInt64 = 0
+    private static let maxFlaggedFlows = 4096
 
     override init() {
         self.observationSignalLock = .allocate(capacity: 1)
@@ -267,9 +284,9 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         switch matcher.decision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode) {
         case .allow:
-            return reportingLateDestination(.allow(), destinationKnown: destinationKnown)
+            return reportingLateDestination(.allow(), for: flow, destinationKnown: destinationKnown)
         case .deny:
-            return reportingLateDestination(.drop(), destinationKnown: destinationKnown)
+            return reportingLateDestination(.drop(), for: flow, destinationKnown: destinationKnown)
         case .ask:
             promptAndResume(flow: flow, conn: conn)
             return .pause()
@@ -294,10 +311,43 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// the flow's first bytes until this extension answered again. That is
     /// waiting for an address, so it is deliberately not used.
     private func reportingLateDestination(_ verdict: NEFilterNewFlowVerdict,
+                                          for flow: NEFilterFlow,
                                           destinationKnown: Bool) -> NEFilterNewFlowVerdict {
         guard !destinationKnown else { return verdict }
         verdict.shouldReport = true
+        rememberFlaggedFlow(flow.identifier)
         return verdict
+    }
+
+    /// Records a flagged flow, evicting the oldest when full. Eviction is
+    /// counted rather than silent, because a dropped identifier means a later
+    /// arrival for that flow can no longer be recognised and the tally
+    /// undercounts.
+    private func rememberFlaggedFlow(_ id: UUID) {
+        os_unfair_lock_lock(destinationAccountingLock)
+        defer { os_unfair_lock_unlock(destinationAccountingLock) }
+        guard flaggedFlows.insert(id).inserted else { return }
+        flaggedFlowsTotal &+= 1
+        flaggedFlowOrder.append(id)
+        guard flaggedFlowOrder.count > Self.maxFlaggedFlows else { return }
+        let oldest = flaggedFlowOrder.removeFirst()
+        flaggedFlows.remove(oldest)
+        flaggedFlowEvictions &+= 1
+    }
+
+    /// True when the report belongs to a flow this provider flagged. A close
+    /// report also retires the identifier, since no further report can follow.
+    private func claimFlaggedFlow(_ id: UUID, isClose: Bool) -> Bool {
+        os_unfair_lock_lock(destinationAccountingLock)
+        defer { os_unfair_lock_unlock(destinationAccountingLock) }
+        guard flaggedFlows.contains(id) else { return false }
+        if isClose {
+            flaggedFlows.remove(id)
+            if let index = flaggedFlowOrder.firstIndex(of: id) {
+                flaggedFlowOrder.remove(at: index)
+            }
+        }
+        return true
     }
 
     /// Observation only. The verdict for this flow was returned long ago and is
@@ -305,10 +355,15 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// delivers it after the verdict it describes has been applied.
     override func handle(_ report: NEFilterReport) {
         guard let socketFlow = report.flow as? NEFilterSocketFlow else { return }
+        // Statistics reports say nothing about whether an address appeared, and
+        // counting them was how this tally came to describe ordinary traffic.
+        let event = report.event
+        guard event == .flowClosed || event == .newFlow || event == .dataDecision else { return }
+        let isClose = event == .flowClosed
+        guard claimFlaggedFlow(socketFlow.identifier, isClose: isClose) else { return }
         let destination = FlowDestination.resolve(endpointHost: remoteAddress(of: socketFlow).host,
                                                   remoteHostname: socketFlow.remoteHostname)
-        guard destination.isKnown else { return }
-        noteLateDestination(event: report.event)
+        noteLateDestination(arrived: destination.isKnown, isClose: isClose)
     }
 
     /// An IP or CIDR rule that cannot be evaluated is a limitation to state,
@@ -341,27 +396,35 @@ final class FilterDataProvider: NEFilterDataProvider {
         let now = DispatchTime.now().uptimeNanoseconds
         let due = now &- lastDestinationLogNanos >= destinationLogIntervalNanos
         if due { lastDestinationLogNanos = now }
-        let unknown = unknownDestinationFlows
+        let flagged = flaggedFlowsTotal
         let lateAtVerdict = lateDestinationAtVerdictReport
         let lateAtClose = lateDestinationAtFlowClose
+        let stillUnknown = stillUnknownAtFlowClose
+        let evicted = flaggedFlowEvictions
         os_unfair_lock_unlock(destinationAccountingLock)
         guard due else { return }
+        // Eviction means an identifier was forgotten before its flow closed, so
+        // the tallies below undercount by at most that much. Say so rather than
+        // presenting a short count as complete.
+        let evictionNote = evicted == 0 ? "." : ", and \(evicted) were forgotten before closing, so the counts above are lower bounds."
         PSLog.error(
             PSLog.netext,
-            "\(unknown) flows had no destination at verdict time: IP and CIDR rules cannot be evaluated for them, "
+            "\(flagged) flows had no destination at verdict time: IP and CIDR rules cannot be evaluated for them, "
             + "only process, bundle, port, and direction rules apply. "
             + "Latest such flow: socket family \(flow.socketFamily), type \(flow.socketType), "
             + "protocol \(flow.socketProtocol), remote port \(port). "
-            + "A destination arrived later for \(lateAtVerdict) of them at verdict report and \(lateAtClose) at flow close."
+            + "Of those same flows, an address arrived later for \(lateAtVerdict) before close and \(lateAtClose) at close, "
+            + "while \(stillUnknown) closed with no address at all\(evictionNote)"
         )
     }
 
-    private func noteLateDestination(event: NEFilterReport.Event) {
+    private func noteLateDestination(arrived: Bool, isClose: Bool) {
         guard os_unfair_lock_trylock(destinationAccountingLock) else { return }
-        if event == .flowClosed {
-            lateDestinationAtFlowClose &+= 1
-        } else {
-            lateDestinationAtVerdictReport &+= 1
+        switch (arrived, isClose) {
+        case (true, true): lateDestinationAtFlowClose &+= 1
+        case (true, false): lateDestinationAtVerdictReport &+= 1
+        case (false, true): stillUnknownAtFlowClose &+= 1
+        case (false, false): break
         }
         os_unfair_lock_unlock(destinationAccountingLock)
     }
@@ -433,7 +496,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             lock.lock(); defer { lock.unlock() }
             guard let self, !settled else { return }
             settled = true
-            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, destinationKnown: destinationKnown))
+            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, for: flow, destinationKnown: destinationKnown))
         }
 
         let asked = IPCConnection.shared.promptUser(flowJSON: data) { allow, _ in

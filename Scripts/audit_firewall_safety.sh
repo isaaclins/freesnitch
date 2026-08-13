@@ -679,6 +679,16 @@ if ! text_within_block "$DNS_PROXY" 'let settleOnce' 'if answered'; then
   fail "the DNS proxy ask path can reply to the same query twice"
 fi
 
+# A report may only be counted for a flow this provider actually flagged.
+# Counting every report made the late-destination tally describe ordinary
+# traffic and overstate by more than two orders of magnitude.
+if ! text_within_block "$FILTER" 'override func handle\(_ report: NEFilterReport\)' 'claimFlaggedFlow'; then
+  fail "the network extension counts filter reports without checking that it flagged the flow"
+fi
+if ! text_within_block "$FILTER" 'private func reportingLateDestination' 'rememberFlaggedFlow'; then
+  fail "the network extension sets shouldReport without recording the flow it expects a report for"
+fi
+
 # The evaluation order is derived from the snapshot. If a future edit assigns
 # the snapshot directly, the two can disagree and a flow is judged by one
 # snapshot's rules in another snapshot's order. Only the setter may assign it.
