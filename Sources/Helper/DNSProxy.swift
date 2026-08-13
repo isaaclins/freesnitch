@@ -147,14 +147,23 @@ final class DNSProxy: @unchecked Sendable {
                 }
                 self.forwardDoH(payload: payload, domain: domain, reply: reply)
             }
+            let isAnswered: () -> Bool = {
+                answerLock.lock(); defer { answerLock.unlock() }
+                return answered
+            }
             guard let onAsk else {
                 // No ask handler is wired up, so there is nobody to ask. Fail
                 // open rather than leave the resolver hanging.
                 settleOnce(true)
                 return
             }
-            askQueue.asyncAfter(deadline: .now() + askBackstopTimeout) { settleOnce(true) }
             onAsk(domain, settleOnce)
+            // Only a query that is still waiting needs a backstop. Asks that
+            // the handler settled on the spot park no timer, so a flood of
+            // them cannot pile up 65 seconds of retained replies.
+            if !isAnswered() {
+                askQueue.asyncAfter(deadline: .now() + askBackstopTimeout) { settleOnce(true) }
+            }
             return
         }
 
