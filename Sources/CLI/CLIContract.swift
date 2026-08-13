@@ -124,9 +124,6 @@ enum CLIJSON {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let value = try decoder.singleValueContainer()
-            if let seconds = try? value.decode(Double.self) {
-                return Date(timeIntervalSince1970: seconds)
-            }
             let string = try value.decode(String.self)
             let fractional = ISO8601DateFormatter()
             fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
