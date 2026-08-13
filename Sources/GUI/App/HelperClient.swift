@@ -154,8 +154,10 @@ final class HelperClient: NSObject, ObservableObject {
 
     /// Re-registers the daemon when SMAppService can manage it. A successful
     /// unregister/register cycle replaces the running process without touching
-    /// the pf anchor. If macOS refuses the cycle, the banner gives the user the
-    /// privileged launchctl recovery command instead of pretending it worked.
+    /// the pf anchor. The matching reconnect runs bootstrap again, which
+    /// reapplies the persisted rules and opt-in enforcement. If macOS refuses
+    /// the cycle, the banner gives the user the privileged launchctl recovery
+    /// command instead of pretending it worked.
     func repairHelper() {
         repairHelperInternal()
     }
