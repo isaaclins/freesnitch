@@ -84,6 +84,60 @@ cidr_mask_line="$(printf '%s\n' "$cidr_body" | grep -nF 'UInt32.max <<' | head -
 if ! printf '%s\n' "$cidr_body" | grep -Fq 'parts[1].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 })'; then
   fail "cidrContains accepts a non-numeric or signed prefix instead of digits only"
 fi
+# An IPv6 CIDR was accepted at ingest and could never match, so an enabled rule
+# did nothing. The IPv6 path must exist, must bound its prefix to 0...128 before
+# any mask is built, and must stay a separate address space from IPv4.
+swift_function_body() {
+  awk -v start="$2" '
+    index($0, start) > 0 && !seen {
+      seen = 1
+      active = 1
+      depth = 0
+    }
+    active {
+      print
+      opens = gsub(/\{/, "{")
+      closes = gsub(/\}/, "}")
+      depth += opens - closes
+      if (depth == 0) exit
+    }
+  ' "$1"
+}
+
+printf '%s\n' "$cidr_body" | grep -Fq 'if net.contains(":") { return ipv6CidrContains(' \
+  || fail "cidrContains no longer routes an IPv6 network to the IPv6 matcher, so IPv6 CIDR rules are inert again"
+ipv6_body="$(swift_function_body "$RULE_MATCHER" 'func ipv6CidrContains(')"
+[[ -n "$ipv6_body" ]] || fail "the shared matcher has no ipv6CidrContains function to audit"
+ipv6_guard_line="$(printf '%s\n' "$ipv6_body" | grep -nF '(0...128).contains(bits)' | head -1 | cut -d: -f1 || true)"
+ipv6_mask_line="$(printf '%s\n' "$ipv6_body" | grep -nF 'UInt8(0xFF) <<' | head -1 | cut -d: -f1 || true)"
+[[ -n "$ipv6_guard_line" ]] || fail "ipv6CidrContains does not bound the CIDR prefix to 0...128, so an over-large prefix can match every address"
+[[ -n "$ipv6_mask_line" ]] || fail "ipv6CidrContains no longer builds the expected IPv6 mask"
+(( ipv6_guard_line < ipv6_mask_line )) \
+  || fail "ipv6CidrContains builds the mask before bounding the prefix"
+printf '%s\n' "$ipv6_body" | grep -Fq 'ipv6Bytes(network), let addr = ipv6Bytes(ip)' \
+  || fail "ipv6CidrContains no longer parses both sides as IPv6, so an IPv4 address could reach the IPv6 comparison"
+require_text "$RULE_MATCHER" "inet_pton(AF_INET6" \
+  "the matcher no longer parses IPv6 with inet_pton, so it can disagree with what ingest validated"
+
+# Every new socket flow used to filter and sort the whole rule set before the
+# verdict. That ordering belongs to the snapshot, and the verdict path must
+# stay a scan over the already ordered array.
+require_text "$RULE_MATCHER" "public struct PreparedRuleSet" \
+  "the precomputed rule order is missing, so every flow pays a filter and a sort again"
+verdict_body="$(swift_function_body "$RULE_MATCHER" 'func decision(for c: Connection, prepared:')"
+[[ -n "$verdict_body" ]] || fail "the shared matcher has no prepared-rule verdict path to audit"
+for forbidden in '.sorted' '.filter' '.map('; do
+  if printf '%s\n' "$verdict_body" | grep -Fq -- "$forbidden"; then
+    fail "the per-flow verdict path uses $forbidden, which reorders or allocates on every flow"
+  fi
+done
+printf '%s\n' "$verdict_body" | grep -Fq 'for r in prepared.ordered' \
+  || fail "the per-flow verdict path no longer scans the precomputed rule order"
+prepared_body="$(swift_function_body "$RULE_MATCHER" 'public init(rules: [Rule])')"
+[[ -n "$prepared_body" ]] || fail "PreparedRuleSet has no initializer to audit"
+printf '%s\n' "$prepared_body" | grep -Fq 'lhs.offset < rhs.offset' \
+  || fail "PreparedRuleSet no longer breaks equal priorities by snapshot order, so which rule wins becomes undefined"
+
 require_text "$RULE_MATCHER" "public enum RuleAddressValidator" \
   "the shared rule address validator is missing"
 require_text "$RULE_MATCHER" "PFHostValidator.kind(for: value)" \
