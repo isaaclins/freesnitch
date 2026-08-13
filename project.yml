@@ -52,8 +52,8 @@ targets:
       properties:
         CFBundleName: FreeSnitch
         CFBundleDisplayName: FreeSnitch
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "8"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "25"
         LSMinimumSystemVersion: "13.0"
         LSUIElement: true
         NSHumanReadableCopyright: "© 2026 FreeSnitch contributors. MIT License."
@@ -166,8 +166,8 @@ targets:
       properties:
         CFBundleName: FreeSnitchNetExt
         CFBundleDisplayName: FreeSnitch Network Extension
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "8"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "25"
         CFBundlePackageType: SYSX
         LSMinimumSystemVersion: "13.0"
         NSSystemExtensionUsageDescription: "FreeSnitch filters per-app network connections."
