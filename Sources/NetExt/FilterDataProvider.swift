@@ -124,7 +124,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
         guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
               let code else { return false }
-        let requirementText = [AppConstants.bundleIdGUI, AppConstants.bundleIdHelper, AppConstants.bundleIdNetExt]
+        let requirementText = [AppConstants.bundleIdGUI, AppConstants.bundleIdCLI, AppConstants.bundleIdHelper, AppConstants.bundleIdNetExt]
             .map { "identifier \"\($0)\"" }
             .joined(separator: " or ")
         var requirement: SecRequirement?

@@ -40,22 +40,30 @@ final class AppState: ObservableObject {
 
     /// Menu-bar speed readout. Off by default: the status item is a plain
     /// template glyph unless the user asks for numbers.
-    @Published var showSpeedsInMenuBar: Bool = UserDefaults.standard.bool(forKey: Prefs.showSpeeds) {
-        didSet { UserDefaults.standard.set(showSpeedsInMenuBar, forKey: Prefs.showSpeeds) }
+    @Published var showSpeedsInMenuBar: Bool = AppPreferences.bool(forKey: AppPreferences.Key.showSpeeds) {
+        didSet {
+            guard !applyingExternalPreferences else { return }
+            AppPreferences.set(showSpeedsInMenuBar, forKey: AppPreferences.Key.showSpeeds)
+        }
     }
-    @Published var showAlertsOnAllSpaces: Bool = UserDefaults.standard.object(forKey: Prefs.alertsAllSpaces) as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showAlertsOnAllSpaces, forKey: Prefs.alertsAllSpaces) }
+    @Published var showAlertsOnAllSpaces: Bool = AppPreferences.defaults.object(forKey: AppPreferences.Key.alertsAllSpaces) as? Bool ?? true {
+        didSet {
+            guard !applyingExternalPreferences else { return }
+            AppPreferences.set(showAlertsOnAllSpaces, forKey: AppPreferences.Key.alertsAllSpaces)
+        }
     }
 
     /// pf anchor + DNS proxy. Off until the user asks for it.
-    @Published var enforcementEnabled: Bool = UserDefaults.standard.bool(forKey: Prefs.enforcement) {
+    @Published var enforcementEnabled: Bool = AppPreferences.bool(forKey: AppPreferences.Key.enforcement) {
         didSet {
-            guard !suppressEnforcementSideEffect else { return }
-            UserDefaults.standard.set(enforcementEnabled, forKey: Prefs.enforcement)
+            guard !suppressEnforcementSideEffect, !applyingExternalPreferences else { return }
+            AppPreferences.set(enforcementEnabled, forKey: AppPreferences.Key.enforcement)
             helper.setEnforcementEnabled(enforcementEnabled)
         }
     }
     private var suppressEnforcementSideEffect = false
+    private var applyingExternalPreferences = false
+    private var preferencesObserver: NSObjectProtocol?
 
     /// Puts the toggle back where reality is after the helper refuses or rolls
     /// back an enforcement change, without bouncing another request off it.
@@ -63,13 +71,13 @@ final class AppState: ObservableObject {
         suppressEnforcementSideEffect = true
         enforcementEnabled = value
         suppressEnforcementSideEffect = false
-        UserDefaults.standard.set(value, forKey: Prefs.enforcement)
+        AppPreferences.set(value, forKey: AppPreferences.Key.enforcement)
     }
 
     enum Prefs {
-        static let enforcement = "PSEnforcementEnabled"
-        static let showSpeeds = "PSShowSpeedsInMenuBar"
-        static let alertsAllSpaces = "PSShowAlertsOnAllSpaces"
+        static let enforcement = AppPreferences.Key.enforcement
+        static let showSpeeds = AppPreferences.Key.showSpeeds
+        static let alertsAllSpaces = AppPreferences.Key.alertsAllSpaces
     }
 
     let helper = HelperClient()
@@ -119,12 +127,33 @@ final class AppState: ObservableObject {
 
     init() {
         helper.state = self
+        preferencesObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(AppPreferences.changeNotification),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.adoptExternalPreferences() }
+        }
         IPGeoCache.shared.onReady { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.updateConnections(self.connections)
             }
         }
+    }
+
+    private func adoptExternalPreferences() {
+        applyingExternalPreferences = true
+        showSpeedsInMenuBar = AppPreferences.bool(forKey: AppPreferences.Key.showSpeeds)
+        showAlertsOnAllSpaces = AppPreferences.defaults.object(forKey: AppPreferences.Key.alertsAllSpaces) as? Bool ?? true
+        enforcementEnabled = AppPreferences.bool(forKey: AppPreferences.Key.enforcement)
+        if let rawMode = AppPreferences.string(forKey: AppPreferences.Key.mode),
+           let externalMode = AppMode(rawValue: rawMode),
+           mode != externalMode {
+            mode = externalMode
+            syncSharedRules()
+        }
+        applyingExternalPreferences = false
     }
 
     /// Runs once the helper is reachable. Monitoring only: enabling pf and the
@@ -169,6 +198,7 @@ final class AppState: ObservableObject {
 
     func setMode(_ m: AppMode) {
         mode = m
+        AppPreferences.set(m.rawValue, forKey: AppPreferences.Key.mode)
         helper.setMode(m)
         syncSharedRules()
     }
@@ -179,6 +209,7 @@ final class AppState: ObservableObject {
     func adoptPersistedMode(_ m: AppMode) {
         guard mode != m else { return }
         mode = m
+        AppPreferences.set(m.rawValue, forKey: AppPreferences.Key.mode, notify: false)
         syncSharedRules()
     }
 

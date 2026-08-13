@@ -51,6 +51,8 @@ jobs:
           test -d "$APP"
           test -f "$APP/Contents/MacOS/FreeSnitch"
           test -f "$APP/Contents/MacOS/FreeSnitchHelper"
+          test -f "$APP/Contents/Helpers/freesnitch"
+          file "$APP/Contents/Helpers/freesnitch" | grep -Fq 'Mach-O'
           if grep -R -E -q \
             'com\.apple\.developer\.networking\.networkextension|com\.apple\.developer\.system-extension\.install' \
             "$APP"; then

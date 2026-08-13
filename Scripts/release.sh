@@ -292,6 +292,7 @@ APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/FreeSnitch.app"
 NETEXT_BUNDLE="$APP_BUNDLE/Contents/Library/SystemExtensions/$NETEXT_BUNDLE_NAME"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/FreeSnitch"
 HELPER_BINARY="$APP_BUNDLE/Contents/MacOS/FreeSnitchHelper"
+CLI_BINARY="$APP_BUNDLE/Contents/Helpers/freesnitch"
 NETEXT_BINARY="$NETEXT_BUNDLE/Contents/MacOS/$NETEXT_BUNDLE_ID"
 APPCAST_ARCHIVES="$ROOT/docs/sparkle-archives"
 ZIP_NAME="FreeSnitch-${VERSION}.zip"
@@ -387,6 +388,7 @@ verify_app_bundle() {
   assert_file "$APP_BUNDLE"
   assert_file "$APP_BINARY"
   assert_file "$HELPER_BINARY"
+  assert_file "$CLI_BINARY"
   assert_file "$APP_BUNDLE/Contents/Library/LaunchDaemons/$HELPER_LABEL.plist"
   assert_file "$NETEXT_BUNDLE"
   assert_file "$NETEXT_BINARY"
@@ -413,6 +415,7 @@ verify_app_bundle() {
 
   assert_universal "$APP_BINARY"
   assert_universal "$HELPER_BINARY"
+  assert_universal "$CLI_BINARY"
   assert_universal "$NETEXT_BINARY"
 
   assert_profile_name "$APP_BUNDLE/Contents/embedded.provisionprofile" "$APP_PROFILE_NAME"
@@ -445,7 +448,10 @@ verify_app_bundle() {
 
   assert_signed_by_team "$APP_BUNDLE"
   assert_signed_by_team "$HELPER_BINARY"
+  assert_signed_by_team "$CLI_BINARY"
   assert_signed_by_team "$NETEXT_BUNDLE"
+  codesign -dv --verbose=4 "$CLI_BINARY" 2>&1 | grep -Fq "Identifier=io.isaaclins.freesnitch.cli" || \
+    die "$CLI_BINARY has the wrong signing identifier"
   assert_framework_code_signatures
   codesign --verify --strict --verbose=2 "$HELPER_BINARY" >/dev/null || die "helper signature verification failed"
   codesign --verify --strict --verbose=2 "$NETEXT_BUNDLE" >/dev/null || die "system extension signature verification failed"
@@ -494,6 +500,8 @@ sign_nested_code() {
   printf 'Re-signing the remaining nested code inside-out with Developer ID...\n'
   codesign --force --options runtime --timestamp --entitlements "$helper_entitlements" \
     --sign "$SIGN_ID" "$HELPER_BINARY"
+  codesign --force --options runtime --timestamp --identifier "$APP_BUNDLE_ID.cli" \
+    --sign "$SIGN_ID" "$CLI_BINARY"
   codesign --force --options runtime --timestamp --entitlements "$netext_entitlements" \
     --sign "$SIGN_ID" "$NETEXT_BUNDLE"
   codesign --force --options runtime --timestamp --entitlements "$app_entitlements" \

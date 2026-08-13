@@ -11,6 +11,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let clientLock = NSLock()
     private var pendingAsks: [String: (Bool) -> Void] = [:]
     private let askLock = NSLock()
+    private var latestProcessUsage: [ProcessUsage] = []
+    private var latestTrafficSample: TrafficSample?
+    private var lastPFError: String?
+    private let diagnosticsLock = NSLock()
     private var mode: AppMode = .alert
 
     init(listener: NSXPCListener) throws {
@@ -73,14 +77,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
         }
         netmon.onSample = { [weak self] sample in
-            self?.broadcast { c in
+            guard let self else { return }
+            self.diagnosticsLock.lock()
+            self.latestTrafficSample = sample
+            self.diagnosticsLock.unlock()
+            self.broadcast { c in
                 if let data = try? JSONEncoder().encode(sample) {
                     c.notifyTraffic(sampleJSON: data)
                 }
             }
         }
         netmon.onProcessUsage = { [weak self] usages in
-            self?.broadcast { c in
+            guard let self else { return }
+            self.diagnosticsLock.lock()
+            self.latestProcessUsage = usages
+            self.diagnosticsLock.unlock()
+            self.broadcast { c in
                 if let data = try? JSONEncoder().encode(usages) {
                     c.notifyProcessUsage(usageJSON: data)
                 }
@@ -121,10 +133,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func getVersion(reply: @escaping (String) -> Void) { reply(AppConstants.version) }
 
     func getStatus(reply: @escaping (Data) -> Void) {
+        diagnosticsLock.lock()
+        let pfctlError = lastPFError
+        diagnosticsLock.unlock()
         let s = HelperStatus(
             version: AppConstants.version,
             running: netmon.isRunning,
             pfctlActive: pf.isLoaded,
+            pfctlError: pfctlError,
             dnsProxyActive: dns.running,
             dnsProxyPort: Int(dns.port),
             activeRules: store.allRules().count,
@@ -147,7 +163,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             let rules = try JSONDecoder().decode([Rule].self, from: rulesJSON)
             for r in rules { try store.upsertRule(r) }
             dns.rules = store.allRules()
-            try pf.applyRules(dns.rules)
+            do {
+                try applyRulesIfEnforcing()
+                clearPFError()
+            } catch {
+                recordPFError(error)
+                throw error
+            }
             reply(true, nil)
         } catch {
             reply(false, "\(error)")
@@ -162,6 +184,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             // Saved but not enforced is a real difference; say so instead of
             // reporting plain success.
             do { try applyRulesIfEnforcing() } catch {
+                recordPFError(error)
                 reply(false, "rule saved but the firewall refused it: \(error)")
                 return
             }
@@ -177,6 +200,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             try store.deleteRule(id: id)
             dns.rules = store.allRules()
             do { try applyRulesIfEnforcing() } catch {
+                recordPFError(error)
                 reply(false, "rule removed but the firewall refused the update: \(error)")
                 return
             }
@@ -204,13 +228,27 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// otherwise is both pointless and a source of phantom errors.
     private func applyRulesIfEnforcing() throws {
         guard pf.isLoaded else { return }
-        try pf.applyRules(dns.rules)
+        do {
+            try pf.applyRules(dns.rules)
+            clearPFError()
+        } catch {
+            recordPFError(error)
+            throw error
+        }
     }
 
     func setEnforcementEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
+        let requestedState = enabled ? "on" : "off"
+        PSLog.error(PSLog.helper, "AUDIT: enforcement \(requestedState) requested")
         if enabled {
             do {
-                try pf.install()
+                do {
+                    try pf.install()
+                    clearPFError()
+                } catch {
+                    recordPFError(error)
+                    throw error
+                }
                 try dns.start(port: AppConstants.dnsProxyPort)
                 reply(true, nil)
             } catch {
@@ -220,7 +258,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
         } else {
             dns.stop()
-            do { try pf.uninstall(); reply(true, nil) } catch { reply(false, "\(error)") }
+            do {
+                try pf.uninstall()
+                clearPFError()
+                reply(true, nil)
+            } catch {
+                recordPFError(error)
+                reply(false, "\(error)")
+            }
         }
     }
 
@@ -234,8 +279,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func currentTrafficSample(reply: @escaping (Data) -> Void) {
-        let sample = TrafficSample(timestamp: Date(), bytesIn: 0, bytesOut: 0)
+        diagnosticsLock.lock()
+        let sample = latestTrafficSample ?? TrafficSample(timestamp: Date(), bytesIn: 0, bytesOut: 0)
+        diagnosticsLock.unlock()
         reply((try? JSONEncoder().encode(sample)) ?? Data())
+    }
+
+    func currentProcessUsage(reply: @escaping (Data) -> Void) {
+        diagnosticsLock.lock()
+        let usages = latestProcessUsage
+        diagnosticsLock.unlock()
+        reply((try? JSONEncoder().encode(usages)) ?? Data())
     }
 
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
@@ -247,6 +301,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         updated.enabled = enabled
         do { try store.updateBlocklist(updated); reply(true, nil) } catch { reply(false, "\(error)") }
         Task { await self.blocklists.refresh() }
+    }
+
+    func listBlocklists(reply: @escaping (Data) -> Void) {
+        reply((try? JSONEncoder().encode(store.allBlocklists())) ?? Data())
     }
 
     func refreshBlocklists(reply: @escaping (Bool, String?) -> Void) {
@@ -263,15 +321,39 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func installPF(reply: @escaping (Bool, String?) -> Void) {
-        do { try pf.install(); reply(true, nil) } catch { reply(false, "\(error)") }
+        PSLog.error(PSLog.helper, "AUDIT: pf install requested")
+        do {
+            try pf.install()
+            clearPFError()
+            reply(true, nil)
+        } catch {
+            recordPFError(error)
+            reply(false, "\(error)")
+        }
     }
 
     func uninstallPF(reply: @escaping (Bool, String?) -> Void) {
-        do { try pf.uninstall(); reply(true, nil) } catch { reply(false, "\(error)") }
+        PSLog.error(PSLog.helper, "AUDIT: pf uninstall requested")
+        do {
+            try pf.uninstall()
+            clearPFError()
+            reply(true, nil)
+        } catch {
+            recordPFError(error)
+            reply(false, "\(error)")
+        }
     }
 
     func flushAll(reply: @escaping (Bool, String?) -> Void) {
-        do { try pf.uninstall(); reply(true, nil) } catch { reply(false, "\(error)") }
+        PSLog.error(PSLog.helper, "AUDIT: firewall flush requested")
+        do {
+            try pf.uninstall()
+            clearPFError()
+            reply(true, nil)
+        } catch {
+            recordPFError(error)
+            reply(false, "\(error)")
+        }
     }
 
     func recentBlocked(limit: Int, reply: @escaping (Data) -> Void) {
@@ -282,6 +364,19 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func recentDenied(limit: Int, reply: @escaping (Data) -> Void) {
         let conns = store.recentConnections(limit: limit, status: .denied)
         reply((try? JSONEncoder().encode(conns)) ?? Data())
+    }
+
+    private func recordPFError(_ error: Error) {
+        diagnosticsLock.lock()
+        lastPFError = error.localizedDescription
+        diagnosticsLock.unlock()
+        PSLog.error(PSLog.helper, "PF diagnostic: \(error.localizedDescription)")
+    }
+
+    private func clearPFError() {
+        diagnosticsLock.lock()
+        lastPFError = nil
+        diagnosticsLock.unlock()
     }
 }
 
@@ -300,7 +395,9 @@ extension HelperService: NSXPCListenerDelegate {
         newConnection.interruptionHandler = { [weak self, weak newConnection] in
             if let c = newConnection { self?.unregisterClient(c) }
         }
-        registerClient(newConnection)
+        if !XPCPeerValidator.isCLI(newConnection) {
+            registerClient(newConnection)
+        }
         newConnection.resume()
         return true
     }
