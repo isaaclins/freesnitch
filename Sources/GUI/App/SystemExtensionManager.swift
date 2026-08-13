@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SystemExtensions
 import NetworkExtension
 import os.log
@@ -69,6 +70,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
         OSSystemExtensionManager.shared.submitRequest(request)
+    }
+
+    /// Opens the System Settings location where a staged system extension is
+    /// approved. The query selects Network Extensions on current macOS; the
+    /// parent pane remains the fallback for releases that do not understand it.
+    func openNetworkExtensionsSettings() {
+        let networkExtensionsURL = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension?NetworkExtensions")
+        let loginItemsURL = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+        if let networkExtensionsURL, NSWorkspace.shared.open(networkExtensionsURL) { return }
+        if let loginItemsURL { NSWorkspace.shared.open(loginItemsURL) }
     }
 
     // MARK: - Content filter configuration
@@ -185,7 +196,7 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
         Task { @MainActor in
             self.status = .needsApproval
             self.state?.appendLog(level: "info",
-                                  message: "Approve FreeSnitch in System Settings > Privacy & Security, then it will start filtering.")
+                                  message: "Approve FreeSnitch in System Settings > General > Login Items & Extensions > Network Extensions, then it will start filtering.")
         }
     }
 

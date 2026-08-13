@@ -8,7 +8,7 @@ struct FreeSnitchApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView()
+            SettingsView(systemExtension: delegate.systemExtension)
                 .environmentObject(delegate.state)
         }
         .commands {
@@ -30,17 +30,22 @@ struct FreeSnitchApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let state = AppState()
+    let state: AppState
+    let systemExtension: SystemExtensionManager
     var menubar: MenubarController!
     var windowManager: WindowManager!
-    var systemExtension: SystemExtensionManager!
 
-    nonisolated override init() { super.init() }
+    override init() {
+        let state = AppState()
+        self.state = state
+        self.systemExtension = SystemExtensionManager(state: state)
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        windowManager = WindowManager(state: state)
-        menubar = MenubarController(state: state, windows: windowManager)
+        windowManager = WindowManager(state: state, systemExtension: systemExtension)
+        menubar = MenubarController(state: state, systemExtension: systemExtension, windows: windowManager)
         menubar.install()
         state.helper.registerDaemon()
         // bootstrap() (rule load + monitoring) is driven by HelperClient once
@@ -53,7 +58,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Per-process firewall (Network System Extension). `activate()` is a
         // no-op unless this build embeds one. The monitor-only build does
         // not, so no extension approval prompt appears.
-        systemExtension = SystemExtensionManager(state: state)
         if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
             systemExtension.activate()
         }

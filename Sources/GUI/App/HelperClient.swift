@@ -268,12 +268,80 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     func addRule(_ rule: Rule) {
-        guard let data = try? JSONEncoder().encode(rule) else { return }
-        remote?.addRule(ruleJSON: data) { _, _ in }
+        addRule(rule) { _, _ in }
+    }
+
+    func addRule(_ rule: Rule, completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let data = try? JSONEncoder().encode(rule) else {
+            completion(false, "Could not encode the rule JSON object.")
+            return
+        }
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.addRule(ruleJSON: data) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
+    func reloadRules(_ rules: [Rule], completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let data = try? JSONEncoder().encode(rules) else {
+            completion(false, "Could not encode the rule JSON array.")
+            return
+        }
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.reloadRules(rulesJSON: data) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
     }
 
     func removeRule(id: UUID) {
-        remote?.removeRule(idString: id.uuidString) { _, _ in }
+        removeRule(id: id) { _, _ in }
+    }
+
+    func removeRule(id: UUID, completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.removeRule(idString: id.uuidString) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
+    /// Replaces the helper's stored rules using the existing CRUD protocol.
+    /// `reloadRules` upserts its JSON array, so remove the current IDs first
+    /// rather than presenting a merge as an import replacement.
+    func replaceRules(_ rules: [Rule],
+                      existing: [Rule],
+                      completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        let ids = existing.map(\.id)
+
+        func removeNext(_ index: Int) {
+            guard index < ids.count else {
+                reloadRules(rules, completion: completion)
+                return
+            }
+            proxy.removeRule(idString: ids[index].uuidString) { ok, message in
+                Task { @MainActor in
+                    guard ok else {
+                        completion(false, message ?? "The helper rejected a rule removal.")
+                        return
+                    }
+                    removeNext(index + 1)
+                }
+            }
+        }
+
+        removeNext(0)
     }
 
     func listRules(profile: String = "", completion: @MainActor @escaping ([Rule]) -> Void) {
@@ -289,6 +357,18 @@ final class HelperClient: NSObject, ObservableObject {
 
     func refreshBlocklists() {
         remote?.refreshBlocklists { _, _ in }
+    }
+
+    func setBlocklistEnabled(id: UUID,
+                             enabled: Bool,
+                             completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.enableBlocklist(idString: id.uuidString, enabled: enabled) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
     }
 
     func setEnforcementEnabled(_ enabled: Bool) {

@@ -3,6 +3,7 @@ import ServiceManagement
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    let systemExtension: SystemExtensionManager
     @State private var doh = AppConstants.defaultDoHUpstream
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -20,7 +21,7 @@ struct SettingsView: View {
 
     private var generalTab: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HelperBanner()
+            HelperBanner(systemExtension: systemExtension)
             Form {
                 Section("Privileged helper") {
                     HStack {
