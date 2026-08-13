@@ -13,6 +13,11 @@ PROJECT_SPEC="$ROOT/project.yml"
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
+BOOT_POLICY_CLIENT="$ROOT/Sources/NetExt/BootPolicyClient.swift"
+LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
+MODELS="$ROOT/Sources/Shared/Models.swift"
+BOOT_POLICY_SERVICE="BHAF4L4726.io.isaaclins.freesnitch.boot"
+OLD_BOOT_POLICY_SERVICE="${BOOT_POLICY_SERVICE#BHAF4L4726.}"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -36,6 +41,24 @@ require_text() {
 [[ -f "$HELPER" ]] || fail "missing $HELPER"
 [[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
 [[ -f "$SYSTEM_EXTENSION_MANAGER" ]] || fail "missing $SYSTEM_EXTENSION_MANAGER"
+[[ -f "$BOOT_POLICY_CLIENT" ]] || fail "missing $BOOT_POLICY_CLIENT"
+[[ -f "$LAUNCHD_PLIST" ]] || fail "missing $LAUNCHD_PLIST"
+[[ -f "$MODELS" ]] || fail "missing $MODELS"
+
+launchd_boot_service_count="$(grep -Fo -- "$BOOT_POLICY_SERVICE" "$LAUNCHD_PLIST" | wc -l | tr -d ' ')"
+[[ "$launchd_boot_service_count" == "1" ]] \
+  || fail "the app-group-prefixed boot-policy service must appear exactly once in launchd plist"
+model_boot_service_count="$(grep -Fo -- "$BOOT_POLICY_SERVICE" "$MODELS" | wc -l | tr -d ' ')"
+[[ "$model_boot_service_count" == "1" ]] \
+  || fail "the shared boot-policy service constant is missing or duplicated"
+require_text "$BOOT_POLICY_CLIENT" \
+  "machServiceName: AppConstants.bootPolicyMachServiceName" \
+  "the boot-policy client does not use the canonical service-name constant"
+if grep -Fq -- "<key>${OLD_BOOT_POLICY_SERVICE}</key>" "$LAUNCHD_PLIST" \
+  || grep -Fq -- "\"${OLD_BOOT_POLICY_SERVICE}\"" \
+    "$MODELS" "$ROOT/Sources/Helper/main.swift" "$BOOT_POLICY_CLIENT"; then
+  fail "the old global boot-policy service name is still present"
+fi
 
 # A missing GUI must never leave a socket flow paused forever or turn a GUI
 # outage into a network outage. Keep this check tied to the actual branch that
