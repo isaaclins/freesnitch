@@ -46,49 +46,6 @@ final class BootPolicyClient: @unchecked Sendable {
         }
     }
 
-    func loadBlocklistSnapshot(
-        since generation: String,
-        completion: @escaping (String?, Data?) -> Void
-    ) {
-        let connection = makeConnection()
-        var finished = false
-        let lock = NSLock()
-        var timeoutWork: DispatchWorkItem?
-        let finish: (String?, Data?) -> Void = { newGeneration, data in
-            lock.lock()
-            guard !finished else {
-                lock.unlock()
-                return
-            }
-            finished = true
-            lock.unlock()
-            timeoutWork?.cancel()
-            connection.invalidate()
-            completion(newGeneration, data)
-        }
-
-        connection.invalidationHandler = { finish(nil, nil) }
-        connection.interruptionHandler = { finish(nil, nil) }
-        connection.resume()
-        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-            PSLog.error(PSLog.netext, "blocklist XPC load failed: \(error.localizedDescription)")
-            finish(nil, nil)
-        }) as? BootPolicyProtocol else {
-            finish(nil, nil)
-            return
-        }
-
-        let work = DispatchWorkItem {
-            PSLog.error(PSLog.netext, "blocklist XPC load timed out; blocklist filtering will fail open")
-            finish(nil, nil)
-        }
-        timeoutWork = work
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: work)
-        proxy.loadBlocklistSnapshot(generation: generation) { newGeneration, data in
-            finish(newGeneration, data)
-        }
-    }
-
     func store(_ snapshotJSON: Data) {
         let connection = makeConnection()
         var finished = false

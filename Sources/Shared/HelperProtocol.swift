@@ -5,10 +5,6 @@ import Foundation
 @objc public protocol BootPolicyProtocol {
     func loadBootSnapshot(reply: @escaping (Data) -> Void)
     func storeBootSnapshot(snapshotJSON: Data, reply: @escaping (Bool, String?) -> Void)
-    /// Returns a compact blocklist payload only when its generation changed.
-    /// The helper remains the owner of source data and the extension never
-    /// receives a large list on every rule snapshot.
-    func loadBlocklistSnapshot(generation: String, reply: @escaping (String, Data) -> Void)
 }
 
 @objc public protocol HelperProtocol {

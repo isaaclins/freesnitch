@@ -6,33 +6,8 @@ final class BlocklistManager: @unchecked Sendable {
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.blocklists")
     var onUpdate: ((Int) -> Void)?
 
-    private static let publicationLock = NSLock()
-    private static var publicationGeneration = UUID().uuidString
-    private static var publicationData = BlocklistBridge.emptySnapshotData
-    private static let maxListBytes = 32 * 1024 * 1024
-
     init(store: RuleStore) {
         self.store = store
-        Self.publish(BlocklistBridge.emptySnapshotData)
-    }
-
-    /// The privileged helper serves the current compact payload through the
-    /// existing, peer-validated boot-policy listener. An empty Data response
-    /// means that the caller already has this generation.
-    static func blocklistSnapshot(since generation: String) -> (generation: String, data: Data) {
-        publicationLock.lock()
-        defer { publicationLock.unlock() }
-        guard generation != publicationGeneration else {
-            return (publicationGeneration, Data())
-        }
-        return (publicationGeneration, publicationData)
-    }
-
-    private static func publish(_ data: Data) {
-        publicationLock.lock()
-        publicationGeneration = UUID().uuidString
-        publicationData = data
-        publicationLock.unlock()
     }
 
     func refresh() async {
@@ -54,22 +29,7 @@ final class BlocklistManager: @unchecked Sendable {
                 try? self.store.updateBlocklist(updated)
             }
         }
-
-        let snapshotData: Data
-        do {
-            snapshotData = try BlocklistBridge.encode(entries: merged)
-        } catch {
-            // Do not let either enforcement layer use a partial or oversized
-            // publication. A rejected payload is an explicit fail-open state.
-            PSLog.error(PSLog.dns, "blocklist snapshot rejected: \(error)")
-            queue.sync { self.domains = [] }
-            Self.publish(BlocklistBridge.emptySnapshotData)
-            onUpdate?(0)
-            return
-        }
-
         queue.sync { self.domains = merged }
-        Self.publish(snapshotData)
         onUpdate?(merged.count)
     }
 
@@ -87,10 +47,6 @@ final class BlocklistManager: @unchecked Sendable {
                 PSLog.error(PSLog.dns, "blocklist \(list.name) returned HTTP \(http.statusCode)")
                 return nil
             }
-            guard data.count <= Self.maxListBytes else {
-                PSLog.error(PSLog.dns, "blocklist \(list.name) exceeded the \(Self.maxListBytes)-byte safety limit")
-                return nil
-            }
             guard let text = String(data: data, encoding: .utf8) else { return nil }
             return parse(text)
         } catch {
@@ -99,7 +55,7 @@ final class BlocklistManager: @unchecked Sendable {
         }
     }
 
-    private func parse(_ text: String) -> Set<String>? {
+    private func parse(_ text: String) -> Set<String> {
         var out: Set<String> = []
         out.reserveCapacity(50_000)
         for raw in text.split(separator: "\n") {
@@ -117,23 +73,11 @@ final class BlocklistManager: @unchecked Sendable {
                 host = String(host[host.index(host.startIndex, offsetBy: 2)..<idx])
             }
             host = host.lowercased()
-            if host.hasSuffix(".") { host.removeLast() }
+            if host.contains("/") { continue }
             if host == "localhost" || host == "0.0.0.0" || host == "broadcasthost" { continue }
-            guard let kind = PFHostValidator.kind(for: host), kind != .cidr else { continue }
-            guard kind == .hostname || kind == .ip else { continue }
+            if host.isEmpty { continue }
             out.insert(host)
-            if out.count > BlocklistBridge.maxEntries {
-                PSLog.error(PSLog.dns, "blocklist source exceeded the \(BlocklistBridge.maxEntries)-entry safety limit")
-                return nil
-            }
         }
         return out
-    }
-}
-
-extension HelperService {
-    func loadBlocklistSnapshot(generation: String, reply: @escaping (String, Data) -> Void) {
-        let snapshot = BlocklistManager.blocklistSnapshot(since: generation)
-        reply(snapshot.generation, snapshot.data)
     }
 }

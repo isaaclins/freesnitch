@@ -21,18 +21,12 @@ import Security
 final class FilterDataProvider: NEFilterDataProvider {
     private let matcher = RuleMatcher()
     private let bootPolicy = BootPolicyClient()
-    private let resolverBypass = ResolverBypass()
     private let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
-    private let blocklistRefreshInterval: TimeInterval = 30
     private let snapshotLock = NSLock()
-    private let blocklistLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
     private var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension has not received a rule snapshot from the GUI."
     )
-    private var blocklistIndex = BlocklistBridge.Index.empty
-    private var blocklistGeneration: String?
-    private var blocklistSyncEnabled = false
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
     private let askTimeout: TimeInterval = 60
 
@@ -70,7 +64,6 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func startFilterAfterBootSnapshot(completionHandler: @escaping (Error?) -> Void) {
         IPCConnection.shared.startListener()
-        startBlocklistSync()
         // Empty rule list + .filterData default => every flow reaches handleNewFlow.
         // handleNewFlow explicitly allows flows until a valid snapshot exists.
         let settings = NEFilterSettings(rules: [], defaultAction: .filterData)
@@ -78,11 +71,6 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     override func stopFilter(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        blocklistLock.lock()
-        blocklistSyncEnabled = false
-        blocklistIndex = .empty
-        blocklistGeneration = nil
-        blocklistLock.unlock()
         completionHandler()
     }
 
@@ -94,9 +82,6 @@ final class FilterDataProvider: NEFilterDataProvider {
         // the user deadlocks the app that is supposed to answer the question.
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
         if isDNSOrDHCP(conn) { return .allow() }
-        if currentBlocklist().contains(remoteHost: conn.remoteHost, remoteIP: conn.remoteIP) {
-            return .drop()
-        }
         guard let snapshot = currentSnapshot() else {
             // No GUI-delivered policy is a degraded state, not an alert-mode
             // policy. Allowing here keeps a missing GUI from becoming a network
@@ -175,92 +160,10 @@ final class FilterDataProvider: NEFilterDataProvider {
         ip.hasPrefix("127.") || ip == "::1" || ip == "localhost"
     }
 
-    /// Keep DHCP available everywhere, but let port 53 bypass policy only for
-    /// configured resolvers. If resolver configuration cannot be read, the
-    /// resolver helper fails open so names can still be resolved.
+    /// Do not let a cached or live policy cut off the machine's basic network
+    /// services. PFManager applies the same protection to its anchor rules.
     private func isDNSOrDHCP(_ conn: Connection) -> Bool {
-        if conn.remotePort == 67 || conn.remotePort == 68 { return true }
-        return conn.remotePort == 53 && resolverBypass.allowsDNS(to: conn.remoteIP)
-    }
-
-    private func currentBlocklist() -> BlocklistBridge.Index {
-        blocklistLock.lock()
-        defer { blocklistLock.unlock() }
-        return blocklistIndex
-    }
-
-    private func startBlocklistSync() {
-        blocklistLock.lock()
-        blocklistSyncEnabled = true
-        blocklistLock.unlock()
-        loadBlocklistSnapshot()
-    }
-
-    private func loadBlocklistSnapshot() {
-        blocklistLock.lock()
-        guard blocklistSyncEnabled else {
-            blocklistLock.unlock()
-            return
-        }
-        let generation = blocklistGeneration ?? ""
-        blocklistLock.unlock()
-
-        bootPolicy.loadBlocklistSnapshot(since: generation) { [weak self] newGeneration, data in
-            guard let self else { return }
-            self.receiveBlocklistSnapshot(generation: newGeneration, data: data)
-            self.scheduleBlocklistSync()
-        }
-    }
-
-    private func scheduleBlocklistSync() {
-        blocklistLock.lock()
-        let enabled = blocklistSyncEnabled
-        blocklistLock.unlock()
-        guard enabled else { return }
-        workQueue.asyncAfter(deadline: .now() + blocklistRefreshInterval) { [weak self] in
-            self?.loadBlocklistSnapshot()
-        }
-    }
-
-    private func receiveBlocklistSnapshot(generation: String?, data: Data?) {
-        blocklistLock.lock()
-        guard blocklistSyncEnabled else {
-            blocklistLock.unlock()
-            return
-        }
-        let previousGeneration = blocklistGeneration
-
-        guard let generation, let data else {
-            blocklistIndex = .empty
-            blocklistGeneration = nil
-            blocklistLock.unlock()
-            PSLog.error(PSLog.netext, "blocklist snapshot unavailable; blocklist filtering is failing open")
-            return
-        }
-
-        if data.isEmpty {
-            if previousGeneration == generation {
-                blocklistLock.unlock()
-                return
-            }
-            blocklistIndex = .empty
-            blocklistGeneration = nil
-            blocklistLock.unlock()
-            PSLog.error(PSLog.netext, "blocklist snapshot changed without a payload; filtering is failing open")
-            return
-        }
-
-        do {
-            let index = try BlocklistBridge.Index(snapshotData: data)
-            blocklistIndex = index
-            blocklistGeneration = generation
-            blocklistLock.unlock()
-        } catch {
-            blocklistIndex = .empty
-            blocklistGeneration = nil
-            blocklistLock.unlock()
-            PSLog.error(PSLog.netext, "blocklist snapshot rejected; blocklist filtering is failing open: \(error)")
-        }
+        conn.remotePort == 53 || conn.remotePort == 67 || conn.remotePort == 68
     }
 
     private func parentPID(of pid: Int32) -> Int32? {
