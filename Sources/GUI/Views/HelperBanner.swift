@@ -82,7 +82,7 @@ private struct BannerInfo {
             case .inProgress:
                 detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active yet. FreeSnitch is trying to restart it without changing the existing pf anchor."
             case .manualRequired(let reason):
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. \(reason) Run `sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper` in Terminal. The current pf anchor is left in place while the helper is restarted."
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. \(reason) Run `\(HelperRecovery.kickstartCommand)` in Terminal. The current pf anchor is left in place while the helper is restarted."
             case .idle:
                 detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. FreeSnitch will try to restart the helper automatically."
             }

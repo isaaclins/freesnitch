@@ -41,6 +41,10 @@ enum HelperRepairState: Equatable {
     case manualRequired(String)
 }
 
+enum HelperRecovery {
+    static let kickstartCommand = "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
+}
+
 @MainActor
 final class HelperClient: NSObject, ObservableObject {
     @Published var connected: Bool = false
@@ -52,6 +56,7 @@ final class HelperClient: NSObject, ObservableObject {
     private var connection: NSXPCConnection?
     private var pollTimer: Timer?
     private var isRepairing = false
+    private var automaticRepairAttemptedVersion: String?
     private var enabledButSilentSince: Date?
     /// Approved but unreachable for long enough that re-registering is worth
     /// offering. Never acted on automatically; see startPolling().
@@ -147,26 +152,64 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
-    /// Re-registers the daemon. After the app bundle is replaced (an update, or
-    /// a reinstall over the top) macOS keeps the Background Item approved but
-    /// launchd no longer has the job, so `status` reads `.enabled` while
-    /// nothing is listening. Unregistering and registering again is Apple's
-    /// prescribed repair for exactly that state.
+    /// Re-registers the daemon when SMAppService can manage it. A successful
+    /// unregister/register cycle replaces the running process without touching
+    /// the pf anchor. If macOS refuses the cycle, the banner gives the user the
+    /// privileged launchctl recovery command instead of pretending it worked.
     func repairHelper() {
-        guard let service else { return }
-        isRepairing = true
-        service.unregister { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                do { try service.register() } catch {
-                    let ns = error as NSError
-                    self.installState = .failed(ns.localizedFailureReason ?? ns.localizedDescription)
-                }
-                self.refreshInstallState()
-                self.isRepairing = false
-                self.reconnectAndPing()
-            }
+        repairHelperInternal()
+    }
+
+    private func repairHelperInternal() {
+        guard !isRepairing else { return }
+        repairState = .inProgress
+        guard let service else {
+            finishRepairFailure("SMAppService cannot manage the helper on this macOS version.")
+            return
         }
+
+        switch service.status {
+        case .enabled:
+            isRepairing = true
+            service.unregister { [weak self] error in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let error {
+                        self.finishRepairFailure("SMAppService could not unregister the old helper: \(error.localizedDescription).")
+                        return
+                    }
+                    self.registerReplacement(service: service)
+                }
+            }
+        case .notRegistered:
+            registerReplacement(service: service)
+        case .requiresApproval:
+            refreshInstallState()
+            finishRepairFailure("Approve FreeSnitch in System Settings under General > Login Items & Extensions before restarting the helper.")
+        case .notFound:
+            refreshInstallState()
+            finishRepairFailure("The helper is not present in this app bundle.")
+        @unknown default:
+            refreshInstallState()
+            finishRepairFailure("macOS reported an unsupported helper registration state.")
+        }
+    }
+
+    private func registerReplacement(service: SMAppService) {
+        do {
+            try service.register()
+            refreshInstallState()
+            isRepairing = false
+            reconnectAndPing(force: true)
+        } catch {
+            finishRepairFailure("SMAppService could not register the new helper: \(error.localizedDescription). A full root LaunchDaemon restart may require administrator privileges.")
+        }
+    }
+
+    private func finishRepairFailure(_ message: String) {
+        isRepairing = false
+        repairState = .manualRequired(message)
+        needsRepair = true
     }
 
     func connect() {
@@ -226,10 +269,10 @@ final class HelperClient: NSObject, ObservableObject {
         pollTimer = timer
     }
 
-    private func reconnectAndPing() {
+    private func reconnectAndPing(force: Bool = false) {
         // A connection made before the daemon existed stays invalid forever, so
         // rebuild it rather than pinging a dead proxy.
-        if connection == nil || installState == .enabled {
+        if force || connection == nil || installState == .enabled {
             connection?.invalidate()
             let conn = NSXPCConnection(machServiceName: AppConstants.xpcMachServiceName, options: [.privileged])
             conn.remoteObjectInterface = HelperBridge.remoteInterface()
@@ -260,6 +303,18 @@ final class HelperClient: NSObject, ObservableObject {
         state?.bootstrap()
     }
 
+    private func beginAutomaticRepair(for helperVersion: String) {
+        guard !isRepairing else { return }
+        guard automaticRepairAttemptedVersion != helperVersion else {
+            if case .inProgress = repairState {
+                repairState = .manualRequired("The automatic SMAppService repair did not replace the running helper.")
+            }
+            return
+        }
+        automaticRepairAttemptedVersion = helperVersion
+        repairHelperInternal()
+    }
+
     func ping() {
         remote?.getVersion { [weak self] version in
             Task { @MainActor in
@@ -272,6 +327,7 @@ final class HelperClient: NSObject, ObservableObject {
                     self.versionState = .mismatch(helper: version, app: AppConstants.version)
                     self.needsRepair = true
                     self.setConnected(false)
+                    self.beginAutomaticRepair(for: version)
                     return
                 }
                 self.versionState = .matching(version)
