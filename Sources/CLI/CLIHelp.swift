@@ -161,12 +161,13 @@ enum CLIHelp {
     private static let helper = """
     Usage: freesnitch settings helper <status|recheck|open-login-items> [--json]
 
-    status reports the SMAppService registration and XPC reachability. recheck
-    attempts to register an absent helper from the signed app bundle without
-    unregistering an enabled service, then checks XPC reachability. It reports
-    the real registration error if macOS rejects the attempt. If approval is
-    required, open-login-items opens the exact System Settings pane where it
-    can be approved.
+    status reports helper XPC reachability. The CLI cannot reliably inspect the
+    app-owned SMAppService registration, so registration is reported as
+    unknown-from-cli. recheck activates the containing signed FreeSnitch.app
+    when registration appears absent, then polls XPC for a bounded interval.
+    It never calls SMAppService.register() and does not claim success if the
+    helper remains unavailable. Use the GUI's Register Helper action and approve
+    FreeSnitch in System Settings when prompted.
     """
 
     private static let speeds = """

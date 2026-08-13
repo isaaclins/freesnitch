@@ -13,8 +13,8 @@ final class CLIHelperClient: NSObject {
     private let eventReceiver = CLIEventReceiver()
     private let timeout: TimeInterval = 15
 
-    func prepare() async throws -> HelperStatus {
-        let version = try await perform { proxy, reply in
+    func prepare(timeout: TimeInterval = 15) async throws -> HelperStatus {
+        let version = try await perform(timeout: timeout) { proxy, reply in
             proxy.getVersion(reply: reply)
         }
         observedVersion = version
@@ -28,7 +28,7 @@ final class CLIHelperClient: NSObject {
                            message: "The helper is version \(version), but this app is version \(CLIAppBundle.expectedBuildIdentity).",
                            remediation: "The helper is still running from an earlier build. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` while launchd still has the service registered, then rerun the command.")
         }
-        let data: Data = try await perform { proxy, reply in
+        let data: Data = try await perform(timeout: timeout) { proxy, reply in
             proxy.getStatus(reply: reply)
         }
         guard !data.isEmpty else {
