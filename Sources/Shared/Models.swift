@@ -211,6 +211,7 @@ public struct HelperStatus: Codable, Sendable {
     public let version: String
     public let running: Bool
     public let pfctlActive: Bool
+    public let pfctlError: String?
     public let dnsProxyActive: Bool
     public let dnsProxyPort: Int
     public let activeRules: Int
@@ -219,11 +220,12 @@ public struct HelperStatus: Codable, Sendable {
     /// `.alert` before it connects, so without this the two disagree after a
     /// restart and the GUI's default overwrites the user's real choice.
     public var mode: AppMode = .alert
-    public init(version: String, running: Bool, pfctlActive: Bool, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert) {
+    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert) {
         self.mode = mode
         self.version = version
         self.running = running
         self.pfctlActive = pfctlActive
+        self.pfctlError = pfctlError
         self.dnsProxyActive = dnsProxyActive
         self.dnsProxyPort = dnsProxyPort
         self.activeRules = activeRules
@@ -250,6 +252,7 @@ public struct BlocklistInfo: Codable, Sendable, Identifiable, Hashable {
 
 public struct AppConstants {
     public static let bundleIdGUI = "io.isaaclins.freesnitch"
+    public static let bundleIdCLI = "io.isaaclins.freesnitch.cli"
     public static let bundleIdHelper = "io.isaaclins.freesnitch.helper"
     public static let bundleIdNetExt = "io.isaaclins.freesnitch.netext"
     public static let xpcMachServiceName = "io.isaaclins.freesnitch.helper"

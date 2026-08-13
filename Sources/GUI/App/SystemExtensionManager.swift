@@ -89,8 +89,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if let loadError { self.fail("filter load: \(loadError.localizedDescription)"); return }
+                if let loadError {
+                    self.recordFilterDiagnostic(state: "unknown", detail: "Could not read the content filter preferences: \(loadError.localizedDescription).")
+                    self.fail("filter load: \(loadError.localizedDescription)")
+                    return
+                }
                 if mgr.providerConfiguration == nil {
+                    self.recordFilterDiagnostic(state: "missing", detail: "No FreeSnitch content filter configuration is installed.")
                     let cfg = NEFilterProviderConfiguration()
                     cfg.filterSockets = true
                     cfg.filterPackets = false
@@ -101,9 +106,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
                         if let saveError {
+                            self.recordFilterDiagnostic(state: "unknown", detail: "The content filter configuration could not be saved: \(saveError.localizedDescription).")
                             self.fail("filter save: \(saveError.localizedDescription)")
                             return
                         }
+                        self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                         self.filterConfigurationActive = true
                         self.status = .active
                         // Deliberately does NOT touch `helperConnected`: the
@@ -120,11 +127,26 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func disableFilter() {
         let mgr = NEFilterManager.shared()
-        mgr.loadFromPreferences { error in
-            guard error == nil else { return }
+        mgr.loadFromPreferences { [weak self] error in
+            guard let self else { return }
+            guard error == nil else {
+                self.recordFilterDiagnostic(state: "unknown", detail: "Could not read the content filter preferences while disabling them.")
+                return
+            }
             mgr.isEnabled = false
-            mgr.saveToPreferences { _ in }
+            mgr.saveToPreferences { saveError in
+                if let saveError {
+                    self.recordFilterDiagnostic(state: "unknown", detail: "The content filter could not be disabled: \(saveError.localizedDescription).")
+                } else {
+                    self.recordFilterDiagnostic(state: "installed-disabled", detail: "The content filter configuration is installed but disabled.")
+                }
+            }
         }
+    }
+
+    private func recordFilterDiagnostic(state: String, detail: String) {
+        AppPreferences.set(state, forKey: AppPreferences.Key.filterConfigurationState, notify: false)
+        AppPreferences.set(detail, forKey: AppPreferences.Key.filterConfigurationDetail, notify: false)
     }
 
     private func registerIPC() {

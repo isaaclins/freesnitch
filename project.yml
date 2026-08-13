@@ -127,9 +127,24 @@ targets:
           else
             echo "warning: helper binary not found, skipping embed"
           fi
+      - name: Embed CLI
+        runOnlyWhenInstalling: false
+        script: |
+          set -e
+          APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
+          CLI_BIN="${BUILT_PRODUCTS_DIR}/FreeSnitchCLI"
+          if [ -f "$CLI_BIN" ]; then
+            mkdir -p "$APP/Contents/Helpers"
+            cp -f "$CLI_BIN" "$APP/Contents/Helpers/freesnitch"
+          else
+            echo "warning: CLI binary not found, skipping embed"
+          fi
     dependencies:
       - package: Sparkle
       - target: FreeSnitchHelper
+        embed: false
+        link: false
+      - target: FreeSnitchCLI
         embed: false
         link: false
       # FreeSnitchNetExt is intentionally NOT embedded in the shipping build —
@@ -209,3 +224,18 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/Helper/Helper.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         OTHER_LDFLAGS: "-sectcreate __TEXT __info_plist $(SRCROOT)/Sources/Helper/Info.plist -sectcreate __TEXT __launchd_plist $(SRCROOT)/Sources/Helper/Launchd.plist"
+
+  FreeSnitchCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/CLI
+      - path: Sources/Shared
+    settings:
+      base:
+        PRODUCT_NAME: FreeSnitchCLI
+        PRODUCT_BUNDLE_IDENTIFIER: io.isaaclins.freesnitch.cli
+        CODE_SIGN_IDENTITY: "Developer ID Application: isaac lins (BHAF4L4726)"
+        ENABLE_HARDENED_RUNTIME: YES
+        OTHER_CODE_SIGN_FLAGS: "--timestamp --identifier io.isaaclins.freesnitch.cli"
+        SKIP_INSTALL: YES

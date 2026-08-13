@@ -65,8 +65,8 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     @discardableResult
     public func promptUser(flowJSON: Data, responseHandler: @escaping (Bool, Bool) -> Void) -> Bool {
         guard let connection = currentConnection else { return false }
-        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in
-            self.currentConnection = nil
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ [weak self, weak connection] _ in
+            self?.clearCurrentConnection(connection)
         }) as? AppCommunication else {
             return false
         }
@@ -176,11 +176,24 @@ extension IPCConnection: NSXPCListenerDelegate {
         newConnection.exportedInterface = NSXPCInterface(with: ProviderCommunication.self)
         newConnection.exportedObject = self
         newConnection.remoteObjectInterface = NSXPCInterface(with: AppCommunication.self)
-        newConnection.invalidationHandler = { [weak self] in self?.currentConnection = nil }
-        newConnection.interruptionHandler = { [weak self] in self?.currentConnection = nil }
-        currentConnection = newConnection
+        newConnection.invalidationHandler = { [weak self, weak newConnection] in
+            self?.clearCurrentConnection(newConnection)
+        }
+        newConnection.interruptionHandler = { [weak self, weak newConnection] in
+            self?.clearCurrentConnection(newConnection)
+        }
+        // A CLI connection is allowed to inspect and update snapshots, but it
+        // must not replace the GUI connection that answers interactive alerts.
+        if !XPCPeerValidator.isCLI(newConnection) {
+            currentConnection = newConnection
+        }
         newConnection.resume()
         return true
+    }
+
+    private func clearCurrentConnection(_ connection: NSXPCConnection?) {
+        guard let connection, currentConnection === connection else { return }
+        currentConnection = nil
     }
 }
 

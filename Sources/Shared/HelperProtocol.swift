@@ -17,8 +17,10 @@ import Foundation
     func stopMonitoring(reply: @escaping (Bool, String?) -> Void)
     func currentConnections(reply: @escaping (Data) -> Void)
     func currentTrafficSample(reply: @escaping (Data) -> Void)
+    func currentProcessUsage(reply: @escaping (Data) -> Void)
 
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void)
+    func listBlocklists(reply: @escaping (Data) -> Void)
     func refreshBlocklists(reply: @escaping (Bool, String?) -> Void)
     func setDoHUpstream(url: String, reply: @escaping (Bool, String?) -> Void)
 

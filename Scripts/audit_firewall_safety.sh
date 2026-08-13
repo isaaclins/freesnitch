@@ -7,6 +7,9 @@ FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
 BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
 IPC="$ROOT/Sources/Shared/IPCConnection.swift"
 PEER_VALIDATOR="$ROOT/Sources/Shared/XPCPeerValidator.swift"
+CLI_HELPER="$ROOT/Sources/CLI/CLIHelperClient.swift"
+CLI_EXTENSION="$ROOT/Sources/CLI/CLIExtensionClient.swift"
+PROJECT_SPEC="$ROOT/project.yml"
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
@@ -27,6 +30,9 @@ require_text() {
 [[ -f "$BRIDGE" ]] || fail "missing $BRIDGE"
 [[ -f "$IPC" ]] || fail "missing $IPC"
 [[ -f "$PEER_VALIDATOR" ]] || fail "missing $PEER_VALIDATOR"
+[[ -f "$CLI_HELPER" ]] || fail "missing $CLI_HELPER"
+[[ -f "$CLI_EXTENSION" ]] || fail "missing $CLI_EXTENSION"
+[[ -f "$PROJECT_SPEC" ]] || fail "missing $PROJECT_SPEC"
 [[ -f "$HELPER" ]] || fail "missing $HELPER"
 [[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
 [[ -f "$SYSTEM_EXTENSION_MANAGER" ]] || fail "missing $SYSTEM_EXTENSION_MANAGER"
@@ -56,6 +62,25 @@ require_text "$PEER_VALIDATOR" "kSecGuestAttributePid" \
   "the shared XPC peer validator has no pid fallback"
 require_text "$PEER_VALIDATOR" "SecCodeCheckValidity" \
   "the shared XPC peer validator does not check the code requirement"
+require_text "$PEER_VALIDATOR" "AppConstants.bundleIdCLI" \
+  "the shared XPC peer validator does not explicitly allow the bundled CLI"
+require_text "$PEER_VALIDATOR" "permittedPeerIdentifiers" \
+  "the GUI and CLI peer identities are not held in one validator allowlist"
+require_text "$CLI_HELPER" "options: [.privileged]" \
+  "the CLI helper client is not using the privileged launchd lookup"
+require_text "$CLI_HELPER" "HelperBridge.remoteInterface()" \
+  "the CLI helper client is not using the shared HelperProtocol interface"
+require_text "$CLI_EXTENSION" "options: [.privileged]" \
+  "the CLI extension client is not using the privileged launchd lookup"
+require_text "$CLI_HELPER" "proxy.setEnforcementEnabled" \
+  "the CLI enforcement path does not go through HelperProtocol"
+require_text "$CLI_HELPER" "proxy.flushAll" \
+  "the CLI flush path does not go through HelperProtocol"
+require_text "$PROJECT_SPEC" "Contents/Helpers/freesnitch" \
+  "the CLI is not embedded inside the app bundle"
+if grep -R -E -q "SecRequirementCreateWithString|SecCodeCheckValidity" "$ROOT/Sources/CLI" --include='*.swift'; then
+  fail "the CLI contains a second peer-validation or code-signature bypass"
+fi
 requirement_count="$(grep -RohF 'let requirementText = "anchor apple generic"' "$ROOT/Sources" --include='*.swift' | wc -l | tr -d ' ')"
 [[ "$requirement_count" == "1" ]] || fail "the GUI XPC requirement is duplicated or missing"
 accept_body="$(awk '
@@ -135,6 +160,8 @@ require_text "$FILTER" "SecCodeCheckValidity" \
   "own-traffic detection no longer validates a code signature"
 require_text "$FILTER" "AppConstants.bundleIdGUI" \
   "the GUI bundle identifier is missing from the own-code requirement"
+require_text "$FILTER" "AppConstants.bundleIdCLI" \
+  "the CLI bundle identifier is missing from the own-code requirement"
 require_text "$FILTER" "AppConstants.bundleIdHelper" \
   "the helper bundle identifier is missing from the own-code requirement"
 require_text "$FILTER" "AppConstants.bundleIdNetExt" \
