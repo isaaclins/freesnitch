@@ -6,6 +6,13 @@ final class DNSProxy: @unchecked Sendable {
     private var tcpListener: NWListener?
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.dns", qos: .userInitiated)
     private let upstreamQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.up")
+    /// Backstop timers only. Kept off `queue` so a pending ask can never wait
+    /// behind DNS handling, and vice versa.
+    private let askQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.ask", qos: .utility)
+    /// The ask handler owns the 60 second human budget. This slightly longer
+    /// backstop only covers a handler that never calls back at all, so that no
+    /// query can leave this proxy without a reply.
+    private let askBackstopTimeout: TimeInterval = 65
     private(set) var port: UInt16 = 53
     private(set) var running = false
 
@@ -121,7 +128,17 @@ final class DNSProxy: @unchecked Sendable {
         }
 
         if action == .ask {
-            onAsk?(domain) { allow in
+            // The query gets exactly one reply. A human answer, a timeout
+            // default, and a late duplicate answer can all arrive for the same
+            // ask, and only the first one is allowed to settle the query.
+            var answered = false
+            let answerLock = NSLock()
+            let settleOnce: (Bool) -> Void = { [weak self] allow in
+                answerLock.lock()
+                if answered { answerLock.unlock(); return }
+                answered = true
+                answerLock.unlock()
+                guard let self else { reply(nil); return }
                 if !allow {
                     self.stats.incrBlocked()
                     self.onBlock?(domain, "ask-denied")
@@ -129,6 +146,23 @@ final class DNSProxy: @unchecked Sendable {
                     return
                 }
                 self.forwardDoH(payload: payload, domain: domain, reply: reply)
+            }
+            let isAnswered: () -> Bool = {
+                answerLock.lock(); defer { answerLock.unlock() }
+                return answered
+            }
+            guard let onAsk else {
+                // No ask handler is wired up, so there is nobody to ask. Fail
+                // open rather than leave the resolver hanging.
+                settleOnce(true)
+                return
+            }
+            onAsk(domain, settleOnce)
+            // Only a query that is still waiting needs a backstop. Asks that
+            // the handler settled on the spot park no timer, so a flood of
+            // them cannot pile up 65 seconds of retained replies.
+            if !isAnswered() {
+                askQueue.asyncAfter(deadline: .now() + askBackstopTimeout) { settleOnce(true) }
             }
             return
         }
