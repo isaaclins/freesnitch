@@ -335,4 +335,13 @@ final class AppCommunicationBridge: NSObject, AppCommunication {
             state.presentAlert(for: conn, reply: responseHandler)
         }
     }
+
+    func recordObservationBatch(observationBatch: Data, responseHandler: @escaping (Bool) -> Void) {
+        guard observationBatch.count <= InsightsLimits.maxBatchBytes else {
+            responseHandler(false)
+            return
+        }
+        // The helper forwarding endpoint is added in the next transport tracer.
+        responseHandler(false)
+    }
 }

@@ -4,6 +4,7 @@ import Foundation
 /// an interactive decision. `responseHandler(allow, remember)`.
 @objc public protocol AppCommunication {
     func promptUser(flowJSON: Data, responseHandler: @escaping (Bool, Bool) -> Void)
+    func recordObservationBatch(observationBatch: Data, responseHandler: @escaping (Bool) -> Void)
 }
 
 /// Implemented by the system extension; called by the app to establish the link
@@ -71,6 +72,20 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
             return false
         }
         proxy.promptUser(flowJSON: flowJSON, responseHandler: responseHandler)
+        return true
+    }
+
+    /// Extension side: hand a bounded observation batch to the connected GUI.
+    /// A missing GUI or transport error drops the batch. The extension never
+    /// waits for the acknowledgement and never retries an individual flow.
+    @discardableResult
+    public func sendObservationBatch(_ data: Data) -> Bool {
+        guard data.count <= InsightsLimits.maxBatchBytes else { return false }
+        guard let connection = currentConnection,
+              let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? AppCommunication else {
+            return false
+        }
+        proxy.recordObservationBatch(observationBatch: data) { _ in }
         return true
     }
 
