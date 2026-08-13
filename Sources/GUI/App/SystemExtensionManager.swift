@@ -18,16 +18,29 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case failed(String)
     }
 
+    private enum RequestKind {
+        case activation
+        case deactivation
+    }
+
     @Published var status: Status = .idle
+    @Published var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
+        "Network extension IPC is not connected."
+    )
 
     private weak var state: AppState?
     private let extensionIdentifier = AppConstants.bundleIdNetExt
     private let log = OSLog(subsystem: AppConstants.bundleIdGUI, category: "sysext")
     private var bridge: AppCommunicationBridge?
+    private var requestKind: RequestKind = .activation
+    private var filterConfigurationActive = false
 
     init(state: AppState) {
         self.state = state
         super.init()
+        state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
+            self?.recordSnapshotStatus(snapshotStatus)
+        }
     }
 
     private var hasEmbeddedExtension: Bool {
@@ -43,6 +56,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             return
         }
         status = .activating
+        requestKind = .activation
         let request = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
         OSSystemExtensionManager.shared.submitRequest(request)
@@ -51,6 +65,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     func deactivate() {
         disableFilter()
         guard hasEmbeddedExtension else { return }
+        requestKind = .deactivation
         let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
         OSSystemExtensionManager.shared.submitRequest(request)
@@ -74,7 +89,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 mgr.isEnabled = true
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
-                        if let saveError { self.fail("filter save: \(saveError.localizedDescription)"); return }
+                        if let saveError {
+                            self.fail("filter save: \(saveError.localizedDescription)")
+                            return
+                        }
+                        self.filterConfigurationActive = true
                         self.status = .active
                         // Deliberately does NOT touch `helperConnected`: the
                         // content filter and the privileged helper are separate
@@ -101,16 +120,29 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         guard let state else { return }
         let bridge = AppCommunicationBridge(state: state)
         self.bridge = bridge
-        IPCConnection.shared.register(delegate: bridge) { ok in
+        IPCConnection.shared.register(delegate: bridge) { [weak self] ok, remoteStatus in
             DispatchQueue.main.async {
+                guard let self else { return }
                 state.appendLog(level: ok ? "info" : "error",
                                 message: ok ? "Connected to network extension." : "Extension IPC unavailable.")
-                // The extension starts with an empty rule set, so it must be
-                // handed the current one the moment the link is up, otherwise
-                // it asks about everything until the next rule change.
+                self.recordSnapshotStatus(remoteStatus)
+                // The extension starts with no in-memory snapshot, so hand the
+                // current one over as soon as the link is up, not only after a
+                // later rule or mode change.
                 if ok { state.syncSharedRules() }
             }
         }
+    }
+
+    private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
+        self.snapshotStatus = snapshotStatus
+        guard filterConfigurationActive else { return }
+        if snapshotStatus.isReady {
+            status = .active
+            return
+        }
+        let detail = snapshotStatus.message ?? "no snapshot has been received"
+        status = .failed("filter snapshot unavailable: \(detail)")
     }
 
     private func fail(_ message: String) {
@@ -124,11 +156,24 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
     nonisolated func request(_ request: OSSystemExtensionRequest,
                              didFinishWithResult result: OSSystemExtensionRequest.Result) {
         Task { @MainActor in
-            if result == .completed {
-                self.enableFilter()
-            } else {
-                self.state?.appendLog(level: "info", message: "Network extension finishes after reboot.")
+            guard self.requestKind == .activation else {
+                if result == .completed {
+                    self.filterConfigurationActive = false
+                    self.status = .idle
+                } else {
+                    self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
+                }
+                return
             }
+            guard result == .completed else {
+                self.state?.appendLog(level: "info", message: "Network extension activation finishes after reboot.")
+                return
+            }
+            // The request remains pending while approval is outstanding. A
+            // completed activation is the first point at which saving the
+            // content-filter preferences is permitted.
+            self.state?.appendLog(level: "info", message: "Network extension approved and active; installing filter configuration.")
+            self.enableFilter()
         }
     }
 

@@ -9,12 +9,12 @@ import Foundation
 /// Implemented by the system extension; called by the app to establish the link
 /// and to hand over the active rule set.
 @objc public protocol ProviderCommunication {
-    func register(_ completionHandler: @escaping (Bool) -> Void)
+    func register(_ completionHandler: @escaping (Bool, Data) -> Void)
     /// The app pushes mode and rules here. The app group container cannot be
     /// used for this: the extension runs as root, so its container resolves to
     /// /var/root/Library/Group Containers while the app writes to the user's
     /// home, and the two never meet.
-    func updateSnapshot(snapshotJSON: Data)
+    func updateSnapshot(snapshotJSON: Data, completionHandler: @escaping (Data) -> Void)
 }
 
 /// App <-> Network System Extension XPC, modelled on Apple's "SimpleFirewall"
@@ -28,10 +28,26 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     private var listener: NSXPCListener?
     private var currentConnection: NSXPCConnection?
     private weak var delegate: AppCommunication?
-    /// Extension side: invoked when the app pushes a new rule set.
-    public var onSnapshot: ((Data) -> Void)?
+    /// Extension side: invoked when the app pushes a rule set. It returns the
+    /// provider's resulting status synchronously so the app can publish it.
+    public var onSnapshot: ((Data) -> SharedRuleBridge.SnapshotStatus)?
+    /// Extension side: supplies the current status during registration.
+    public var snapshotStatus: (() -> SharedRuleBridge.SnapshotStatus)?
 
     private override init() { super.init() }
+
+    private static func encodeStatus(_ status: SharedRuleBridge.SnapshotStatus) -> Data {
+        (try? SharedRuleBridge.encode(status)) ?? Data()
+    }
+
+    private static func decodeStatus(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
+        (try? SharedRuleBridge.decodeStatus(data))
+            ?? .unavailable("Network extension returned an unreadable snapshot status.")
+    }
+
+    private static func unavailableStatus(_ detail: String) -> SharedRuleBridge.SnapshotStatus {
+        .unavailable("\(detail) No rule snapshot was delivered; filtering remains fail-open.")
+    }
 
     // MARK: - Extension side
 
@@ -59,46 +75,104 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     }
 
     /// App side: hand the current mode and rules to the extension. Silently
-    /// does nothing when the extension is not running, which is the normal
-    /// case for builds without one.
-    public func sendSnapshot(_ snapshotJSON: Data) {
-        guard let connection = currentConnection,
-              let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? ProviderCommunication else {
+    /// reports an unavailable status when the extension is not running, which
+    /// is the normal case for builds without one.
+    public func sendSnapshot(
+        _ snapshotJSON: Data,
+        completionHandler: @escaping (SharedRuleBridge.SnapshotStatus) -> Void = { _ in }
+    ) {
+        var completed = false
+        let completionLock = NSLock()
+        let finish: (SharedRuleBridge.SnapshotStatus) -> Void = { status in
+            completionLock.lock()
+            guard !completed else {
+                completionLock.unlock()
+                return
+            }
+            completed = true
+            completionLock.unlock()
+            completionHandler(status)
+        }
+
+        guard let connection = currentConnection else {
+            finish(Self.unavailableStatus("Network extension IPC is not connected."))
             return
         }
-        proxy.updateSnapshot(snapshotJSON: snapshotJSON)
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            finish(Self.unavailableStatus("Network extension IPC failed: \(error.localizedDescription)."))
+        }) as? ProviderCommunication else {
+            finish(Self.unavailableStatus("Network extension IPC proxy is unavailable."))
+            return
+        }
+        proxy.updateSnapshot(snapshotJSON: snapshotJSON) { statusJSON in
+            finish(Self.decodeStatus(statusJSON))
+        }
     }
 
     // MARK: - App side
 
     /// Called from the app once the extension is active. Connects to the
     /// extension's mach service and registers `delegate` to receive prompts.
-    public func register(delegate: AppCommunication, completionHandler: @escaping (Bool) -> Void) {
+    public func register(
+        delegate: AppCommunication,
+        completionHandler: @escaping (Bool, SharedRuleBridge.SnapshotStatus) -> Void
+    ) {
         self.delegate = delegate
 
-        let newConnection = NSXPCConnection(machServiceName: AppConstants.ipcMachServiceName, options: [])
+        var completed = false
+        let completionLock = NSLock()
+        let finish: (Bool, SharedRuleBridge.SnapshotStatus) -> Void = { ok, status in
+            completionLock.lock()
+            guard !completed else {
+                completionLock.unlock()
+                return
+            }
+            completed = true
+            completionLock.unlock()
+            completionHandler(ok, status)
+        }
+
+        // The extension runs as root, so its listener is registered in the
+        // system domain. Without .privileged launchd searches the per-user GUI
+        // domain instead and every lookup fails with "No such process", which
+        // silently left the filter with no rules and no way to raise alerts.
+        // HelperClient already talks to the root helper this way.
+        let newConnection = NSXPCConnection(machServiceName: AppConstants.ipcMachServiceName,
+                                            options: [.privileged])
         newConnection.exportedInterface = NSXPCInterface(with: AppCommunication.self)
         newConnection.exportedObject = delegate
         newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
-        newConnection.invalidationHandler = { [weak self] in self?.currentConnection = nil }
+        newConnection.invalidationHandler = { [weak self] in
+            self?.currentConnection = nil
+            finish(false, Self.unavailableStatus("Network extension rejected or invalidated the GUI XPC peer."))
+        }
         newConnection.interruptionHandler = { [weak self] in self?.currentConnection = nil }
         currentConnection = newConnection
         newConnection.resume()
 
-        guard let proxy = newConnection.remoteObjectProxyWithErrorHandler({ _ in
-            completionHandler(false)
+        guard let proxy = newConnection.remoteObjectProxyWithErrorHandler({ error in
+            finish(false, Self.unavailableStatus("Network extension IPC rejected the GUI peer or failed: \(error.localizedDescription)."))
         }) as? ProviderCommunication else {
-            completionHandler(false)
+            finish(false, Self.unavailableStatus("Network extension IPC proxy is unavailable."))
             return
         }
-        proxy.register(completionHandler)
+        proxy.register { ok, statusJSON in
+            finish(ok, Self.decodeStatus(statusJSON))
+        }
     }
 }
 
 extension IPCConnection: NSXPCListenerDelegate {
     public func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
-        // Extension side: the app connected. Export ProviderCommunication and
-        // keep the connection so we can call promptUser on it later.
+        guard XPCPeerValidator.isTrustedGUI(newConnection) else {
+            PSLog.error(PSLog.netext,
+                        "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement "
+                        + "(pid \(newConnection.processIdentifier)); no snapshot was accepted and "
+                        + "filtering will fail open if no trusted GUI is connected.")
+            return false
+        }
+        // Extension side: the signed GUI connected. Export ProviderCommunication
+        // and keep the connection so we can call promptUser on it later.
         newConnection.exportedInterface = NSXPCInterface(with: ProviderCommunication.self)
         newConnection.exportedObject = self
         newConnection.remoteObjectInterface = NSXPCInterface(with: AppCommunication.self)
@@ -111,11 +185,18 @@ extension IPCConnection: NSXPCListenerDelegate {
 }
 
 extension IPCConnection: ProviderCommunication {
-    public func register(_ completionHandler: @escaping (Bool) -> Void) {
-        completionHandler(true)
+    public func register(_ completionHandler: @escaping (Bool, Data) -> Void) {
+        let status = snapshotStatus?()
+            ?? .unavailable("Network extension has not received a rule snapshot from the GUI.")
+        completionHandler(true, Self.encodeStatus(status))
     }
 
-    public func updateSnapshot(snapshotJSON: Data) {
-        onSnapshot?(snapshotJSON)
+    public func updateSnapshot(
+        snapshotJSON: Data,
+        completionHandler: @escaping (Data) -> Void
+    ) {
+        let status = onSnapshot?(snapshotJSON)
+            ?? .unavailable("Network extension is not ready to receive rule snapshots.")
+        completionHandler(Self.encodeStatus(status))
     }
 }

@@ -46,7 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // bootstrap() (rule load + monitoring) is driven by HelperClient once
         // the helper is actually reachable — see HelperClient.setConnected.
         state.helper.connect()
-        // Seed the app-group snapshot so the network extension has rules to read.
+        // Seed the initial rule snapshot so the network extension receives the
+        // current mode and rules as soon as its XPC listener is available.
         state.syncSharedRules()
 
         // Per-process firewall (Network System Extension). `activate()` is a
