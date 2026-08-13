@@ -47,14 +47,14 @@ final class BootPolicyClient: @unchecked Sendable {
     }
 
     func loadBlocklistSnapshot(
-        since generation: Int,
-        completion: @escaping (Int?, Data?) -> Void
+        since generation: String,
+        completion: @escaping (String?, Data?) -> Void
     ) {
         let connection = makeConnection()
         var finished = false
         let lock = NSLock()
         var timeoutWork: DispatchWorkItem?
-        let finish: (Int?, Data?) -> Void = { newGeneration, data in
+        let finish: (String?, Data?) -> Void = { newGeneration, data in
             lock.lock()
             guard !finished else {
                 lock.unlock()

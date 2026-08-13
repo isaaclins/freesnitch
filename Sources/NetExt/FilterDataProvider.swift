@@ -31,7 +31,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         "Network extension has not received a rule snapshot from the GUI."
     )
     private var blocklistIndex = BlocklistBridge.Index.empty
-    private var blocklistGeneration: Int?
+    private var blocklistGeneration: String?
     private var blocklistSyncEnabled = false
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
     private let askTimeout: TimeInterval = 60
@@ -202,7 +202,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             blocklistLock.unlock()
             return
         }
-        let generation = blocklistGeneration ?? -1
+        let generation = blocklistGeneration ?? ""
         blocklistLock.unlock()
 
         bootPolicy.loadBlocklistSnapshot(since: generation) { [weak self] newGeneration, data in
@@ -222,7 +222,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
     }
 
-    private func receiveBlocklistSnapshot(generation: Int?, data: Data?) {
+    private func receiveBlocklistSnapshot(generation: String?, data: Data?) {
         blocklistLock.lock()
         guard blocklistSyncEnabled else {
             blocklistLock.unlock()

@@ -7,7 +7,7 @@ final class BlocklistManager: @unchecked Sendable {
     var onUpdate: ((Int) -> Void)?
 
     private static let publicationLock = NSLock()
-    private static var publicationGeneration = 0
+    private static var publicationGeneration = UUID().uuidString
     private static var publicationData = BlocklistBridge.emptySnapshotData
     private static let maxListBytes = 32 * 1024 * 1024
 
@@ -19,7 +19,7 @@ final class BlocklistManager: @unchecked Sendable {
     /// The privileged helper serves the current compact payload through the
     /// existing, peer-validated boot-policy listener. An empty Data response
     /// means that the caller already has this generation.
-    static func blocklistSnapshot(since generation: Int) -> (generation: Int, data: Data) {
+    static func blocklistSnapshot(since generation: String) -> (generation: String, data: Data) {
         publicationLock.lock()
         defer { publicationLock.unlock() }
         guard generation != publicationGeneration else {
@@ -30,7 +30,7 @@ final class BlocklistManager: @unchecked Sendable {
 
     private static func publish(_ data: Data) {
         publicationLock.lock()
-        publicationGeneration += 1
+        publicationGeneration = UUID().uuidString
         publicationData = data
         publicationLock.unlock()
     }
@@ -132,7 +132,7 @@ final class BlocklistManager: @unchecked Sendable {
 }
 
 extension HelperService {
-    func loadBlocklistSnapshot(generation: Int, reply: @escaping (Int, Data) -> Void) {
+    func loadBlocklistSnapshot(generation: String, reply: @escaping (String, Data) -> Void) {
         let snapshot = BlocklistManager.blocklistSnapshot(since: generation)
         reply(snapshot.generation, snapshot.data)
     }

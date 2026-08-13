@@ -8,7 +8,7 @@ import Foundation
     /// Returns a compact blocklist payload only when its generation changed.
     /// The helper remains the owner of source data and the extension never
     /// receives a large list on every rule snapshot.
-    func loadBlocklistSnapshot(generation: Int, reply: @escaping (Int, Data) -> Void)
+    func loadBlocklistSnapshot(generation: String, reply: @escaping (String, Data) -> Void)
 }
 
 @objc public protocol HelperProtocol {
