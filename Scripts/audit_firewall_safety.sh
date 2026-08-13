@@ -21,6 +21,8 @@ INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
 INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
 OBSERVATION_QUEUE="$ROOT/Sources/NetExt/ObservationQueue.swift"
 UNINSTALL="$ROOT/Scripts/uninstall_freesnitch.sh"
+RULE_MATCHER="$ROOT/Sources/Shared/RuleMatcher.swift"
+CLI_PARSER="$ROOT/Sources/CLI/CLIParser.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -52,6 +54,65 @@ require_text() {
 [[ -f "$INSIGHTS_MODELS" ]] || fail "missing $INSIGHTS_MODELS"
 [[ -f "$OBSERVATION_QUEUE" ]] || fail "missing $OBSERVATION_QUEUE"
 [[ -f "$UNINSTALL" ]] || fail "missing $UNINSTALL"
+[[ -f "$RULE_MATCHER" ]] || fail "missing $RULE_MATCHER"
+[[ -f "$CLI_PARSER" ]] || fail "missing $CLI_PARSER"
+
+# A CIDR prefix outside 0...32 used to produce mask 0 through Swift's
+# non-trapping smart shift, and mask 0 matches every IPv4 address. The matcher
+# must bound the prefix before the mask exists, and both ingest boundaries must
+# refuse to store an address the matcher cannot evaluate.
+cidr_body="$(awk '
+  /func cidrContains\(/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$RULE_MATCHER")"
+[[ -n "$cidr_body" ]] || fail "the shared matcher no longer has a cidrContains function to audit"
+cidr_guard_line="$(printf '%s\n' "$cidr_body" | grep -nF '(0...32).contains(bits)' | head -1 | cut -d: -f1 || true)"
+cidr_mask_line="$(printf '%s\n' "$cidr_body" | grep -nF 'UInt32.max <<' | head -1 | cut -d: -f1 || true)"
+[[ -n "$cidr_guard_line" ]] || fail "cidrContains does not bound the CIDR prefix to 0...32, so an over-large prefix can match every address"
+[[ -n "$cidr_mask_line" ]] || fail "cidrContains no longer builds the expected IPv4 mask"
+(( cidr_guard_line < cidr_mask_line )) \
+  || fail "cidrContains builds the mask before bounding the prefix"
+if ! printf '%s\n' "$cidr_body" | grep -Fq 'parts[1].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 })'; then
+  fail "cidrContains accepts a non-numeric or signed prefix instead of digits only"
+fi
+require_text "$RULE_MATCHER" "public enum RuleAddressValidator" \
+  "the shared rule address validator is missing"
+require_text "$RULE_MATCHER" "PFHostValidator.kind(for: value)" \
+  "the rule address validator does not reuse PFHostValidator"
+require_text "$CLI_PARSER" "RuleAddressValidator.rejectionReason(forRemoteIP: value)" \
+  "the CLI stores --ip without validating it"
+require_text "$HELPER" "RuleAddressValidator.rejectionReason(forRemoteIP: rule.remoteIP)" \
+  "the helper trusts its callers to have validated rule addresses"
+for ingest_func in 'func addRule[(]' 'func reloadRules[(]'; do
+  ingest_body="$(awk -v start="$ingest_func" '
+    $0 ~ start {
+      active = 1
+      depth = 0
+    }
+    active {
+      print
+      opens = gsub(/\{/, "{")
+      closes = gsub(/\}/, "}")
+      depth += opens - closes
+      if (depth == 0) exit
+    }
+  ' "$HELPER")"
+  reason_line="$(printf '%s\n' "$ingest_body" | grep -nF 'rejectionReason(for:' | head -1 | cut -d: -f1 || true)"
+  upsert_line="$(printf '%s\n' "$ingest_body" | grep -nF 'store.upsertRule' | head -1 | cut -d: -f1 || true)"
+  [[ -n "$reason_line" && -n "$upsert_line" ]] \
+    || fail "a helper rule ingest path stores rules without an address rejection check"
+  (( reason_line < upsert_line )) \
+    || fail "a helper rule ingest path stores the rule before validating its address"
+done
 
 # Date boundaries are explicit: XPC and snapshots retain Apple's reference
 # epoch, SQLite remains Unix seconds, and the CLI contract stays ISO 8601 text.
@@ -322,4 +383,4 @@ if printf '%s\n' "$activation_body" | grep -Fq "enableFilter"; then
   fail "filter configuration is still enabled optimistically during activate()"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, and activation ordering are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, and activation ordering are present.\n'
