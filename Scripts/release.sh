@@ -563,7 +563,10 @@ sparkle_tool() {
   local sparkle_dir="$BUILD_ROOT/sparkle"
   local tarball="$sparkle_dir/Sparkle-${SPARKLE_VERSION}.tar.xz"
   mkdir -p "$sparkle_dir"
-  printf 'Downloading Sparkle %s tools...\n' "$SPARKLE_VERSION"
+  # This function returns the tool path on stdout, so progress must go to
+  # stderr. Printing it to stdout made the caller capture the message and the
+  # path together and then try to execute the whole string.
+  printf 'Downloading Sparkle %s tools...\n' "$SPARKLE_VERSION" >&2
   curl -fsSL -o "$tarball" \
     "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
   tar -xf "$tarball" -C "$sparkle_dir"
