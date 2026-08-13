@@ -132,7 +132,13 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
             completionHandler(ok, status)
         }
 
-        let newConnection = NSXPCConnection(machServiceName: AppConstants.ipcMachServiceName, options: [])
+        // The extension runs as root, so its listener is registered in the
+        // system domain. Without .privileged launchd searches the per-user GUI
+        // domain instead and every lookup fails with "No such process", which
+        // silently left the filter with no rules and no way to raise alerts.
+        // HelperClient already talks to the root helper this way.
+        let newConnection = NSXPCConnection(machServiceName: AppConstants.ipcMachServiceName,
+                                            options: [.privileged])
         newConnection.exportedInterface = NSXPCInterface(with: AppCommunication.self)
         newConnection.exportedObject = delegate
         newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
