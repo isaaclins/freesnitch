@@ -446,6 +446,40 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
+    func getDoHUpstream(reply: @escaping (String?, String?) -> Void) {
+        let lock = NSLock()
+        var finished = false
+        var timeoutWork: DispatchWorkItem?
+        let finish: (String?, String?) -> Void = { value, error in
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            lock.unlock()
+            timeoutWork?.cancel()
+            reply(value, error)
+        }
+        let work = DispatchWorkItem {
+            finish(nil, "Reading the effective DoH upstream timed out. Restart the helper to finish the update.")
+        }
+        timeoutWork = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
+
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            finish(nil, "Could not read the effective DoH upstream: \(error.localizedDescription)")
+        }) as? HelperProtocol else {
+            finish(nil, "The privileged helper is unavailable.")
+            return
+        }
+        guard proxy.getDoHUpstream != nil else {
+            finish(nil, "The running helper is too old to report the effective DoH upstream. Restart the helper to finish the update.")
+            return
+        }
+        proxy.getDoHUpstream?(reply: { finish($0, nil) })
+    }
+
     func setMode(_ m: AppMode) {
         remote?.setMode(rawValue: m.rawValue) { _, _ in }
     }

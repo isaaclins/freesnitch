@@ -22,6 +22,7 @@ import Foundation
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void)
     func listBlocklists(reply: @escaping (Data) -> Void)
     func refreshBlocklists(reply: @escaping (Bool, String?) -> Void)
+    @objc optional func getDoHUpstream(reply: @escaping (String) -> Void)
     func setDoHUpstream(url: String, reply: @escaping (Bool, String?) -> Void)
 
     func installPF(reply: @escaping (Bool, String?) -> Void)

@@ -23,6 +23,7 @@ struct StatusReport: Encodable {
     let mode: String
     let modeLabel: String
     let enforcement: Bool
+    let dohUpstream: String
     let helper: HelperReport
     let extensionStatus: ExtensionReport
 }

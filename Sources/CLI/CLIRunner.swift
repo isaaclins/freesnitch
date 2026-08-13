@@ -36,8 +36,9 @@ final class CLIRunner {
     private func status() async throws -> CommandResult {
         let helper = CLIHelperClient()
         let helperStatus = try await helper.prepare()
+        let dohUpstream = try await helper.getDoH()
         let extensionInspection = await ExtensionInspector.inspect()
-        let report = statusReport(helperStatus: helperStatus, extensionReport: extensionInspection.report)
+        let report = statusReport(helperStatus: helperStatus, dohUpstream: dohUpstream, extensionReport: extensionInspection.report)
         return CommandResult(data: report, human: humanStatus(report))
     }
 
@@ -386,14 +387,16 @@ final class CLIRunner {
     }
 
     private func setDoH(_ value: String) async throws -> CommandResult {
-        guard let url = URL(string: value), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
-            throw CLIError(.invalidArgument, message: "Invalid DoH URL `\(value)`.", remediation: "Use an http or https URL such as https://cloudflare-dns.com/dns-query.")
+        if let reason = DoHUpstreamValidator.rejectionReason(for: value) {
+            throw CLIError(.invalidArgument,
+                           message: "Invalid DoH URL `\(value)`: \(reason).",
+                           remediation: DoHUpstreamValidator.remediation)
         }
         let helper = CLIHelperClient()
         _ = try await helper.prepare()
-        try await helper.setDoH(url: url.absoluteString)
-        let report = SettingReport(key: "doh_url", label: "DNS over HTTPS upstream", value: url.absoluteString, changed: true, detail: nil)
-        return CommandResult(data: report, human: "DNS over HTTPS upstream: \(url.absoluteString)")
+        try await helper.setDoH(url: value)
+        let report = SettingReport(key: "doh_url", label: "DNS over HTTPS upstream", value: value, changed: true, detail: nil)
+        return CommandResult(data: report, human: "DNS over HTTPS upstream: \(value)")
     }
 
     private func setEnforcement(_ enabled: Bool) async throws -> CommandResult {
@@ -629,11 +632,12 @@ final class CLIRunner {
         }
     }
 
-    private func statusReport(helperStatus: HelperStatus, extensionReport: ExtensionReport) -> StatusReport {
+    private func statusReport(helperStatus: HelperStatus, dohUpstream: String, extensionReport: ExtensionReport) -> StatusReport {
         StatusReport(version: helperStatus.version,
                      mode: canonicalMode(helperStatus.mode),
                      modeLabel: modeLabel(helperStatus.mode),
                      enforcement: helperStatus.pfctlActive || helperStatus.dnsProxyActive,
+                     dohUpstream: dohUpstream,
                      helper: helperReport(helperStatus),
                      extensionStatus: extensionReport)
     }
@@ -783,6 +787,7 @@ final class CLIRunner {
           Helper: \(report.helper.reachable ? "reachable" : "unreachable") (running \(report.helper.running ? "yes" : "no"))
           PF anchor: \(humanBool(report.helper.pfctlActive))
           DNS proxy: \(report.helper.dnsProxyActive ? "running" : "stopped") on port \(report.helper.dnsProxyPort)
+          DoH upstream: \(report.dohUpstream)
           Extension approval: \(report.extensionStatus.approval)
           Extension XPC running: \(report.extensionStatus.running)
           Filter configuration: \(report.extensionStatus.filterConfiguration) (enabled \(report.extensionStatus.filterEnabled))

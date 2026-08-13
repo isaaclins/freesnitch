@@ -209,6 +209,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         if let modeStr = store.getSetting("mode"), let m = AppMode(rawValue: modeStr) {
             self.mode = m
         }
+        dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))
 
         dns.rules = store.allRules()
         dns.mode = mode
@@ -401,6 +402,18 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 c.notifyAlert(connectionJSON: data) { allow, _ in answer(allow) }
             }
         }
+    }
+
+    static func restoredDoHUpstream(from storedValue: String?) -> String {
+        guard let storedValue else { return AppConstants.defaultDoHUpstream }
+        guard let reason = DoHUpstreamValidator.rejectionReason(for: storedValue) else {
+            return storedValue
+        }
+        PSLog.error(
+            PSLog.helper,
+            "Rejected stored DoH upstream `\(storedValue)`: \(reason). Falling back to `\(AppConstants.defaultDoHUpstream)`."
+        )
+        return AppConstants.defaultDoHUpstream
     }
 
     // MARK: - HelperProtocol
@@ -610,10 +623,23 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
+    func getDoHUpstream(reply: @escaping (String) -> Void) {
+        let effectiveURL = dns.dohURL
+        reply(effectiveURL)
+    }
+
     func setDoHUpstream(url: String, reply: @escaping (Bool, String?) -> Void) {
-        dns.dohURL = url
-        try? store.setSetting("doh_url", url)
-        reply(true, nil)
+        if let reason = DoHUpstreamValidator.rejectionReason(for: url) {
+            reply(false, "Invalid DoH upstream `\(url)`: \(reason). \(DoHUpstreamValidator.remediation)")
+            return
+        }
+        do {
+            try store.setSetting("doh_url", url)
+            dns.dohURL = url
+            reply(true, nil)
+        } catch {
+            reply(false, "Could not save DoH upstream `\(url)`: \(error.localizedDescription)")
+        }
     }
 
     func installPF(reply: @escaping (Bool, String?) -> Void) {

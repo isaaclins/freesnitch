@@ -552,6 +552,19 @@ text_within_block() {
   ' "$file"
 }
 
+# Persisted helper settings must be restored together. Restoring the mode but
+# not the DoH upstream silently changes the user's resolver after every helper
+# restart.
+if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'store.getSetting("mode")'; then
+  fail "the helper no longer restores its persisted mode"
+fi
+if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))'; then
+  fail "the helper restores mode without also restoring and validating the persisted DoH upstream"
+fi
+if ! text_within_block "$HELPER" 'static func restoredDoHUpstream[(]' 'DoHUpstreamValidator.rejectionReason(for: storedValue)'; then
+  fail "the helper restores a persisted DoH upstream without validating it"
+fi
+
 allow_within_block() {
   local file="$1"
   local start_regex="$2"

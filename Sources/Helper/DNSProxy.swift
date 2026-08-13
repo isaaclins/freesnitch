@@ -6,6 +6,8 @@ final class DNSProxy: @unchecked Sendable {
     private var tcpListener: NWListener?
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.dns", qos: .userInitiated)
     private let upstreamQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.up")
+    private let dohLock = NSLock()
+    private var storedDoHURL = AppConstants.defaultDoHUpstream
     /// Backstop timers only. Kept off `queue` so a pending ask can never wait
     /// behind DNS handling, and vice versa.
     private let askQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.ask", qos: .utility)
@@ -26,7 +28,18 @@ final class DNSProxy: @unchecked Sendable {
     private var preparedRules = PreparedRuleSet(rules: [])
     var mode: AppMode = .alert
     var matcher = RuleMatcher()
-    var dohURL: String = AppConstants.defaultDoHUpstream
+    var dohURL: String {
+        get {
+            dohLock.lock()
+            defer { dohLock.unlock() }
+            return storedDoHURL
+        }
+        set {
+            dohLock.lock()
+            storedDoHURL = newValue
+            dohLock.unlock()
+        }
+    }
     var onBlock: ((String, String?) -> Void)?
     var onResolve: ((String, [String]) -> Void)?
     var onAsk: ((String, @escaping (Bool) -> Void) -> Void)?
