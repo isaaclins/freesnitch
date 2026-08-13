@@ -468,82 +468,95 @@ final class CLIRunner {
     private func helperSettings(_ action: HelperSettingsCommand) async throws -> CommandResult {
         if case .openLoginItems = action {
             try openLoginItems()
-            let report = HelperSettingsReport(registration: helperRegistrationState(), reachable: false, version: nil, detail: "Opened System Settings > General > Login Items & Extensions.")
-            return CommandResult(data: report, human: "Opened System Settings > General > Login Items & Extensions.")
+            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: false, version: nil, detail: "Opened System Settings > General > Login Items & Extensions. Helper registration is app-owned; CLI registration state is not authoritative.")
+            return CommandResult(data: report, human: "Opened System Settings > General > Login Items & Extensions.\nHelper registration: unknown-from-cli (app-owned).")
         }
 
-        let registration: String
+        let rawRegistration = helperRegistrationStateRaw()
+        let didActivateApp: Bool
+        let status: HelperStatus
         do {
-            if case .recheck = action {
-                registration = try recheckHelperRegistration()
+            if case .recheck = action,
+               rawRegistration == "not-registered" || rawRegistration == "not-found" {
+                try activateContainingApp()
+                didActivateApp = true
+                status = try await pollHelperAfterAppActivation()
             } else {
-                registration = helperRegistrationState()
+                didActivateApp = false
+                status = try await CLIHelperClient().prepare()
             }
+            let observedRegistration = helperRegistrationStateRaw()
+            let detail = didActivateApp
+                ? "Activated the containing signed FreeSnitch.app. Helper registration is app-owned; CLI did not call SMAppService.register(). CLI observed state: \(observedRegistration), which is not authoritative."
+                : "Helper XPC is the authoritative live fact; CLI cannot inspect app-owned SMAppService registration reliably. CLI observed state: \(observedRegistration)."
+            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: true, version: status.version, detail: detail)
+            return CommandResult(data: report, human: "Helper registration: unknown-from-cli (app-owned).\nHelper XPC: reachable (v\(status.version)).\n\(detail)")
         } catch let error as CLIError {
-            let report = HelperSettingsReport(registration: helperRegistrationState(), reachable: false, version: nil, detail: error.message)
+            let observedRegistration = helperRegistrationStateRaw()
+            let remediation = helperRemediation(registration: observedRegistration, error: error)
+            let detail = "CLI observed SMAppService state: \(observedRegistration), but this is not authoritative because registration is app-owned. \(error.message)"
+            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: false, version: nil, detail: detail)
             return CommandResult(data: report,
-                                 human: "Helper registration: \(report.registration).\nHelper XPC: unreachable.\nWhat to do: \(error.remediation ?? "Run freesnitch doctor.")",
+                                 human: "Helper registration: unknown-from-cli (app-owned).\nCLI observed registration: \(observedRegistration) (not authoritative).\nHelper XPC: unreachable.\nWhat to do: \(remediation)",
                                  exitCode: error.exitCode,
-                                 error: error)
-        }
-
-        let helper = CLIHelperClient()
-        do {
-            let status = try await helper.prepare()
-            let report = HelperSettingsReport(registration: registration, reachable: true, version: status.version, detail: nil)
-            return CommandResult(data: report, human: "Helper registration: \(registration).\nHelper XPC: reachable (v\(status.version)).")
-        } catch let error as CLIError {
-            let remediation = helperRemediation(registration: registration, error: error)
-            let adjustedError = CLIError(error.exitCode, code: error.code, message: error.message, remediation: remediation)
-            let report = HelperSettingsReport(registration: registration, reachable: false, version: helper.observedVersion, detail: error.message)
-            return CommandResult(data: report,
-                                 human: "Helper registration: \(registration).\nHelper XPC: unreachable.\nWhat to do: \(remediation)",
-                                 exitCode: adjustedError.exitCode,
-                                 error: adjustedError)
+                                 error: CLIError(error.exitCode, code: error.code, message: error.message, remediation: remediation))
         }
     }
 
-    private func recheckHelperRegistration() throws -> String {
-        let registration = helperRegistrationState()
-        guard registration == "not-registered" || registration == "not-found" else {
-            if registration == "wrong-location" {
-                return registration
-            }
-            return registration
-        }
-        guard CLIAppBundle.isInApplicationsFolder else { return "wrong-location" }
-        guard CLIAppBundle.hasEmbeddedHelper else { return "not-found" }
-
-        let service = SMAppService.daemon(plistName: "io.isaaclins.freesnitch.helper.plist")
-        do {
-            try service.register()
-        } catch {
-            let ns = error as NSError
-            let details = "domain=\(ns.domain), code=\(ns.code), description=\(ns.localizedDescription)"
+    private func activateContainingApp() throws {
+        guard let appURL = CLIAppBundle.appURL,
+              appURL.pathExtension == "app" else {
             throw CLIError(.operationFailed,
-                           message: "Helper registration failed: \(details).",
-                           remediation: "Registration failed with \(details). The signed app bundles the helper, but macOS may still show Background App Activity as on while launchd has no service. Run this recheck from /Applications, then approve FreeSnitch in System Settings > General > Login Items & Extensions if prompted.")
+                           message: "The CLI is not inside a FreeSnitch.app bundle, so it cannot activate the app-owned helper registration path.",
+                           remediation: "Launch the signed FreeSnitch.app, use its Register Helper action, then rerun `freesnitch settings helper status`.")
         }
-        return helperRegistrationState()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [appURL.path]
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw CLIError(.operationFailed,
+                           message: "Could not activate the containing FreeSnitch.app: \(error.localizedDescription).",
+                           remediation: "Launch the signed FreeSnitch.app and use its Register Helper action.")
+        }
+        guard process.terminationStatus == 0 else {
+            throw CLIError(.operationFailed,
+                           message: "The containing FreeSnitch.app could not be activated (open exited \(process.terminationStatus)).",
+                           remediation: "Launch the signed FreeSnitch.app and use its Register Helper action.")
+        }
+    }
+
+    private func pollHelperAfterAppActivation() async throws -> HelperStatus {
+        var lastError: CLIError?
+        for attempt in 0..<6 {
+            let registration = helperRegistrationStateRaw()
+            if registration == "enabled" || registration == "requires-approval" || attempt > 0 {
+                let helper = CLIHelperClient()
+                do {
+                    return try await helper.prepare(timeout: 1)
+                } catch let error as CLIError {
+                    lastError = error
+                }
+            }
+            if attempt < 5 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        throw lastError ?? CLIError(.helperUnreachable, message: "The helper did not become reachable after activating the signed FreeSnitch.app.")
     }
 
     private func helperRemediation(registration: String, error: CLIError) -> String {
         switch registration {
         case "enabled":
-            return "The helper service is still registered. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` for a stale or stopped helper, then rerun `freesnitch settings helper status`."
+            return "Helper XPC is unreachable although the CLI observed an enabled registration. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` only if launchd still has the service, then rerun `freesnitch settings helper status`."
         case "requires-approval":
-            return "Approve FreeSnitch in System Settings > General > Login Items & Extensions, then rerun `freesnitch settings helper recheck`. Registration must happen before the kickstart command can work."
-        case "not-registered":
-            return "Run `freesnitch settings helper recheck` from the signed FreeSnitch app in /Applications to register the absent service, then approve it if macOS asks."
-        case "not-found":
-            if CLIAppBundle.hasEmbeddedHelper {
-                return "SMAppService reports no registration record even though this signed app bundles the helper declaration and executable. Background App Activity may still show FreeSnitch as on while launchd has no service; toggling it off/on is not sufficient. Run `freesnitch settings helper recheck` from /Applications to register it."
-            }
-            return "This app copy does not contain both the helper declaration and executable, so registration cannot be attempted. Install the signed FreeSnitch release, then rerun this command."
-        case "wrong-location":
-            return "Move FreeSnitch.app to /Applications and run the bundled CLI again. No helper registration was attempted."
+            return "Use the signed FreeSnitch.app Register Helper action, then approve FreeSnitch in System Settings > General > Login Items & Extensions. Registration must happen before the kickstart command can work."
+        case "not-registered", "not-found":
+            return "The CLI cannot register the app-owned helper. Launch the signed FreeSnitch.app and use its Register Helper action, then approve it in System Settings if prompted. If it remains unavailable, rerun `freesnitch settings helper status`."
         default:
-            return error.remediation ?? "Run `freesnitch doctor` for helper diagnostics."
+            return "The CLI cannot inspect app-owned SMAppService registration reliably. Launch the signed FreeSnitch.app and use its Register Helper action, then rerun `freesnitch settings helper status`.\(error.message.isEmpty ? "" : " Last XPC error: \(error.message)")"
         }
     }
 
@@ -584,16 +597,20 @@ final class CLIRunner {
         }
     }
 
-    private func helperRegistrationState() -> String {
-        guard CLIAppBundle.appURL != nil else { return "wrong-location" }
+    private func helperRegistrationStateRaw() -> String {
+        guard CLIAppBundle.appURL != nil else { return "unknown-from-cli" }
         let service = SMAppService.daemon(plistName: "io.isaaclins.freesnitch.helper.plist")
         switch service.status {
         case .enabled: return "enabled"
         case .requiresApproval: return "requires-approval"
-        case .notRegistered: return CLIAppBundle.isInApplicationsFolder ? "not-registered" : "wrong-location"
+        case .notRegistered: return "not-registered"
         case .notFound: return "not-found"
-        @unknown default: return "unknown"
+        @unknown default: return "unknown-from-cli"
         }
+    }
+
+    private func helperRegistrationState() -> String {
+        "unknown-from-cli"
     }
 
     private func syncSnapshot(mode: AppMode, rules: [Rule]) async -> (state: String, message: String?) {
