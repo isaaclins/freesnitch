@@ -15,6 +15,7 @@ public enum SharedRuleBridge {
     /// system, not streamed like the live XPC payload.
     public static let maximumBootSnapshotEncodedBytes = 512 * 1024
     public static let maximumBootSnapshotRuleCount = 4096
+    public static let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
 
     public struct Snapshot: Codable, Sendable {
         public var mode: AppMode
@@ -107,6 +108,15 @@ public enum SharedRuleBridge {
         let stored = try JSONDecoder().decode(BootSnapshot.self, from: data)
         try validateBootSnapshot(stored, now: now)
         return stored.snapshot
+    }
+
+    public static func applyingBootPolicySafety(_ snapshot: Snapshot, now: Date = Date()) -> Snapshot {
+        guard snapshot.mode == .silentDeny else { return snapshot }
+        let age = now.timeIntervalSince(snapshot.updatedAt)
+        guard age < 0 || age > staleSilentDenyAge else { return snapshot }
+        var downgraded = snapshot
+        downgraded.mode = .alert
+        return downgraded
     }
 
     private static func validateBootSnapshot(_ stored: BootSnapshot, now: Date) throws {

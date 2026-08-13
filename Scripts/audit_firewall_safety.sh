@@ -46,6 +46,8 @@ require_text "$SYSTEM_EXTENSION_MANAGER" \
   "the GUI does not write the persisted boot snapshot to vendorConfiguration"
 require_text "$FILTER" "filterConfiguration.vendorConfiguration" \
   "the extension does not read filterConfiguration.vendorConfiguration"
+require_text "$BRIDGE" "applyingBootPolicySafety" \
+  "stale silent-deny boot policy downgrade is missing"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"

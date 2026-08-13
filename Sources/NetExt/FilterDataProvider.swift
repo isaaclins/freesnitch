@@ -27,7 +27,6 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private let matcher = RuleMatcher()
     private let resolverBypass = ResolverBypass()
-    private let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
     private var snapshotOrigin: SnapshotOrigin = .none
@@ -320,16 +319,13 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func loadBootSnapshot(_ data: Data) {
         do {
-            var received = try SharedRuleBridge.decodeBootSnapshot(data)
-            if received.mode == .silentDeny {
-                let age = Date().timeIntervalSince(received.updatedAt)
-                if age < 0 || age > staleSilentDenyAge {
-                    received.mode = .alert
-                    PSLog.error(
-                        PSLog.netext,
-                        "stale silent-deny boot policy downgraded to alert; explicit deny rules remain active and unanswered asks fail open"
-                    )
-                }
+            let decoded = try SharedRuleBridge.decodeBootSnapshot(data)
+            let received = SharedRuleBridge.applyingBootPolicySafety(decoded)
+            if decoded.mode == .silentDeny && received.mode == .alert {
+                PSLog.error(
+                    PSLog.netext,
+                    "stale silent-deny boot policy downgraded to alert; explicit deny rules remain active and unanswered asks fail open"
+                )
             }
             let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
             snapshotLock.lock()
