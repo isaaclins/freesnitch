@@ -216,8 +216,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
         dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))
 
-        dns.rules = persistedPolicy.rules
-        dns.mode = persistedPolicy.mode
+        // One transition, so the DNS path can never observe the restored rules
+        // paired with the default mode.
+        dns.applyPolicy(mode: persistedPolicy.mode, rules: persistedPolicy.rules)
         dns.onBlock = { [weak self] domain, reason in
             self?.broadcast { c in
                 let payload: [String: Any] = ["domain": domain, "reason": reason ?? ""]
@@ -514,8 +515,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             let state = try store.mutatePolicy(change)
             mode = state.mode
             policyGeneration = state.generation
-            dns.mode = state.mode
-            dns.rules = state.rules
+            // Mode and rules belong to the same committed generation, so they
+            // are published together. Assigning them one after the other left a
+            // window where a query was judged by the new mode against the old
+            // rules, which is the tear #47 removed inside DNSProxy.
+            dns.applyPolicy(mode: state.mode, rules: state.rules)
             return SharedRuleBridge.Snapshot(mode: state.mode,
                                              rules: state.rules,
                                              generation: state.generation)

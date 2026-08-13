@@ -885,4 +885,31 @@ generation_assignment_line="$(grep -nF 'setSnapshotLocked(accepted)' "$FILTER" |
 [[ -n "$generation_check_line" && -n "$generation_assignment_line" && "$generation_check_line" -lt "$generation_assignment_line" ]] \
   || fail "the extension assigns a live snapshot before comparing its generation"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, and authoritative helper-owned policy snapshots are present.\n'
+# DNS policy must be one immutable value published under one lock, and a query
+# must decide from a single snapshot. Stored mutable policy fields raced across
+# the XPC, blocklist and DNS queues, and the paired rules plus prepared set tore
+# apart between two stores.
+require_text "$DNS_PROXY" "private var storedPolicy" \
+  "DNSProxy does not keep its policy in one private stored value"
+require_text "$DNS_PROXY" "func policySnapshot() -> DNSPolicy" \
+  "DNSProxy does not expose one coherent policy snapshot"
+require_text "$DNS_PROXY" "let policy = policySnapshot()" \
+  "the DNS query path does not decide from a single policy snapshot"
+require_text "$DNS_PROXY" "func applyPolicy(mode" \
+  "DNSProxy has no combined mode-and-rules transition"
+if grep -Fq 'didSet { preparedRules' "$DNS_PROXY"; then
+  fail "DNSProxy still rebuilds its prepared rules in a didSet, which tears the pairing"
+fi
+if grep -Eq '^[[:space:]]+var (rules: \[Rule\]|blocklist: Set<String>|mode: AppMode) = ' "$DNS_PROXY"; then
+  fail "DNSProxy still stores mutable DNS policy fields outside the locked snapshot"
+fi
+
+# The helper must publish mode and rules as one transition. Two statements left
+# a window where a query saw the new mode against the old rules.
+require_text "$HELPER" "dns.applyPolicy(mode:" \
+  "the helper does not publish mode and rules as one DNS policy transition"
+if grep -Eq '^[[:space:]]+dns\.(mode|rules) = ' "$HELPER"; then
+  fail "the helper still assigns DNS mode and rules separately, which publishes a torn policy"
+fi
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, and atomic DNS policy publication are present.\n'
