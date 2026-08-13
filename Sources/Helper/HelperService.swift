@@ -26,6 +26,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         self.listener = listener
         super.init()
 
+        pf.onWarning = { [weak self] message in
+            self?.broadcast { client in
+                client.notifyLog(level: "error", message: message)
+            }
+        }
+
         if let modeStr = store.getSetting("mode"), let m = AppMode(rawValue: modeStr) {
             self.mode = m
         }
@@ -51,7 +57,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             self.askLock.lock()
             self.pendingAsks[domain] = completion
             self.askLock.unlock()
-            let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: domain, status: .pending)
+            let ruleHost: String
+            if PFHostValidator.kind(for: domain) == .hostname {
+                ruleHost = domain
+            } else {
+                ruleHost = ""
+                PSLog.error(
+                    PSLog.dns,
+                    "DNS query name '\(domain)' is not a connectable PF destination: \(PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
+                )
+            }
+            let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: ruleHost, status: .pending)
             guard let data = try? JSONEncoder().encode(stub) else { completion(true); return }
             self.broadcast { c in
                 c.notifyAlert(connectionJSON: data) { allow, _ in
@@ -217,7 +233,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     /// Passive monitoring only. Starting the DNS proxy (which binds port 53 and
     /// takes over name resolution) and loading the pf anchor are *enforcement*
-    /// and are gated behind setEnforcementEnabled — a monitor should never
+    /// and are gated behind setEnforcementEnabled. A monitor should never
     /// silently reconfigure the user's networking.
     func startMonitoring(reply: @escaping (Bool, String?) -> Void) {
         netmon.start()

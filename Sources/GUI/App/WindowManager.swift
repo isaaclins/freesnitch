@@ -5,14 +5,16 @@ import Combine
 @MainActor
 final class WindowManager {
     private let state: AppState
+    private let systemExtension: SystemExtensionManager
     private weak var networkMonitorWindow: NSWindow?
     private weak var rulesWindow: NSWindow?
     private weak var settingsWindow: NSWindow?
     private var alertWindow: NSWindow?
     private var alertCancellable: AnyCancellable?
 
-    init(state: AppState) {
+    init(state: AppState, systemExtension: SystemExtensionManager) {
         self.state = state
+        self.systemExtension = systemExtension
         observeAlerts()
     }
 
@@ -25,7 +27,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 1100, height: 700),
             minSize: NSSize(width: 900, height: 550),
             autosaveName: "FreeSnitch.NetworkMonitor",
-            content: NetworkMonitorView().environmentObject(state)
+            content: NetworkMonitorView(systemExtension: systemExtension).environmentObject(state)
         )
     }
 
@@ -36,7 +38,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 1000, height: 650),
             minSize: NSSize(width: 820, height: 500),
             autosaveName: "FreeSnitch.Rules",
-            content: RulesManagerView().environmentObject(state)
+            content: RulesManagerView(systemExtension: systemExtension).environmentObject(state)
         )
     }
 
@@ -50,7 +52,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 560, height: 460),
             minSize: NSSize(width: 560, height: 460),
             autosaveName: "FreeSnitch.Settings",
-            content: SettingsView().environmentObject(state),
+            content: SettingsView(systemExtension: systemExtension).environmentObject(state),
             resizable: false
         )
     }
@@ -81,7 +83,7 @@ final class WindowManager {
         window.minSize = minSize
         // Use `contentView` (NSHostingView) instead of `contentViewController`.
         // Assigning a hosting *controller* makes NSWindow resize itself to the
-        // SwiftUI view's fitting size — which collapsed these windows to a
+        // SwiftUI view's fitting size, which collapsed these windows to a
         // sliver. A hosting *view* keeps the size we set here, but only if we
         // also stop it exporting an intrinsic size: with `sizingOptions`
         // left at its default the window grew to the content's ideal height
@@ -135,7 +137,7 @@ final class WindowManager {
 
     private func presentAlertWindow() {
         // Use a hosting *controller* so the panel auto-sizes to the alert's
-        // content — long process names / hostnames grow the card correctly.
+        // content. Long process names and hostnames grow the card correctly.
         // (Reading NSHostingView.fittingSize before the view is laid out
         // returns zero and would clip the content.)
         let hosting = NSHostingController(rootView: AlertWindowContent().environmentObject(state))

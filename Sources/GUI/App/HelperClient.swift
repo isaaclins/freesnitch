@@ -11,7 +11,7 @@ enum HelperInstallState: Equatable {
     /// Not asked yet.
     case unknown
     /// Registered with launchd but waiting for the user to switch it on in
-    /// System Settings › General › Login Items & Extensions.
+    /// System Settings under General > Login Items & Extensions.
     case requiresApproval
     /// Approved and running; XPC should be reachable.
     case enabled
@@ -42,7 +42,7 @@ final class HelperClient: NSObject, ObservableObject {
     private var isRepairing = false
     private var enabledButSilentSince: Date?
     /// Approved but unreachable for long enough that re-registering is worth
-    /// offering. Never acted on automatically — see startPolling().
+    /// offering. Never acted on automatically; see startPolling().
     /// Version string reported by the running daemon, when it answers at all.
     @Published var helperVersion: String?
     @Published var needsRepair = false {
@@ -68,7 +68,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// Registers the privileged helper as a launchd daemon via SMAppService.
     /// Without this the XPC mach service never exists, so every helper call
     /// silently no-ops (the root cause of "no rules / no traffic"). Requires a
-    /// signed build; the user approves it in System Settings → Login Items.
+    /// signed build; the user approves it in System Settings under Login Items.
     func registerDaemon() {
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
@@ -78,7 +78,7 @@ final class HelperClient: NSObject, ObservableObject {
             return
         case .requiresApproval:
             // Calling register() again here throws EPERM and tells the user
-            // nothing useful — the item exists, it just isn't switched on yet.
+            // nothing useful. The item exists, but it is not switched on yet.
             installState = .requiresApproval
             return
         default:
@@ -165,7 +165,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     /// Keeps checking registration + reachability. Approval happens outside the
     /// app (System Settings), so without polling the user has to relaunch to
-    /// see anything change — which reads as "the app does nothing".
+    /// see anything change, which reads as "the app does nothing".
     private func startPolling() {
         pollTimer?.invalidate()
         let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
@@ -268,12 +268,80 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     func addRule(_ rule: Rule) {
-        guard let data = try? JSONEncoder().encode(rule) else { return }
-        remote?.addRule(ruleJSON: data) { _, _ in }
+        addRule(rule) { _, _ in }
+    }
+
+    func addRule(_ rule: Rule, completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let data = try? JSONEncoder().encode(rule) else {
+            completion(false, "Could not encode the rule JSON object.")
+            return
+        }
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.addRule(ruleJSON: data) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
+    func reloadRules(_ rules: [Rule], completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let data = try? JSONEncoder().encode(rules) else {
+            completion(false, "Could not encode the rule JSON array.")
+            return
+        }
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.reloadRules(rulesJSON: data) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
     }
 
     func removeRule(id: UUID) {
-        remote?.removeRule(idString: id.uuidString) { _, _ in }
+        removeRule(id: id) { _, _ in }
+    }
+
+    func removeRule(id: UUID, completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.removeRule(idString: id.uuidString) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
+    }
+
+    /// Replaces the helper's stored rules using the existing CRUD protocol.
+    /// `reloadRules` upserts its JSON array, so remove the current IDs first
+    /// rather than presenting a merge as an import replacement.
+    func replaceRules(_ rules: [Rule],
+                      existing: [Rule],
+                      completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        let ids = existing.map(\.id)
+
+        func removeNext(_ index: Int) {
+            guard index < ids.count else {
+                reloadRules(rules, completion: completion)
+                return
+            }
+            proxy.removeRule(idString: ids[index].uuidString) { ok, message in
+                Task { @MainActor in
+                    guard ok else {
+                        completion(false, message ?? "The helper rejected a rule removal.")
+                        return
+                    }
+                    removeNext(index + 1)
+                }
+            }
+        }
+
+        removeNext(0)
     }
 
     func listRules(profile: String = "", completion: @MainActor @escaping ([Rule]) -> Void) {
@@ -289,6 +357,18 @@ final class HelperClient: NSObject, ObservableObject {
 
     func refreshBlocklists() {
         remote?.refreshBlocklists { _, _ in }
+    }
+
+    func setBlocklistEnabled(id: UUID,
+                             enabled: Bool,
+                             completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = remote else {
+            completion(false, "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.enableBlocklist(idString: id.uuidString, enabled: enabled) { ok, message in
+            Task { @MainActor in completion(ok, message) }
+        }
     }
 
     func setEnforcementEnabled(_ enabled: Bool) {

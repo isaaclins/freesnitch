@@ -3,6 +3,7 @@ import ServiceManagement
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    let systemExtension: SystemExtensionManager
     @State private var doh = AppConstants.defaultDoHUpstream
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -20,7 +21,7 @@ struct SettingsView: View {
 
     private var generalTab: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HelperBanner()
+            HelperBanner(systemExtension: systemExtension)
             Form {
                 Section("Privileged helper") {
                     HStack {
@@ -117,7 +118,7 @@ struct SettingsView: View {
                         .font(.body).foregroundColor(.secondary)
                     Text(state.helperConnected
                          ? "Press Refresh All to download the default blocklists."
-                         : "Blocklists live in the privileged helper. Approve the helper first — see the General tab.")
+                         : "Blocklists live in the privileged helper. Approve the helper first. See the General tab.")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

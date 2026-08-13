@@ -5,12 +5,13 @@ import AppKit
 
 struct NetworkMonitorView: View {
     @EnvironmentObject var state: AppState
+    let systemExtension: SystemExtensionManager
     @State private var selectedProcess: String? = nil
     @State private var searchText: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            HelperBanner()
+            HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
                 sidebar
                     .frame(width: 240)

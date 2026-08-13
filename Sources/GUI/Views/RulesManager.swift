@@ -1,11 +1,23 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct RulesManagerView: View {
     @EnvironmentObject var state: AppState
+    let systemExtension: SystemExtensionManager
     @State private var selectedCategory: Category = .all
     @State private var searchText: String = ""
     @State private var selectedRuleIDs: Set<UUID> = []
+    @State private var showingRuleEditor = false
+    @State private var showingImporter = false
+    @State private var showingExporter = false
+    @State private var exportDocument = RuleJSONDocument(rules: [])
+    @State private var pendingImportRules: [Rule] = []
+    @State private var showingImportConfirmation = false
+    @State private var pendingRemovalIDs: Set<UUID> = []
+    @State private var showingRemoveConfirmation = false
+    @State private var errorMessage: String?
+    @State private var showingError = false
 
     enum Category: Hashable {
         case all
@@ -21,7 +33,7 @@ struct RulesManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HelperBanner()
+            HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
                 sidebar.frame(width: 220).background(PSTheme.bgSidebar)
                 Divider().background(PSTheme.stroke)
@@ -32,6 +44,45 @@ struct RulesManagerView: View {
         }
         .background(PSTheme.bgPrimary)
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showingRuleEditor) {
+            RuleEditorView { rule in addRule(rule) }
+        }
+        .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
+            importRules(from: result)
+        }
+        .fileExporter(isPresented: $showingExporter,
+                      document: exportDocument,
+                      contentType: .json,
+                      defaultFilename: "freesnitch-rules") { result in
+            if case .failure(let error) = result {
+                showError("Could not export rules: \(error.localizedDescription)")
+            }
+        }
+        .confirmationDialog("Replace all rules?",
+                            isPresented: $showingImportConfirmation,
+                            titleVisibility: .visible) {
+            Button("Replace Rules", role: .destructive) {
+                replaceRules(with: pendingImportRules)
+            }
+            Button("Cancel", role: .cancel) { pendingImportRules.removeAll() }
+        } message: {
+            Text("Importing \(pendingImportRules.count) rules will replace the \(state.rules.count) rules currently in FreeSnitch.")
+        }
+        .confirmationDialog("Remove selected rules?",
+                            isPresented: $showingRemoveConfirmation,
+                            titleVisibility: .visible) {
+            Button("Remove Rules", role: .destructive) {
+                removeRules(withIDs: pendingRemovalIDs)
+            }
+            Button("Cancel", role: .cancel) { pendingRemovalIDs.removeAll() }
+        } message: {
+            Text("This permanently removes \(pendingRemovalIDs.count) rules from FreeSnitch.")
+        }
+        .alert("Rules Manager", isPresented: $showingError) {
+            Button("OK", role: .cancel) { showingError = false }
+        } message: {
+            Text(errorMessage ?? "The requested operation could not be completed.")
+        }
     }
 
     private var sidebar: some View {
@@ -47,6 +98,10 @@ struct RulesManagerView: View {
                 navRow(.unapproved, label: "Unapproved", icon: "questionmark.circle.fill", count: state.rules.filter { $0.action == .ask }.count, badge: true)
 
                 sidebarHeader("Rule Groups").padding(.top, 8)
+                Text("Categories only")
+                    .font(.system(size: 10))
+                    .foregroundColor(PSTheme.textMuted)
+                    .padding(.horizontal, 10)
                 groupRow("iCloud Services", icon: "icloud.fill")
                 groupRow("macOS Services", icon: "applelogo")
                 groupRow("Apple Apps", icon: "app.gift")
@@ -94,10 +149,6 @@ struct RulesManagerView: View {
     private func groupRow(_ label: String, icon: String) -> some View {
         Button(action: { selectCategory(.group(label)) }) {
             HStack(spacing: 8) {
-                Toggle("", isOn: .constant(true))
-                    .toggleStyle(.checkbox)
-                    .controlSize(.mini)
-                    .labelsHidden()
                 Image(systemName: icon).foregroundColor(PSTheme.accent).frame(width: 16)
                 Text(label).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
                 Spacer()
@@ -108,15 +159,19 @@ struct RulesManagerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Rule Groups are categories for viewing rules, not enforcement switches.")
     }
 
     private func blocklistRow(_ b: BlocklistInfo) -> some View {
         Button(action: { selectCategory(.blocklist(b.id)) }) {
             HStack(spacing: 8) {
-                Toggle("", isOn: Binding(get: { b.enabled }, set: { _ in }))
-                    .toggleStyle(.checkbox)
-                    .controlSize(.mini)
-                    .labelsHidden()
+                Toggle("", isOn: Binding(
+                    get: { b.enabled },
+                    set: { setBlocklist(b, enabled: $0) }
+                ))
+                .toggleStyle(.checkbox)
+                .controlSize(.mini)
+                .labelsHidden()
                 Image(systemName: "shield.lefthalf.filled").foregroundColor(PSTheme.accentRed).frame(width: 16)
                 Text(b.name).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary).lineLimit(1)
                 Spacer()
@@ -127,6 +182,7 @@ struct RulesManagerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Enable or disable this blocklist.")
     }
 
     private var mainPane: some View {
@@ -147,9 +203,26 @@ struct RulesManagerView: View {
             .background(PSTheme.bgTertiary)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             Spacer()
-            Button(action: {}) { Image(systemName: "tray.and.arrow.down.fill") }.buttonStyle(.borderless)
-            Button(action: {}) { Image(systemName: "tray.and.arrow.up.fill") }.buttonStyle(.borderless)
-            Button(action: {}) { Image(systemName: "plus") }.buttonStyle(.borderless)
+            Button(action: { showingImporter = true }) {
+                Image(systemName: "tray.and.arrow.down.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!state.helperConnected)
+            .help(state.helperConnected
+                  ? "Import rules from a plain JSON array. This replaces the current rules."
+                  : "Approve the FreeSnitch helper before importing rules.")
+            Button(action: { exportRules() }) {
+                Image(systemName: "tray.and.arrow.up.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(state.rules.isEmpty)
+            .help(state.rules.isEmpty ? "There are no rules to export." : "Export rules as a plain JSON array.")
+            Button(action: { showingRuleEditor = true }) {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!state.helperConnected)
+            .help(state.helperConnected ? "Add a rule." : "Approve the FreeSnitch helper before adding rules.")
         }
         .padding(8)
         .foregroundColor(PSTheme.textSecondary)
@@ -225,10 +298,10 @@ struct RulesManagerView: View {
     private var emptySubtitle: String {
         if case .blocklist(let id) = selectedCategory {
             let count = state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
-            return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings → Blocklists."
+            return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings under Blocklists."
         }
         if !state.helperConnected {
-            return "Rules are managed by the FreeSnitch helper. Approve it in System Settings → General → Login Items — this window fills in on its own once it connects."
+            return "Rules are managed by the FreeSnitch helper. Approve it in System Settings under General > Login Items. This window fills in on its own once it connects."
         }
         if state.rules.isEmpty {
             return "Rules are created automatically when you allow or deny a connection alert."
@@ -454,6 +527,79 @@ struct RulesManagerView: View {
         !selectedRules.isEmpty && selectedRules.allSatisfy { !$0.enabled }
     }
 
+    private func addRule(_ rule: Rule) {
+        state.helper.addRule(rule) { ok, message in
+            guard ok else {
+                showError("Could not add rule: \(message ?? "the helper rejected the rule")")
+                return
+            }
+            state.refreshRules()
+        }
+    }
+
+    private func importRules(from result: Result<URL, Error>) {
+        guard state.helperConnected else {
+            showError("Approve the FreeSnitch helper before importing rules.")
+            return
+        }
+        do {
+            let url: URL
+            switch result {
+            case .success(let selectedURL): url = selectedURL
+            case .failure(let error):
+                if (error as NSError).code == NSUserCancelledError { return }
+                throw error
+            }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url)
+            pendingImportRules = try JSONDecoder().decode([Rule].self, from: data)
+            showingImportConfirmation = true
+        } catch {
+            showError("Could not read a plain rule JSON array: \(error.localizedDescription)")
+        }
+    }
+
+    private func replaceRules(with rules: [Rule]) {
+        pendingImportRules.removeAll()
+        let existingRules = state.rules
+        state.helper.replaceRules(rules, existing: existingRules) { ok, message in
+            guard ok else {
+                showError("Could not replace rules: \(message ?? "the helper rejected the import")")
+                return
+            }
+            state.rules = rules
+            state.syncSharedRules()
+            state.refreshRules()
+            clearSelection()
+        }
+    }
+
+    private func exportRules() {
+        exportDocument = RuleJSONDocument(rules: state.rules)
+        showingExporter = true
+    }
+
+    private func setBlocklist(_ blocklist: BlocklistInfo, enabled: Bool) {
+        state.helper.setBlocklistEnabled(id: blocklist.id, enabled: enabled) { ok, message in
+            guard ok else {
+                showError("Could not change \(blocklist.name): \(message ?? "the helper rejected the change")")
+                return
+            }
+            state.blocklists = state.blocklists.map { item in
+                guard item.id == blocklist.id else { return item }
+                var copy = item
+                copy.enabled = enabled
+                return copy
+            }
+        }
+    }
+
+    private func showError(_ message: String) {
+        errorMessage = message
+        showingError = true
+    }
+
     private func toggleRule(_ r: Rule) {
         var copy = r
         copy.enabled.toggle()
@@ -479,21 +625,146 @@ struct RulesManagerView: View {
     }
 
     private func removeRule(_ r: Rule) {
-        state.helper.removeRule(id: r.id)
-        state.refreshRules()
-        clearSelection()
+        removeRules(withIDs: [r.id])
     }
 
     private func removeSelectedRules() {
-        let rules = selectedRules
-        guard !rules.isEmpty else { return }
-        for rule in rules {
-            state.helper.removeRule(id: rule.id)
+        let ids = Set(selectedRules.map(\.id))
+        guard !ids.isEmpty else { return }
+        if ids.count > 1 {
+            pendingRemovalIDs = ids
+            showingRemoveConfirmation = true
+        } else {
+            removeRules(withIDs: ids)
         }
-        let removedIDs = Set(rules.map(\.id))
-        state.rules.removeAll { removedIDs.contains($0.id) }
+    }
+
+    private func removeRules(withIDs ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            state.helper.removeRule(id: id)
+        }
+        state.rules.removeAll { ids.contains($0.id) }
+        pendingRemovalIDs.removeAll()
         state.syncSharedRules()
         clearSelection()
+    }
+}
+
+private struct RuleJSONDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+
+    let rules: [Rule]
+
+    init(rules: [Rule]) {
+        self.rules = rules
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        rules = try JSONDecoder().decode([Rule].self, from: data)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return FileWrapper(regularFileWithContents: try encoder.encode(rules))
+    }
+}
+
+private struct RuleEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let onSave: (Rule) -> Void
+    @State private var processName = ""
+    @State private var processBundleID = ""
+    @State private var remoteHost = ""
+    @State private var remoteIP = ""
+    @State private var remotePort = ""
+    @State private var direction: RuleDirection = .outgoing
+    @State private var action: RuleAction = .allow
+    @State private var scope: RuleScope = .domain
+    @State private var enabled = true
+    @State private var notes = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add Rule")
+                .font(.title2.weight(.semibold))
+                .foregroundColor(PSTheme.textPrimary)
+            Form {
+                Section("Match") {
+                    TextField("Process name", text: $processName)
+                    TextField("Bundle ID", text: $processBundleID)
+                    TextField("Host or domain", text: $remoteHost)
+                    TextField("IP address", text: $remoteIP)
+                    TextField("Port", text: $remotePort)
+                        .onChange(of: remotePort) { value in
+                            remotePort = value.filter { $0.isNumber }
+                        }
+                }
+                Section("Decision") {
+                    Picker("Direction", selection: $direction) {
+                        ForEach(RuleDirection.allCases, id: \.self) { value in
+                            Text(value.rawValue.capitalized).tag(value)
+                        }
+                    }
+                    Picker("Action", selection: $action) {
+                        ForEach(RuleAction.allCases, id: \.self) { value in
+                            Text(value.rawValue.capitalized).tag(value)
+                        }
+                    }
+                    Picker("Scope", selection: $scope) {
+                        ForEach(RuleScope.allCases, id: \.self) { value in
+                            Text(value.rawValue.capitalized).tag(value)
+                        }
+                    }
+                    Toggle("Enabled", isOn: $enabled)
+                    TextField("Notes", text: $notes)
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Add") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSave)
+            }
+        }
+        .padding(20)
+        .frame(width: 470, height: 520)
+        .background(PSTheme.bgPrimary)
+        .preferredColorScheme(.dark)
+    }
+
+    private var canSave: Bool {
+        let hasMatch = [processName, processBundleID, remoteHost, remoteIP]
+            .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return hasMatch || !remotePort.isEmpty
+    }
+
+    private func save() {
+        let rule = Rule(
+            processBundleId: optionalValue(processBundleID),
+            processName: optionalValue(processName),
+            remoteHost: optionalValue(remoteHost),
+            remoteIP: optionalValue(remoteIP),
+            remotePort: Int(remotePort),
+            direction: direction,
+            action: action,
+            scope: scope,
+            notes: optionalValue(notes),
+            enabled: enabled
+        )
+        onSave(rule)
+        dismiss()
+    }
+
+    private func optionalValue(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
