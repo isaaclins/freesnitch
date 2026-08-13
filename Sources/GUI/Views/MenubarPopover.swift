@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenubarPopoverView: View {
     @EnvironmentObject var state: AppState
+    let systemExtension: SystemExtensionManager
     @EnvironmentObject var windows: WindowManager
     let close: () -> Void
     @State private var showModePicker = false
@@ -11,7 +12,7 @@ struct MenubarPopoverView: View {
             headerBar
                 .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
-            HelperBanner(compact: true)
+            HelperBanner(systemExtension: systemExtension, compact: true)
 
             trafficGraph
                 .padding(.horizontal, 12)

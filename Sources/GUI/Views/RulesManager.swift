@@ -3,6 +3,7 @@ import AppKit
 
 struct RulesManagerView: View {
     @EnvironmentObject var state: AppState
+    let systemExtension: SystemExtensionManager
     @State private var selectedCategory: Category = .all
     @State private var searchText: String = ""
     @State private var selectedRuleIDs: Set<UUID> = []
@@ -21,7 +22,7 @@ struct RulesManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HelperBanner()
+            HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
                 sidebar.frame(width: 220).background(PSTheme.bgSidebar)
                 Divider().background(PSTheme.stroke)

@@ -5,13 +5,15 @@ import Combine
 @MainActor
 final class MenubarController {
     private let state: AppState
+    private let systemExtension: SystemExtensionManager
     private let windows: WindowManager
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var trafficCancellable: AnyCancellable?
 
-    init(state: AppState, windows: WindowManager) {
+    init(state: AppState, systemExtension: SystemExtensionManager, windows: WindowManager) {
         self.state = state
+        self.systemExtension = systemExtension
         self.windows = windows
     }
 
@@ -27,7 +29,8 @@ final class MenubarController {
         popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
-        let popoverView = MenubarPopoverView(close: { [weak self] in self?.popover.performClose(nil) })
+        let popoverView = MenubarPopoverView(systemExtension: systemExtension,
+                                              close: { [weak self] in self?.popover.performClose(nil) })
             .environmentObject(state)
             .environmentObject(windows)
             .frame(width: 380, height: 540)
@@ -35,12 +38,14 @@ final class MenubarController {
 
         render()
 
-        // Redraw on traffic, on helper health changes (the glyph reflects it)
-        // and when the user toggles the speed readout in Settings.
+        // Redraw on traffic, helper health, filter readiness and when the
+        // user toggles the speed readout in Settings.
         trafficCancellable = Publishers.MergeMany(
             state.$trafficHistory.map { _ in () }.eraseToAnyPublisher(),
             state.$helperConnected.map { _ in () }.eraseToAnyPublisher(),
             state.$helperInstallState.map { _ in () }.eraseToAnyPublisher(),
+            state.$filterSnapshotStatus.map { _ in () }.eraseToAnyPublisher(),
+            systemExtension.$status.map { _ in () }.eraseToAnyPublisher(),
             state.$showSpeedsInMenuBar.map { _ in () }.eraseToAnyPublisher()
         )
         .receive(on: RunLoop.main)
@@ -110,8 +115,8 @@ final class MenubarController {
     private func render() {
         guard let button = statusItem.button else { return }
 
-        let healthy = state.helperConnected
-        let symbol = healthy ? "record.circle" : "circle.slash"
+        let filtering = isFilterReady
+        let symbol = filtering ? "record.circle" : "shield.slash"
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "FreeSnitch")?
             .withSymbolConfiguration(config)
@@ -133,15 +138,37 @@ final class MenubarController {
         button.setAccessibilityLabel("FreeSnitch: \(tooltip)")
     }
 
+    private var isFilterReady: Bool {
+        systemExtension.status == .active && state.filterSnapshotStatus.state == .ready
+    }
+
     private var tooltip: String {
-        guard state.helperConnected else {
-            switch state.helperInstallState {
-            case .requiresApproval: return "Waiting for approval in System Settings under Login Items"
-            case .wrongLocation: return "Move FreeSnitch to your Applications folder"
-            case .notFound: return "Helper missing from this build"
-            case .failed(let m): return "Helper error: \(m)"
-            default: return "Helper not running. No traffic is being monitored"
+        guard isFilterReady else {
+            switch systemExtension.status {
+            case .needsApproval:
+                return "Firewall not filtering. Approve FreeSnitch under General > Login Items & Extensions > Network Extensions"
+            case .failed(let message):
+                return "Firewall not filtering: \(message)"
+            case .unsupported:
+                return "Firewall not filtering. Network Extension unavailable in this build"
+            case .activating:
+                return "Firewall not filtering yet. Network Extension is starting"
+            case .active:
+                switch state.filterSnapshotStatus.state {
+                case .unavailable:
+                    return "Firewall not filtering. Rule snapshot unavailable"
+                case .invalid:
+                    return "Firewall not filtering. Rule snapshot invalid"
+                case .ready:
+                    break
+                }
+            case .idle:
+                return "Firewall not filtering yet"
             }
+            return "Firewall not filtering"
+        }
+        if !state.helperConnected {
+            return "Firewall filtering is active. Traffic monitor helper is not connected"
         }
         return "↓ \(PSFormat.bytesPerSec(state.currentIn))  ↑ \(PSFormat.bytesPerSec(state.currentOut))"
     }

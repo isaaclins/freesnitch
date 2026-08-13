@@ -5,14 +5,16 @@ import Combine
 @MainActor
 final class WindowManager {
     private let state: AppState
+    private let systemExtension: SystemExtensionManager
     private weak var networkMonitorWindow: NSWindow?
     private weak var rulesWindow: NSWindow?
     private weak var settingsWindow: NSWindow?
     private var alertWindow: NSWindow?
     private var alertCancellable: AnyCancellable?
 
-    init(state: AppState) {
+    init(state: AppState, systemExtension: SystemExtensionManager) {
         self.state = state
+        self.systemExtension = systemExtension
         observeAlerts()
     }
 
@@ -25,7 +27,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 1100, height: 700),
             minSize: NSSize(width: 900, height: 550),
             autosaveName: "FreeSnitch.NetworkMonitor",
-            content: NetworkMonitorView().environmentObject(state)
+            content: NetworkMonitorView(systemExtension: systemExtension).environmentObject(state)
         )
     }
 
@@ -36,7 +38,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 1000, height: 650),
             minSize: NSSize(width: 820, height: 500),
             autosaveName: "FreeSnitch.Rules",
-            content: RulesManagerView().environmentObject(state)
+            content: RulesManagerView(systemExtension: systemExtension).environmentObject(state)
         )
     }
 
@@ -50,7 +52,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 560, height: 460),
             minSize: NSSize(width: 560, height: 460),
             autosaveName: "FreeSnitch.Settings",
-            content: SettingsView().environmentObject(state),
+            content: SettingsView(systemExtension: systemExtension).environmentObject(state),
             resizable: false
         )
     }
