@@ -70,7 +70,7 @@ struct SettingsView: View {
         case .requiresApproval: return "Waiting for your approval"
         case .notRegistered, .unknown: return "Not installed"
         case .wrongLocation: return "Move FreeSnitch to /Applications"
-        case .notFound: return "Missing from this build"
+        case .notFound: return "Registration record missing"
         case .failed(let m): return "Failed: \(m)"
         }
     }

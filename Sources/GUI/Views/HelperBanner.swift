@@ -80,11 +80,11 @@ private struct BannerInfo {
             title = "The FreeSnitch helper version does not match"
             switch repairState {
             case .inProgress:
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active yet. FreeSnitch is trying to restart it without changing the existing pf anchor."
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. FreeSnitch is registering only when no service exists; it will not unregister this running helper."
             case .manualRequired(let reason):
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. \(reason) Run `\(HelperRecovery.kickstartCommand)` in Terminal. The current pf anchor is left in place while the helper is restarted."
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. \(reason) The current pf anchor is left in place."
             case .idle:
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. FreeSnitch will try to restart the helper automatically."
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. Automatic replacement is disabled. Use Repair to show the safe recovery command."
             }
             action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
             return
@@ -97,7 +97,7 @@ private struct BannerInfo {
             icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
             title = "The helper needs repairing"
-            detail = "It is approved but either not responding or left over from an older FreeSnitch, usually after an in-place update. Repairing re-installs the background helper; macOS will ask you to approve it once more in Login Items."
+            detail = "It is approved but not responding. Repair is non-destructive and will not unregister the enabled service. Use it to show the privileged kickstart command; approval remains intact."
             action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
         case .enabled:
             icon = "hourglass"
@@ -111,12 +111,18 @@ private struct BannerInfo {
             title = "FreeSnitch needs your approval to monitor traffic"
             detail = "Open System Settings under General > Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
             action = BannerAction(title: "Open Login Items") { state, _ in state.helper.openLoginItemsSettings() }
-        case .notRegistered, .unknown:
+        case .notRegistered:
             icon = "bolt.horizontal.circle.fill"
             tint = PSTheme.accentYellow
-            title = "The FreeSnitch helper isn't installed yet"
-            detail = "The helper runs the traffic monitor and the firewall rules. Install it to start seeing connections."
-            action = BannerAction(title: "Install Helper") { state, _ in state.helper.registerDaemon() }
+            title = "The FreeSnitch helper isn't registered yet"
+            detail = "The helper runs the traffic monitor and the firewall rules. Register it from this signed app, then approve it in System Settings if macOS asks."
+            action = BannerAction(title: "Register Helper") { state, _ in state.helper.registerDaemon() }
+        case .unknown:
+            icon = "questionmark.circle.fill"
+            tint = PSTheme.accentYellow
+            title = "The FreeSnitch helper state is unknown"
+            detail = "Refresh the helper state or run the CLI diagnostics. No registration change was attempted."
+            action = BannerAction(title: "Check Again") { state, _ in state.helper.refreshInstallState(); state.helper.ping() }
         case .wrongLocation:
             icon = "arrow.down.app.fill"
             tint = PSTheme.accentRed
@@ -126,11 +132,16 @@ private struct BannerInfo {
                 NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
             }
         case .notFound:
-            icon = "xmark.octagon.fill"
-            tint = PSTheme.accentRed
-            title = "The helper is missing from this copy of FreeSnitch"
-            detail = "This build has no privileged helper bundled. Download FreeSnitch again from the official releases page."
-            action = nil
+            icon = "exclamationmark.triangle.fill"
+            tint = PSTheme.accentYellow
+            title = "macOS cannot find the FreeSnitch helper registration"
+            if HelperClient.hasBundledHelper {
+                detail = "This signed app still contains the helper declaration and executable, but SMAppService lost or cannot find its registration record. Background App Activity may still show FreeSnitch as on while launchd has no service. Register it again; toggling that switch alone is not sufficient."
+                action = BannerAction(title: "Register Helper") { state, _ in state.helper.registerDaemon() }
+            } else {
+                detail = "This app copy does not contain both the helper declaration and executable, so registration cannot be attempted. Install the signed FreeSnitch release again."
+                action = nil
+            }
         case .failed(let message):
             icon = "xmark.octagon.fill"
             tint = PSTheme.accentRed

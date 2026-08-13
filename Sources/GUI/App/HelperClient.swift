@@ -17,7 +17,8 @@ enum HelperInstallState: Equatable {
     case enabled
     /// Registration was never attempted or was removed.
     case notRegistered
-    /// The daemon plist isn't where macOS expects it (broken/unsigned build).
+    /// SMAppService cannot find the registration record or declaration. The
+    /// bundle files are checked separately before registration is attempted.
     case notFound
     /// The app is running from the disk image, Downloads, or anywhere else that
     /// isn't an Applications folder. macOS refuses to install background
@@ -43,6 +44,49 @@ enum HelperRepairState: Equatable {
 
 enum HelperRecovery {
     static let kickstartCommand = AppConstants.helperKickstartCommand
+
+    static func staleHelperMessage(helper: String, app: String) -> String {
+        "The helper is still running from an earlier build (v\(helper), expected v\(app)). Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(kickstartCommand)` in Terminal. This works while launchd still has the helper service registered."
+    }
+
+    static func registrationErrorDetails(_ error: Error) -> String {
+        let ns = error as NSError
+        return "domain=\(ns.domain), code=\(ns.code), description=\(ns.localizedDescription)"
+    }
+}
+
+enum HelperLifecycleStatus: Equatable {
+    case enabled
+    case notRegistered
+    case requiresApproval
+    case notFound
+    case unknown
+}
+
+enum HelperLifecycleAction: Equatable {
+    case alreadyEnabled
+    case register
+    case manualKickstart
+    case guideApproval
+    case unavailable
+    case noRegistration
+}
+
+enum HelperLifecyclePolicy {
+    /// Pure lifecycle policy seam. Registration is only allowed when there is
+    /// no existing service to destroy, and repair never unregisters an enabled
+    /// service.
+    static func action(for status: HelperLifecycleStatus, repairing: Bool = false) -> HelperLifecycleAction {
+        switch status {
+        case .enabled: return repairing ? .manualKickstart : .alreadyEnabled
+        case .notRegistered: return .register
+        case .requiresApproval: return .guideApproval
+        // A lost SMAppService record is recoverable when the signed bundle
+        // still contains the declaration and executable.
+        case .notFound: return .register
+        case .unknown: return .noRegistration
+        }
+    }
 }
 
 @MainActor
@@ -56,11 +100,10 @@ final class HelperClient: NSObject, ObservableObject {
     private var connection: NSXPCConnection?
     private var pollTimer: Timer?
     private var isRepairing = false
-    private var automaticRepairAttemptedVersion: String?
     private var repairConfirmationID = UUID()
     private var enabledButSilentSince: Date?
-    /// Approved but unreachable for long enough that re-registering is worth
-    /// offering. Never acted on automatically; see startPolling().
+    /// Approved but unreachable for long enough that non-destructive recovery
+    /// is worth offering. Never acted on automatically; see startPolling().
     /// Version string reported by the running daemon, when it answers at all.
     @Published var helperVersion: String?
     @Published var versionState: HelperVersionState = .unknown {
@@ -94,6 +137,15 @@ final class HelperClient: NSObject, ObservableObject {
         return path.hasPrefix(userApps)
     }
 
+    static var hasBundledHelper: Bool {
+        let contents = Bundle.main.bundleURL.appendingPathComponent("Contents")
+        let declaration = contents
+            .appendingPathComponent("Library/LaunchDaemons/io.isaaclins.freesnitch.helper.plist")
+        let executable = contents.appendingPathComponent("MacOS/FreeSnitchHelper")
+        return FileManager.default.fileExists(atPath: declaration.path)
+            && FileManager.default.fileExists(atPath: executable.path)
+    }
+
     /// Registers the privileged helper as a launchd daemon via SMAppService.
     /// Without this the XPC mach service never exists, so every helper call
     /// silently no-ops (the root cause of "no rules / no traffic"). Requires a
@@ -101,25 +153,28 @@ final class HelperClient: NSObject, ObservableObject {
     func registerDaemon() {
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
-        switch service.status {
-        case .enabled:
+        switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
+        case .alreadyEnabled:
             installState = .enabled
-            return
-        case .requiresApproval:
-            // Calling register() again here throws EPERM and tells the user
-            // nothing useful. The item exists, but it is not switched on yet.
+        case .register:
+            guard Self.hasBundledHelper else {
+                installState = .notFound
+                return
+            }
+            do {
+                try service.register()
+                refreshInstallState()
+            } catch {
+                let details = HelperRecovery.registrationErrorDetails(error)
+                installState = .failed(details)
+                state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
+            }
+        case .guideApproval:
             installState = .requiresApproval
-            return
-        default:
-            break
-        }
-        do {
-            try service.register()
-            refreshInstallState()
-        } catch {
-            let ns = error as NSError
-            installState = .failed(ns.localizedFailureReason ?? ns.localizedDescription)
-            state?.appendLog(level: "error", message: "Helper registration failed: \(ns.localizedDescription)")
+        case .unavailable:
+            installState = .notFound
+        case .manualKickstart, .noRegistration:
+            installState = .unknown
         }
     }
 
@@ -146,19 +201,8 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
-    /// Removes the launchd registration (used by "Reinstall helper").
-    func unregisterDaemon() {
-        service?.unregister { [weak self] _ in
-            Task { @MainActor in self?.refreshInstallState() }
-        }
-    }
-
-    /// Re-registers the daemon when SMAppService can manage it. A successful
-    /// unregister/register cycle replaces the running process without touching
-    /// the pf anchor. The matching reconnect runs bootstrap again, which
-    /// reapplies the persisted rules and opt-in enforcement. If macOS refuses
-    /// the cycle, the banner gives the user the privileged launchctl recovery
-    /// command instead of pretending it worked.
+    /// Repair never unregisters an enabled helper. A running stale daemon must
+    /// be restarted with the privileged launchctl command instead.
     func repairHelper() {
         repairHelperInternal()
     }
@@ -166,51 +210,62 @@ final class HelperClient: NSObject, ObservableObject {
     private func repairHelperInternal() {
         guard !isRepairing else { return }
         repairState = .inProgress
+        guard Self.isInApplicationsFolder else {
+            installState = .wrongLocation
+            finishRepairFailure("Move FreeSnitch to /Applications before registering the helper.")
+            return
+        }
         guard let service else {
             finishRepairFailure("SMAppService cannot manage the helper on this macOS version.")
             return
         }
 
-        switch service.status {
-        case .enabled:
-            isRepairing = true
-            service.unregister { [weak self] error in
-                Task { @MainActor in
-                    guard let self else { return }
-                    if let error {
-                        self.finishRepairFailure("SMAppService could not unregister the old helper: \(error.localizedDescription).")
-                        return
-                    }
-                    self.registerReplacement(service: service)
-                }
+        switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status), repairing: true) {
+        case .manualKickstart:
+            refreshInstallState()
+            let message: String
+            if case .mismatch(let helper, let app) = versionState {
+                message = HelperRecovery.staleHelperMessage(helper: helper, app: app)
+            } else {
+                message = "The helper is enabled but not responding. Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(HelperRecovery.kickstartCommand)` in Terminal. This works while launchd still has the helper service registered."
             }
-        case .notRegistered:
-            registerReplacement(service: service)
-        case .requiresApproval:
+            finishRepairFailure(message)
+        case .register:
+            guard Self.hasBundledHelper else {
+                refreshInstallState()
+                finishRepairFailure("This app copy does not contain both the helper declaration and executable, so registration cannot be attempted.")
+                return
+            }
+            registerAbsentService(service: service)
+        case .guideApproval:
             refreshInstallState()
-            finishRepairFailure("Approve FreeSnitch in System Settings under General > Login Items & Extensions before restarting the helper.")
-        case .notFound:
+            finishRepairFailure("Approve FreeSnitch in System Settings under General > Login Items & Extensions before starting the helper. Registration exists, but launchd cannot start it until approval.")
+        case .unavailable:
             refreshInstallState()
-            finishRepairFailure("The helper is not present in this app bundle.")
-        @unknown default:
+            finishRepairFailure("macOS cannot manage the helper registration on this system.")
+        case .alreadyEnabled, .noRegistration:
             refreshInstallState()
             finishRepairFailure("macOS reported an unsupported helper registration state.")
         }
     }
 
-    private func registerReplacement(service: SMAppService) {
+    /// Registration is safe here because SMAppService reports no active
+    /// service. It is deliberately separate from stale-helper repair.
+    private func registerAbsentService(service: SMAppService) {
         do {
             try service.register()
             refreshInstallState()
             if installState == .requiresApproval {
-                finishRepairFailure("macOS registered the replacement, but it still needs approval in System Settings under General > Login Items & Extensions.")
+                finishRepairFailure("macOS registered the helper, but it still needs approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work.")
                 return
             }
             isRepairing = false
             scheduleRepairConfirmation()
             reconnectAndPing(force: true)
         } catch {
-            finishRepairFailure("SMAppService could not register the new helper: \(error.localizedDescription). A full root LaunchDaemon restart may require administrator privileges.")
+            let details = HelperRecovery.registrationErrorDetails(error)
+            state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
+            finishRepairFailure("SMAppService could not register the absent helper: \(details). Open System Settings under General > Login Items & Extensions if approval is required, then try again.")
         }
     }
 
@@ -220,9 +275,26 @@ final class HelperClient: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             Task { @MainActor in
                 guard let self, self.repairConfirmationID == confirmationID else { return }
-                guard self.hasVersionMismatch else { return }
                 guard case .inProgress = self.repairState else { return }
-                self.repairState = .manualRequired("SMAppService accepted the repair, but the helper did not reconnect with the new version.")
+                if self.hasVersionMismatch {
+                    self.repairState = .manualRequired("The registered helper did not reconnect with the expected build. Run `\(HelperRecovery.kickstartCommand)` while launchd still has the service registered.")
+                    return
+                }
+                switch self.installState {
+                case .enabled:
+                    self.repairState = .manualRequired("SMAppService registered the helper, but it did not reconnect. Registration exists, so run `\(HelperRecovery.kickstartCommand)` in Terminal.")
+                case .requiresApproval:
+                    self.repairState = .manualRequired("The helper is registered but still requires approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work.")
+                case .notRegistered, .notFound:
+                    self.repairState = .manualRequired("SMAppService did not leave a usable registration record. Do not run the kickstart command yet; run the helper recheck again and report the registration state.")
+                case .wrongLocation:
+                    self.repairState = .manualRequired("Move FreeSnitch to /Applications before retrying helper registration.")
+                case .failed(let message):
+                    self.repairState = .manualRequired("Helper registration failed: \(message)")
+                case .unknown:
+                    self.repairState = .manualRequired("SMAppService registration did not produce a reachable helper. Recheck the registration state before using the kickstart command.")
+                }
+                self.needsRepair = true
             }
         }
     }
@@ -282,10 +354,9 @@ final class HelperClient: NSObject, ObservableObject {
 
                 // Approved but silent (typically after an in-place app update,
                 // where the Background Item stays approved but launchd has no
-                // job). Surface it after a grace period and let the user decide:
-                // repairing means unregister + register, and unregister REVOKES
-                // the existing approval, so doing it automatically could throw
-                // away a good approval just because XPC was slow to come up.
+                // job). Surface it after a grace period and keep recovery
+                // non-destructive. An enabled service is restarted with the
+                // privileged kickstart command, never unregister/register.
                 guard self.installState == .enabled else {
                     self.enabledButSilentSince = nil
                     self.needsRepair = false
@@ -329,16 +400,14 @@ final class HelperClient: NSObject, ObservableObject {
         state?.bootstrap()
     }
 
-    private func beginAutomaticRepair(for helperVersion: String) {
-        guard !isRepairing else { return }
-        guard automaticRepairAttemptedVersion != helperVersion else {
-            if case .inProgress = repairState {
-                repairState = .manualRequired("The automatic SMAppService repair did not replace the running helper.")
-            }
-            return
+    private static func lifecycleStatus(for status: SMAppService.Status) -> HelperLifecycleStatus {
+        switch status {
+        case .enabled: return .enabled
+        case .requiresApproval: return .requiresApproval
+        case .notRegistered: return .notRegistered
+        case .notFound: return .notFound
+        @unknown default: return .unknown
         }
-        automaticRepairAttemptedVersion = helperVersion
-        repairHelperInternal()
     }
 
     func ping() {
@@ -350,14 +419,15 @@ final class HelperClient: NSObject, ObservableObject {
                 guard AppConstants.identityMatches(reported: version, expected: AppConstants.buildIdentity) else {
                     // A helper left over from an older install answers happily,
                     // so keep that fact separate from ordinary reachability.
+                    // It is still running, so do not unregister it. The exact
+                    // privileged recovery command is surfaced immediately.
                     self.versionState = .mismatch(helper: version, app: AppConstants.buildIdentity)
                     self.needsRepair = true
+                    self.repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: version, app: AppConstants.buildIdentity))
                     self.setConnected(false)
-                    self.beginAutomaticRepair(for: version)
                     return
                 }
                 self.versionState = .matching(version)
-                self.automaticRepairAttemptedVersion = nil
                 self.repairConfirmationID = UUID()
                 self.repairState = .idle
                 self.needsRepair = false

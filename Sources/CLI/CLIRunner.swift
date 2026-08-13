@@ -471,18 +471,79 @@ final class CLIRunner {
             let report = HelperSettingsReport(registration: helperRegistrationState(), reachable: false, version: nil, detail: "Opened System Settings > General > Login Items & Extensions.")
             return CommandResult(data: report, human: "Opened System Settings > General > Login Items & Extensions.")
         }
-        let registration = helperRegistrationState()
+
+        let registration: String
+        do {
+            if case .recheck = action {
+                registration = try recheckHelperRegistration()
+            } else {
+                registration = helperRegistrationState()
+            }
+        } catch let error as CLIError {
+            let report = HelperSettingsReport(registration: helperRegistrationState(), reachable: false, version: nil, detail: error.message)
+            return CommandResult(data: report,
+                                 human: "Helper registration: \(report.registration).\nHelper XPC: unreachable.\nWhat to do: \(error.remediation ?? "Run freesnitch doctor.")",
+                                 exitCode: error.exitCode,
+                                 error: error)
+        }
+
         let helper = CLIHelperClient()
         do {
             let status = try await helper.prepare()
             let report = HelperSettingsReport(registration: registration, reachable: true, version: status.version, detail: nil)
             return CommandResult(data: report, human: "Helper registration: \(registration).\nHelper XPC: reachable (v\(status.version)).")
         } catch let error as CLIError {
+            let remediation = helperRemediation(registration: registration, error: error)
+            let adjustedError = CLIError(error.exitCode, code: error.code, message: error.message, remediation: remediation)
             let report = HelperSettingsReport(registration: registration, reachable: false, version: helper.observedVersion, detail: error.message)
             return CommandResult(data: report,
-                                 human: "Helper registration: \(registration).\nHelper XPC: unreachable.\nWhat to do: \(error.remediation ?? "Run freesnitch doctor.")",
-                                 exitCode: error.exitCode,
-                                 error: error)
+                                 human: "Helper registration: \(registration).\nHelper XPC: unreachable.\nWhat to do: \(remediation)",
+                                 exitCode: adjustedError.exitCode,
+                                 error: adjustedError)
+        }
+    }
+
+    private func recheckHelperRegistration() throws -> String {
+        let registration = helperRegistrationState()
+        guard registration == "not-registered" || registration == "not-found" else {
+            if registration == "wrong-location" {
+                return registration
+            }
+            return registration
+        }
+        guard CLIAppBundle.isInApplicationsFolder else { return "wrong-location" }
+        guard CLIAppBundle.hasEmbeddedHelper else { return "not-found" }
+
+        let service = SMAppService.daemon(plistName: "io.isaaclins.freesnitch.helper.plist")
+        do {
+            try service.register()
+        } catch {
+            let ns = error as NSError
+            let details = "domain=\(ns.domain), code=\(ns.code), description=\(ns.localizedDescription)"
+            throw CLIError(.operationFailed,
+                           message: "Helper registration failed: \(details).",
+                           remediation: "Registration failed with \(details). The signed app bundles the helper, but macOS may still show Background App Activity as on while launchd has no service. Run this recheck from /Applications, then approve FreeSnitch in System Settings > General > Login Items & Extensions if prompted.")
+        }
+        return helperRegistrationState()
+    }
+
+    private func helperRemediation(registration: String, error: CLIError) -> String {
+        switch registration {
+        case "enabled":
+            return "The helper service is still registered. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` for a stale or stopped helper, then rerun `freesnitch settings helper status`."
+        case "requires-approval":
+            return "Approve FreeSnitch in System Settings > General > Login Items & Extensions, then rerun `freesnitch settings helper recheck`. Registration must happen before the kickstart command can work."
+        case "not-registered":
+            return "Run `freesnitch settings helper recheck` from the signed FreeSnitch app in /Applications to register the absent service, then approve it if macOS asks."
+        case "not-found":
+            if CLIAppBundle.hasEmbeddedHelper {
+                return "SMAppService reports no registration record even though this signed app bundles the helper declaration and executable. Background App Activity may still show FreeSnitch as on while launchd has no service; toggling it off/on is not sufficient. Run `freesnitch settings helper recheck` from /Applications to register it."
+            }
+            return "This app copy does not contain both the helper declaration and executable, so registration cannot be attempted. Install the signed FreeSnitch release, then rerun this command."
+        case "wrong-location":
+            return "Move FreeSnitch.app to /Applications and run the bundled CLI again. No helper registration was attempted."
+        default:
+            return error.remediation ?? "Run `freesnitch doctor` for helper diagnostics."
         }
     }
 
@@ -524,11 +585,12 @@ final class CLIRunner {
     }
 
     private func helperRegistrationState() -> String {
+        guard CLIAppBundle.appURL != nil else { return "wrong-location" }
         let service = SMAppService.daemon(plistName: "io.isaaclins.freesnitch.helper.plist")
         switch service.status {
         case .enabled: return "enabled"
         case .requiresApproval: return "requires-approval"
-        case .notRegistered: return "not-registered"
+        case .notRegistered: return CLIAppBundle.isInApplicationsFolder ? "not-registered" : "wrong-location"
         case .notFound: return "not-found"
         @unknown default: return "unknown"
         }
@@ -778,15 +840,18 @@ final class CLIRunner {
             findings.append(DoctorFinding(id: "helper_reachable", state: "ok", message: "The privileged helper is reachable.", action: "No action needed.", exitCode: nil))
             let expectedIdentity = CLIAppBundle.expectedBuildIdentity
             let versionMatches = AppConstants.identityMatches(reported: status.version, expected: expectedIdentity)
-            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper and app both report version \(status.version)." : "The helper reports version \(status.version), but this app is \(expectedIdentity). Helper-side fixes are not active until it is replaced.", action: versionMatches ? "No action needed." : "Open FreeSnitch and use Repair, or run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
+            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper and app both report version \(status.version)." : "The helper reports version \(status.version), but this app is \(expectedIdentity). Helper-side fixes are not active until it is replaced.", action: versionMatches ? "No action needed." : "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
             return
         }
         let reachable = error?.exitCode == .helperVersionMismatch
-        findings.append(DoctorFinding(id: "helper_reachable", state: reachable ? "ok" : "problem", message: reachable ? "The helper answered, but it is not the build this app expects." : "The privileged helper could not be reached.", action: reachable ? "See the helper version finding." : "Run `freesnitch settings helper recheck`; approve FreeSnitch in Login Items, then run doctor again.", exitCode: reachable ? nil : (error?.exitCode ?? CLIExitCode.helperUnreachable).rawValue))
+        let registration = helperRegistrationState()
+        let reachabilityAction = error.map { helperRemediation(registration: registration, error: $0) }
+            ?? helperRemediation(registration: registration, error: CLIError(.helperUnreachable, message: "The helper could not be reached."))
+        findings.append(DoctorFinding(id: "helper_reachable", state: reachable ? "ok" : "problem", message: reachable ? "The helper answered, but it is not the build this app expects." : "The privileged helper could not be reached.", action: reachable ? "See the helper version finding." : reachabilityAction, exitCode: reachable ? nil : (error?.exitCode ?? CLIExitCode.helperUnreachable).rawValue))
         let staleExpected = CLIAppBundle.expectedBuildIdentity
         let staleReported = observedVersion ?? "unknown"
         let staleMessage = "A helper from an earlier install is still running. It reports \(staleReported), but this app is \(staleExpected), so helper-side fixes are not active."
-        findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? staleMessage : "The helper version could not be checked.", action: reachable ? "Open FreeSnitch and use Repair, or run: \(AppConstants.helperKickstartCommand)" : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
+        findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? staleMessage : "The helper version could not be checked.", action: reachable ? "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)" : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
     }
 
     private func appendExtensionFindings(findings: inout [DoctorFinding], inspection: ExtensionInspection) {

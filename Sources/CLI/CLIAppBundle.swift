@@ -29,6 +29,24 @@ enum CLIAppBundle {
         return "\(short) (\(build))"
     }
 
+    static var isInApplicationsFolder: Bool {
+        guard let appURL else { return false }
+        let path = appURL.resolvingSymlinksInPath().path
+        if path.hasPrefix("/Applications/") { return true }
+        let userApps = (NSHomeDirectory() as NSString).appendingPathComponent("Applications") + "/"
+        return path.hasPrefix(userApps)
+    }
+
+    static var hasEmbeddedHelper: Bool {
+        guard let appURL else { return false }
+        let contents = appURL.appendingPathComponent("Contents")
+        let declaration = contents
+            .appendingPathComponent("Library/LaunchDaemons/io.isaaclins.freesnitch.helper.plist")
+        let executable = contents.appendingPathComponent("MacOS/FreeSnitchHelper")
+        return FileManager.default.fileExists(atPath: declaration.path)
+            && FileManager.default.fileExists(atPath: executable.path)
+    }
+
     static var hasEmbeddedNetworkExtension: Bool {
         guard let appURL else { return false }
         let directory = appURL

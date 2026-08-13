@@ -60,7 +60,7 @@ enum CLIHelp {
       mode <alert|silent-allow|silent-deny>
                                      Set the menu-bar mode.
       settings helper <status|recheck|open-login-items>
-                                     Inspect or repair the helper approval path.
+                                     Inspect or safely recheck the helper lifecycle.
       settings speeds <on|off>       Set the menu-bar speed readout preference.
       settings launch-at-login <on|off>
                                      Set whether FreeSnitch launches at login.
@@ -162,8 +162,11 @@ enum CLIHelp {
     Usage: freesnitch settings helper <status|recheck|open-login-items> [--json]
 
     status reports the SMAppService registration and XPC reachability. recheck
-    performs the GUI's refreshInstallState plus ping action. open-login-items
-    opens the exact System Settings pane where the helper can be approved.
+    attempts to register an absent helper from the signed app bundle without
+    unregistering an enabled service, then checks XPC reachability. It reports
+    the real registration error if macOS rejects the attempt. If approval is
+    required, open-login-items opens the exact System Settings pane where it
+    can be approved.
     """
 
     private static let speeds = """
