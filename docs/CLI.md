@@ -11,6 +11,38 @@ A release build should expose that path through a symlink or shell alias if a
 short `freesnitch` command is desired. Do not copy the binary out of the app
 bundle. Its signature and identifier are part of the XPC trust boundary.
 
+### Run it from anywhere
+
+Pick one of these. Both keep the executable inside the bundle, so the signature
+and identifier the helper checks stay intact.
+
+Symlink into a directory that is already on your `PATH`:
+
+```sh
+sudo ln -sf /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch
+```
+
+Or put the bundle's `Helpers` directory on your `PATH`, which needs no
+administrator rights. For zsh, the default shell on macOS:
+
+```sh
+echo 'export PATH="/Applications/FreeSnitch.app/Contents/Helpers:$PATH"' >> ~/.zshrc && exec zsh
+```
+
+For bash, use `~/.bash_profile` instead of `~/.zshrc`.
+
+Verify either approach with:
+
+```sh
+freesnitch --version
+freesnitch settings helper status
+```
+
+The symlink is resolved back to the real path inside the bundle before the CLI
+identifies itself, so `Helper XPC: reachable` is expected from both setups. A
+copy of the binary placed outside the bundle is not supported and will not be
+trusted.
+
 The CLI never prompts. It writes data to stdout and diagnostics to stderr.
 Every command accepts `--json`.
 
