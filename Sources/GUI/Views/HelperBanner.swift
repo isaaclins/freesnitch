@@ -75,7 +75,7 @@ private struct BannerInfo {
           versionState: HelperVersionState,
           repairState: HelperRepairState) {
         if case .mismatch(let helperVersion, let appVersion) = versionState {
-            icon = "exclamationmark.arrow.trianglehead.counterclockwise"
+            icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
             title = "The FreeSnitch helper is out of date"
             switch repairState {
