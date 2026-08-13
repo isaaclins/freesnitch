@@ -110,6 +110,53 @@ struct FlowDestination: Equatable {
     }
 }
 
+/// Bounded state that connects the reports macOS sends later to the exact
+/// flows whose verdict asked for one. Kept independent of NetworkExtension so
+/// its one-flow-one-category invariant can be tested without a live provider.
+struct LateDestinationTracker {
+    enum Outcome: Equatable {
+        case ignored
+        case arrivedBeforeClose
+        case arrivedAtClose
+        case stillUnknownAtClose
+    }
+
+    private var flows: [UUID: Bool] = [:]
+    private var order: [UUID] = []
+    private let capacity: Int
+    private(set) var total: UInt64 = 0
+    private(set) var evictions: UInt64 = 0
+
+    init(capacity: Int = 4096) {
+        precondition(capacity > 0)
+        self.capacity = capacity
+    }
+
+    mutating func flag(_ id: UUID) {
+        guard flows[id] == nil else { return }
+        flows[id] = false
+        total &+= 1
+        order.append(id)
+        guard order.count > capacity else { return }
+        let oldest = order.removeFirst()
+        flows.removeValue(forKey: oldest)
+        evictions &+= 1
+    }
+
+    mutating func report(_ id: UUID, destinationKnown: Bool, isClose: Bool) -> Outcome {
+        guard let arrivedBeforeClose = flows[id] else { return .ignored }
+        if isClose {
+            flows.removeValue(forKey: id)
+            if let index = order.firstIndex(of: id) { order.remove(at: index) }
+            guard !arrivedBeforeClose else { return .ignored }
+            return destinationKnown ? .arrivedAtClose : .stillUnknownAtClose
+        }
+        guard destinationKnown, !arrivedBeforeClose else { return .ignored }
+        flows[id] = true
+        return .arrivedBeforeClose
+    }
+}
+
 final class FilterDataProvider: NEFilterDataProvider {
     private enum SnapshotOrigin: Equatable {
         case none
@@ -152,22 +199,10 @@ final class FilterDataProvider: NEFilterDataProvider {
     private var stillUnknownAtFlowClose: UInt64 = 0
     private var lastDestinationLogNanos: UInt64 = 0
     private let destinationLogIntervalNanos: UInt64 = 60 * 1_000_000_000
-    /// Identifiers of the flows this provider actually asked to hear about.
-    ///
-    /// The framework delivers reports for flows that were never flagged, so
-    /// without this the late-destination tally counts ordinary traffic that had
-    /// an address from its first packet and reads as though addresses arrive
-    /// late constantly. Only a flow whose verdict carried `shouldReport` may be
-    /// counted here.
-    private var flaggedFlows: Set<UUID> = []
-    /// Insertion order, so a flow whose close report never arrives is evicted
-    /// oldest first instead of growing this set without bound.
-    private var flaggedFlowOrder: [UUID] = []
-    private var flaggedFlowEvictions: UInt64 = 0
-    /// Cumulative count of flows flagged, taken under the blocking lock, so it
-    /// is exact. The tallies below can only ever be a subset of it.
-    private var flaggedFlowsTotal: UInt64 = 0
-    private static let maxFlaggedFlows = 4096
+    /// The framework delivers reports for flows that were never flagged. This
+    /// tracker ties reports to the flows whose verdict carried `shouldReport`,
+    /// and ensures each flow enters at most one outcome category.
+    private var lateDestinationTracker = LateDestinationTracker()
 
     override init() {
         self.observationSignalLock = .allocate(capacity: 1)
@@ -325,29 +360,23 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// undercounts.
     private func rememberFlaggedFlow(_ id: UUID) {
         os_unfair_lock_lock(destinationAccountingLock)
-        defer { os_unfair_lock_unlock(destinationAccountingLock) }
-        guard flaggedFlows.insert(id).inserted else { return }
-        flaggedFlowsTotal &+= 1
-        flaggedFlowOrder.append(id)
-        guard flaggedFlowOrder.count > Self.maxFlaggedFlows else { return }
-        let oldest = flaggedFlowOrder.removeFirst()
-        flaggedFlows.remove(oldest)
-        flaggedFlowEvictions &+= 1
+        lateDestinationTracker.flag(id)
+        os_unfair_lock_unlock(destinationAccountingLock)
     }
 
-    /// True when the report belongs to a flow this provider flagged. A close
-    /// report also retires the identifier, since no further report can follow.
-    private func claimFlaggedFlow(_ id: UUID, isClose: Bool) -> Bool {
+    /// Classifies one report for a flow this provider flagged. Each flow enters
+    /// exactly one late-destination category: first arrival before close, first
+    /// arrival at close, or still unknown at close. Duplicate reports and
+    /// reports for ordinary unflagged flows change no counter.
+    private func classifyFlaggedReport(_ id: UUID, destinationKnown: Bool, isClose: Bool) {
         os_unfair_lock_lock(destinationAccountingLock)
-        defer { os_unfair_lock_unlock(destinationAccountingLock) }
-        guard flaggedFlows.contains(id) else { return false }
-        if isClose {
-            flaggedFlows.remove(id)
-            if let index = flaggedFlowOrder.firstIndex(of: id) {
-                flaggedFlowOrder.remove(at: index)
-            }
+        switch lateDestinationTracker.report(id, destinationKnown: destinationKnown, isClose: isClose) {
+        case .arrivedBeforeClose: lateDestinationAtVerdictReport &+= 1
+        case .arrivedAtClose: lateDestinationAtFlowClose &+= 1
+        case .stillUnknownAtClose: stillUnknownAtFlowClose &+= 1
+        case .ignored: break
         }
-        return true
+        os_unfair_lock_unlock(destinationAccountingLock)
     }
 
     /// Observation only. The verdict for this flow was returned long ago and is
@@ -360,10 +389,9 @@ final class FilterDataProvider: NEFilterDataProvider {
         let event = report.event
         guard event == .flowClosed || event == .newFlow || event == .dataDecision else { return }
         let isClose = event == .flowClosed
-        guard claimFlaggedFlow(socketFlow.identifier, isClose: isClose) else { return }
         let destination = FlowDestination.resolve(endpointHost: remoteAddress(of: socketFlow).host,
                                                   remoteHostname: socketFlow.remoteHostname)
-        noteLateDestination(arrived: destination.isKnown, isClose: isClose)
+        classifyFlaggedReport(socketFlow.identifier, destinationKnown: destination.isKnown, isClose: isClose)
     }
 
     /// An IP or CIDR rule that cannot be evaluated is a limitation to state,
@@ -396,11 +424,11 @@ final class FilterDataProvider: NEFilterDataProvider {
         let now = DispatchTime.now().uptimeNanoseconds
         let due = now &- lastDestinationLogNanos >= destinationLogIntervalNanos
         if due { lastDestinationLogNanos = now }
-        let flagged = flaggedFlowsTotal
+        let flagged = lateDestinationTracker.total
         let lateAtVerdict = lateDestinationAtVerdictReport
         let lateAtClose = lateDestinationAtFlowClose
         let stillUnknown = stillUnknownAtFlowClose
-        let evicted = flaggedFlowEvictions
+        let evicted = lateDestinationTracker.evictions
         os_unfair_lock_unlock(destinationAccountingLock)
         guard due else { return }
         // Eviction means an identifier was forgotten before its flow closed, so
@@ -416,17 +444,6 @@ final class FilterDataProvider: NEFilterDataProvider {
             + "Of those same flows, an address arrived later for \(lateAtVerdict) before close and \(lateAtClose) at close, "
             + "while \(stillUnknown) closed with no address at all\(evictionNote)"
         )
-    }
-
-    private func noteLateDestination(arrived: Bool, isClose: Bool) {
-        guard os_unfair_lock_trylock(destinationAccountingLock) else { return }
-        switch (arrived, isClose) {
-        case (true, true): lateDestinationAtFlowClose &+= 1
-        case (true, false): lateDestinationAtVerdictReport &+= 1
-        case (false, true): stillUnknownAtFlowClose &+= 1
-        case (false, false): break
-        }
-        os_unfair_lock_unlock(destinationAccountingLock)
     }
 
     // MARK: - Observation drain
