@@ -17,6 +17,10 @@ LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
 MODELS="$ROOT/Sources/Shared/Models.swift"
 WIRE_CODEC="$ROOT/Sources/Shared/WireCodec.swift"
 CLI_CONTRACT="$ROOT/Sources/CLI/CLIContract.swift"
+INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
+INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
+OBSERVATION_QUEUE="$ROOT/Sources/NetExt/ObservationQueue.swift"
+UNINSTALL="$ROOT/Scripts/uninstall_freesnitch.sh"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -44,6 +48,10 @@ require_text() {
 [[ -f "$MODELS" ]] || fail "missing $MODELS"
 [[ -f "$WIRE_CODEC" ]] || fail "missing $WIRE_CODEC"
 [[ -f "$CLI_CONTRACT" ]] || fail "missing $CLI_CONTRACT"
+[[ -f "$INSIGHTS_STORE" ]] || fail "missing $INSIGHTS_STORE"
+[[ -f "$INSIGHTS_MODELS" ]] || fail "missing $INSIGHTS_MODELS"
+[[ -f "$OBSERVATION_QUEUE" ]] || fail "missing $OBSERVATION_QUEUE"
+[[ -f "$UNINSTALL" ]] || fail "missing $UNINSTALL"
 
 # Date boundaries are explicit: XPC and snapshots retain Apple's reference
 # epoch, SQLite remains Unix seconds, and the CLI contract stays ISO 8601 text.
@@ -65,6 +73,48 @@ if grep -Fq "CLIJSON.decode(SharedRuleBridge.SnapshotStatus" "$CLI_EXTENSION"; t
 fi
 require_text "$HELPER" "FreeSnitchWireCodec.decode" \
   "helper rule requests do not use the explicit wire date codec"
+
+# Slice 1 evidence transport and store invariants.
+require_text "$INSIGHTS_STORE" "static let defaultPath = \"/Library/Application Support/FreeSnitch/Insights/insights.sqlite\"" \
+  "InsightsStore does not isolate evidence below the shared support directory"
+require_text "$INSIGHTS_STORE" "expectedUID: uid_t = 0" \
+  "InsightsStore has no production root-owner default and test UID seam"
+require_text "$INSIGHTS_STORE" "(info.st_mode & 0o022) == 0" \
+  "the shared support directory writable-mode check is missing"
+require_text "$INSIGHTS_STORE" "mode: 0o700" \
+  "the private Insights directory is not strict 0700"
+require_text "$INSIGHTS_STORE" "mode: 0o600" \
+  "the Insights database companions are not strict 0600"
+require_text "$INSIGHTS_STORE" "CREATE TABLE IF NOT EXISTS dns_mappings" \
+  "the DNS evidence table is missing"
+require_text "$INSIGHTS_STORE" "func recordDNSMappings" \
+  "the helper has no direct DNS mapping store method"
+require_text "$INSIGHTS_STORE" "func purge()" \
+  "the Insights purge seam is missing"
+require_text "$INSIGHTS_MODELS" "maxBatchBytes" \
+  "bounded Insights payload limits are missing"
+require_text "$OBSERVATION_QUEUE" "os_unfair_lock_trylock" \
+  "the extension queue enqueue path is not trylock-only"
+require_text "$OBSERVATION_QUEUE" "capacity: Int = 1024" \
+  "the extension queue capacity is not explicit and modest"
+require_text "$FILTER" "FlowObservation(connection: conn)" \
+  "the extension does not enqueue a compact observation before verdict handling"
+require_text "$FILTER" "observationQueue.drain(maximum: InsightsLimits.maxBatchCount)" \
+  "the extension drain is not bounded by the model batch count"
+require_text "$IPC" "sendObservationBatch" \
+  "the GUI XPC batch sender is missing"
+require_text "$SYSTEM_EXTENSION_MANAGER" "observationBatch.count <= InsightsLimits.maxBatchBytes" \
+  "the GUI bridge does not enforce the basic observation byte cap"
+require_text "$HELPER" "ingestObservationBatch" \
+  "the helper observation boundary is missing"
+require_text "$HELPER" "batch.validate(payloadBytes: observationBatch.count)" \
+  "the helper does not validate the decoded observation batch"
+require_text "$HELPER" "recordDNSMappings" \
+  "DNSProxy answers are not written directly by the helper"
+require_text "$UNINSTALL" "readonly INSIGHTS=\"\${SUPPORT}/Insights\"" \
+  "the FreeSnitch uninstall guard does not target the private Insights directory"
+require_text "$UNINSTALL" "puresnitch -F all" \
+  "the uninstall does not flush the intentionally reused PF anchor"
 require_text "$SYSTEM_EXTENSION_MANAGER" \
   "vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] = snapshotData" \
   "the GUI does not write the persisted boot snapshot to vendorConfiguration"
