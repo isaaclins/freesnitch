@@ -30,8 +30,9 @@ final class CLIHelperClient: NSObject {
         }
         guard AppConstants.identityMatches(reported: version, expected: CLIAppBundle.expectedBuildIdentity) else {
             throw CLIError(.helperVersionMismatch,
-                           message: "The helper is version \(version), but this app is version \(CLIAppBundle.expectedBuildIdentity).",
-                           remediation: "The helper is still running from an earlier build. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` while launchd still has the service registered, then rerun the command.")
+                           message: "The helper process is running version \(version), but the installed app is version \(CLIAppBundle.expectedBuildIdentity). Helper-side fixes in the installed build are not active.",
+                           remediation: "The helper is still running from an earlier build. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` while launchd still has the service registered, then rerun the command.",
+                           observedHelperVersion: version)
         }
         let data: Data = try await perform(timeout: timeout) { proxy, reply in
             proxy.getStatus(reply: reply)

@@ -425,8 +425,64 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     // Report the build identity, not just the marketing version, so a caller
     // can tell a helper left over from an earlier build of the same release
     // from the one it shipped with.
+    //
+    // The reported value is the identity captured when this process started,
+    // never the Info.plist as it reads right now. An in-place update replaces
+    // the bundle under a still-running root daemon, and reading disk at call
+    // time made that daemon answer with a build whose code it is not running.
     func getVersion(reply: @escaping (String) -> Void) {
-        reply(AppBundleIdentity.current ?? AppConstants.version)
+        reply(Self.runningVersion)
+    }
+
+    /// The build this process is executing.
+    static var runningVersion: String {
+        AppBundleIdentity.running ?? AppConstants.version
+    }
+
+    /// The build sitting in the app bundle on disk right now.
+    static var installedVersion: String {
+        AppBundleIdentity.installed ?? AppConstants.version
+    }
+
+    /// True when this process is older than the bundle it was launched from,
+    /// which means helper-side fixes in the installed build are not active.
+    static var isStaleProcess: Bool {
+        AppBundleIdentity.isStale(running: AppBundleIdentity.running,
+                                  installed: AppBundleIdentity.installed)
+    }
+
+    /// Replaces this stale process with the installed one.
+    ///
+    /// The only supported restart is `launchctl kickstart -k`, run as root by
+    /// the helper itself on request of the owning signed GUI. The service stays
+    /// registered throughout: never bootout, never unregister, because #24
+    /// showed that path can remove the helper entirely. A helper that is not
+    /// stale refuses, so this cannot be used to bounce a healthy daemon.
+    func restartForUpdate(reply: @escaping (Bool, String?) -> Void) {
+        guard Self.isStaleProcess else {
+            reply(false, "The running helper is \(Self.runningVersion) and the installed app is \(Self.installedVersion); no restart is needed.")
+            return
+        }
+        PSLog.info(
+            PSLog.helper,
+            "Restarting for update: running \(Self.runningVersion), installed \(Self.installedVersion). Using launchctl kickstart -k; the service stays registered."
+        )
+        reply(true, nil)
+        // Answer first, then restart. launchd keeps the registration and starts
+        // the installed binary again because the job is KeepAlive.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.5) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = AppConstants.helperKickstartArguments
+            do {
+                try process.run()
+            } catch {
+                PSLog.error(
+                    PSLog.helper,
+                    "launchctl kickstart failed: \(error.localizedDescription). The helper stays registered; run `\(AppConstants.helperKickstartCommand)`."
+                )
+            }
+        }
     }
 
     private func authoritativePolicyState() -> RuleStore.PolicyState {
@@ -477,7 +533,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         diagnosticsLock.unlock()
         let policy = authoritativePolicyState()
         let s = HelperStatus(
-            version: AppBundleIdentity.current ?? AppConstants.version,
+            version: Self.runningVersion,
             running: netmon.isRunning,
             pfctlActive: pf.isLoaded,
             pfctlError: pfctlError,
@@ -486,7 +542,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             activeRules: policy.rules.count,
             blockedToday: dns.statistics.blocked,
             mode: policy.mode,
-            policyGeneration: policy.generation
+            policyGeneration: policy.generation,
+            installedVersion: Self.installedVersion
         )
         reply((try? FreeSnitchWireCodec.encode(s)) ?? Data())
     }

@@ -208,6 +208,9 @@ public struct ProcessUsage: Codable, Sendable {
 }
 
 public struct HelperStatus: Codable, Sendable {
+    /// The build the helper process is actually running. Captured when the
+    /// process started, so an in-place update cannot change it under a daemon
+    /// that was never restarted.
     public let version: String
     public let running: Bool
     public let pfctlActive: Bool
@@ -222,9 +225,14 @@ public struct HelperStatus: Codable, Sendable {
     public var mode: AppMode = .alert
     /// Optional for decoding status payloads from older helpers.
     public var policyGeneration: UInt64?
-    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil) {
+    /// The build currently installed on disk, read when the status was built.
+    /// Different from `version` exactly when the helper is stale. Optional so
+    /// status payloads from helpers that predate #36 still decode.
+    public var installedVersion: String?
+    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil, installedVersion: String? = nil) {
         self.mode = mode
         self.policyGeneration = policyGeneration
+        self.installedVersion = installedVersion
         self.version = version
         self.running = running
         self.pfctlActive = pfctlActive
@@ -317,6 +325,12 @@ public struct AppConstants {
     /// different things.
     public static let helperKickstartCommand =
         "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
+
+    /// The same restart, without `sudo`, for the already-root helper to run on
+    /// itself when the signed GUI asks it to finish an update. Never a bootout,
+    /// never an unregister: #24 showed that path can delete the service.
+    public static let helperKickstartArguments =
+        ["kickstart", "-k", "system/io.isaaclins.freesnitch.helper"]
 
     public static let dnsProxyPort: UInt16 = 53
     public static let defaultDoHUpstream = "https://cloudflare-dns.com/dns-query"

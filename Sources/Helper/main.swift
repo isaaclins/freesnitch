@@ -1,6 +1,11 @@
 import Foundation
 
-PSLog.info(PSLog.helper, "FreeSnitchHelper starting v\(AppConstants.version) pid=\(getpid())")
+// Freeze the identity of the bundle this process is launching from, before any
+// update can replace it on disk. Everything the helper reports as its running
+// version comes from this capture.
+AppBundleIdentity.captureRunningIdentity()
+
+PSLog.info(PSLog.helper, "FreeSnitchHelper starting running=\(HelperService.runningVersion) installed=\(HelperService.installedVersion) pid=\(getpid())")
 
 let listener = NSXPCListener(machServiceName: AppConstants.xpcMachServiceName)
 

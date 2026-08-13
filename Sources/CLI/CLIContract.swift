@@ -38,15 +38,21 @@ struct CLIError: Error {
     let code: String
     let message: String
     let remediation: String?
+    /// The version the helper process reported before the identity check
+    /// refused it, so a stale helper can be named in reports instead of being
+    /// rendered as a plain unreachable helper.
+    let observedHelperVersion: String?
 
     init(_ exitCode: CLIExitCode,
          code: String? = nil,
          message: String,
-         remediation: String? = nil) {
+         remediation: String? = nil,
+         observedHelperVersion: String? = nil) {
         self.exitCode = exitCode
         self.code = code ?? exitCode.name
         self.message = message
         self.remediation = remediation
+        self.observedHelperVersion = observedHelperVersion
     }
 }
 

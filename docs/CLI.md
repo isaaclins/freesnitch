@@ -191,9 +191,15 @@ freesnitch settings doh https://cloudflare-dns.com/dns-query
 freesnitch settings dns status
 ```
 
-The helper status reports enforcement, pf, and DNS proxy state. Preference
-changes are written to the GUI preference suite and notify a running GUI.
-`open-login-items` opens the same System Settings pane used by the GUI.
+The helper status reports enforcement, pf, and DNS proxy state. It reports two
+versions: the build the helper process is running, captured when that process
+started, and the build installed on disk. After an in-place update these differ
+until the daemon is restarted, and `settings helper status` and `doctor` both say
+so and print the exact recovery command,
+`sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper`. The helper
+is never unregistered as a repair. Preference changes are written to the GUI
+preference suite and notify a running GUI. `open-login-items` opens the same
+System Settings pane used by the GUI.
 
 ## Rules
 

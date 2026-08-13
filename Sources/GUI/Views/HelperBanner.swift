@@ -77,14 +77,14 @@ private struct BannerInfo {
         if case .mismatch(let helperVersion, let appVersion) = versionState {
             icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
-            title = "The FreeSnitch helper version does not match"
+            title = "The running helper is not the installed build"
             switch repairState {
             case .inProgress:
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. FreeSnitch is registering only when no service exists; it will not unregister this running helper."
+                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. FreeSnitch is registering only when no service exists; it will not unregister this running helper."
             case .manualRequired(let reason):
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. \(reason) The current pf anchor is left in place."
+                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. \(reason) The current pf anchor is left in place."
             case .idle:
-                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. Automatic replacement is disabled. Use Repair to show the safe recovery command."
+                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. Restart it with `\(AppConstants.helperKickstartCommand)`, or use Repair to show the safe recovery command."
             }
             action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
             return

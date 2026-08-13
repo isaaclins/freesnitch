@@ -33,6 +33,9 @@ enum HelperInstallState: Equatable {
 enum HelperVersionState: Equatable {
     case unknown
     case matching(String)
+    /// `helper` is the build the helper process is running; `app` is the build
+    /// installed on disk. They differ after an in-place update that left the
+    /// root daemon running the previous binary.
     case mismatch(helper: String, app: String)
 }
 
@@ -46,7 +49,12 @@ enum HelperRecovery {
     static let kickstartCommand = AppConstants.helperKickstartCommand
 
     static func staleHelperMessage(helper: String, app: String) -> String {
-        "The helper is still running from an earlier build (v\(helper), expected v\(app)). Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(kickstartCommand)` in Terminal. This works while launchd still has the helper service registered."
+        "The helper process is running v\(helper) while the installed app is v\(app). Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(kickstartCommand)` in Terminal. This works while launchd still has the helper service registered."
+    }
+
+    /// Shown while the installed app asks the running helper to restart itself.
+    static func restartingMessage(helper: String, app: String) -> String {
+        "The helper process is running v\(helper) while the installed app is v\(app). FreeSnitch asked it to restart with `\(kickstartCommand)`; the registration is left untouched. If this message stays, run that command in Terminal."
     }
 
     static func registrationErrorDetails(_ error: Error) -> String {
@@ -102,6 +110,9 @@ final class HelperClient: NSObject, ObservableObject {
     private var isRepairing = false
     private var repairConfirmationID = UUID()
     private var enabledButSilentSince: Date?
+    /// One automatic restart attempt per app launch. A helper that comes back
+    /// still stale gets the manual command instead of an endless bounce loop.
+    private var didRequestUpdateRestart = false
     /// Approved but unreachable for long enough that non-destructive recovery
     /// is worth offering. Never acted on automatically; see startPolling().
     /// Version string reported by the running daemon, when it answers at all.
@@ -189,6 +200,51 @@ final class HelperClient: NSObject, ObservableObject {
         case .notRegistered: installState = .notRegistered
         case .notFound: installState = .notFound
         @unknown default: installState = .unknown
+        }
+    }
+
+    /// The build installed on disk right now. Read at call time, because an
+    /// in-place update replaces it under a running app as well as under the
+    /// helper.
+    static var installedIdentity: String {
+        AppBundleIdentity.installed ?? AppConstants.buildIdentity
+    }
+
+    /// Finishes the update for the user: the installed, signed GUI asks the
+    /// running root helper to restart itself with `launchctl kickstart -k`.
+    ///
+    /// Nothing here unregisters, boots out, or removes the service; #24 showed
+    /// that path can delete the helper entirely. A helper from before this
+    /// existed has no restart selector, and then the exact privileged command
+    /// is shown instead.
+    private func requestUpdateRestart(helper: String, installed: String) {
+        guard !didRequestUpdateRestart else { return }
+        didRequestUpdateRestart = true
+        guard let proxy = remote, proxy.restartForUpdate != nil else {
+            repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: helper, app: installed))
+            return
+        }
+        repairState = .manualRequired(HelperRecovery.restartingMessage(helper: helper, app: installed))
+        state?.appendLog(level: "info", message: "Helper is running v\(helper) but v\(installed) is installed; asking it to restart with launchctl kickstart -k.")
+        proxy.restartForUpdate? { [weak self] ok, message in
+            Task { @MainActor in
+                guard let self else { return }
+                guard ok else {
+                    self.repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: helper, app: installed))
+                    self.state?.appendLog(level: "error", message: "The helper refused the update restart: \(message ?? "no reason given").")
+                    return
+                }
+                // Give launchd time to bring the installed binary back, then
+                // re-check. Still stale means the manual command is required.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    Task { @MainActor in
+                        self.reconnectAndPing(force: true)
+                        if self.hasVersionMismatch {
+                            self.repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: helper, app: installed))
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -416,14 +472,18 @@ final class HelperClient: NSObject, ObservableObject {
                 guard let self else { return }
                 guard !version.isEmpty else { self.setConnected(false); return }
                 self.helperVersion = version
-                guard AppConstants.identityMatches(reported: version, expected: AppConstants.buildIdentity) else {
+                // The helper reports the build its process is running; compare
+                // it against the build installed on disk, which is what an
+                // in-place update just changed.
+                let installed = Self.installedIdentity
+                guard AppConstants.identityMatches(reported: version, expected: installed) else {
                     // A helper left over from an older install answers happily,
                     // so keep that fact separate from ordinary reachability.
                     // It is still running, so do not unregister it. The exact
                     // privileged recovery command is surfaced immediately.
-                    self.versionState = .mismatch(helper: version, app: AppConstants.buildIdentity)
+                    self.versionState = .mismatch(helper: version, app: installed)
                     self.needsRepair = true
-                    self.repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: version, app: AppConstants.buildIdentity))
+                    self.requestUpdateRestart(helper: version, installed: installed)
                     self.setConnected(false)
                     return
                 }
@@ -431,6 +491,7 @@ final class HelperClient: NSObject, ObservableObject {
                 self.repairConfirmationID = UUID()
                 self.repairState = .idle
                 self.needsRepair = false
+                self.didRequestUpdateRestart = false
                 self.setConnected(true)
             }
         }

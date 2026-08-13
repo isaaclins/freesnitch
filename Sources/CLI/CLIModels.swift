@@ -31,8 +31,13 @@ struct StatusReport: Encodable {
 
 struct HelperReport: Encodable {
     let reachable: Bool
+    /// The build the helper process is running.
     let version: String
+    /// The build installed on disk, which is what the helper should be running.
     let expectedVersion: String
+    /// The installed build as the helper itself reads it. Absent on helpers
+    /// that predate the running/installed split.
+    let installedVersion: String?
     let versionMatches: Bool
     let running: Bool
     let pfctlActive: Bool
@@ -175,7 +180,13 @@ struct SettingReport: Encodable {
 struct HelperSettingsReport: Encodable {
     let registration: String
     let reachable: Bool
+    /// The build the helper process is running, when it answered.
     let version: String?
+    /// The build installed on disk right now.
+    let installedVersion: String?
+    /// The running helper predates the installed bundle, so helper-side fixes
+    /// are not active until it is restarted.
+    let stale: Bool
     let detail: String?
 }
 

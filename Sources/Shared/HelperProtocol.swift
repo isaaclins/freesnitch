@@ -1,7 +1,14 @@
 import Foundation
 
 @objc public protocol HelperProtocol {
+    /// The build of the running helper process, not the build on disk.
     func getVersion(reply: @escaping (String) -> Void)
+    /// Restarts the helper with `launchctl kickstart -k` when the running
+    /// process is older than the installed bundle, so an in-place update stops
+    /// leaving a stale root daemon behind. Optional because a helper from
+    /// before #36 does not have it; callers must fall back to telling the user
+    /// the privileged command instead of unregistering anything.
+    @objc optional func restartForUpdate(reply: @escaping (Bool, String?) -> Void)
     func getStatus(reply: @escaping (Data) -> Void)
     func setMode(rawValue: String, reply: @escaping (Bool, String?) -> Void)
 

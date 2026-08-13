@@ -511,7 +511,7 @@ final class CLIRunner {
     private func helperSettings(_ action: HelperSettingsCommand) async throws -> CommandResult {
         if case .openLoginItems = action {
             try openLoginItems()
-            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: false, version: nil, detail: "Opened System Settings > General > Login Items & Extensions. Helper registration is app-owned; CLI registration state is not authoritative.")
+            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: false, version: nil, installedVersion: CLIAppBundle.expectedBuildIdentity, stale: false, detail: "Opened System Settings > General > Login Items & Extensions. Helper registration is app-owned; CLI registration state is not authoritative.")
             return CommandResult(data: report, human: "Opened System Settings > General > Login Items & Extensions.\nHelper registration: unknown-from-cli (app-owned).")
         }
 
@@ -532,17 +532,25 @@ final class CLIRunner {
             let detail = didActivateApp
                 ? "Activated the containing signed FreeSnitch.app. Helper registration is app-owned; CLI did not call SMAppService.register(). CLI observed state: \(observedRegistration), which is not authoritative."
                 : "Helper XPC is the authoritative live fact; CLI cannot inspect app-owned SMAppService registration reliably. CLI observed state: \(observedRegistration)."
-            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: true, version: status.version, detail: detail)
-            return CommandResult(data: report, human: "Helper registration: unknown-from-cli (app-owned).\nHelper XPC: reachable (v\(status.version)).\n\(detail)")
+            let installed = status.installedVersion ?? CLIAppBundle.expectedBuildIdentity
+            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: true, version: status.version, installedVersion: installed, stale: false, detail: detail)
+            return CommandResult(data: report, human: "Helper registration: unknown-from-cli (app-owned).\nHelper XPC: reachable (running v\(status.version), installed v\(installed)).\n\(detail)")
         } catch let error as CLIError {
             let observedRegistration = helperRegistrationStateRaw()
             let remediation = helperRemediation(registration: observedRegistration, error: error)
+            let stale = error.exitCode == .helperVersionMismatch
             let detail = "CLI observed SMAppService state: \(observedRegistration), but this is not authoritative because registration is app-owned. \(error.message)"
-            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: false, version: nil, detail: detail)
+            let report = HelperSettingsReport(registration: "unknown-from-cli", reachable: stale, version: helper(from: error), installedVersion: CLIAppBundle.expectedBuildIdentity, stale: stale, detail: detail)
+            // A stale helper is reachable. Saying "unreachable" there hides the
+            // one fact the user needs: the running daemon is not the installed
+            // build, and only a restart fixes that.
+            let reachability = stale
+                ? "Helper XPC: reachable, but the running helper is stale.\n\(error.message)"
+                : "Helper XPC: unreachable."
             return CommandResult(data: report,
-                                 human: "Helper registration: unknown-from-cli (app-owned).\nCLI observed registration: \(observedRegistration) (not authoritative).\nHelper XPC: unreachable.\nWhat to do: \(remediation)",
+                                 human: "Helper registration: unknown-from-cli (app-owned).\nCLI observed registration: \(observedRegistration) (not authoritative).\n\(reachability)\nWhat to do: \(remediation)",
                                  exitCode: error.exitCode,
-                                 error: CLIError(error.exitCode, code: error.code, message: error.message, remediation: remediation))
+                                 error: CLIError(error.exitCode, code: error.code, message: error.message, remediation: remediation, observedHelperVersion: error.observedHelperVersion))
         }
     }
 
@@ -683,10 +691,18 @@ final class CLIRunner {
                      extensionStatus: extensionReport)
     }
 
+    /// The running helper version carried by a mismatch error, when the helper
+    /// answered before the check refused it.
+    private func helper(from error: CLIError) -> String? {
+        guard error.exitCode == .helperVersionMismatch else { return nil }
+        return error.observedHelperVersion
+    }
+
     private func helperReport(_ status: HelperStatus) -> HelperReport {
         HelperReport(reachable: true,
                      version: status.version,
                      expectedVersion: CLIAppBundle.expectedBuildIdentity,
+                     installedVersion: status.installedVersion,
                      versionMatches: AppConstants.identityMatches(reported: status.version, expected: CLIAppBundle.expectedBuildIdentity),
                      running: status.running,
                      pfctlActive: status.pfctlActive,
@@ -915,7 +931,7 @@ final class CLIRunner {
             findings.append(DoctorFinding(id: "helper_reachable", state: "ok", message: "The privileged helper is reachable.", action: "No action needed.", exitCode: nil))
             let expectedIdentity = CLIAppBundle.expectedBuildIdentity
             let versionMatches = AppConstants.identityMatches(reported: status.version, expected: expectedIdentity)
-            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper and app both report version \(status.version)." : "The helper reports version \(status.version), but this app is \(expectedIdentity). Helper-side fixes are not active until it is replaced.", action: versionMatches ? "No action needed." : "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
+            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper process is running \(status.version), which is the installed build." : "The helper process is running \(status.version), but the installed build is \(expectedIdentity). Helper-side fixes are not active until the running process is replaced.", action: versionMatches ? "No action needed." : "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
             return
         }
         let reachable = error?.exitCode == .helperVersionMismatch
@@ -924,8 +940,8 @@ final class CLIRunner {
             ?? helperRemediation(registration: registration, error: CLIError(.helperUnreachable, message: "The helper could not be reached."))
         findings.append(DoctorFinding(id: "helper_reachable", state: reachable ? "ok" : "problem", message: reachable ? "The helper answered, but it is not the build this app expects." : "The privileged helper could not be reached.", action: reachable ? "See the helper version finding." : reachabilityAction, exitCode: reachable ? nil : (error?.exitCode ?? CLIExitCode.helperUnreachable).rawValue))
         let staleExpected = CLIAppBundle.expectedBuildIdentity
-        let staleReported = observedVersion ?? "unknown"
-        let staleMessage = "A helper from an earlier install is still running. It reports \(staleReported), but this app is \(staleExpected), so helper-side fixes are not active."
+        let staleReported = observedVersion ?? error?.observedHelperVersion ?? "unknown"
+        let staleMessage = "A helper process from an earlier install is still running. It is running \(staleReported), but the installed build is \(staleExpected), so helper-side fixes are not active."
         findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? staleMessage : "The helper version could not be checked.", action: reachable ? "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)" : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
     }
 

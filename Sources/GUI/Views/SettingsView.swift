@@ -68,7 +68,7 @@ struct SettingsView: View {
 
     private var helperSummary: String {
         if case .mismatch(let helperVersion, let appVersion) = state.helperVersionState {
-            return "Version mismatch: helper v\(helperVersion), app v\(appVersion)"
+            return "Stale helper: running v\(helperVersion), installed v\(appVersion). Restart it with `\(AppConstants.helperKickstartCommand)`"
         }
         switch state.helperInstallState {
         case .enabled: return state.helperConnected ? "Connected" : "Approved, connecting…"

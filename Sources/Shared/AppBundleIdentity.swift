@@ -15,10 +15,55 @@ public enum AppBundleIdentity {
     }
 
     /// The marketing version and build of the app containing the current
-    /// executable, for example "0.2.0 (15)".
+    /// executable, for example "0.2.0 (15)", as it is on disk right now.
     public static var current: String? {
         guard let appURL = containingAppURL else { return nil }
         return identity(from: appURL)
+    }
+
+    /// The identity of the bundle on disk, read at call time. After an in-place
+    /// update this is the new build, whatever the running processes are.
+    public static var installed: String? { current }
+
+    /// The identity of the bundle as it was when this process started running.
+    ///
+    /// This is the only value that describes the code actually executing. The
+    /// on-disk Info.plist is replaced under a running daemon by an in-place
+    /// update, so reading it at call time makes a stale process claim the new
+    /// build's version, which is exactly the incident behind #36. Resolved once
+    /// and then frozen for the lifetime of the process.
+    public static let running: String? = current
+
+    /// Forces the running identity to be resolved now, at process start, rather
+    /// than on whichever later call happens to ask first. Call this before any
+    /// work that could outlive an update.
+    @discardableResult
+    public static func captureRunningIdentity() -> String? { running }
+
+    /// A running process is stale only when both identities are known and they
+    /// differ. An unknown value proves nothing, and a firewall that cries wolf
+    /// gets ignored.
+    public static func isStale(running: String?, installed: String?) -> Bool {
+        guard let running, let installed else { return false }
+        return running != installed
+    }
+
+    /// The running and installed identities of the current process, kept apart
+    /// so no surface can collapse them into one misleading string.
+    public struct Report: Equatable, Sendable {
+        public let running: String?
+        public let installed: String?
+
+        public init(running: String?, installed: String?) {
+            self.running = running
+            self.installed = installed
+        }
+
+        public var isStale: Bool { AppBundleIdentity.isStale(running: running, installed: installed) }
+    }
+
+    public static func report() -> Report {
+        Report(running: running, installed: installed)
     }
 
     /// Finds the canonical `.app` ancestor of an executable path.

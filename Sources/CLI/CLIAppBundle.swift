@@ -5,11 +5,13 @@ enum CLIAppBundle {
         AppBundleIdentity.containingAppURL
     }
 
-    /// The build identity of the app bundle this CLI was shipped inside.
+    /// The build identity currently installed on disk, read at call time. This
+    /// is what a helper is expected to be running, and it is what an in-place
+    /// update changes.
     /// A bare CLI outside an app falls back to its marketing version only, so
     /// it cannot make a false stale-helper claim.
     static var expectedBuildIdentity: String {
-        AppBundleIdentity.current ?? AppConstants.version
+        AppBundleIdentity.installed ?? AppConstants.version
     }
 
     static var hasEmbeddedNetworkExtension: Bool {

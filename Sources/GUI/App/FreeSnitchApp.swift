@@ -36,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowManager: WindowManager!
 
     override init() {
+        // Freeze the identity of the bundle this process launched from, so a
+        // later in-place update cannot change what this app claims to be.
+        AppBundleIdentity.captureRunningIdentity()
         let state = AppState()
         self.state = state
         self.systemExtension = SystemExtensionManager(state: state)
