@@ -24,8 +24,9 @@ final class ResolverBypass: @unchecked Sendable {
         timer.cancel()
     }
 
-    /// Returns true for DHCP, local stubs handled by the caller, or a
-    /// configured resolver. An unknown address fails open for DNS safety.
+    /// Returns true for a configured resolver. An unknown address or missing
+    /// resolver configuration fails open for DNS safety during the boot window;
+    /// the caller decides whether that window is active.
     func allowsDNS(to remoteIP: String) -> Bool {
         guard !remoteIP.isEmpty else { return true }
         let normalized = remoteIP.lowercased().split(separator: "%").first.map(String.init) ?? remoteIP
