@@ -298,6 +298,32 @@ The helper logs enforcement changes, pf install and uninstall, and flushes as
 audit events. `pkill -x FreeSnitch` remains the emergency fail-open escape
 hatch.
 
+`freesnitch pf uninstall` removes the pf anchor content only. It is a recovery
+operation, not an uninstall of FreeSnitch, and it never removes the helper.
+
+## Removing FreeSnitch
+
+The CLI has no uninstall command, and that is deliberate: under System Integrity
+Protection only the app can deactivate the system extension, because
+`systemextensionsctl uninstall` refuses to run at all. Start in the app under
+Settings > Uninstall, then finish with the script:
+
+```sh
+sudo bash Scripts/uninstall_freesnitch.sh --yes
+sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
+```
+
+The script refuses to remove the app while macOS still holds a record for
+`io.isaaclins.freesnitch.netext`, or while the privileged helper is still
+running from that bundle. `--remove-database` additionally deletes
+`/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds every
+rule, profile and blocklist and can exceed 300 MB; without it that file is kept.
+Only the shared `puresnitch` anchor is flushed, pf is never disabled globally,
+and the empty anchor file stays because `/etc/pf.conf` still references it.
+
+`Scripts/test_uninstall_safety.sh` exercises those guards against a fake root
+with stubbed privileged tools, so it never touches the real system.
+
 ## Interactive alerts
 
 Pending alert interaction is not part of this release. The GUI stores pending

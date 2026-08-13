@@ -19,12 +19,29 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case failed(String)
     }
 
+    /// What macOS actually reported about removing the extension.
+    ///
+    /// Deactivation is a deliberate, user-initiated uninstall, never a repair
+    /// (see #24), and it commonly finishes only after a reboot. Accepting the
+    /// request is not success, so there is no state for "we asked": the value
+    /// only moves past `.deactivating` when the system answers.
+    enum UninstallState: Equatable {
+        case idle
+        case deactivating
+        case notInstalled
+        case pendingReboot
+        case removed
+        case failed(String)
+    }
+
     private enum RequestKind {
         case activation
         case deactivation
+        case properties
     }
 
     @Published var status: Status = .idle
+    @Published var uninstallState: UninstallState = .idle
     @Published var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
     )
@@ -75,6 +92,35 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         guard hasEmbeddedExtension else { return }
         requestKind = .deactivation
         let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
+        request.delegate = self
+        OSSystemExtensionManager.shared.submitRequest(request)
+    }
+
+    /// Entry point for the uninstall flow in Settings. Under SIP the app is the
+    /// only component macOS allows to deactivate this extension, so this is the
+    /// real removal path, not a convenience wrapper.
+    ///
+    /// It touches the extension and the content filter only. It never
+    /// unregisters, boots out, or kickstarts the privileged helper: removing
+    /// that service is the user's own action in System Settings, and doing it
+    /// silently is exactly the failure #24 was filed for.
+    func deactivateForUninstall() {
+        uninstallState = .deactivating
+        guard hasEmbeddedExtension else {
+            // Nothing was ever staged from this bundle, so there is no OS
+            // answer to wait for. Still drop the filter configuration.
+            disableFilter()
+            uninstallState = .notInstalled
+            return
+        }
+        deactivate()
+    }
+
+    /// Asks the system whether a record for the extension still exists, so the
+    /// UI can report what macOS holds rather than what we requested.
+    private func checkExtensionPresence() {
+        requestKind = .properties
+        let request = OSSystemExtensionRequest.propertiesRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
         OSSystemExtensionManager.shared.submitRequest(request)
     }
@@ -290,12 +336,19 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
     nonisolated func request(_ request: OSSystemExtensionRequest,
                              didFinishWithResult result: OSSystemExtensionRequest.Result) {
         Task { @MainActor in
+            if self.requestKind == .properties { return }
             guard self.requestKind == .activation else {
                 if result == .completed {
                     self.filterConfigurationActive = false
                     self.status = .idle
+                    // A completed deactivation is the system's answer, but the
+                    // record can still be present and only drop at reboot. Ask
+                    // before telling the user it is gone.
+                    self.uninstallState = .deactivating
+                    self.checkExtensionPresence()
                 } else {
                     self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
+                    self.uninstallState = .pendingReboot
                 }
                 return
             }
@@ -312,11 +365,50 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
     }
 
     nonisolated func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        Task { @MainActor in self.fail("Extension activation failed: \(error.localizedDescription)") }
+        Task { @MainActor in
+            let missing = (error as? OSSystemExtensionError)?.code == .extensionNotFound
+            switch self.requestKind {
+            case .activation:
+                self.fail("Extension activation failed: \(error.localizedDescription)")
+            case .deactivation:
+                if missing {
+                    self.uninstallState = .notInstalled
+                } else {
+                    self.uninstallState = .failed(error.localizedDescription)
+                }
+                self.state?.appendLog(level: "info",
+                                      message: "Network extension deactivation returned: \(error.localizedDescription)")
+            case .properties:
+                // The system has no record left to describe. That is the only
+                // evidence available that the extension is actually gone.
+                self.uninstallState = missing ? .removed : .pendingReboot
+            }
+        }
+    }
+
+    nonisolated func request(_ request: OSSystemExtensionRequest,
+                             foundProperties properties: [OSSystemExtensionProperties]) {
+        Task { @MainActor in
+            guard self.requestKind == .properties else { return }
+            let records = properties.filter { $0.bundleIdentifier == self.extensionIdentifier }
+            if records.isEmpty {
+                self.uninstallState = .removed
+            } else {
+                self.uninstallState = .pendingReboot
+            }
+        }
     }
 
     nonisolated func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         Task { @MainActor in
+            guard self.requestKind != .deactivation else {
+                // Removal can need approval too. Do not repaint the firewall
+                // status as "waiting to be switched on" while the user is
+                // switching it off.
+                self.state?.appendLog(level: "info",
+                                      message: "macOS is asking you to approve removing the FreeSnitch network extension. Approve it in System Settings > General > Login Items & Extensions > Network Extensions.")
+                return
+            }
             self.status = .needsApproval
             self.state?.appendLog(level: "info",
                                   message: "Approve FreeSnitch in System Settings > General > Login Items & Extensions > Network Extensions, then it will start filtering.")

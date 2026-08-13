@@ -76,6 +76,28 @@ This build needs no system extension approval, because it has no extension to ap
 
 On first launch the app registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings > General > Login Items & Extensions > Allow in the Background**. Until that switch is on, macOS blocks the helper and the app cannot see traffic. The window updates on its own once you approve it, with no relaunch needed.
 
+## Uninstall
+
+Start in the app: **FreeSnitch > Settings > Uninstall**. Under System Integrity Protection, which is on by default, the app is the only component macOS lets deactivate the FreeSnitch system extension. `systemextensionsctl uninstall` answers `At this time, this tool cannot be used if System Integrity Protection is enabled.` even for root, so a script cannot do this part.
+
+The Uninstall tab asks you to confirm twice, then turns enforcement off, disables the content filter, and requests deactivation of the network extension. macOS usually finishes that only after a restart, and the app reports what the system actually answers rather than claiming success when the request was accepted.
+
+What is left needs administrator rights and is yours to do:
+
+1. Switch FreeSnitch off in **System Settings > General > Login Items & Extensions**. That is what removes the privileged helper. FreeSnitch never unregisters its own service for you, because doing that silently is how a working install gets broken (see #24).
+2. Restart if the app says the deactivation finishes after a restart.
+3. Run the script, which does the file and `pf` work with its guards in place:
+
+```bash
+sudo bash Scripts/uninstall_freesnitch.sh --yes
+# also delete your rules, profiles and blocklists:
+sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
+```
+
+The script refuses to remove the app while macOS still holds a record for the extension, or while the helper is still running from that bundle. Without `--remove-database` it keeps `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds your rules and can exceed 300 MB, so a reinstall finds them again. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
+
+Without a checkout, the Uninstall tab shows and copies the equivalent commands.
+
 ## Why this exists
 
 Little Snitch is the gold standard for application firewalls on macOS. It costs $59 per machine. LuLu is free and offers per-process kernel filtering, but its rules manager is spartan and there is no world map, traffic graph, or built-in blocklist library. FreeSnitch offers per-process filtering in its firewall flavour. The macOS built-in firewall blocks inbound. It does nothing for outbound traffic.
@@ -262,6 +284,8 @@ freesnitch/
 │   ├── make_icon.sh
 │   ├── release.sh
 │   ├── render_icon.swift
+│   ├── test_uninstall_safety.sh
+│   ├── uninstall_freesnitch.sh
 │   └── uninstall_puresnitch.sh
 ├── docs/                   # Website, architecture, translations, screenshots
 ├── .github/                # Issue templates and CI workflows

@@ -14,6 +14,7 @@ struct SettingsView: View {
             dnsTab.tabItem { Label("DNS", systemImage: "globe") }
             blocklistsTab.tabItem { Label("Blocklists", systemImage: "shield.lefthalf.filled") }
             profilesTab.tabItem { Label("Profiles", systemImage: "person.crop.circle") }
+            uninstallTab.tabItem { Label("Uninstall", systemImage: "trash") }
             aboutTab.tabItem { Label("About", systemImage: "info.circle") }
         }
         .padding(16)
@@ -217,6 +218,13 @@ struct SettingsView: View {
                 }.padding(.vertical, 4)
             }
         }
+    }
+
+    /// Deliberate removal, deliberately its own tab. It must not sit next to
+    /// the helper's Repair action in General: repair and uninstall are
+    /// different actions and #24 is what happens when they blur.
+    private var uninstallTab: some View {
+        UninstallView(systemExtension: systemExtension)
     }
 
     private var aboutTab: some View {
