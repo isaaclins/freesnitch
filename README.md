@@ -237,6 +237,8 @@ There is no fixed roadmap here, and pretending otherwise ages badly. Direction i
 
 **Will this run on Intel Macs?** The project settings build universal `arm64` and `x86_64` binaries and set macOS 13 as the deployment target. No public release DMG is available yet.
 
+**Does it show an app's declared Internet Access Policy?** It can, and in practice it almost never will. FreeSnitch parses Little Snitch's `.lsiap` format and displays it when an app ships one, but adoption never happened: scanning a working Mac found the file in 0 of 64 installed apps. The parser is kept because the data would be genuinely useful if it existed, showing what an app says a connection is for before you deny it. Treat it as latent support rather than a feature you will see.
+
 **How is it different from LuLu?** [LuLu](https://github.com/objective-see/LuLu) is an excellent free, open-source alternative with its own Network Extension implementation. FreeSnitch differs in its Little Snitch-style UI, world map, traffic graph, mode picker, DoH support, blocklist library, and written-from-scratch rule engine. Try both and use whichever fits.
 
 **Does it work alongside Pi-hole, AdGuard Home, or NextDNS?** Point FreeSnitch's DoH upstream at your own DoH endpoint. FreeSnitch can then provide a per-device enforcement layer on top of your network-wide blocker.
@@ -287,7 +289,7 @@ If you find a security issue, please open a private security advisory rather tha
 Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Especially welcome:
-- Expanded Internet Access Policy (`.lsiap`) format coverage and edge-case testing
+- Blocklist and filtering coverage, especially cases that bypass DNS-level blocking
 - Translations beyond English
 - Additional blocklist providers
 - XCTest coverage for the rule matcher and DNS proxy
