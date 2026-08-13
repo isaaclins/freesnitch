@@ -17,17 +17,24 @@ final class FlowObservationQueue: @unchecked Sendable {
     private var tail = 0
     private var count = 0
     private var fullDrops = 0
-    private var lock = os_unfair_lock_s()
+    private let lock: UnsafeMutablePointer<os_unfair_lock_s>
 
     init(capacity: Int = 1024) {
         precondition(capacity > 0)
         self.capacity = capacity
         self.values = Array(repeating: nil, count: capacity)
+        self.lock = .allocate(capacity: 1)
+        self.lock.initialize(to: os_unfair_lock_s())
+    }
+
+    deinit {
+        lock.deinitialize(count: 1)
+        lock.deallocate()
     }
 
     func enqueue(_ observation: FlowObservation) -> EnqueueResult {
-        guard os_unfair_lock_trylock(&lock) else { return .contended }
-        defer { os_unfair_lock_unlock(&lock) }
+        guard os_unfair_lock_trylock(lock) else { return .contended }
+        defer { os_unfair_lock_unlock(lock) }
         guard count < capacity else {
             fullDrops += 1
             return .full
@@ -42,8 +49,8 @@ final class FlowObservationQueue: @unchecked Sendable {
     /// wait for the hot path while moving at most the requested bound.
     func drain(maximum: Int) -> [FlowObservation] {
         guard maximum > 0 else { return [] }
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
         let amount = min(maximum, count)
         var result: [FlowObservation] = []
         result.reserveCapacity(amount)
@@ -57,14 +64,14 @@ final class FlowObservationQueue: @unchecked Sendable {
     }
 
     var isEmpty: Bool {
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
         return count == 0
     }
 
     func takeFullDropCount() -> Int {
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
         defer { fullDrops = 0 }
         return fullDrops
     }

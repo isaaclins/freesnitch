@@ -341,7 +341,12 @@ final class AppCommunicationBridge: NSObject, AppCommunication {
             responseHandler(false)
             return
         }
-        // The helper forwarding endpoint is added in the next transport tracer.
-        responseHandler(false)
+        guard let state else {
+            responseHandler(false)
+            return
+        }
+        Task { @MainActor in
+            responseHandler(state.helper.ingestObservationBatch(observationBatch))
+        }
     }
 }

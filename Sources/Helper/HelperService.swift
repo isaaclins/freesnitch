@@ -2,6 +2,7 @@ import Foundation
 
 final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
+    private let insights: InsightsStore?
     private let pf = PFManager()
     private let dns = DNSProxy()
     private let netmon = NetMonitor()
@@ -22,6 +23,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         try? FileManager.default.createDirectory(atPath: dbDir, withIntermediateDirectories: true)
         let dbPath = (dbDir as NSString).appendingPathComponent("freesnitch.sqlite")
         self.store = try RuleStore(path: dbPath)
+        self.insights = try? InsightsStore()
+        if self.insights == nil {
+            PSLog.error(PSLog.helper, "Insights store failed to open; observation recording is unavailable.")
+        }
         self.blocklists = BlocklistManager(store: store)
         self.listener = listener
         super.init()
@@ -48,6 +53,16 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
         }
         dns.onResolve = { [weak self] domain, ips in
+            let observedAt = Date()
+            let mappings = ips.map {
+                DNSMapping(domain: domain, ip: $0, observedAt: observedAt,
+                           expiresAt: observedAt.addingTimeInterval(5 * 60))
+            }
+            do {
+                try self?.insights?.recordDNSMappings(mappings)
+            } catch {
+                PSLog.error(PSLog.helper, "DNS mapping recording failed: \(error.localizedDescription)")
+            }
             self?.broadcast { c in
                 c.notifyLog(level: "resolve", message: "\(domain) -> \(ips.joined(separator: ", "))")
             }
@@ -385,6 +400,26 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func recentDenied(limit: Int, reply: @escaping (Data) -> Void) {
         let conns = store.recentConnections(limit: limit, status: .denied)
         reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
+    }
+
+    func ingestObservationBatch(observationBatch: Data, reply: @escaping (Bool, String?) -> Void) {
+        guard observationBatch.count <= InsightsLimits.maxBatchBytes else {
+            reply(false, "observation batch exceeds the byte limit")
+            return
+        }
+        guard let insights else {
+            reply(false, "insights store is unavailable")
+            return
+        }
+        do {
+            let batch = try FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: observationBatch)
+            try batch.validate(payloadBytes: observationBatch.count)
+            try insights.record(batch.observations)
+            reply(true, nil)
+        } catch {
+            PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
+            reply(false, error.localizedDescription)
+        }
     }
 
     private func recordPFError(_ error: Error) {

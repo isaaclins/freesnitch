@@ -30,6 +30,8 @@ import Foundation
 
     func recentBlocked(limit: Int, reply: @escaping (Data) -> Void)
     func recentDenied(limit: Int, reply: @escaping (Data) -> Void)
+
+    func ingestObservationBatch(observationBatch: Data, reply: @escaping (Bool, String?) -> Void)
 }
 
 @objc public protocol HelperClientProtocol {

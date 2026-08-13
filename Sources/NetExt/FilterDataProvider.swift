@@ -36,11 +36,22 @@ final class FilterDataProvider: NEFilterDataProvider {
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
     private let observationQueue = FlowObservationQueue(capacity: 1024)
     private let observationDrainQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.observations", qos: .utility)
-    private var observationSignalLock = os_unfair_lock_s()
+    private let observationSignalLock: UnsafeMutablePointer<os_unfair_lock_s>
     private var observationDrainScheduled = false
     private var observationStopped = false
     private var lastObservationDropLog = Date.distantPast
     private let askTimeout: TimeInterval = 60
+
+    override init() {
+        self.observationSignalLock = .allocate(capacity: 1)
+        self.observationSignalLock.initialize(to: os_unfair_lock_s())
+        super.init()
+    }
+
+    deinit {
+        observationSignalLock.deinitialize(count: 1)
+        observationSignalLock.deallocate()
+    }
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
         IPCConnection.shared.onSnapshot = { [weak self] data in
@@ -102,9 +113,9 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     override func stopFilter(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        os_unfair_lock_lock(&observationSignalLock)
+        os_unfair_lock_lock(observationSignalLock)
         observationStopped = true
-        os_unfair_lock_unlock(&observationSignalLock)
+        os_unfair_lock_unlock(observationSignalLock)
         completionHandler()
     }
 
@@ -143,9 +154,9 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func drainObservationBatch() {
         while true {
-            os_unfair_lock_lock(&observationSignalLock)
+            os_unfair_lock_lock(observationSignalLock)
             let stopped = observationStopped
-            os_unfair_lock_unlock(&observationSignalLock)
+            os_unfair_lock_unlock(observationSignalLock)
             guard !stopped else { return }
 
             let observations = observationQueue.drain(maximum: InsightsLimits.maxBatchCount)
@@ -170,18 +181,18 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     private func signalObservationDrain() {
-        guard os_unfair_lock_trylock(&observationSignalLock) else { return }
+        guard os_unfair_lock_trylock(observationSignalLock) else { return }
         let shouldSchedule = !observationStopped && !observationDrainScheduled
         if shouldSchedule { observationDrainScheduled = true }
-        os_unfair_lock_unlock(&observationSignalLock)
+        os_unfair_lock_unlock(observationSignalLock)
         guard shouldSchedule else { return }
         observationDrainQueue.async { [weak self] in self?.drainObservationBatch() }
     }
 
     private func finishObservationDrainIfIdle() {
-        os_unfair_lock_lock(&observationSignalLock)
+        os_unfair_lock_lock(observationSignalLock)
         observationDrainScheduled = false
-        os_unfair_lock_unlock(&observationSignalLock)
+        os_unfair_lock_unlock(observationSignalLock)
         if !observationQueue.isEmpty { signalObservationDrain() }
     }
 

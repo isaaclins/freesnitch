@@ -450,6 +450,26 @@ final class HelperClient: NSObject, ObservableObject {
         remote?.setMode(rawValue: m.rawValue) { _, _ in }
     }
 
+    @discardableResult
+    func ingestObservationBatch(_ data: Data) -> Bool {
+        guard data.count <= InsightsLimits.maxBatchBytes else {
+            state?.appendLog(level: "error", message: "Insights batch exceeded the transport limit and was dropped by the GUI.")
+            return false
+        }
+        guard let proxy = remote else {
+            state?.appendLog(level: "error", message: "Insights batch dropped because the privileged helper is unavailable.")
+            return false
+        }
+        proxy.ingestObservationBatch(observationBatch: data) { [weak self] ok, message in
+            guard !ok else { return }
+            Task { @MainActor in
+                self?.state?.appendLog(level: "error",
+                                       message: "The helper rejected an insights batch: \(message ?? "unknown error").")
+            }
+        }
+        return true
+    }
+
     func addRule(_ rule: Rule) {
         addRule(rule) { _, _ in }
     }
