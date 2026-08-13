@@ -82,30 +82,56 @@ enum SystemExtensionProbe {
         }
     }
 
-    private static func parse(_ text: String, exitStatus: Int32) -> SystemExtensionObservation {
+    static func parse(_ text: String, exitStatus: Int32) -> SystemExtensionObservation {
         let lines = text.components(separatedBy: .newlines)
-        let matchingIndexes = lines.indices.filter { lines[$0].contains(AppConstants.bundleIdNetExt) }
-        guard let index = matchingIndexes.first else {
+        let matchingLines = lines.filter { $0.contains(AppConstants.bundleIdNetExt) }
+        guard !matchingLines.isEmpty else {
             let detail = exitStatus == 0
                 ? "The FreeSnitch network extension is not listed as installed or approved."
                 : "The system extension listing did not contain FreeSnitch (exit status \(exitStatus))."
             return SystemExtensionObservation(state: "not-approved", detail: detail)
         }
 
-        let start = max(lines.startIndex, index - 1)
-        let end = min(lines.endIndex, index + 2)
-        let context = lines[start..<end].joined(separator: " ").lowercased()
-        if context.contains("waiting for user approval") ||
-            context.contains("needs user approval") ||
-            context.contains("not approved") ||
-            context.contains("deactivated") ||
-            context.contains("disabled") {
-            return SystemExtensionObservation(state: "not-approved", detail: "The FreeSnitch network extension is installed but is waiting for approval or is disabled.")
+        let statuses = matchingLines.map { $0.lowercased() }
+        let hasActiveGeneration = statuses.contains { status in
+            let negativeState = status.contains("terminated") ||
+                status.contains("deactivated") ||
+                status.contains("disabled") ||
+                status.contains("inactive") ||
+                status.contains("not running") ||
+                status.contains("not approved") ||
+                status.contains("waiting for user approval") ||
+                status.contains("needs user approval") ||
+                status.contains("waiting for approval") ||
+                status.contains("needs approval")
+            return !negativeState &&
+                (status.contains("active") ||
+                 status.contains("activated") ||
+                 status.contains("enabled") ||
+                 status.contains("running"))
         }
-        if context.contains("activated") || context.contains("enabled") || context.contains("active") || context.contains("running") {
+        if hasActiveGeneration {
             return SystemExtensionObservation(state: "approved", detail: "The FreeSnitch network extension is approved by macOS.")
         }
-        return SystemExtensionObservation(state: "unknown", detail: "The FreeSnitch network extension is listed, but macOS reported an unrecognized state.")
+
+        let hasApprovalProblem = statuses.contains { status in
+            status.contains("waiting for user approval") ||
+                status.contains("needs user approval") ||
+                status.contains("not approved") ||
+                status.contains("deactivated") ||
+                status.contains("disabled")
+        }
+        if hasApprovalProblem {
+            return SystemExtensionObservation(state: "not-approved", detail: "The FreeSnitch network extension is installed but is waiting for approval or is disabled.")
+        }
+
+        let allTerminatedWaitingToUninstall = statuses.allSatisfy { status in
+            status.contains("terminated") && status.contains("waiting to uninstall")
+        }
+        if allTerminatedWaitingToUninstall {
+            return SystemExtensionObservation(state: "unknown", detail: "The FreeSnitch network extension has only terminated generations waiting to uninstall; no approved generation was found.")
+        }
+        return SystemExtensionObservation(state: "unknown", detail: "The FreeSnitch network extension is listed, but macOS reported no active generation.")
     }
 }
 
