@@ -212,19 +212,27 @@ final class HelperClient: NSObject, ObservableObject {
         needsRepair = true
     }
 
-    func connect() {
+    private func makeConnection() -> NSXPCConnection {
         let conn = NSXPCConnection(machServiceName: AppConstants.xpcMachServiceName, options: [.privileged])
         conn.remoteObjectInterface = HelperBridge.remoteInterface()
         conn.exportedInterface = HelperBridge.exportedInterface()
         conn.exportedObject = HelperEventReceiver(state: state)
-        conn.invalidationHandler = { [weak self] in
-            Task { @MainActor in self?.setConnected(false) }
+        let markDisconnected: () -> Void = { [weak self, weak conn] in
+            Task { @MainActor in
+                guard let self, self.connection === conn else { return }
+                self.connection = nil
+                self.setConnected(false)
+            }
         }
-        conn.interruptionHandler = { [weak self] in
-            Task { @MainActor in self?.setConnected(false) }
-        }
-        conn.resume()
+        conn.invalidationHandler = markDisconnected
+        conn.interruptionHandler = markDisconnected
+        return conn
+    }
+
+    func connect() {
+        let conn = makeConnection()
         self.connection = conn
+        conn.resume()
         ping()
         startPolling()
     }
@@ -244,7 +252,8 @@ final class HelperClient: NSObject, ObservableObject {
                     return
                 }
                 if self.hasVersionMismatch {
-                    self.ping()
+                    if self.connection == nil { self.reconnectAndPing() }
+                    else { self.ping() }
                     return
                 }
                 self.reconnectAndPing()
@@ -274,14 +283,9 @@ final class HelperClient: NSObject, ObservableObject {
         // rebuild it rather than pinging a dead proxy.
         if force || connection == nil || installState == .enabled {
             connection?.invalidate()
-            let conn = NSXPCConnection(machServiceName: AppConstants.xpcMachServiceName, options: [.privileged])
-            conn.remoteObjectInterface = HelperBridge.remoteInterface()
-            conn.exportedInterface = HelperBridge.exportedInterface()
-            conn.exportedObject = HelperEventReceiver(state: state)
-            conn.invalidationHandler = { [weak self] in Task { @MainActor in self?.setConnected(false) } }
-            conn.interruptionHandler = { [weak self] in Task { @MainActor in self?.setConnected(false) } }
-            conn.resume()
+            let conn = makeConnection()
             connection = conn
+            conn.resume()
         }
         ping()
     }
@@ -331,6 +335,7 @@ final class HelperClient: NSObject, ObservableObject {
                     return
                 }
                 self.versionState = .matching(version)
+                self.automaticRepairAttemptedVersion = nil
                 self.repairState = .idle
                 self.needsRepair = false
                 self.setConnected(true)
