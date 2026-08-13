@@ -7,6 +7,7 @@ FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
 BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
 IPC="$ROOT/Sources/Shared/IPCConnection.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
+SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -24,6 +25,7 @@ require_text() {
 [[ -f "$BRIDGE" ]] || fail "missing $BRIDGE"
 [[ -f "$IPC" ]] || fail "missing $IPC"
 [[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
+[[ -f "$SYSTEM_EXTENSION_MANAGER" ]] || fail "missing $SYSTEM_EXTENSION_MANAGER"
 
 # A missing GUI must never leave a socket flow paused forever or turn a GUI
 # outage into a network outage. Keep this check tied to the actual branch that
@@ -121,4 +123,21 @@ if ! allow_within_block "$FILTER" 'workQueue\.asyncAfter'; then
   fail "the interactive timeout does not fail open with an allow verdict"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, and XPC snapshots are present.\n'
+require_text "$SYSTEM_EXTENSION_MANAGER" "@Published var status: Status = .idle" \
+  "system extension status is not published"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.fail(\"filter save: \\(saveError.localizedDescription)\")" \
+  "filter-save failures are not recorded in the published status"
+require_text "$SYSTEM_EXTENSION_MANAGER" "guard self.requestKind == .activation else" \
+  "system extension request completion is not tied to activation"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.enableFilter()" \
+  "filter configuration is not enabled from the completed activation callback"
+activation_body="$(awk '
+  /^    func activate\(\)/ { active = 1 }
+  /^    func deactivate\(\)/ { active = 0 }
+  active { print }
+' "$SYSTEM_EXTENSION_MANAGER")"
+if printf '%s\n' "$activation_body" | grep -Fq "enableFilter"; then
+  fail "filter configuration is still enabled optimistically during activate()"
+fi
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, and activation ordering are present.\n'
