@@ -52,6 +52,11 @@ import Foundation
     /// pretending it has no data. The reply carries an encoded `InsightsReport`
     /// and an error string, never both.
     @objc optional func queryInsights(request: Data, reply: @escaping (Data, String?) -> Void)
+    /// One bounded profile command in, one whole profile snapshot out. Profile
+    /// state is helper-owned, so the GUI never merges cached fragments.
+    /// Optional because a helper predating profiles does not answer it, and the
+    /// GUI must degrade rather than claim profiles are broken.
+    @objc optional func handleProfileCommand(request: Data, reply: @escaping (Data, String?) -> Void)
     /// A bounded, in-memory prepared set for first-contact classification.
     /// The helper refreshes it off the verdict path; unavailable or stale data
     /// is an error so Alert mode keeps asking.

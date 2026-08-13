@@ -432,6 +432,10 @@ public struct AppConstants {
     /// The privileged recovery command for replacing a stale helper. Shared so
     /// the GUI banner and the CLI doctor cannot drift into telling the user two
     /// different things.
+    /// Emitted by the helper when the active profile changes, so a connected
+    /// GUI resynchronizes from the helper-owned snapshot instead of guessing.
+    public static let profilePolicyChangedLogMessage = "Active profile policy changed; resynchronizing."
+
     public static let helperKickstartCommand =
         "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
 

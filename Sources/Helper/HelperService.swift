@@ -165,6 +165,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
     private let insights: InsightsStore?
     private let pf = PFManager()
+    /// Profiles are helper-owned: the coordinator decides which profile is
+    /// active and the service is the only door into it from outside.
+    private let profiles: ProfileCommandService
+    private let profileCoordinator: ProfileCoordinator
+    private let profileQueue = DispatchQueue(label: "io.isaaclins.freesnitch.profiles", qos: .userInitiated)
     private let dns = DNSProxy()
     private let netmon = NetMonitor()
     private let blocklists: BlocklistManager
@@ -215,6 +220,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         self.mode = persistedPolicy.mode
         self.policyGeneration = persistedPolicy.generation
         self.blocklists = BlocklistManager(store: store)
+        let coordinator = ProfileCoordinator(store: store)
+        self.profileCoordinator = coordinator
+        self.profiles = ProfileCommandService(store: store, coordinator: coordinator)
         self.listener = listener
         super.init()
 
@@ -261,6 +269,19 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         // anchor, not in the DNS proxy. PFManager renders them behind the
         // user's own rules and behind the explicit loopback, DHCP and resolver
         // passes, so a feed can never take this machine off the network.
+        // A profile switch changes strictness and the selected rule layers. It
+        // affects new flows only: nothing here touches an established
+        // connection, which is the guarantee #31 required.
+        profiles.onPolicyChanged = { [weak self] _ in
+            self?.republishActivePolicy()
+        }
+        profiles.onBlocklistsChanged = { [weak self] in
+            guard let self else { return }
+            Task {
+                await self.blocklists.refresh()
+                await self.blocklists.refreshIPBlocklists()
+            }
+        }
         blocklists.onIPBlocklistUpdate = { [weak self] set, _ in
             guard let self else { return }
             do {
@@ -313,6 +334,23 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         startInsightsMaintenance()
         Task { await blocklists.refresh() }
         Task { await blocklists.refreshIPBlocklists() }
+        // Only a binding the user created can ever switch the active profile.
+        profileCoordinator.startWatchingNetworks()
+    }
+
+    /// Republishes the active profile's policy to the DNS proxy and tells
+    /// connected clients to resynchronize, so the extension is updated through
+    /// the existing authoritative-snapshot path rather than from cached state.
+    private func republishActivePolicy() {
+        policyQueue.sync {
+            let state = store.activePolicyState()
+            mode = state.mode
+            policyGeneration = state.generation
+            dns.applyPolicy(mode: state.mode, rules: state.rules)
+        }
+        broadcast { client in
+            client.notifyLog(level: "info", message: AppConstants.profilePolicyChangedLogMessage)
+        }
     }
 
     /// The resolvers that must stay reachable no matter what any feed lists.
@@ -576,7 +614,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// reads the persisted helper state, never a GUI or CLI cache.
     private func authoritativeSnapshot() -> SharedRuleBridge.Snapshot {
         policyQueue.sync {
-            let state = store.policyState()
+            // The enforced policy is the ACTIVE profile's strictness plus the
+            // two rule layers, Always and that profile. Publishing the raw
+            // store state instead would enforce rules the active profile does
+            // not select, which is the whole point of #31.
+            let state = store.activePolicyState()
             mode = state.mode
             policyGeneration = state.generation
             return SharedRuleBridge.Snapshot(mode: state.mode,
@@ -1219,6 +1261,24 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// instruction arriving from another process. The rows going back out are
     /// bounded but never content-judged: this store's own data must not be
     /// hidden from the user because one row looks unusual (#57).
+    /// Profiles are answered off the XPC connection queue, like Insights, so a
+    /// profile command can never stall connection handling. The request is
+    /// bounded before it is decoded.
+    func handleProfileCommand(request: Data, reply: @escaping (Data, String?) -> Void) {
+        guard request.count <= ProfileTransportBoundary.maximumRequestBytes else {
+            reply(Data(), "profile request exceeds the request byte limit")
+            return
+        }
+        profileQueue.async { [weak self] in
+            guard let self else {
+                reply(Data(), "the helper is shutting down")
+                return
+            }
+            let (data, message) = self.profiles.handle(requestData: request)
+            reply(data, message)
+        }
+    }
+
     func queryInsights(request: Data, reply: @escaping (Data, String?) -> Void) {
         guard request.count <= InsightsLimits.maxQueryRequestBytes else {
             reply(Data(), "insights query exceeds the request byte limit")

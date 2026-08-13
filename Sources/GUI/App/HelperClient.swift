@@ -383,8 +383,43 @@ final class HelperClient: NSObject, ObservableObject {
         let conn = makeConnection()
         self.connection = conn
         conn.resume()
+        // Profile state is helper-owned. Hand the view model a transport rather
+        // than an XPC connection, so it never owns one of its own.
+        // The transport is @Sendable and may be called from any queue, while
+        // this client is main-actor isolated, so hop before touching it.
+        ProfileClient.shared.setTransport { [weak self] request, completion in
+            Task { @MainActor in
+                guard let self else {
+                    completion(Data(), "The privileged helper is unavailable.")
+                    return
+                }
+                self.sendProfileCommand(request, completion: completion)
+            }
+        }
         ping()
         startPolling()
+    }
+
+    /// One bounded profile command in, one encoded snapshot out. A helper that
+    /// predates profiles simply does not implement the selector, and the view
+    /// model reports that rather than pretending profiles failed.
+    private func sendProfileCommand(_ request: Data,
+                                    completion: @escaping (Data, String?) -> Void) {
+        guard request.count <= ProfileTransportBoundary.maximumRequestBytes else {
+            completion(Data(), "The profile request exceeds the transport limit.")
+            return
+        }
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            completion(Data(), "Could not reach the privileged helper: \(error.localizedDescription).")
+        }) as? HelperProtocol else {
+            completion(Data(), "The privileged helper is unavailable.")
+            return
+        }
+        guard proxy.handleProfileCommand != nil else {
+            completion(Data(), "The running helper is too old to manage profiles. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            return
+        }
+        proxy.handleProfileCommand?(request: request, reply: completion)
     }
 
     /// Keeps checking registration + reachability. Approval happens outside the
@@ -897,6 +932,15 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
     }
 
     func notifyLog(level: String, message: String) {
-        Task { @MainActor in self.state?.appendLog(level: level, message: message) }
+        Task { @MainActor in
+            self.state?.appendLog(level: level, message: message)
+            // A profile switch changes which rules are enforced. Refresh from
+            // the helper-owned snapshot instead of assuming the cached set is
+            // still correct, and refresh the profile view model with it.
+            if message == AppConstants.profilePolicyChangedLogMessage {
+                self.state?.syncSharedRules()
+                ProfileClient.shared.refresh()
+            }
+        }
     }
 }
