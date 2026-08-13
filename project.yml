@@ -79,8 +79,8 @@ targets:
         # com.apple.developer.system-extension.install are deliberately absent.
         # They are restricted entitlements: without an Apple-issued
         # provisioning profile embedded in the bundle, AMFI can refuse to start
-        # the process at all — the app simply never opens for the user. They
-        # come back only together with the two Developer ID profiles (app +
+        # the process at all, and the app simply never opens for the user. They
+        # come back only together with the two Developer ID profiles (app and
         # extension); see docs/NETWORK-EXTENSION.md.
         com.apple.security.application-groups:
           - BHAF4L4726.io.isaaclins.freesnitch
@@ -147,9 +147,11 @@ targets:
       - target: FreeSnitchCLI
         embed: false
         link: false
-      # FreeSnitchNetExt is intentionally NOT embedded in the shipping build —
-      # embedding it requires the restricted entitlements above. Generate the
-      # firewall flavour with: xcodegen generate --spec project-netext.yml
+      # This spec is the contributor build and deliberately omits the system
+      # extension, so the app can be built without this team's Developer ID
+      # provisioning profiles. Shipping releases are not built from here:
+      # Scripts/release.sh generates the firewall flavour with
+      #   xcodegen generate --spec project-netext.yml
 
   FreeSnitchNetExt:
     type: system-extension

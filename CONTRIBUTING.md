@@ -12,7 +12,9 @@ xcodegen generate --spec project.yml
 open FreeSnitch.xcodeproj
 ```
 
-The default `xcodegen generate` command uses `project.yml`, the monitor flavour. Build target: FreeSnitch. Hit ⌘R. A local monitor build may fail to install the helper daemon without Developer ID signing. That is expected for an unsigned development build. The GUI still launches against in-memory state.
+The default `xcodegen generate` command uses `project.yml`, the contributor build. It omits the Network System Extension so it builds without this team's Developer ID provisioning profiles, which is why it is the default here. Users receive the firewall build instead, generated from `project-netext.yml` by `Scripts/release.sh`.
+
+Build target: FreeSnitch. Hit ⌘R. A local contributor build may fail to install the helper daemon without Developer ID signing. That is expected for an unsigned development build. The GUI still launches against in-memory state, and per-process filtering is absent because the extension is not embedded.
 
 ## Conventions
 
@@ -25,7 +27,7 @@ The default `xcodegen generate` command uses `project.yml`, the monitor flavour.
 
 ## Areas where help is most welcome
 
-1. **Firewall build testing** (`project-netext.yml`). Test the signed universal build, first-launch system extension approval, and per-process flow decisions when you have the required Developer ID profiles.
+1. **Firewall build testing** (`project-netext.yml`). This is the build users get, and it is the hardest to test, since it needs the Developer ID profiles. Test the signed universal build, first-launch system extension approval, and per-process flow decisions.
 2. **macOS compatibility**. Test on every macOS version you have, report breakage with a paste of the build error.
 3. **Localization**. The strings are not yet `.strings`-extracted. Help wanted.
 4. **Blocklist curation**. Add high-quality, low-false-positive sources; remove anything stale.

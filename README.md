@@ -42,9 +42,23 @@
 
 No public release or Homebrew cask is available yet. Build from source for now.
 
-### Monitor build
+Two builds exist. The difference is about who can build them, not about which one is the real product. Every release built by `Scripts/release.sh` is the firewall build, so that is what a user installs. The monitor build exists so contributors can work on the app without holding this team's Developer ID provisioning profiles.
 
-The monitor flavour is generated from `project.yml`. It includes the app, helper, monitoring, rules UI, DNS proxy, and `pfctl` integration. It does not embed the Network System Extension and can be built without Developer ID provisioning profiles.
+### Firewall build, the one that ships
+
+Generated from `project-netext.yml`. It embeds `io.isaaclins.freesnitch.netext.systemextension` and provides per-process filtering. It requires the Developer ID provisioning profiles for the app and extension in `Profiles/`, plus Developer ID signing.
+
+```bash
+xcodegen generate --spec project-netext.yml
+xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Release \
+  -derivedDataPath build build
+```
+
+Install the signed firewall build in `/Applications`. On first launch, approve the system extension in **System Settings > Privacy & Security**.
+
+### Monitor build, for contributors without the profiles
+
+Generated from `project.yml`. It includes the app, helper, monitoring, rules UI, DNS proxy, and `pfctl` integration, and omits the Network System Extension so it builds without provisioning profiles. Use it to work on everything except per-process filtering. It is not what users receive.
 
 ```bash
 brew install xcodegen
@@ -56,17 +70,7 @@ xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Relea
 open build/Build/Products/Release/FreeSnitch.app
 ```
 
-### Firewall build
-
-The firewall flavour is generated from `project-netext.yml`. It embeds `io.isaaclins.freesnitch.netext.systemextension` and provides working per-process filtering. This build requires the local Developer ID provisioning profiles for the app and extension in `Profiles/`, plus Developer ID signing.
-
-```bash
-xcodegen generate --spec project-netext.yml
-xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Release \
-  -derivedDataPath build build
-```
-
-Install the signed firewall build in `/Applications`. On first launch, approve the system extension in **System Settings > Privacy & Security**. The monitor build does not need this approval.
+This build needs no system extension approval, because it has no extension to approve.
 
 **FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from a mounted disk image or from Downloads, so drag it across before opening it. FreeSnitch will tell you if you forget.
 
@@ -86,7 +90,7 @@ FreeSnitch is the fourth choice:
 - **Built like a Mac app, not a port.** Native SwiftUI for the windows, real `NSStatusItem` for the menubar, `SMAppService` for the privileged helper, and XPC over a Mach service for the GUI to daemon bridge.
 - **A signed firewall build has passed Apple notarization.** The public repository has no published release yet.
 
-What FreeSnitch is **honest** about: the per-process firewall is available in the firewall flavour, not the monitor flavour. `Sources/NetExt/FilterDataProvider.swift` is a real `NEFilterDataProvider`; it evaluates every new socket flow and returns an allow or drop verdict, or pauses the flow for a decision from the GUI. Build it from `project-netext.yml` with the Developer ID profiles, sign and notarize it, install it in `/Applications`, and approve the system extension on first launch. No public release has been published yet.
+What FreeSnitch is **honest** about: released builds ship the per-process firewall, and `Sources/NetExt/FilterDataProvider.swift` is a real `NEFilterDataProvider` that evaluates every new socket flow and returns an allow or drop verdict, or pauses the flow for a decision from the GUI. The monitor build omits that extension so contributors can build without this team's provisioning profiles; it is a development convenience, not the shipped product. No public release has been published yet.
 
 ## What it does
 
@@ -217,7 +221,7 @@ FreeSnitch's firewall flavour provides per-process kernel filtering alongside it
 
 ## Roadmap
 
-- [x] **Current codebase**: monitor flavour with DNS-level and pfctl-level enforcement, rules UI, Sparkle updater integration, Internet Access Policy (`.lsiap`) parsing and display, and firewall flavour with a signed Network System Extension.
+- [x] **Current codebase**: signed Network System Extension for per-process filtering in the shipping build, DNS-level and pfctl-level enforcement, rules UI, command line interface, Sparkle updater integration, and Internet Access Policy (`.lsiap`) parsing and display.
 - [ ] **Next**: Expand Internet Access Policy support and coverage.
 - [ ] **Later**: iCloud sync of rule sets between Macs.
 - [ ] **Later**: Endpoint Security Framework integration for process-event awareness.
@@ -230,7 +234,7 @@ No public release has been published. Version values in the project files identi
 
 **Does FreeSnitch send my traffic anywhere?** FreeSnitch itself has no telemetry, analytics, or phone-home service. It contacts enabled blocklist sources, the DoH upstream you choose, the offline geolocation data sources used for the map, and the configured Sparkle update feed. IP-to-country lookups use downloaded local data rather than a per-connection lookup service.
 
-**How does per-process filtering work?** The firewall flavour embeds a Network System Extension built from `Sources/NetExt/FilterDataProvider.swift`. It evaluates each new socket flow against the shared rules and can allow, drop, or pause it for a GUI decision. It requires the Developer ID-signed firewall build and user approval of the system extension on first launch. The monitor flavour provides observation plus DNS and pfctl enforcement without embedding that extension.
+**How does per-process filtering work?** The shipping build embeds a Network System Extension built from `Sources/NetExt/FilterDataProvider.swift`. It evaluates each new socket flow against the shared rules and can allow, drop, or pause it for a GUI decision. It needs user approval of the system extension on first launch. The contributor build, generated from `project.yml`, leaves that extension out so it can be built without provisioning profiles, and falls back to observation plus DNS and pfctl enforcement.
 
 **Will this run on Intel Macs?** The project settings build universal `arm64` and `x86_64` binaries and set macOS 13 as the deployment target. No public release DMG is available yet.
 
@@ -261,8 +265,8 @@ freesnitch/
 ├── docs/                   # Website, architecture, translations, screenshots
 ├── .github/                # Issue templates and CI workflows
 ├── .gitignore
-├── project.yml             # Monitor flavour XcodeGen definition
-├── project-netext.yml      # Firewall flavour with the system extension
+├── project.yml             # Contributor build, no system extension
+├── project-netext.yml      # Shipping build, with the system extension
 ├── CONTRIBUTING.md
 ├── README.md
 ├── LICENSE                 # MIT
