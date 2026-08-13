@@ -11,7 +11,7 @@ enum HelperInstallState: Equatable {
     /// Not asked yet.
     case unknown
     /// Registered with launchd but waiting for the user to switch it on in
-    /// System Settings › General › Login Items & Extensions.
+    /// System Settings under General > Login Items & Extensions.
     case requiresApproval
     /// Approved and running; XPC should be reachable.
     case enabled
@@ -42,7 +42,7 @@ final class HelperClient: NSObject, ObservableObject {
     private var isRepairing = false
     private var enabledButSilentSince: Date?
     /// Approved but unreachable for long enough that re-registering is worth
-    /// offering. Never acted on automatically — see startPolling().
+    /// offering. Never acted on automatically; see startPolling().
     /// Version string reported by the running daemon, when it answers at all.
     @Published var helperVersion: String?
     @Published var needsRepair = false {
@@ -68,7 +68,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// Registers the privileged helper as a launchd daemon via SMAppService.
     /// Without this the XPC mach service never exists, so every helper call
     /// silently no-ops (the root cause of "no rules / no traffic"). Requires a
-    /// signed build; the user approves it in System Settings → Login Items.
+    /// signed build; the user approves it in System Settings under Login Items.
     func registerDaemon() {
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
@@ -78,7 +78,7 @@ final class HelperClient: NSObject, ObservableObject {
             return
         case .requiresApproval:
             // Calling register() again here throws EPERM and tells the user
-            // nothing useful — the item exists, it just isn't switched on yet.
+            // nothing useful. The item exists, but it is not switched on yet.
             installState = .requiresApproval
             return
         default:
@@ -165,7 +165,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     /// Keeps checking registration + reachability. Approval happens outside the
     /// app (System Settings), so without polling the user has to relaunch to
-    /// see anything change — which reads as "the app does nothing".
+    /// see anything change, which reads as "the app does nothing".
     private func startPolling() {
         pollTimer?.invalidate()
         let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in

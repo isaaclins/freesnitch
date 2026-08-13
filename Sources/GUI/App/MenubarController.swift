@@ -130,17 +130,17 @@ final class MenubarController {
         }
 
         button.toolTip = tooltip
-        button.setAccessibilityLabel("FreeSnitch — \(tooltip)")
+        button.setAccessibilityLabel("FreeSnitch: \(tooltip)")
     }
 
     private var tooltip: String {
         guard state.helperConnected else {
             switch state.helperInstallState {
-            case .requiresApproval: return "Waiting for approval in System Settings › Login Items"
+            case .requiresApproval: return "Waiting for approval in System Settings under Login Items"
             case .wrongLocation: return "Move FreeSnitch to your Applications folder"
             case .notFound: return "Helper missing from this build"
             case .failed(let m): return "Helper error: \(m)"
-            default: return "Helper not running — no traffic is being monitored"
+            default: return "Helper not running. No traffic is being monitored"
             }
         }
         return "↓ \(PSFormat.bytesPerSec(state.currentIn))  ↑ \(PSFormat.bytesPerSec(state.currentOut))"

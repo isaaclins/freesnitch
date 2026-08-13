@@ -44,13 +44,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menubar.install()
         state.helper.registerDaemon()
         // bootstrap() (rule load + monitoring) is driven by HelperClient once
-        // the helper is actually reachable — see HelperClient.setConnected.
+        // the helper is actually reachable. See HelperClient.setConnected.
         state.helper.connect()
         // Seed the app-group snapshot so the network extension has rules to read.
         state.syncSharedRules()
 
         // Per-process firewall (Network System Extension). `activate()` is a
-        // no-op unless this build embeds one — the monitor-only release does
+        // no-op unless this build embeds one. The monitor-only build does
         // not, so no extension approval prompt appears.
         systemExtension = SystemExtensionManager(state: state)
         if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {

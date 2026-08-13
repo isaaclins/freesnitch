@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="screenshot.png" alt="FreeSnitch — open-source macOS application firewall" width="800">
+  <img src="screenshot.png" alt="FreeSnitch: open-source macOS application firewall" width="800">
 </p>
 
 <p align="center">
@@ -19,13 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/isaaclins/freesnitch/releases/latest"><img src="https://img.shields.io/github/v/release/isaaclins/freesnitch?style=flat-square&label=Download" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/macOS-13.0+-blue?style=flat-square" alt="macOS 13.0+">
   <img src="https://img.shields.io/badge/Swift-5.10-orange?style=flat-square" alt="Swift 5.10">
-  <img src="https://img.shields.io/badge/Notarized-Apple-success?style=flat-square" alt="Notarized">
+  <img src="https://img.shields.io/badge/Firewall_build-Notarized-success?style=flat-square" alt="Notarized firewall build">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/isaaclins/freesnitch?style=flat-square" alt="MIT License"></a>
   <a href="https://github.com/isaaclins/freesnitch/stargazers"><img src="https://img.shields.io/github/stars/isaaclins/freesnitch?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/isaaclins/freesnitch/releases"><img src="https://img.shields.io/github/downloads/isaaclins/freesnitch/total?style=flat-square&label=Downloads" alt="Downloads"></a>
 </p>
 
 <p align="center">
@@ -42,67 +40,79 @@
 
 ## Install
 
-Download the signed, notarized `.dmg` from [Releases](https://github.com/isaaclins/freesnitch/releases/latest) and drag FreeSnitch into `/Applications`. No Gatekeeper warnings, no quarantine workaround.
+No public release or Homebrew cask is available yet. Build from source for now.
 
-Homebrew is unavailable until a cask is published.
+### Monitor build
 
-**FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from the mounted disk image or from Downloads, so drag it across before opening it — FreeSnitch will tell you if you forget.
-
-On first launch it registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings → General → Login Items & Extensions → Allow in the Background**. Until that switch is on, macOS blocks the helper and the app can't see any traffic. The window picks up on its own once you flip it; no relaunch needed.
-
-### Build from source
+The monitor flavour is generated from `project.yml`. It includes the app, helper, monitoring, rules UI, DNS proxy, and `pfctl` integration. It does not embed the Network System Extension and can be built without Developer ID provisioning profiles.
 
 ```bash
 brew install xcodegen
 git clone https://github.com/isaaclins/freesnitch.git
 cd freesnitch
-xcodegen generate
+xcodegen generate --spec project.yml
 xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Release \
   -derivedDataPath build build
 open build/Build/Products/Release/FreeSnitch.app
 ```
 
+### Firewall build
+
+The firewall flavour is generated from `project-netext.yml`. It embeds `io.isaaclins.freesnitch.netext.systemextension` and provides working per-process filtering. This build requires the local Developer ID provisioning profiles for the app and extension in `Profiles/`, plus Developer ID signing.
+
+```bash
+xcodegen generate --spec project-netext.yml
+xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Release \
+  -derivedDataPath build build
+```
+
+Install the signed firewall build in `/Applications`. On first launch, approve the system extension in **System Settings > Privacy & Security**. The monitor build does not need this approval.
+
+**FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from a mounted disk image or from Downloads, so drag it across before opening it. FreeSnitch will tell you if you forget.
+
+On first launch the app registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings > General > Login Items & Extensions > Allow in the Background**. Until that switch is on, macOS blocks the helper and the app cannot see traffic. The window updates on its own once you approve it, with no relaunch needed.
+
 ## Why this exists
 
-Little Snitch is the gold standard for application firewalls on macOS. It costs $59 per machine. LuLu is free and excellent at the per-process kernel level, but the rules manager is spartan and there is no world map, no traffic graph, no built-in blocklist library. The macOS built-in firewall blocks inbound — it does nothing for outbound traffic.
+Little Snitch is the gold standard for application firewalls on macOS. It costs $59 per machine. LuLu is free and offers per-process kernel filtering, but its rules manager is spartan and there is no world map, traffic graph, or built-in blocklist library. FreeSnitch offers per-process filtering in its firewall flavour. The macOS built-in firewall blocks inbound. It does nothing for outbound traffic.
 
 So most Mac users sit between three choices: pay $59, accept a barebones UI, or have no visibility into what their machine talks to at all.
 
 FreeSnitch is the fourth choice:
 
-- **Same UI pattern as Little Snitch 6.** Menubar status item, world map, rules manager, connection alert popups. If you've used LS you already know how to use this.
-- **Free under MIT.** Read the code, fork it, audit it. The matcher, the DNS proxy, the pf integration — all open.
-- **No telemetry.** No analytics SDKs. No crash reporters phoning home. No "anonymous usage" pings. The only outbound traffic from FreeSnitch itself is your DNS queries going to the DoH resolver you chose, and (toggle-able) ip-api.com for the world map.
-- **Built like a Mac app, not a port.** Native SwiftUI for the windows, real `NSStatusItem` for the menubar, `SMAppService` for the privileged helper, XPC over a Mach service for the GUI ↔ daemon bridge.
-- **Signed + notarized by Apple.** No "developer cannot be verified" wall.
+- **Little Snitch-style UI.** Menubar status item, world map, rules manager, and connection alert popups. If you've used LS, you already know how to use this.
+- **Free under MIT.** Read the code, fork it, audit it. The matcher, DNS proxy, pf integration, and UI are all open.
+- **No telemetry.** No analytics SDKs. No crash reporters phoning home. No "anonymous usage" pings. Network requests are limited to enabled blocklists, the DoH resolver you choose, offline geolocation data sources, and Sparkle update checks.
+- **Built like a Mac app, not a port.** Native SwiftUI for the windows, real `NSStatusItem` for the menubar, `SMAppService` for the privileged helper, and XPC over a Mach service for the GUI to daemon bridge.
+- **A signed firewall build has passed Apple notarization.** The public repository has no published release yet.
 
-What FreeSnitch is **honest** about: per-process kernel filtering is the one feature gated behind Apple's `com.apple.developer.networking.networkextension` entitlement. The hook points exist in `Sources/NetExt/` dormant in the codebase. Until Apple grants the entitlement, FreeSnitch blocks at DNS level and packet level (`pfctl`), which in practice catches everything that resolves a hostname — i.e. nearly everything that is not hardcoded-IP malware. LuLu has the entitlement today and is the right choice if per-process kernel filtering is a hard requirement for you right now.
+What FreeSnitch is **honest** about: the per-process firewall is available in the firewall flavour, not the monitor flavour. `Sources/NetExt/FilterDataProvider.swift` is a real `NEFilterDataProvider`; it evaluates every new socket flow and returns an allow or drop verdict, or pauses the flow for a decision from the GUI. Build it from `project-netext.yml` with the Developer ID profiles, sign and notarize it, install it in `/Applications`, and approve the system extension on first launch. No public release has been published yet.
 
 ## What it does
 
 ### Network Monitor
-A live world map of every active connection your Mac is making, with a per-process bandwidth sidebar and a summary pane that ranks the top processes, domains and countries by traffic volume. Sort, filter and click into any process to see exactly which hosts it talked to in the last five minutes.
+A live world map of connections reported by the helper, with a per-process bandwidth sidebar and a summary pane that ranks the top processes, domains, and countries by traffic volume. Search the process list and inspect the connections currently reported by the monitor.
 
 ### Rules Manager
-The full rules UI you'd expect from a Little Snitch-style firewall — All Rules, Active, Deny, Temporary, Unapproved categories, Rule Groups, Blocklists in the sidebar. Each rule shows process, allow/deny chip, priority, hit count. Search across every field. Glob hostnames, CIDR ranges, port-specific rules, time-bounded rules with expiry.
+The rules UI includes All Rules, Active, Deny, Temporary, Unapproved categories, Rule Groups, and Blocklists in the sidebar. Each rule shows process, allow or deny action, priority, and hit count. Search by process or remote host. Match glob hostnames, CIDR ranges, and port-specific rules, with time-bounded rules supported by expiry dates in the rule model and matcher.
 
 ### Connection Alerts
-Default-deny mode pops a clean alert on every new outbound connection: "Allow / Deny", "remember this", scope (this process / this domain / this IP / this port), duration (5 min / 1 hr / forever). Three modes total — Alert, Silent Allow, Silent Deny — switchable from the menubar.
+Alert mode can show a decision window for a new connection, with Allow or Deny, a remember choice, and controls for scope and duration. The current alert handler records a remembered rule using the connection host or IP; scope and duration selections are not yet applied. The app has three modes: Alert, Silent Allow, and Silent Deny. Switch modes from the menubar.
 
 ### DNS over HTTPS
-Built-in DoH client to Cloudflare, Quad9, Google, or any DoH endpoint you point it at. Domain-level blocking runs through a local DNS proxy on `127.0.0.1:53`, so every `getaddrinfo` your apps make passes through FreeSnitch before leaving the machine.
+Built-in DoH client with example upstreams for Cloudflare, Quad9, and Google, plus support for a custom DoH endpoint. When Enforcement is enabled, the helper can run a local DNS proxy on `127.0.0.1:53` and filter queries sent to that proxy before forwarding allowed queries over DoH.
 
 ### Blocklist Library
-1Hosts, OISD, StevenBlack, HaGeZi out of the box. Subscribe, refresh on a schedule, audit which entries are matching. Bring your own list URLs too.
+Ships with 1Hosts Lite, OISD Small, StevenBlack, HaGeZi Multi Light, URLhaus, Anti-PopAds, Peter Lowe, and AdGuard DNS sources. Refresh the enabled sources from Settings and inspect their entry counts.
 
 ### Packet-Level Blocking
-A `puresnitch` anchor in `pfctl` for IP, CIDR and port blocking at the kernel — works regardless of which process initiated the connection.
+When Enforcement is enabled, a `puresnitch` anchor in `pfctl` provides IP, CIDR, and port blocking at the kernel. These rules apply regardless of which process initiated the connection.
 
 ### Profiles
-Default, Home, Public Wi-Fi, Lockdown. Different rule sets active on different networks. Switches automatically when the SSID changes.
+The helper seeds `default`, `home`, `public-wifi`, and `lockdown` profiles. Rules carry a profile name, but automatic SSID switching is not implemented in the current codebase.
 
 ### Menubar Status Item
-Live up/down throughput, five-minute traffic graph, recent activity stream, denied-count badge, one-click mode picker.
+Live up and down throughput when enabled, a five-minute traffic graph, a top-process list, a denied-count badge, and a one-click mode picker.
 
 ## How it works
 
@@ -130,15 +140,16 @@ Live up/down throughput, five-minute traffic graph, recent activity stream, deni
                                      │
                 ┌────────────────────┼────────────────────┐
                 │            macOS networking            │
-                │   pfctl  ·  DNS  ·  bpf  ·  ess  ·  …  │
+                │   pfctl  ·  DNS  ·  Network Extension  │
                 └─────────────────────────────────────────┘
 ```
 
-Three things move bytes:
+Four parts make up the monitoring and enforcement path:
 
-1. **DNS interception** — A local DNS proxy on `127.0.0.1:53` answers every query. Blocklisted domains return NXDOMAIN; everything else forwards over DoH to the resolver of your choice.
-2. **pfctl anchor** — A `puresnitch` anchor in `/etc/pf.conf` carries block-rules for IPs, CIDR ranges and ports. Kernel-level.
-3. **Process and connection observability** — `nettop -P -L 0 -x -J bytes_in,bytes_out` is parsed continuously for per-process bandwidth. `lsof -i -n -P -F pcnT` snapshots active connections every two seconds. Both feed the GUI's process list, world map and traffic graph.
+1. **DNS interception.** When Enforcement is enabled, a local DNS proxy on `127.0.0.1:53` answers queries. Blocklisted domains return NXDOMAIN. Everything else forwards over DoH to the resolver of your choice.
+2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports.
+3. **Process and connection observability.** `nettop -P -L 0 -x -J bytes_in,bytes_out` is parsed continuously for per-process bandwidth. `lsof -i -n -P -F pcnT` snapshots active connections every two seconds. Both feed the GUI's process list, world map, and traffic graph.
+4. **Per-process filtering.** In the firewall flavour, the Network System Extension evaluates each new socket flow against the shared rule set and can allow, drop, or pause it for a GUI decision.
 
 ## Anatomy of a rule
 
@@ -159,24 +170,24 @@ Rule(
 )
 ```
 
-The matcher walks enabled rules in `priority` order (DESC) and applies the first match. No match → fall back to the active mode (`alert`, `silentAllow`, `silentDeny`).
+The matcher walks enabled rules in descending `priority` order and applies the first match. With no match, it falls back to the active mode (`alert`, `silentAllow`, `silentDeny`).
 
 ## Permissions
 
 FreeSnitch needs to install a small **privileged helper** at first launch in order to:
 
 - read per-process connection state via `nettop` and `lsof`
-- and, only if you turn on **Enforcement** in Settings: write `pfctl` rules to `/etc/pf.anchors/puresnitch` and bind `127.0.0.1:53` for the local DNS proxy
+- and, only if you turn on **Enforcement** in Settings, write `pfctl` rules to `/etc/pf.anchors/puresnitch` and bind `127.0.0.1:53` for the local DNS proxy
 
 Enforcement is **off by default**. Out of the box FreeSnitch watches; it does not touch your firewall or your resolver until you ask it to.
 
-The helper is installed via `SMAppService.daemon`, the modern replacement for `SMJobBless`. macOS will surface it in **System Settings → General → Login Items & Extensions** as a service you can enable, disable or remove with a single switch. FreeSnitch never asks for your password during normal operation; the helper handles privileged calls on its own through XPC.
+The helper is installed via `SMAppService.daemon`, the modern replacement for `SMJobBless`. macOS will surface it in **System Settings > General > Login Items & Extensions** as a service you can enable, disable, or remove with a single switch. FreeSnitch never asks for your password during normal operation. The helper handles privileged calls on its own through XPC.
 
 What FreeSnitch does **not** do:
 
 - It does not collect telemetry, crash reports, or usage analytics.
 - It does not require an account, license check, or any kind of identity.
-- It does not move data anywhere except the DoH resolver you pick and (optionally, toggle-able) ip-api.com for the world map.
+- It sends network requests only to enabled blocklist sources, the DoH resolver you pick, the offline geolocation data sources used for the map, and the configured Sparkle update feed.
 - It does not modify your firewall or DNS settings until you turn on Enforcement in Settings.
 
 ## Screenshots
@@ -194,68 +205,77 @@ What FreeSnitch does **not** do:
 | World map / traffic graph | ✅ | ✅ | ❌ | ❌ |
 | Rules manager (LS-style) | ✅ | ✅ | basic | ❌ |
 | DNS proxy + DoH | ✅ | ✅ | ❌ | ❌ |
-| Domain blocklists out of the box | ✅ (1Hosts, OISD, StevenBlack, HaGeZi) | ✅ | ❌ | ❌ |
+| Domain blocklists out of the box | ✅ (8 sources) | ✅ | ❌ | ❌ |
 | pf-based IP/CIDR blocking | ✅ | ✅ | n/a | basic |
-| Per-process kernel filtering | gated (NE entitlement) | ✅ | ✅ | ❌ |
+| Per-process kernel filtering | ✅ in firewall flavour | ✅ | ✅ | ❌ |
 | Outbound blocking | ✅ | ✅ | ✅ | ❌ |
 | Inbound blocking | ✅ | ✅ | ✅ | ✅ |
 | Telemetry | none | none | none | n/a |
 | Auditable source | yes | no | yes | no |
 
-If per-process kernel filtering matters to you today, use **LuLu** — it's free, open source and has the Network Extension entitlement. If you want the Little Snitch UI without paying $59, that is what FreeSnitch is for.
+FreeSnitch's firewall flavour provides per-process kernel filtering alongside its rules UI. LuLu remains a free, open-source alternative with its own Network Extension implementation. If you want the Little Snitch-style UI without paying $59, that is what FreeSnitch is for.
 
 ## Roadmap
 
-- [x] **v0.1.0** — Signed + notarized release. DNS-level + pfctl-level firewall. Full Little Snitch-style UI.
-- [ ] **v0.2.0** — System Extension path (`NEFilterDataProvider`) for per-process kernel filtering. Requires Apple's `com.apple.developer.networking.networkextension` entitlement.
-- [ ] **v0.3.0** — Internet Access Policy (`.lsiap`) file support, on par with Little Snitch's IAP feature. Other firewalls can read the same file.
-- [ ] **v0.4.0** — iCloud sync of rule sets between Macs.
-- [ ] **v0.5.0** — Endpoint Security Framework integration for process-event awareness.
+- [x] **Current codebase**: monitor flavour with DNS-level and pfctl-level enforcement, rules UI, Sparkle updater integration, Internet Access Policy (`.lsiap`) parsing and display, and firewall flavour with a signed Network System Extension.
+- [ ] **Next**: Expand Internet Access Policy support and coverage.
+- [ ] **Later**: iCloud sync of rule sets between Macs.
+- [ ] **Later**: Endpoint Security Framework integration for process-event awareness.
+
+No public release has been published. Version values in the project files identify the current build, not a downloadable release.
 
 ## FAQ
 
-**Is this a Little Snitch clone?** It is an independent open-source alternative with a deliberately similar user interface. The blocking engine, the DNS proxy, the matcher — all written from scratch. No Little Snitch source, assets or proprietary plist formats are used. "Little Snitch" is a registered trademark of Objective Development Software GmbH; this project is not affiliated with or endorsed by Objective Development.
+**Is this a Little Snitch clone?** It is an independent open-source alternative with a deliberately similar user interface. The blocking engine, DNS proxy, and matcher are written from scratch. No Little Snitch source, assets, or proprietary plist formats are used. "Little Snitch" is a registered trademark of Objective Development Software GmbH. This project is not affiliated with or endorsed by Objective Development.
 
-**Does FreeSnitch send my traffic anywhere?** No. Your DNS queries leave only as far as the DoH upstream you pick (Cloudflare by default — override in Settings). FreeSnitch itself has no telemetry, no analytics, no phone-home. IP→country lookups go to ip-api.com (free tier) and can be disabled.
+**Does FreeSnitch send my traffic anywhere?** FreeSnitch itself has no telemetry, analytics, or phone-home service. It contacts enabled blocklist sources, the DoH upstream you choose, the offline geolocation data sources used for the map, and the configured Sparkle update feed. IP-to-country lookups use downloaded local data rather than a per-connection lookup service.
 
-**Why isn't per-process blocking at parity with Little Snitch?** Per-process blocking requires Apple's Network Extension entitlement, which is application-gated. The hook points exist in this codebase under `Sources/NetExt/`. The entitlement must be granted by Apple. Until then, blocking happens at DNS-level and packet-level (pfctl), which catches the overwhelming majority of unwanted traffic in practice — anything that resolves a hostname.
+**How does per-process filtering work?** The firewall flavour embeds a Network System Extension built from `Sources/NetExt/FilterDataProvider.swift`. It evaluates each new socket flow against the shared rules and can allow, drop, or pause it for a GUI decision. It requires the Developer ID-signed firewall build and user approval of the system extension on first launch. The monitor flavour provides observation plus DNS and pfctl enforcement without embedding that extension.
 
-**Will this run on Intel Macs?** Yes. From v0.2.0 the release DMG is a universal binary (`arm64` + `x86_64`) with a macOS 13 (Ventura) minimum. v0.1.0 was arm64-only and would not launch on Intel at all.
+**Will this run on Intel Macs?** The project settings build universal `arm64` and `x86_64` binaries and set macOS 13 as the deployment target. No public release DMG is available yet.
 
-**How is it different from LuLu?** [LuLu](https://github.com/objective-see/LuLu) is excellent and has had the Network Extension entitlement for years. FreeSnitch differs in: a Little Snitch-style UI (world map, traffic graph, mode picker), DoH out-of-the-box, an opinionated blocklist library, and a written-from-scratch rule engine. Try both; use whichever fits.
+**How is it different from LuLu?** [LuLu](https://github.com/objective-see/LuLu) is an excellent free, open-source alternative with its own Network Extension implementation. FreeSnitch differs in its Little Snitch-style UI, world map, traffic graph, mode picker, DoH support, blocklist library, and written-from-scratch rule engine. Try both and use whichever fits.
 
-**Does it work alongside Pi-hole / AdGuard Home / NextDNS?** Yes. Point FreeSnitch's DoH upstream at your own DoH endpoint and FreeSnitch becomes a per-device enforcement layer on top of your network-wide blocker.
+**Does it work alongside Pi-hole, AdGuard Home, or NextDNS?** Point FreeSnitch's DoH upstream at your own DoH endpoint. FreeSnitch can then provide a per-device enforcement layer on top of your network-wide blocker.
 
-**What about Tailscale, WireGuard, ProtonVPN?** FreeSnitch's pfctl rules apply at kernel level, so they work alongside VPN tunnels on `utun*` interfaces. The DNS proxy on `127.0.0.1:53` is intentionally a loopback bind, so it stays out of the way of VPN-pushed DNS unless you opt in via the "use FreeSnitch as system DNS" toggle.
+**What about Tailscale, WireGuard, or ProtonVPN?** FreeSnitch's `PFManager` writes IP, CIDR, and port rules to the `puresnitch` anchor. It does not configure VPN interfaces. The DNS proxy handles queries sent to `127.0.0.1:53`; the current app does not change the Mac's system DNS settings.
 
 ## Project structure
 
 ```
 freesnitch/
 ├── Sources/
-│   ├── GUI/          # SwiftUI app (menubar, windows, alerts)
+│   ├── GUI/          # SwiftUI app, updater, system extension manager
 │   ├── Helper/       # Privileged daemon (pfctl, DNS proxy, nettop)
-│   ├── NetExt/       # Network System Extension (dormant; needs Apple entitlement)
+│   ├── NetExt/       # Network System Extension and per-process provider
 │   └── Shared/       # Rule model, SQLite store, XPC protocol, matcher
 ├── Resources/
-│   └── Assets.xcassets/AppIcon.appiconset/
+│   ├── Assets.xcassets/
+│   └── Branding/
 ├── Scripts/
-│   ├── make_icon.sh        # Generates app icon from Swift CoreGraphics
-│   └── release.sh          # Builds, signs, notarizes, and publishes releases
-├── docs/                   # Screenshots, architecture, translations
-├── .github/workflows/      # CI
-├── project.yml             # XcodeGen project definition
+│   ├── audit_firewall_safety.sh
+│   ├── make_icon.sh
+│   ├── release.sh
+│   ├── render_icon.swift
+│   └── uninstall_puresnitch.sh
+├── docs/                   # Website, architecture, translations, screenshots
+├── .github/                # Issue templates and CI workflows
+├── .gitignore
+├── project.yml             # Monitor flavour XcodeGen definition
+├── project-netext.yml      # Firewall flavour with the system extension
+├── CONTRIBUTING.md
 ├── README.md
-└── LICENSE                 # MIT
+├── LICENSE                 # MIT
+└── screenshot.png          # Repository hero screenshot
 ```
 
 ## Security
 
 - The privileged helper is installed via `SMAppService.daemon`, the modern replacement for `SMJobBless`. Trust boundary is the system Login Items & Extensions list.
 - The XPC interface is typed; the helper validates every request shape and refuses anything outside the declared protocol.
-- pfctl writes are scoped to a single anchor (`puresnitch`) so the rest of `/etc/pf.conf` is never touched.
-- The DNS proxy refuses queries from anything that isn't local loopback.
-- All destructive operations (purge rules, reset blocklists) require explicit confirmation by default.
+- pfctl rules are scoped to the single `puresnitch` anchor. Enabling Enforcement may add that anchor reference to `/etc/pf.conf`, but it does not replace unrelated rules.
+- The DNS proxy listens on port 53 only when Enforcement is enabled.
+- Rule removal, including removal of selected rules, is exposed in the Rules Manager. There is no blocklist reset operation in the current UI.
 
 If you find a security issue, please open a private security advisory rather than a public issue.
 
@@ -264,11 +284,11 @@ If you find a security issue, please open a private security advisory rather tha
 Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Especially welcome:
-- `NEFilterDataProvider` wiring for the dormant `Sources/NetExt/` provider, if you have access to Apple's Network Extension entitlement
-- Internet Access Policy (`.lsiap`) parser and integration
+- Expanded Internet Access Policy (`.lsiap`) format coverage and edge-case testing
 - Translations beyond English
 - Additional blocklist providers
 - XCTest coverage for the rule matcher and DNS proxy
+- Documentation and testing for the signed firewall build and first-launch system extension approval
 
 ## Acknowledgments
 
@@ -282,4 +302,4 @@ Especially welcome:
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Use it, fork it, ship it under your own name if you want — the only thing the license asks is that the notice stays.
+MIT. See [LICENSE](LICENSE). Use it, fork it, or ship it under your own name if you want. The only requirement is that the license notice stays.

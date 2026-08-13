@@ -194,7 +194,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     /// Passive monitoring only. Starting the DNS proxy (which binds port 53 and
     /// takes over name resolution) and loading the pf anchor are *enforcement*
-    /// and are gated behind setEnforcementEnabled — a monitor should never
+    /// and are gated behind setEnforcementEnabled. A monitor should never
     /// silently reconfigure the user's networking.
     func startMonitoring(reply: @escaping (Bool, String?) -> Void) {
         netmon.start()
