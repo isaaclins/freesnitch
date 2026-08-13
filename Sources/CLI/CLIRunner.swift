@@ -28,6 +28,7 @@ final class CLIRunner {
         case .pf(let operation): return try await pf(operation)
         case .flush: return try await flush()
         case .settings(let command): return try await settings(command)
+        case .alerts(let command): return try await alerts(command)
         case .help, .version:
             return CommandResult(data: EmptyPayload(), human: "")
         }
@@ -807,6 +808,102 @@ final class CLIRunner {
                                 topDomains: Array(topDomains),
                                 topCountries: Array(topCountries),
                                 countryData: topCountries.isEmpty ? "No country metadata was present in helper connection records." : "Country totals use metadata present in helper connection records.")
+    }
+
+    // MARK: - Pending connection alerts
+
+    private func alerts(_ command: AlertsCommand) async throws -> CommandResult {
+        switch command {
+        case .list: return try await listAlerts()
+        case .answer(let request): return try await answerAlert(request)
+        }
+    }
+
+    private func listAlerts() async throws -> CommandResult {
+        let helper = CLIHelperClient()
+        _ = try await helper.prepare()
+        let listing = try await helper.pendingAlerts()
+        let now = Date()
+        let report = PendingAlertsReport(count: listing.alerts.count,
+                                         appAttached: listing.guiAttached,
+                                         capacity: listing.capacity,
+                                         alerts: listing.alerts.map { PendingAlertRow($0, now: now) },
+                                         reason: listing.reason)
+        return CommandResult(data: report, human: humanAlerts(report))
+    }
+
+    private func answerAlert(_ request: PendingAlertAnswerRequest) async throws -> CommandResult {
+        let helper = CLIHelperClient()
+        _ = try await helper.prepare()
+        let response = try await helper.answerPendingAlert(request)
+        let scope = request.answer.remember.storesRule
+            ? (request.answer.scope ?? response.descriptor.map(PendingAlertRuleFactory.defaultScope(for:)))?.rawValue
+            : nil
+        let report = AlertAnswerReport(id: response.id,
+                                       state: response.state.rawValue,
+                                       allow: response.allow,
+                                       decision: response.allow.map { $0 ? "allow" : "deny" },
+                                       answeredBy: response.answeredBy?.rawValue,
+                                       resolvedAt: response.resolvedAt,
+                                       scope: scope,
+                                       remember: request.answer.remember.describedValue,
+                                       ruleStored: response.ruleStored,
+                                       ruleId: response.ruleID,
+                                       ruleMessage: response.ruleMessage,
+                                       message: response.message)
+        // Each way of failing to answer is its own fact with its own code. A
+        // caller scripting this must be able to tell "too late" from "someone
+        // else answered" from "that alert never existed".
+        let failure: CLIError?
+        switch response.state {
+        case .answered:
+            failure = response.ruleMessage.map {
+                CLIError(.operationFailed,
+                         code: "alert_rule_not_stored",
+                         message: "The flow was answered, but the remembered rule was not stored: \($0)",
+                         remediation: "Create the rule explicitly with `freesnitch rules add`, or answer without --remember.")
+            }
+        case .alreadyAnswered:
+            failure = CLIError(.operationFailed,
+                               code: "alert_already_answered",
+                               message: response.message,
+                               remediation: "An alert resolves exactly once. Run `freesnitch alerts list` for the alerts still waiting.")
+        case .expired:
+            failure = CLIError(.operationFailed,
+                               code: "alert_expired",
+                               message: response.message,
+                               remediation: "Alerts stay answerable for at most \(Int(PendingAlertLimits.maxLifetime)) seconds, always less than the flow's own ask timeout. Answer sooner, or create a rule with `freesnitch rules add`.")
+        case .unknown:
+            failure = CLIError(.operationFailed,
+                               code: "alert_not_found",
+                               message: response.message,
+                               remediation: "Run `freesnitch alerts list` for the current alert IDs. IDs are not reused and do not survive a helper restart.")
+        }
+        return CommandResult(data: report,
+                             human: humanAlertAnswer(report),
+                             exitCode: failure?.exitCode ?? .success,
+                             error: failure)
+    }
+
+    private func humanAlerts(_ report: PendingAlertsReport) -> String {
+        guard !report.alerts.isEmpty else {
+            return "Pending alerts: none.\n\(report.reason ?? "")"
+        }
+        let rows = report.alerts.map { alert in
+            "  \(alert.id.uuidString)  \(alert.process.isEmpty ? "unnamed process" : alert.process) -> \(alert.destination):\(alert.port)\n    address=\(alert.address.isEmpty ? "-" : alert.address) direction=\(alert.direction) protocol=\(alert.protocolName) expires in \(alert.secondsRemaining)s"
+        }.joined(separator: "\n")
+        return "Pending alerts (\(report.count) of at most \(report.capacity))\n\(rows)\n\nAnswer one with: freesnitch alerts answer ID --allow|--deny [--scope process|domain|ip|port] [--remember 30m|--temporary]"
+    }
+
+    private func humanAlertAnswer(_ report: AlertAnswerReport) -> String {
+        var lines = ["Alert \(report.id.uuidString): \(report.state)", "  \(report.message)"]
+        if report.ruleStored, let ruleId = report.ruleId {
+            lines.append("  Stored rule \(ruleId.uuidString) (scope \(report.scope ?? "-"), remember \(report.remember)).")
+        }
+        if let ruleMessage = report.ruleMessage {
+            lines.append("  Rule: \(ruleMessage)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func requireYes(_ operation: String) throws {

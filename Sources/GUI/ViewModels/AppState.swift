@@ -105,9 +105,17 @@ final class AppState: ObservableObject {
     private var processUsages: [ProcessUsage] = []
 
     struct PendingAlert: Identifiable {
-        let id = UUID()
+        /// Stable for the life of the alert and shared with the helper, so the
+        /// CLI can name exactly this question.
+        let id: UUID
         let connection: Connection
         let reply: (Bool, Bool) -> Void
+
+        init(id: UUID = UUID(), connection: Connection, reply: @escaping (Bool, Bool) -> Void) {
+            self.id = id
+            self.connection = connection
+            self.reply = reply
+        }
     }
 
     struct LogEntry: Identifiable {
@@ -341,7 +349,92 @@ final class AppState: ObservableObject {
             return
         }
         firstContactAskedToday += 1
-        pendingAlerts.append(PendingAlert(connection: c, reply: reply))
+        let alert = PendingAlert(connection: c, reply: reply)
+        pendingAlerts.append(alert)
+        registerPendingAlertWithHelper(alert)
+    }
+
+    /// Publishes the alert this app is already showing to the helper's bounded
+    /// registry so `freesnitch alerts` can see and answer it.
+    ///
+    /// This is an index entry, not the flow. The extension's callback stays
+    /// here, the registry entry expires before the flow's own budget, and a
+    /// helper that is unreachable, too old, or full changes nothing about the
+    /// alert this app is presenting.
+    private func registerPendingAlertWithHelper(_ alert: PendingAlert) {
+        guard let proxy = helper.remote else { return }
+        guard proxy.registerPendingAlert != nil else {
+            appendLog(level: "info",
+                      message: "The running helper is too old to index pending alerts, so `freesnitch alerts` cannot see this one.")
+            return
+        }
+        let now = Date()
+        let descriptor = PendingAlertDescriptor(id: alert.id,
+                                                connection: alert.connection,
+                                                askedAt: now,
+                                                expiresAt: now.addingTimeInterval(PendingAlertLimits.maxLifetime))
+        guard let data = try? FreeSnitchWireCodec.encode(descriptor),
+              data.count <= PendingAlertLimits.maxDescriptorBytes else {
+            appendLog(level: "error", message: "A pending alert could not be encoded for the helper registry.")
+            return
+        }
+        proxy.registerPendingAlert?(descriptor: data) { [weak self] payload, message in
+            Task { @MainActor in
+                self?.applyPendingAlertResolution(id: alert.id, payload: payload, message: message)
+            }
+        }
+    }
+
+    /// The helper reports how a registered alert finished. Only an answer from
+    /// the command line, and the registry's own overflow, change anything here.
+    private func applyPendingAlertResolution(id: UUID, payload: Data, message: String?) {
+        if let message, !message.isEmpty {
+            appendLog(level: "error", message: "The helper refused to index a connection alert: \(message)")
+            return
+        }
+        guard let resolution = try? FreeSnitchWireCodec.decode(PendingAlertResolution.self, from: payload) else {
+            appendLog(level: "error", message: "The helper returned an unreadable pending alert resolution.")
+            return
+        }
+        switch resolution.kind {
+        case .answered:
+            // A remembered rule, if the answer asked for one, was already
+            // stored by the helper, which owns policy.
+            let allow = resolution.flowVerdict ?? PendingAlertRegistry.defaultDecision
+            guard finishAlert(id: id, allow: allow, remember: false) else { return }
+            appendLog(level: "info",
+                      message: "A connection alert was answered from the command line: \(allow ? "allow" : "deny").")
+        case .overflow:
+            // The registry is full. Do not queue a question nobody can answer:
+            // resume with the same fail-open default this view model already
+            // uses when its own alert queue overflows.
+            finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false)
+        case .withdrawn, .expired:
+            // Answered here, or no longer answerable from outside. The flow
+            // still resumes on the extension's own timeout.
+            break
+        }
+    }
+
+    private func withdrawPendingAlertFromHelper(_ id: UUID) {
+        guard let proxy = helper.remote, proxy.withdrawPendingAlert != nil else { return }
+        proxy.withdrawPendingAlert?(idString: id.uuidString) { [weak self] ok, message in
+            guard !ok, let message, !message.isEmpty else { return }
+            Task { @MainActor in
+                self?.appendLog(level: "info", message: "The pending alert registry did not accept this answer: \(message)")
+            }
+        }
+    }
+
+    /// Answers one pending alert exactly once. A second attempt, from the
+    /// window or from a command line verdict that arrives at the same moment,
+    /// finds nothing and does nothing.
+    @discardableResult
+    private func finishAlert(id: UUID, allow: Bool, remember: Bool) -> Bool {
+        guard let index = pendingAlerts.firstIndex(where: { $0.id == id }) else { return false }
+        let alert = pendingAlerts.remove(at: index)
+        alert.reply(allow, remember)
+        return true
     }
 
     func firstContactContext(for connection: Connection) -> String? {
@@ -351,8 +444,11 @@ final class AppState: ObservableObject {
     }
 
     func resolveAlert(_ alert: PendingAlert, allow: Bool, remember: Bool) {
-        alert.reply(allow, remember)
-        pendingAlerts.removeAll { $0.id == alert.id }
+        guard finishAlert(id: alert.id, allow: allow, remember: remember) else { return }
+        // Claim the registry entry too, so a command line answer arriving after
+        // this one is told the app already answered instead of appearing to
+        // decide a flow that is already decided.
+        withdrawPendingAlertFromHelper(alert.id)
         // A rule keyed on the unspecified address matches nothing, so it would
         // never stop the next prompt. Answer the flow, remember nothing.
         let host = alert.connection.remoteHost.isEmpty ? alert.connection.remoteIP : alert.connection.remoteHost

@@ -56,6 +56,27 @@ import Foundation
     /// The helper refreshes it off the verdict path; unavailable or stale data
     /// is an error so Alert mode keeps asking.
     @objc optional func getInsightsContactSnapshot(reply: @escaping (Data, String?) -> Void)
+    /// Registers a connection alert the calling app is already presenting, so
+    /// a process that does not own the extension's callback connection can see
+    /// and answer it. The reply is deliberately long-lived: it carries the
+    /// resolution and arrives when the alert is answered, withdrawn, or
+    /// expires. The registry clamps that to less than the flow's own ask
+    /// timeout, so this can never hold a flow longer than it already waits.
+    /// Only the app may call it; the CLI is refused, exactly as it is refused
+    /// notification-client status.
+    @objc optional func registerPendingAlert(descriptor: Data, reply: @escaping (Data, String?) -> Void)
+    /// The registering app answered the alert itself. This claims the entry so
+    /// a later CLI answer is told the app already answered it.
+    @objc optional func withdrawPendingAlert(idString: String, reply: @escaping (Bool, String?) -> Void)
+    /// The pending alerts that can be answered right now, plus whether an app
+    /// is attached at all. An empty list is never returned without a reason.
+    @objc optional func listPendingAlerts(reply: @escaping (Data, String?) -> Void)
+    /// Answers one pending alert exactly once and, when asked to remember,
+    /// stores the rule through the same validated policy path as every other
+    /// rule. An id that expired, was already answered, or never existed comes
+    /// back with its specific state, not a generic failure.
+    @objc optional func answerPendingAlert(request: Data, reply: @escaping (Data, String?) -> Void)
+
     func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void)
     func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void)
     func purgeInsights(reply: @escaping (Bool, String?) -> Void)

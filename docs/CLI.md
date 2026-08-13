@@ -112,6 +112,8 @@ Command-specific `data` shapes are:
 | `rules export` | a `freesnitch.rules.v1` document, or count and output path when writing a file |
 | monitor views | `requestedLimit`, `returned`, and the relevant array |
 | `monitor summary` | `topProcesses`, `topDomains`, `topCountries`, and country metadata status |
+| `alerts list` | `count`, `appAttached`, `capacity`, `alerts`, and `reason` when the list is empty |
+| `alerts answer` | `id`, `state`, `allow`, `decision`, `answeredBy`, `resolvedAt`, `scope`, `remember`, `ruleStored`, `ruleId`, `ruleMessage`, `message` |
 | blocklists | an array of ID, name, URL, enabled state, update time, and entry count |
 | settings | the changed or queried setting and its value |
 | `pf` and `flush` | the existing `puresnitch` anchor diagnostic |
@@ -326,10 +328,95 @@ with stubbed privileged tools, so it never touches the real system.
 
 ## Interactive alerts
 
-Pending alert interaction is not part of this release. The GUI stores pending
-network-extension alert continuations in `AppState.PendingAlert`, and only its
-`AppCommunicationBridge` has the answer closure. The helper protocol has no
-persistent alert identifier, list operation, answer operation, remember scope,
-or duration model. A one-shot CLI cannot safely list or answer a GUI-owned
-continuation, so no misleading `alerts` command was added. This is the exact
-plumbing needed for a future parity change.
+```sh
+freesnitch alerts list
+freesnitch alerts list --json | jq '.data.alerts'
+freesnitch alerts answer 01234567-89AB-CDEF-0123-456789ABCDEF --deny
+freesnitch alerts answer 01234567-89AB-CDEF-0123-456789ABCDEF --allow --remember forever
+freesnitch alerts answer 01234567-89AB-CDEF-0123-456789ABCDEF --deny --scope ip --temporary
+```
+
+`alerts list` shows every alert waiting for an answer with a stable ID, the
+process, the destination name, the address, the port, and the seconds left
+before the alert expires.
+
+### The FreeSnitch app must be running
+
+This is a property of the design, not a limitation of the CLI, and the command
+says so rather than looking broken.
+
+A connection alert is one paused flow. The network extension pauses it and asks
+the **running app** over the app-group XPC channel it holds; that callback is
+what resumes the flow. The helper never sees those flows, and the CLI is
+deliberately not registered as a notification client, because a long-lived
+privileged notification client is exactly the trust and lifetime problem issue
+#25 asked not to create.
+
+So the app registers each alert it presents in a small, expiring registry inside
+the helper. `alerts list` reads that registry and `alerts answer` writes to it;
+the verdict travels back to the app, which answers the extension. With the app
+not running, no alert can exist, and `alerts list` returns an empty list with
+the reason stated in `reason`:
+
+```json
+{
+  "count": 0,
+  "appAttached": false,
+  "capacity": 12,
+  "alerts": [],
+  "reason": "No FreeSnitch app is connected to the helper. Connection alerts are raised by the network extension against the running app, so none can exist and none can be answered while the app is not running. Flows still resume with the fail-open default when their ask timeout expires."
+}
+```
+
+That is not an error, so the exit code stays `0`.
+
+### Answering
+
+```text
+freesnitch alerts answer <ID> --allow|--deny [--scope process|domain|ip|port]
+                              [--remember <duration>|--temporary] [--json]
+```
+
+- `--allow` or `--deny` is required, and exactly one of them.
+- `--remember <duration>` stores a rule for the decision. Use `forever`, or a
+  number with `s`, `m`, `h`, or `d`, from 60 seconds up to 30 days.
+- `--temporary` is shorthand for `--remember 1h`.
+- `--scope` chooses what a remembered decision applies to and requires
+  `--remember` or `--temporary`. Without it, the scope is `domain` when a host
+  name is known and `ip` otherwise, which is what the alert panel does.
+- Without `--remember` or `--temporary` only this flow is answered and no rule
+  is stored, which is the alert panel with "Remember this decision" unchecked.
+
+Rules created this way go through the same helper-owned validation and the same
+policy generation as `rules add`, and appear in `freesnitch rules list`.
+
+### Timeouts, fail-open, and answering exactly once
+
+- An alert stays answerable for at most 55 seconds, which is deliberately
+  shorter than the 60 second budget the extension gives the paused flow. The
+  CLI can never hold traffic for longer than it is already held.
+  `Scripts/test_pending_alerts.sh` reads both numbers out of the real sources
+  and fails if that stops being true.
+- An alert nobody answers changes nothing: the flow resumes with the existing
+  fail-open default when the extension's own timeout expires.
+- The registry is bounded at 12 outstanding alerts, like the DNS ask table.
+  Past the bound nothing is queued; the alert resolves immediately with the
+  fail-open default, which is what the app already does when its own alert
+  queue is full.
+- An alert is answered exactly once. If the app answers first, or another
+  `alerts answer` gets there first, the loser is told which one answered.
+
+Each way of failing to answer has its own error code, so a script never has to
+parse prose:
+
+| `error.code` | Meaning |
+| --- | --- |
+| `alert_already_answered` | The app, or another CLI answer, answered it first |
+| `alert_expired` | The alert timed out; the flow already resumed fail-open |
+| `alert_not_found` | No alert with that ID is or was pending on this helper |
+| `alert_rule_not_stored` | The flow was answered; the remembered rule was refused |
+| `pending_alerts_unsupported` | The running helper predates this feature |
+
+All of them exit `72` (`operation_failed`), except `pending_alerts_unsupported`,
+which exits `67` (`helper_version_mismatch`). Alert IDs are not reused and do
+not survive a helper restart.

@@ -20,6 +20,9 @@ enum CLIHelp {
         case ["settings", "dns"]: return dns
         case ["settings", "blocklists"]: return blocklists
         case ["settings", "blocklist"]: return blocklist
+        case ["alerts"], ["alert"]: return alerts
+        case ["alerts", "list"], ["alert", "list"]: return alertsList
+        case ["alerts", "answer"], ["alert", "answer"]: return alertsAnswer
         case ["rules"]: return rules
         case ["rules", "list"]: return rulesList
         case ["rules", "show"], ["rules", "get"]: return rulesShow
@@ -84,6 +87,11 @@ enum CLIHelp {
       rules import <file|->           Merge rules from a JSON export or stdin.
       rules export [--output PATH]    Export a portable JSON rule file.
 
+    Pending connection alerts:
+      alerts list                     Show the connection alerts waiting for an answer.
+      alerts answer <id> --allow|--deny [--scope S] [--remember D|--temporary]
+                                     Answer one pending alert exactly once.
+
     Other controls:
       blocklists [refresh]            List or refresh all blocklists.
       blocklist <id> <on|off>         Toggle one blocklist.
@@ -105,10 +113,76 @@ enum CLIHelp {
       freesnitch rules disable 01234567-89AB-CDEF-0123-456789ABCDEF
       freesnitch rules export --output /tmp/freesnitch-rules.json
       freesnitch enforcement off --yes
+      freesnitch alerts list --json
 
-    Interactive alerts are intentionally not exposed yet. The GUI owns pending
-    alert continuations in AppState and the helper has no durable alert ID or
-    answer protocol; a CLI command would otherwise be unsafe or misleading.
+    Connection alerts are raised by the network extension against the running
+    FreeSnitch app, which owns the callback the extension waits on. `alerts`
+    lists and answers what that app has registered with the helper, so it
+    reports an empty list, with the reason, when the app is not running.
+    """
+
+    private static let alerts = """
+    Usage: freesnitch alerts <list|answer> [options] [--json]
+
+    A connection alert is one paused flow waiting for a human. The network
+    extension pauses the flow and asks the running FreeSnitch app over its own
+    channel; the app registers that question with the helper, which is what
+    these commands read and answer. The app must be running: without it no
+    alert can exist, and `alerts list` says so instead of implying a failure.
+
+    Safety, unchanged by these commands:
+      - an alert stays answerable for at most \(Int(PendingAlertLimits.maxLifetime)) seconds, always less than
+        the flow's own ask timeout, so answering from a script can never hold
+        traffic longer than it is already held
+      - an unanswered alert still resumes with the existing fail-open default
+      - an alert is answered exactly once; the loser of a race is told so
+
+    See also:
+      freesnitch alerts list --help
+      freesnitch alerts answer --help
+    """
+
+    private static let alertsList = """
+    Usage: freesnitch alerts list [--json]
+
+    Lists the connection alerts waiting for an answer: stable ID, process,
+    destination name, address, port, and how many seconds are left before the
+    alert expires.
+
+    An empty list always carries a reason: either no alert is waiting, or the
+    FreeSnitch app is not running and therefore no alert can exist. Neither is
+    an error, so the exit code stays 0.
+    """
+
+    private static let alertsAnswer = """
+    Usage: freesnitch alerts answer <ID> --allow|--deny [options] [--json]
+
+    Options:
+      --allow                      Let this flow through.
+      --deny                       Block this flow.
+      --scope process|domain|ip|port
+                                   What a remembered decision applies to.
+                                   Default: domain when a host name is known,
+                                   otherwise ip. Requires --remember or
+                                   --temporary.
+      --remember <duration>        Store a rule for this decision. Use forever,
+                                   or a number with s, m, h, or d, from
+                                   \(Int(PendingAlertLimits.minRememberDuration))s up to \(Int(PendingAlertLimits.maxRememberDuration / 86400))d.
+      --temporary                  Shorthand for --remember \(PendingAlertDuration.describe(PendingAlertLimits.temporaryRememberDuration)).
+
+    Without --remember or --temporary only this flow is answered and no rule is
+    stored, which is the alert panel with "Remember this decision" unchecked.
+
+    Exit codes are specific, so a script can tell these apart:
+      alert_already_answered   Someone, or the app itself, answered it first.
+      alert_expired            The alert timed out; the flow already resumed.
+      alert_not_found          No alert with that ID is or was pending.
+      alert_rule_not_stored    The flow was answered, the rule was not stored.
+
+    Examples:
+      freesnitch alerts answer 01234567-89AB-CDEF-0123-456789ABCDEF --deny
+      freesnitch alerts answer 01234567-89AB-CDEF-0123-456789ABCDEF --allow --remember forever
+      freesnitch alerts answer 01234567-89AB-CDEF-0123-456789ABCDEF --deny --scope ip --temporary
     """
 
     private static let status = """

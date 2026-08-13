@@ -28,6 +28,8 @@ enum CLICommand {
     case pf(PFCommand)
     case flush
     case settings(SettingsCommand)
+    /// Parsing lives in AlertsCommandParser, next to the answer model.
+    case alerts(AlertsCommand)
 }
 
 enum RulesCommand {
@@ -186,6 +188,8 @@ enum CLIParser {
             let cursor = TokenCursor(tokens: Array(arguments.dropFirst()))
             try cursor.requireEnd("flush")
             command = .flush
+        case "alerts", "alert":
+            command = .alerts(try AlertsCommandParser.parse(Array(arguments.dropFirst())))
         case "settings":
             command = .settings(try parseSettings(Array(arguments.dropFirst())))
         case "helper":
@@ -622,6 +626,7 @@ enum CLIParser {
         case .enforcement: return "enforcement"
         case .pf: return "pf"
         case .flush: return "flush"
+        case .alerts(let value): return AlertsCommandParser.name(for: value)
         case .settings(let value):
             switch value {
             case .helper: return "settings helper"

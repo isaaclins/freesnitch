@@ -10,6 +10,15 @@ private struct AuthoritativeSnapshotReply {
     let data: Data
 }
 
+/// An optional helper getter that answers with a payload and a reason, never
+/// both. `supported` separates "this helper is too old" from "this helper said
+/// no", which are different problems with different fixes.
+private struct HelperPayloadReply {
+    let supported: Bool
+    let data: Data
+    let message: String?
+}
+
 /// Direct client for the root daemon. The connection construction deliberately
 /// mirrors GUI/App/HelperClient.swift, including the privileged lookup option.
 final class CLIHelperClient: NSObject {
@@ -212,6 +221,63 @@ final class CLIHelperClient: NSObject {
         try await requireSuccess(timeout: timeout) { proxy, reply in
             proxy.flushAll(reply: reply)
         }
+    }
+
+    /// The connection alerts the running app has registered with the helper.
+    ///
+    /// The CLI is not, and must not become, a notification client: it asks the
+    /// helper for an index of what the app is already showing.
+    func pendingAlerts() async throws -> PendingAlertListing {
+        let response: HelperPayloadReply = try await perform(timeout: timeout) { proxy, reply in
+            guard proxy.listPendingAlerts != nil else {
+                reply(HelperPayloadReply(supported: false, data: Data(), message: nil))
+                return
+            }
+            proxy.listPendingAlerts?(reply: { data, message in
+                reply(HelperPayloadReply(supported: true, data: data, message: message))
+            })
+        }
+        guard response.supported else { throw Self.alertsUnsupported }
+        if let message = response.message, !message.isEmpty {
+            throw CLIError(.operationFailed,
+                           code: "alert_list_failed",
+                           message: "The helper could not list pending alerts: \(message).",
+                           remediation: "Run `freesnitch doctor`, then retry.")
+        }
+        return try decode(PendingAlertListing.self, data: response.data, what: "pending alert")
+    }
+
+    func answerPendingAlert(_ request: PendingAlertAnswerRequest) async throws -> PendingAlertAnswerResponse {
+        guard let payload = try? FreeSnitchWireCodec.encode(request),
+              payload.count <= PendingAlertLimits.maxRequestBytes else {
+            throw CLIError(.internalFailure,
+                           message: "The alert answer could not be encoded within the transport limit.",
+                           remediation: "Report this with the exact command you ran.")
+        }
+        let response: HelperPayloadReply = try await perform(timeout: timeout) { proxy, reply in
+            guard proxy.answerPendingAlert != nil else {
+                reply(HelperPayloadReply(supported: false, data: Data(), message: nil))
+                return
+            }
+            proxy.answerPendingAlert?(request: payload, reply: { data, message in
+                reply(HelperPayloadReply(supported: true, data: data, message: message))
+            })
+        }
+        guard response.supported else { throw Self.alertsUnsupported }
+        if let message = response.message, !message.isEmpty {
+            throw CLIError(.invalidArgument,
+                           code: "alert_answer_rejected",
+                           message: "The helper rejected the alert answer: \(message).",
+                           remediation: "Run `freesnitch alerts answer --help` for the accepted scopes and durations.")
+        }
+        return try decode(PendingAlertAnswerResponse.self, data: response.data, what: "pending alert answer")
+    }
+
+    private static var alertsUnsupported: CLIError {
+        CLIError(.helperVersionMismatch,
+                 code: "pending_alerts_unsupported",
+                 message: "The running helper does not support pending connection alerts.",
+                 remediation: "The helper is still running from an earlier build. Run `\(AppConstants.helperKickstartCommand)`, then rerun the command.")
     }
 
     func recentBlocked(limit: Int) async throws -> [Connection] {

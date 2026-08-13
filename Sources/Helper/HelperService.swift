@@ -187,6 +187,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private var clientConnections: [NSXPCConnection] = []
     private let clientLock = NSLock()
     private let asks = DNSAskCoordinator()
+    /// Connection alerts the running app has registered so they can be listed
+    /// and answered from outside it. The helper never owns the flow itself; it
+    /// owns the bounded, expiring index of what is answerable.
+    private let pendingAlerts = PendingAlertRegistry()
     /// The helper is the sole owner of policy mutation and snapshot
     /// construction. This queue is never held across XPC replies, PF work, or
     /// other network operations.
@@ -421,8 +425,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func unregisterClient(_ conn: NSXPCConnection) {
-        clientLock.lock(); defer { clientLock.unlock() }
+        clientLock.lock()
         clientConnections.removeAll { $0 === conn }
+        clientLock.unlock()
+        // A client that went away cannot answer anything it registered. Drop
+        // its entries; the extension still resumes those flows on its own
+        // timeout with the fail-open default.
+        pendingAlerts.withdrawAll(ownerKey: ObjectIdentifier(conn))
+    }
+
+    /// Number of connected notification clients, which is what makes a
+    /// connection alert possible at all.
+    private var connectedClientCount: Int {
+        clientLock.lock()
+        let count = clientConnections.count
+        clientLock.unlock()
+        return count
     }
 
     /// Returns the number of clients the block was actually delivered to. A
@@ -960,6 +978,210 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         } catch {
             reply(Data(), "insights contact history is malformed: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Pending connection alerts
+
+    func registerPendingAlert(descriptor: Data, reply: @escaping (Data, String?) -> Void) {
+        guard descriptor.count <= PendingAlertLimits.maxDescriptorBytes else {
+            reply(Data(), "the pending alert descriptor exceeds its byte limit")
+            return
+        }
+        // The CLI is not an alert owner. It cannot receive the extension's
+        // question, so letting it register one would only invent alerts that
+        // nothing can answer.
+        if let connection = NSXPCConnection.current(), XPCPeerValidator.isCLI(connection) {
+            reply(Data(), "only the FreeSnitch app can register a pending connection alert")
+            return
+        }
+        let alert: PendingAlertDescriptor
+        do {
+            alert = try FreeSnitchWireCodec.decode(PendingAlertDescriptor.self, from: descriptor)
+            try alert.validate()
+        } catch {
+            reply(Data(), "the pending alert descriptor was rejected: \(error.localizedDescription)")
+            return
+        }
+        let ownerKey = NSXPCConnection.current().map(ObjectIdentifier.init)
+        // One reply per XPC request, whichever exit runs first.
+        let replyLock = NSLock()
+        var replied = false
+        let answerOnce: (PendingAlertResolution) -> Void = { resolution in
+            replyLock.lock()
+            guard !replied else {
+                replyLock.unlock()
+                return
+            }
+            replied = true
+            replyLock.unlock()
+            guard let data = try? FreeSnitchWireCodec.encode(resolution) else {
+                reply(Data(), "the pending alert resolution could not be encoded")
+                return
+            }
+            reply(data, nil)
+        }
+        pendingAlerts.register(alert, ownerKey: ownerKey, onResolve: answerOnce)
+    }
+
+    func withdrawPendingAlert(idString: String, reply: @escaping (Bool, String?) -> Void) {
+        guard let id = UUID(uuidString: idString) else {
+            reply(false, "bad uuid")
+            return
+        }
+        switch pendingAlerts.withdraw(id: id) {
+        case .answered:
+            reply(true, nil)
+        case .alreadyAnswered(let answerer, _):
+            reply(false, "the alert was already answered by the \(answerer.rawValue)")
+        case .expired:
+            reply(false, "the alert had already expired")
+        case .unknown:
+            reply(false, "no such pending alert")
+        }
+    }
+
+    func listPendingAlerts(reply: @escaping (Data, String?) -> Void) {
+        let listing = PendingAlertListing(alerts: pendingAlerts.pending(),
+                                          guiAttached: connectedClientCount > 0)
+        do {
+            let data = try FreeSnitchWireCodec.encode(listing)
+            guard data.count <= PendingAlertLimits.maxListingBytes else {
+                reply(Data(), "the pending alert listing exceeds its byte limit")
+                return
+            }
+            reply(data, nil)
+        } catch {
+            reply(Data(), "the pending alert listing could not be encoded: \(error.localizedDescription)")
+        }
+    }
+
+    func answerPendingAlert(request: Data, reply: @escaping (Data, String?) -> Void) {
+        guard request.count <= PendingAlertLimits.maxRequestBytes else {
+            reply(Data(), "the pending alert answer exceeds its byte limit")
+            return
+        }
+        let decoded: PendingAlertAnswerRequest
+        do {
+            decoded = try FreeSnitchWireCodec.decode(PendingAlertAnswerRequest.self, from: request)
+            try decoded.answer.validate()
+        } catch {
+            reply(Data(), error.localizedDescription)
+            return
+        }
+        let now = Date()
+        // Claim first. The claim is what makes the flow resolve exactly once,
+        // so it must not wait behind rule storage.
+        let outcome = pendingAlerts.answer(id: decoded.id, allow: decoded.answer.allow, by: .cli, now: now)
+        let response: PendingAlertAnswerResponse
+        switch outcome {
+        case .answered(let alert):
+            PSLog.error(PSLog.helper,
+                        "AUDIT: pending alert \(alert.id.uuidString) answered \(decoded.answer.allow ? "allow" : "deny") from the command line")
+            response = storeRememberedRule(for: alert, answer: decoded.answer, now: now)
+        case .alreadyAnswered(let answerer, let at):
+            response = PendingAlertAnswerResponse(
+                id: decoded.id,
+                state: .alreadyAnswered,
+                answeredBy: answerer,
+                resolvedAt: at,
+                message: "Alert \(decoded.id.uuidString) was already answered by the \(answerer.rawValue). An alert is answered exactly once.")
+        case .expired(let at):
+            response = PendingAlertAnswerResponse(
+                id: decoded.id,
+                state: .expired,
+                resolvedAt: at,
+                message: "Alert \(decoded.id.uuidString) expired before it was answered. The flow resumed with the fail-open default.")
+        case .unknown:
+            response = PendingAlertAnswerResponse(
+                id: decoded.id,
+                state: .unknown,
+                message: "No alert with ID \(decoded.id.uuidString) is or was pending on this helper.")
+        }
+        do {
+            reply(try FreeSnitchWireCodec.encode(response), nil)
+        } catch {
+            reply(Data(), "the pending alert answer could not be encoded: \(error.localizedDescription)")
+        }
+    }
+
+    /// Stores the remembered rule for an answered alert through the same
+    /// validated policy path every other rule uses. The flow is already
+    /// answered at this point, so a rejected rule is reported, never retried
+    /// against the flow.
+    private func storeRememberedRule(for alert: PendingAlertDescriptor,
+                                     answer: PendingAlertAnswer,
+                                     now: Date) -> PendingAlertAnswerResponse {
+        let verdict = answer.allow ? "Allowed" : "Denied"
+        let base = "\(verdict) \(alert.processName.isEmpty ? "an unnamed process" : alert.processName) to \(alert.destination)."
+        let rule: Rule?
+        do {
+            rule = try PendingAlertRuleFactory.rule(for: alert, answer: answer, now: now)
+        } catch {
+            return PendingAlertAnswerResponse(id: alert.id,
+                                              state: .answered,
+                                              allow: answer.allow,
+                                              answeredBy: .cli,
+                                              resolvedAt: now,
+                                              descriptor: alert,
+                                              ruleMessage: error.localizedDescription,
+                                              message: "\(base) No rule was stored: \(error.localizedDescription)")
+        }
+        guard let rule else {
+            return PendingAlertAnswerResponse(id: alert.id,
+                                              state: .answered,
+                                              allow: answer.allow,
+                                              answeredBy: .cli,
+                                              resolvedAt: now,
+                                              descriptor: alert,
+                                              message: "\(base) Nothing was remembered.")
+        }
+        if let reason = rejectionReason(for: rule) {
+            return PendingAlertAnswerResponse(id: alert.id,
+                                              state: .answered,
+                                              allow: answer.allow,
+                                              answeredBy: .cli,
+                                              resolvedAt: now,
+                                              descriptor: alert,
+                                              ruleMessage: reason,
+                                              message: "\(base) No rule was stored: \(reason)")
+        }
+        do {
+            try RuleTransportBoundary.validate(rule: rule)
+            _ = try mutatePolicy { draft in
+                var updated = draft.rules
+                updated.append(rule)
+                try RuleTransportBoundary.validate(rules: updated)
+                draft.rules = updated
+            }
+        } catch {
+            return PendingAlertAnswerResponse(id: alert.id,
+                                              state: .answered,
+                                              allow: answer.allow,
+                                              answeredBy: .cli,
+                                              resolvedAt: now,
+                                              descriptor: alert,
+                                              ruleMessage: error.localizedDescription,
+                                              message: "\(base) No rule was stored: \(error.localizedDescription)")
+        }
+        var ruleMessage: String?
+        do { try applyRulesIfEnforcing() } catch {
+            recordPFError(error)
+            ruleMessage = "rule saved but the firewall refused the update: \(error.localizedDescription)"
+        }
+        let remembered = answer.remember.kind == .forever
+            ? "permanently"
+            : "for \(answer.remember.describedValue)"
+        let scope = (answer.scope ?? PendingAlertRuleFactory.defaultScope(for: alert)).rawValue
+        return PendingAlertAnswerResponse(id: alert.id,
+                                          state: .answered,
+                                          allow: answer.allow,
+                                          answeredBy: .cli,
+                                          resolvedAt: now,
+                                          descriptor: alert,
+                                          ruleStored: true,
+                                          ruleID: rule.id,
+                                          ruleMessage: ruleMessage,
+                                          message: "\(base) Remembered \(remembered) with \(scope) scope.")
     }
 
     func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void) {
