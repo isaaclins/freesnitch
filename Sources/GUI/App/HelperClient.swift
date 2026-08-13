@@ -456,7 +456,13 @@ final class HelperClient: NSObject, ObservableObject {
             state?.appendLog(level: "error", message: "Insights batch exceeded the transport limit and was dropped by the GUI.")
             return false
         }
-        guard let proxy = remote else {
+        let proxy = connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
+            Task { @MainActor in
+                self?.state?.appendLog(level: "error",
+                                       message: "Insights batch transport failed: \(error.localizedDescription).")
+            }
+        } as? HelperProtocol
+        guard let proxy else {
             state?.appendLog(level: "error", message: "Insights batch dropped because the privileged helper is unavailable.")
             return false
         }
