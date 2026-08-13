@@ -187,6 +187,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // content filter and privileged helper are separate.
                                 self.state?.appendLog(level: "info", message: "Per-process firewall active.")
                                 self.registerIPC()
+                            } else if self.filterConfigurationActive {
+                                self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                             }
                         }
 
