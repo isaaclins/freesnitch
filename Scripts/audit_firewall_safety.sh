@@ -11,6 +11,7 @@ CLI_HELPER="$ROOT/Sources/CLI/CLIHelperClient.swift"
 CLI_EXTENSION="$ROOT/Sources/CLI/CLIExtensionClient.swift"
 PROJECT_SPEC="$ROOT/project.yml"
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
+DNS_PROXY="$ROOT/Sources/Helper/DNSProxy.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
@@ -56,6 +57,7 @@ require_text() {
 [[ -f "$UNINSTALL" ]] || fail "missing $UNINSTALL"
 [[ -f "$RULE_MATCHER" ]] || fail "missing $RULE_MATCHER"
 [[ -f "$CLI_PARSER" ]] || fail "missing $CLI_PARSER"
+[[ -f "$DNS_PROXY" ]] || fail "missing $DNS_PROXY"
 
 # A CIDR prefix outside 0...32 used to produce mask 0 through Swift's
 # non-trapping smart shift, and mask 0 matches every IPv4 address. The matcher
@@ -294,6 +296,30 @@ fi
 # Each fail-open check is scoped to its own brace block. A window of N lines
 # would let one block borrow another block's allow verdict and hide a
 # fail-closed regression, so the block is delimited by brace depth instead.
+# Same idea, for any literal that has to appear inside one brace block.
+text_within_block() {
+  local file="$1"
+  local start_regex="$2"
+  local needle="$3"
+  awk -v start="$start_regex" -v needle="$needle" '
+    !active && $0 ~ start {
+      active = 1
+      depth = 0
+    }
+    active {
+      if (index($0, needle) > 0) {
+        found = 1
+        exit 0
+      }
+      n = gsub(/\{/, "{")
+      m = gsub(/\}/, "}")
+      depth += n - m
+      if (depth <= 0) active = 0
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$file"
+}
+
 allow_within_block() {
   local file="$1"
   local start_regex="$2"
@@ -383,4 +409,87 @@ if printf '%s\n' "$activation_body" | grep -Fq "enableFilter"; then
   fail "filter configuration is still enabled optimistically during activate()"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, and activation ordering are present.\n'
+# A DNS ask must never outlive its answer path. With no client connected the
+# helper resolves the query itself, an unanswered ask resolves at the timeout,
+# the pending table is bounded, and no completion runs while the lock is held.
+require_text "$HELPER" "static let defaultDecision = true" \
+  "the DNS ask default is not an explicit fail-open allow"
+# Anchored: "= 600" also contains "= 60", and a ten minute budget is not the
+# extension's budget.
+grep -Eq 'static let askTimeout: TimeInterval = 60[[:space:]]*$' "$HELPER" \
+  || fail "the DNS ask path has no 60 second timeout matching the extension budget"
+require_text "$HELPER" "static let capacity = " \
+  "the pending DNS ask table is not bounded by an explicit capacity"
+require_text "$HELPER" "askTimeoutQueue.asyncAfter" \
+  "the DNS ask timeout does not run on its own queue"
+if grep -Fq 'let askTimeoutQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns"' "$HELPER"; then
+  fail "the DNS ask timeout shares the DNS handling queue it is supposed to unblock"
+fi
+
+coordinator_body="$(awk '
+  /^final class DNSAskCoordinator/ {
+    active = 1
+    depth = 0
+  }
+  active {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$HELPER")"
+[[ -n "$coordinator_body" ]] || fail "the helper no longer has a DNSAskCoordinator to audit"
+
+# The bound, the timeout, and the no-client path each have to resolve the ask,
+# so every one of them must reach a completion with the fail-open default.
+for ask_func in 'func ask[(]domain' 'func admit[(]domain' 'func expire[(]domain'; do
+  # A multi-line signature has no brace on its first line, so the block only
+  # ends once at least one brace has been seen.
+  ask_body="$(printf '%s\n' "$coordinator_body" | awk -v start="$ask_func" '
+    !active && $0 ~ start {
+      active = 1
+      depth = 0
+      seen = 0
+    }
+    active {
+      print
+      opens = gsub(/\{/, "{")
+      closes = gsub(/\}/, "}")
+      if (opens > 0) seen = 1
+      depth += opens - closes
+      if (seen && depth == 0) exit
+    }
+  ')"
+  printf '%s\n' "$ask_body" | grep -Eq 'Self\.defaultDecision' \
+    || fail "a DNS ask resolution path does not fall back to the documented default"
+done
+
+# A completion or an XPC send under the lock is how this path deadlocks. Walk
+# the coordinator and refuse any call between lock and unlock.
+printf '%s\n' "$coordinator_body" | awk '
+  /defer[[:space:]]*\{[[:space:]]*askLock\.unlock\(\)/ { next }
+  /askLock\.lock\(\)/ { held = 1; next }
+  /askLock\.unlock\(\)/ { held = 0; next }
+  held && /completion\(|\.completion\(|sendAlert\(/ {
+    print "held: " $0
+    bad = 1
+  }
+  END { exit(bad ? 1 : 0) }
+' || fail "the DNS ask coordinator runs a completion or an alert send while holding its lock"
+
+# The no-client branch is the whole point of the fix: it must resolve, not log.
+if ! text_within_block "$HELPER" 'if delivered <= 0[[:space:]]*\{' 'resolve(domain: domain, allow: Self.defaultDecision)'; then
+  fail "the helper does not resolve a DNS ask that reached no client"
+fi
+
+require_text "$DNS_PROXY" "guard let onAsk else" \
+  "the DNS proxy leaves the query unanswered when no ask handler is wired up"
+if ! text_within_block "$DNS_PROXY" 'guard let onAsk else[[:space:]]*\{' 'settleOnce(true)'; then
+  fail "the DNS proxy no-handler path does not fail open"
+fi
+if ! text_within_block "$DNS_PROXY" 'let settleOnce' 'if answered'; then
+  fail "the DNS proxy ask path can reply to the same query twice"
+fi
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, and activation ordering are present.\n'
