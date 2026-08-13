@@ -2,31 +2,14 @@ import Foundation
 
 enum CLIAppBundle {
     static var appURL: URL? {
-        let executable = URL(fileURLWithPath: CommandLine.arguments.first ?? "")
-            .standardizedFileURL
-        var current = executable
-        while current.path != "/" {
-            if current.pathExtension == "app" { return current }
-            current.deleteLastPathComponent()
-        }
-        if Bundle.main.bundleURL.pathExtension == "app" { return Bundle.main.bundleURL }
-        return nil
+        AppBundleIdentity.containingAppURL
     }
 
     /// The build identity of the app bundle this CLI was shipped inside.
-    ///
-    /// The CLI is a bare tool with no Info.plist of its own, so it cannot read
-    /// its own build number. Reading the containing app's Info.plist is also
-    /// the more meaningful question: the CLI wants to know whether the helper
-    /// came from this app, not from this executable.
+    /// A bare CLI outside an app falls back to its marketing version only, so
+    /// it cannot make a false stale-helper claim.
     static var expectedBuildIdentity: String {
-        guard let appURL,
-              let info = NSDictionary(contentsOf: appURL.appendingPathComponent("Contents/Info.plist")),
-              let short = info["CFBundleShortVersionString"] as? String else {
-            return AppConstants.buildIdentity
-        }
-        guard let build = info["CFBundleVersion"] as? String else { return short }
-        return "\(short) (\(build))"
+        AppBundleIdentity.current ?? AppConstants.version
     }
 
     static var hasEmbeddedNetworkExtension: Bool {

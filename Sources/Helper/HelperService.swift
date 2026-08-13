@@ -151,7 +151,9 @@ final class HelperService: NSObject, HelperProtocol, BootPolicyProtocol, @unchec
     // Report the build identity, not just the marketing version, so a caller
     // can tell a helper left over from an earlier build of the same release
     // from the one it shipped with.
-    func getVersion(reply: @escaping (String) -> Void) { reply(AppConstants.buildIdentity) }
+    func getVersion(reply: @escaping (String) -> Void) {
+        reply(AppBundleIdentity.current ?? AppConstants.version)
+    }
 
     // MARK: - BootPolicyProtocol
     func loadBootSnapshot(reply: @escaping (Data) -> Void) {
@@ -193,7 +195,7 @@ final class HelperService: NSObject, HelperProtocol, BootPolicyProtocol, @unchec
         let pfctlError = lastPFError
         diagnosticsLock.unlock()
         let s = HelperStatus(
-            version: AppConstants.buildIdentity,
+            version: AppBundleIdentity.current ?? AppConstants.version,
             running: netmon.isRunning,
             pfctlActive: pf.isLoaded,
             pfctlError: pfctlError,
