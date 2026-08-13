@@ -249,8 +249,8 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
-    /// Registration is safe here because SMAppService reports that no service
-    /// currently exists. It is deliberately separate from stale-helper repair.
+    /// Registration is safe here because SMAppService reports no active
+    /// service. It is deliberately separate from stale-helper repair.
     private func registerAbsentService(service: SMAppService) {
         do {
             try service.register()
@@ -275,9 +275,26 @@ final class HelperClient: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             Task { @MainActor in
                 guard let self, self.repairConfirmationID == confirmationID else { return }
-                guard self.hasVersionMismatch else { return }
                 guard case .inProgress = self.repairState else { return }
-                self.repairState = .manualRequired("SMAppService accepted the repair, but the helper did not reconnect with the new version.")
+                if self.hasVersionMismatch {
+                    self.repairState = .manualRequired("The registered helper did not reconnect with the expected build. Run `\(HelperRecovery.kickstartCommand)` while launchd still has the service registered.")
+                    return
+                }
+                switch self.installState {
+                case .enabled:
+                    self.repairState = .manualRequired("SMAppService registered the helper, but it did not reconnect. Registration exists, so run `\(HelperRecovery.kickstartCommand)` in Terminal.")
+                case .requiresApproval:
+                    self.repairState = .manualRequired("The helper is registered but still requires approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work.")
+                case .notRegistered, .notFound:
+                    self.repairState = .manualRequired("SMAppService did not leave a usable registration record. Do not run the kickstart command yet; run the helper recheck again and report the registration state.")
+                case .wrongLocation:
+                    self.repairState = .manualRequired("Move FreeSnitch to /Applications before retrying helper registration.")
+                case .failed(let message):
+                    self.repairState = .manualRequired("Helper registration failed: \(message)")
+                case .unknown:
+                    self.repairState = .manualRequired("SMAppService registration did not produce a reachable helper. Recheck the registration state before using the kickstart command.")
+                }
+                self.needsRepair = true
             }
         }
     }
