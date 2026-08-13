@@ -1,5 +1,166 @@
 import Foundation
 
+/// Owns the pending DNS "ask" decisions that sit between the DNS proxy and the
+/// connected GUI clients.
+///
+/// Three properties matter here, and each one is a bug this type exists to
+/// prevent:
+/// - every completion runs exactly once, so a late GUI answer that arrives
+///   after a timeout cannot reply to the same query twice
+/// - no completion and no XPC call ever runs while the lock is held
+/// - the table is bounded, so a missing or wedged GUI cannot grow it forever
+final class DNSAskCoordinator: @unchecked Sendable {
+    /// Fail open, exactly like the network extension's no-GUI path. FreeSnitch
+    /// must never turn a missing or silent decision UI into a name resolution
+    /// outage, so an ask that nobody answers resolves to allow and the query is
+    /// forwarded normally. Blocking is only ever the result of a rule or of a
+    /// human saying no.
+    static let defaultDecision = true
+
+    /// The same budget FilterDataProvider gives its own ask path, so both
+    /// interactive paths wait the same 60 seconds for a human.
+    static let askTimeout: TimeInterval = 60
+
+    /// Hard bound on outstanding asks. Past this, new asks resolve with the
+    /// default immediately instead of queueing, so a GUI that never answers
+    /// cannot turn every asked domain into a retained closure.
+    static let capacity = 128
+
+    enum Admission: Equatable {
+        /// The table was full: the completion already ran with the default and
+        /// nothing is pending.
+        case resolvedImmediately
+        /// First waiter for this domain; the caller should broadcast an alert.
+        case startedAsk
+        /// An alert for this domain is already outstanding. Do not broadcast a
+        /// second one; the answer wakes every waiter.
+        case joinedAsk
+    }
+
+    private struct Waiter {
+        let id: UInt64
+        let completion: (Bool) -> Void
+    }
+
+    private var pendingAsks: [String: [Waiter]] = [:]
+    private var waiterCount = 0
+    private var nextWaiterID: UInt64 = 0
+    private let askLock = NSLock()
+    /// Timeouts fire on their own utility queue. They must never share a queue
+    /// with DNS handling, because a timeout that waits behind query processing
+    /// is the same hang it is supposed to break.
+    private let askTimeoutQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns-ask-timeout", qos: .utility)
+
+    /// Number of waiters currently parked. Test seam and diagnostics.
+    var outstandingWaiters: Int {
+        askLock.lock()
+        let count = waiterCount
+        askLock.unlock()
+        return count
+    }
+
+    /// Number of distinct domains currently parked.
+    var outstandingDomains: Int {
+        askLock.lock()
+        let count = pendingAsks.count
+        askLock.unlock()
+        return count
+    }
+
+    /// Runs one complete ask.
+    ///
+    /// `sendAlert` hands the question to the connected clients and returns how
+    /// many of them actually received it. It runs outside the lock, because it
+    /// performs XPC. A return of zero means there is nobody who could ever
+    /// answer, and the ask resolves with the default right away.
+    func ask(domain: String,
+             timeout: TimeInterval? = nil,
+             completion: @escaping (Bool) -> Void,
+             sendAlert: (_ answer: @escaping (Bool) -> Void) -> Int) {
+        switch admit(domain: domain, timeout: timeout, completion: completion) {
+        case .resolvedImmediately:
+            // The bound was hit; the completion already ran with the default.
+            return
+        case .joinedAsk:
+            // An alert for this domain is already outstanding. Coalesce onto it
+            // instead of raising a second identical prompt.
+            return
+        case .startedAsk:
+            break
+        }
+        let delivered = sendAlert { [weak self] allow in
+            self?.resolve(domain: domain, allow: allow)
+        }
+        if delivered <= 0 {
+            // Nobody received the question, so nobody can ever answer it. Fail
+            // open now instead of holding the query until the application's
+            // resolver gives up, the same choice the network extension makes
+            // when no GUI is attached.
+            PSLog.error(PSLog.dns, "No client received the DNS alert for '\(domain)'; resolving with the fail-open default.")
+            resolve(domain: domain, allow: Self.defaultDecision)
+        }
+    }
+
+    /// Parks a completion until someone answers, the timeout expires, or the
+    /// caller resolves it. `timeout` exists so tests can use a short budget;
+    /// production always uses `askTimeout`.
+    func admit(domain: String, timeout: TimeInterval? = nil, completion: @escaping (Bool) -> Void) -> Admission {
+        askLock.lock()
+        if waiterCount >= Self.capacity {
+            askLock.unlock()
+            PSLog.error(PSLog.dns, "DNS ask table is at its \(Self.capacity) entry bound; resolving '\(domain)' with the fail-open default.")
+            completion(Self.defaultDecision)
+            return .resolvedImmediately
+        }
+        nextWaiterID &+= 1
+        let waiterID = nextWaiterID
+        let isFirstForDomain = pendingAsks[domain] == nil
+        pendingAsks[domain, default: []].append(Waiter(id: waiterID, completion: completion))
+        waiterCount += 1
+        askLock.unlock()
+
+        let budget = timeout ?? Self.askTimeout
+        askTimeoutQueue.asyncAfter(deadline: .now() + budget) { [weak self] in
+            self?.expire(domain: domain, waiterID: waiterID)
+        }
+        return isFirstForDomain ? .startedAsk : .joinedAsk
+    }
+
+    /// Wakes every waiter parked on this domain. Coalescing is deliberate: one
+    /// alert answers every in-flight query for the same name instead of the
+    /// second query silently overwriting and abandoning the first completion.
+    /// A second answer for the same domain finds an empty slot and does
+    /// nothing, which is what makes each completion run exactly once.
+    func resolve(domain: String, allow: Bool) {
+        askLock.lock()
+        let waiters = pendingAsks.removeValue(forKey: domain) ?? []
+        waiterCount -= waiters.count
+        askLock.unlock()
+        for waiter in waiters { waiter.completion(allow) }
+    }
+
+    /// Resolves one specific waiter whose budget ran out, leaving any other
+    /// waiter for the same domain still waiting for the human.
+    private func expire(domain: String, waiterID: UInt64) {
+        askLock.lock()
+        var waiters = pendingAsks[domain] ?? []
+        guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else {
+            askLock.unlock()
+            return
+        }
+        let waiter = waiters.remove(at: index)
+        if waiters.isEmpty {
+            pendingAsks.removeValue(forKey: domain)
+        } else {
+            pendingAsks[domain] = waiters
+        }
+        waiterCount -= 1
+        askLock.unlock()
+        PSLog.error(PSLog.dns, "DNS ask for '\(domain)' went unanswered for the ask timeout; resolving with the fail-open default.")
+        waiter.completion(Self.defaultDecision)
+    }
+}
+
 final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
     private let insights: InsightsStore?
@@ -19,8 +180,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private var lastInsightsDropLog = Date.distantPast
     private var clientConnections: [NSXPCConnection] = []
     private let clientLock = NSLock()
-    private var pendingAsks: [String: (Bool) -> Void] = [:]
-    private let askLock = NSLock()
+    private let asks = DNSAskCoordinator()
     private var latestProcessUsage: [ProcessUsage] = []
     private var latestTrafficSample: TrafficSample?
     private var lastPFError: String?
@@ -73,30 +233,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
         }
         dns.onAsk = { [weak self] domain, completion in
-            guard let self else { completion(true); return }
-            self.askLock.lock()
-            self.pendingAsks[domain] = completion
-            self.askLock.unlock()
-            let ruleHost: String
-            if PFHostValidator.kind(for: domain) == .hostname {
-                ruleHost = domain
-            } else {
-                ruleHost = ""
-                PSLog.error(
-                    PSLog.dns,
-                    "DNS query name '\(domain)' is not a connectable PF destination: \(PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
-                )
-            }
-            let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: ruleHost, status: .pending)
-            guard let data = try? FreeSnitchWireCodec.encode(stub) else { completion(true); return }
-            self.broadcast { c in
-                c.notifyAlert(connectionJSON: data) { allow, _ in
-                    self.askLock.lock()
-                    let cb = self.pendingAsks.removeValue(forKey: domain)
-                    self.askLock.unlock()
-                    cb?(allow)
-                }
-            }
+            guard let self else { completion(DNSAskCoordinator.defaultDecision); return }
+            self.handleDNSAsk(domain: domain, completion: completion)
         }
         blocklists.onUpdate = { [weak self] _ in
             self?.dns.blocklist = self?.blocklists.domains ?? []
@@ -221,13 +359,46 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         clientConnections.removeAll { $0 === conn }
     }
 
-    private func broadcast(_ block: (HelperClientProtocol) -> Void) {
+    /// Returns the number of clients the block was actually delivered to. A
+    /// caller that is waiting for an answer needs to know that nobody received
+    /// the question.
+    @discardableResult
+    private func broadcast(_ block: (HelperClientProtocol) -> Void) -> Int {
         clientLock.lock()
         let conns = clientConnections
         clientLock.unlock()
+        var delivered = 0
         for conn in conns {
             if let proxy = conn.remoteObjectProxy as? HelperClientProtocol {
                 block(proxy)
+                delivered += 1
+            }
+        }
+        return delivered
+    }
+
+    /// The DNS ask path. Every exit resolves the query: a human answer, the ask
+    /// timeout, the capacity bound, or an immediate default when there is
+    /// nobody to ask. A DNS query that reaches this function is never left
+    /// without a reply.
+    private func handleDNSAsk(domain: String, completion: @escaping (Bool) -> Void) {
+        asks.ask(domain: domain, completion: completion) { answer in
+            let ruleHost: String
+            if PFHostValidator.kind(for: domain) == .hostname {
+                ruleHost = domain
+            } else {
+                ruleHost = ""
+                PSLog.error(
+                    PSLog.dns,
+                    "DNS query name '\(domain)' is not a connectable PF destination: \(PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
+                )
+            }
+            let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: ruleHost, status: .pending)
+            // An unencodable alert is the same situation as an unreachable
+            // client: zero deliveries, so the coordinator fails open.
+            guard let data = try? FreeSnitchWireCodec.encode(stub) else { return 0 }
+            return broadcast { c in
+                c.notifyAlert(connectionJSON: data) { allow, _ in answer(allow) }
             }
         }
     }
