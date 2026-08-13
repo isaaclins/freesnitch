@@ -5,6 +5,223 @@ import Darwin
 import Glibc
 #endif
 
+fileprivate struct PreparedIPv6Address: Equatable, Sendable {
+    let upper: UInt64
+    let lower: UInt64
+}
+
+fileprivate struct PreparedIPv6Network: Sendable {
+    let upper: UInt64
+    let lower: UInt64
+    let upperMask: UInt64
+    let lowerMask: UInt64
+
+    init(address: PreparedIPv6Address, prefix: Int) {
+        if prefix == 0 {
+            upperMask = 0
+            lowerMask = 0
+        } else if prefix < 64 {
+            upperMask = UInt64.max << (64 - prefix)
+            lowerMask = 0
+        } else if prefix == 64 {
+            upperMask = UInt64.max
+            lowerMask = 0
+        } else {
+            upperMask = UInt64.max
+            lowerMask = UInt64.max << (128 - prefix)
+        }
+        upper = address.upper & upperMask
+        lower = address.lower & lowerMask
+    }
+
+    func contains(_ address: PreparedIPv6Address) -> Bool {
+        address.upper & upperMask == upper && address.lower & lowerMask == lower
+    }
+}
+
+fileprivate func parsePreparedIPv6Address(_ raw: String) -> PreparedIPv6Address? {
+    let literal = raw.prefix { $0 != "%" }
+    guard !literal.isEmpty else { return nil }
+    var address = in6_addr()
+    guard String(literal).withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
+    return withUnsafeBytes(of: &address) { bytes in
+        var upper: UInt64 = 0
+        var lower: UInt64 = 0
+        for index in 0..<8 { upper = (upper << 8) | UInt64(bytes[index]) }
+        for index in 8..<16 { lower = (lower << 8) | UInt64(bytes[index]) }
+        return PreparedIPv6Address(upper: upper, lower: lower)
+    }
+}
+
+fileprivate func parsePreparedIPv4Address(_ raw: String) -> UInt32? {
+    let octets = raw.split(separator: ".", omittingEmptySubsequences: false)
+    guard octets.count == 4 else { return nil }
+    var address: UInt32 = 0
+    for octet in octets {
+        guard !octet.isEmpty,
+              octet.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+              octet.count == 1 || octet.first != "0",
+              let value = UInt32(octet), value < 256 else { return nil }
+        address = (address << 8) | value
+    }
+    return address
+}
+
+fileprivate struct PreparedConnectionAddress: Sendable {
+    let ipv4: UInt32?
+    let ipv6: PreparedIPv6Address?
+
+    init(_ raw: String, needsIPv4: Bool, needsIPv6: Bool) {
+        ipv4 = needsIPv4 && !raw.contains(":") ? parsePreparedIPv4Address(raw) : nil
+        ipv6 = needsIPv6 && raw.contains(":") ? parsePreparedIPv6Address(raw) : nil
+    }
+}
+
+fileprivate enum PreparedHostPattern: Sendable {
+    case exact(String)
+    case wildcard(base: String, dottedSuffix: String)
+    case suffix(String)
+
+    init(_ raw: String) {
+        if raw.hasPrefix("*.") {
+            let base = String(raw.dropFirst(2))
+            self = .wildcard(base: base, dottedSuffix: "." + base)
+        } else if raw.hasPrefix(".") {
+            self = .suffix(String(raw.dropFirst()))
+        } else {
+            self = .exact(raw)
+        }
+    }
+
+    func matches(_ host: String) -> Bool {
+        switch self {
+        case .exact(let value):
+            return host == value
+        case .wildcard(let base, let dottedSuffix):
+            return host == base || host.hasSuffix(dottedSuffix)
+        case .suffix(let value):
+            return host.hasSuffix(value)
+        }
+    }
+}
+
+fileprivate struct PreparedIPPattern: Sendable {
+    fileprivate enum Comparison: Sendable {
+        case exactOnly
+        case wildcard(String)
+        case ipv6Literal(PreparedIPv6Address)
+        case ipv4CIDR(network: UInt32, mask: UInt32)
+        case ipv6CIDR(PreparedIPv6Network)
+    }
+
+    let raw: String
+    let comparison: Comparison
+
+    init(_ raw: String) {
+        self.raw = raw
+
+        if raw.contains("/") {
+            let parts = raw.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty,
+                  parts[1].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else {
+                comparison = .exactOnly
+                return
+            }
+            let network = String(parts[0])
+            if network.contains(":") {
+                guard let bits = Int(parts[1]), (0...128).contains(bits),
+                      let address = parsePreparedIPv6Address(network) else {
+                    comparison = .exactOnly
+                    return
+                }
+                comparison = .ipv6CIDR(PreparedIPv6Network(address: address, prefix: bits))
+            } else {
+                guard let bits = Int(parts[1]), (0...32).contains(bits),
+                      let address = parsePreparedIPv4Address(network) else {
+                    comparison = .exactOnly
+                    return
+                }
+                let mask: UInt32 = bits == 0 ? 0 : UInt32.max << (32 - bits)
+                comparison = .ipv4CIDR(network: address & mask, mask: mask)
+            }
+            return
+        }
+
+        if raw.contains(":") {
+            comparison = parsePreparedIPv6Address(raw).map(Comparison.ipv6Literal) ?? .exactOnly
+        } else if raw.hasSuffix(".*") {
+            comparison = .wildcard(String(raw.dropLast(2)) + ".")
+        } else {
+            comparison = .exactOnly
+        }
+    }
+
+    var needsIPv4: Bool {
+        if case .ipv4CIDR = comparison { return true }
+        return false
+    }
+
+    var needsIPv6: Bool {
+        switch comparison {
+        case .ipv6Literal, .ipv6CIDR: return true
+        default: return false
+        }
+    }
+
+    func matches(rawIP: String, parsed: PreparedConnectionAddress) -> Bool {
+        if raw == rawIP { return true }
+        switch comparison {
+        case .exactOnly:
+            return false
+        case .wildcard(let prefix):
+            return rawIP.hasPrefix(prefix)
+        case .ipv6Literal(let expected):
+            return parsed.ipv6 == expected
+        case .ipv4CIDR(let network, let mask):
+            guard let address = parsed.ipv4 else { return false }
+            return address & mask == network
+        case .ipv6CIDR(let network):
+            guard let address = parsed.ipv6 else { return false }
+            return network.contains(address)
+        }
+    }
+}
+
+fileprivate struct PreparedRule: Sendable {
+    let action: RuleAction
+    let expiresAt: Date?
+    let direction: RuleDirection?
+    let processBundleId: String?
+    let processPath: String?
+    let remotePort: Int?
+    let remoteHost: PreparedHostPattern?
+    let remoteIP: PreparedIPPattern?
+
+    init(_ rule: Rule) {
+        action = rule.action
+        expiresAt = rule.expiresAt
+        direction = rule.direction == .any ? nil : rule.direction
+        processBundleId = rule.processBundleId.flatMap { $0.isEmpty ? nil : $0 }
+        processPath = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
+        remotePort = rule.remotePort.flatMap { $0 == 0 ? nil : $0 }
+        remoteHost = rule.remoteHost.flatMap { $0.isEmpty ? nil : PreparedHostPattern($0) }
+        remoteIP = rule.remoteIP.flatMap { $0.isEmpty ? nil : PreparedIPPattern($0) }
+    }
+
+    var needsIPv4: Bool { remoteIP?.needsIPv4 ?? false }
+    var needsIPv6: Bool { remoteIP?.needsIPv6 ?? false }
+
+    func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        if let direction, direction != connection.direction { return false }
+        if let processBundleId, (connection.processBundleId ?? "") != processBundleId { return false }
+        if let processPath, !connection.processPath.hasPrefix(processPath) { return false }
+        if let remotePort, connection.remotePort != remotePort { return false }
+        if let remoteHost, !remoteHost.matches(connection.remoteHost) { return false }
+        if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
+        return true
+    }
+}
+
 /// The enabled rules of one policy snapshot, already in the order the matcher
 /// consults them.
 ///
@@ -16,6 +233,9 @@ import Glibc
 public struct PreparedRuleSet: Sendable {
     /// Enabled rules, highest priority first.
     public let ordered: [Rule]
+    fileprivate let compiled: [PreparedRule]
+    fileprivate let needsIPv4: Bool
+    fileprivate let needsIPv6: Bool
 
     public init(rules: [Rule]) {
         // Which rule wins must never depend on a sort algorithm's tie
@@ -29,6 +249,9 @@ public struct PreparedRuleSet: Sendable {
                     : lhs.element.priority > rhs.element.priority
             }
             .map { $0.element }
+        compiled = ordered.map(PreparedRule.init)
+        needsIPv4 = compiled.contains(where: \.needsIPv4)
+        needsIPv6 = compiled.contains(where: \.needsIPv6)
     }
 }
 
@@ -46,9 +269,14 @@ public struct RuleMatcher: Sendable {
         // depends on when the flow arrives rather than on the snapshot. It
         // stays a test inside the scan, which allocates nothing.
         let now = Date()
-        for r in prepared.ordered {
+        let address = PreparedConnectionAddress(
+            c.remoteIP,
+            needsIPv4: prepared.needsIPv4,
+            needsIPv6: prepared.needsIPv6
+        )
+        for r in prepared.compiled {
             if let exp = r.expiresAt, exp < now { continue }
-            if matches(rule: r, connection: c) { return r.action }
+            if r.matches(connection: c, address: address) { return r.action }
         }
 
         switch defaultMode {

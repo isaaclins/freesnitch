@@ -133,12 +133,53 @@ for forbidden in '.sorted' '.filter' '.map('; do
     fail "the per-flow verdict path uses $forbidden, which reorders or allocates on every flow"
   fi
 done
-printf '%s\n' "$verdict_body" | grep -Fq 'for r in prepared.ordered' \
-  || fail "the per-flow verdict path no longer scans the precomputed rule order"
+printf '%s\n' "$verdict_body" | grep -Fq 'for r in prepared.compiled' \
+  || fail "the per-flow verdict path no longer scans the compiled rule order"
+if printf '%s\n' "$verdict_body" | grep -Eq 'matches\(rule:|ipMatches\(|hostMatches\('; then
+  fail "the prepared verdict path reparses rule text instead of using compiled match data"
+fi
+address_line="$(printf '%s\n' "$verdict_body" | grep -nF 'PreparedConnectionAddress(' | head -1 | cut -d: -f1 || true)"
+scan_line="$(printf '%s\n' "$verdict_body" | grep -nF 'for r in prepared.compiled' | head -1 | cut -d: -f1 || true)"
+[[ -n "$address_line" && -n "$scan_line" ]] \
+  || fail "the prepared verdict path does not parse the connection address once before scanning rules"
+(( address_line < scan_line )) \
+  || fail "the prepared verdict path starts scanning before parsing the connection address"
 prepared_body="$(swift_function_body "$RULE_MATCHER" 'public init(rules: [Rule])')"
 [[ -n "$prepared_body" ]] || fail "PreparedRuleSet has no initializer to audit"
 printf '%s\n' "$prepared_body" | grep -Fq 'lhs.offset < rhs.offset' \
   || fail "PreparedRuleSet no longer breaks equal priorities by snapshot order, so which rule wins becomes undefined"
+printf '%s\n' "$prepared_body" | grep -Fq 'compiled = ordered.map(PreparedRule.init)' \
+  || fail "PreparedRuleSet does not compile each ordered rule when the snapshot is applied"
+prepared_ip_body="$(swift_function_body "$RULE_MATCHER" 'fileprivate struct PreparedIPPattern')"
+[[ -n "$prepared_ip_body" ]] || fail "the prepared matcher has no compiled IP pattern representation"
+prepared_v4_guard_line="$(printf '%s\n' "$prepared_ip_body" | grep -nF '(0...32).contains(bits)' | head -1 | cut -d: -f1 || true)"
+prepared_v4_mask_line="$(printf '%s\n' "$prepared_ip_body" | grep -nF 'let mask: UInt32' | head -1 | cut -d: -f1 || true)"
+[[ -n "$prepared_v4_guard_line" ]] \
+  || fail "compiled IPv4 CIDR patterns do not reject prefixes above 32"
+[[ -n "$prepared_v4_mask_line" ]] \
+  || fail "compiled IPv4 CIDR patterns no longer build the expected mask"
+(( prepared_v4_guard_line < prepared_v4_mask_line )) \
+  || fail "compiled IPv4 CIDR patterns build a mask before bounding the prefix"
+prepared_v6_guard_line="$(printf '%s\n' "$prepared_ip_body" | grep -nF '(0...128).contains(bits)' | head -1 | cut -d: -f1 || true)"
+prepared_v6_network_line="$(printf '%s\n' "$prepared_ip_body" | grep -nF 'PreparedIPv6Network(address: address, prefix: bits)' | head -1 | cut -d: -f1 || true)"
+[[ -n "$prepared_v6_guard_line" ]] \
+  || fail "compiled IPv6 CIDR patterns do not reject prefixes above 128"
+[[ -n "$prepared_v6_network_line" ]] \
+  || fail "compiled IPv6 CIDR patterns no longer retain their bounded prefix"
+(( prepared_v6_guard_line < prepared_v6_network_line )) \
+  || fail "compiled IPv6 CIDR patterns build a network before bounding the prefix"
+printf '%s\n' "$prepared_ip_body" | grep -Fq 'parts[1].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 })' \
+  || fail "compiled CIDR patterns accept a non-numeric or signed prefix"
+printf '%s\n' "$prepared_ip_body" | grep -Fq 'if network.contains(":")' \
+  || fail "compiled rules no longer keep IPv4 and IPv6 CIDRs in separate address spaces"
+printf '%s\n' "$prepared_ip_body" | grep -Fq 'parsePreparedIPv4Address(network)' \
+  || fail "PreparedRuleSet does not parse IPv4 CIDR networks when the snapshot is applied"
+printf '%s\n' "$prepared_ip_body" | grep -Fq 'parsePreparedIPv6Address(network)' \
+  || fail "PreparedRuleSet does not parse IPv6 CIDR networks when the snapshot is applied"
+printf '%s\n' "$prepared_ip_body" | grep -Fq 'if raw == rawIP { return true }' \
+  || fail "compiled IP rules no longer preserve exact-text matches for malformed stored values"
+require_text "$RULE_MATCHER" 'octet.count == 1 || octet.first != "0"' \
+  "compiled IPv4 parsing accepts ambiguous leading-zero octets"
 
 require_text "$RULE_MATCHER" "public enum RuleAddressValidator" \
   "the shared rule address validator is missing"
