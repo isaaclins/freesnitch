@@ -20,7 +20,7 @@ public enum XPCPeerValidator {
         trustedPeer(connection, requirement: peerRequirement())
     }
 
-    /// The boot-policy listener is a separate, read-only XPC surface. Keep its
+    /// The boot-policy listener is a separate cache-only XPC surface. Keep its
     /// requirement separate so a network extension can never use the helper's
     /// state-changing GUI and CLI API.
     public static func isTrustedNetExt(_ connection: NSXPCConnection) -> Bool {

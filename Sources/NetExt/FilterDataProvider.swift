@@ -3,8 +3,8 @@
 //  FreeSnitch Network System Extension
 //
 //  A NEFilterDataProvider content filter (the same mechanism Little Snitch
-//  uses). Every new socket flow is evaluated against the rule set delivered
-//  over XPC by the GUI. Flows with no decisive rule are PAUSED
+//  uses). Every new socket flow is evaluated against the rule set restored from
+//  the helper cache or delivered over XPC by the GUI. Flows with no decisive rule are PAUSED
 //  and the GUI is asked over XPC; the flow resumes with the user's verdict.
 //
 //  Requires the `com.apple.developer.networking.networkextension`
@@ -81,6 +81,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
+        if isDNSOrDHCP(conn) { return .allow() }
         guard let snapshot = currentSnapshot() else {
             // No GUI-delivered policy is a degraded state, not an alert-mode
             // policy. Allowing here keeps a missing GUI from becoming a network
@@ -157,6 +158,12 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func isLoopback(_ ip: String) -> Bool {
         ip.hasPrefix("127.") || ip == "::1" || ip == "localhost"
+    }
+
+    /// Do not let a cached or live policy cut off the machine's basic network
+    /// services. PFManager applies the same protection to its anchor rules.
+    private func isDNSOrDHCP(_ conn: Connection) -> Bool {
+        conn.remotePort == 53 || conn.remotePort == 67 || conn.remotePort == 68
     }
 
     private func parentPID(of pid: Int32) -> Int32? {

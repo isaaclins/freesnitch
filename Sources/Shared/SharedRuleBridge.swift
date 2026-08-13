@@ -1,9 +1,10 @@
 import Foundation
 
 /// The rule snapshot exchanged between the GUI and the Network System
-/// Extension. The extension runs as root, so an app-group file would resolve
-/// to root's home rather than the logged-in user's home. Snapshots therefore
-/// stay in memory and cross the existing app-extension XPC connection.
+/// Extension. The extension runs in a sandbox, so an app-group file would
+/// resolve to the wrong home for the root process. Live snapshots cross the
+/// existing app-extension XPC connection; the helper separately owns a
+/// versioned boot cache for extension startup.
 public enum SharedRuleBridge {
     /// Version the on-disk envelope separately from the live XPC payload. A
     /// future build must reject an unknown cache instead of guessing its policy.
