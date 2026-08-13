@@ -23,6 +23,8 @@ final class AppState: ObservableObject {
     @Published var unconfirmedCount: Int = 0
     @Published var incomingCount: Int = 0
     @Published var pendingAlerts: [PendingAlert] = []
+    @Published private(set) var firstContactAskedToday = 0
+    @Published private(set) var knownContactsAllowedToday = 0
     @Published var helperConnected: Bool = false
     @Published var helperInstallState: HelperInstallState = .unknown
     @Published var helperVersionState: HelperVersionState = .unknown
@@ -79,6 +81,10 @@ final class AppState: ObservableObject {
     /// Only the newest helper getter response may update the GUI cache or
     /// publish a snapshot. This protects against out-of-order XPC replies.
     private var snapshotRequestSequence: UInt64 = 0
+    /// Prepared by the helper from retained Insights history. This cache is
+    /// memory-only on the alert path; an unavailable or stale classifier asks.
+    private var contactClassifier = InsightsContactClassifier(snapshot: nil)
+    private var contactRefreshTimer: Timer?
 
     /// Puts the toggle back where reality is after the helper refuses or rolls
     /// back an enforcement change, without bouncing another request off it.
@@ -177,7 +183,24 @@ final class AppState: ObservableObject {
     func bootstrap() {
         helper.startMonitoring()
         refreshRules()
+        refreshContactClassifier()
+        if contactRefreshTimer == nil {
+            let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+                self?.refreshContactClassifier()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            contactRefreshTimer = timer
+        }
         if enforcementEnabled { helper.setEnforcementEnabled(true) }
+    }
+
+    private func refreshContactClassifier() {
+        helper.insightsContactSnapshot { [weak self] snapshot in
+            guard let self else { return }
+            // The classifier validates freshness and fields again. A helper
+            // transport error therefore cannot turn into a silent allow.
+            self.contactClassifier = InsightsContactClassifier(snapshot: snapshot)
+        }
     }
 
     /// Refreshes the display cache and synchronizes the extension from one
@@ -293,6 +316,18 @@ final class AppState: ObservableObject {
     private static let maxPendingAlerts = 12
 
     func presentAlert(for c: Connection, reply: @escaping (Bool, Bool) -> Void) {
+        // Alert mode's known-contact verdict is the settled #26 behavior:
+        // allow silently, like the existing Silent Allow fallback, because a
+        // retained observation is evidence that this app/destination pair is
+        // known. Explicit rules have already been matched by the extension and
+        // remain authoritative. If the cache is unavailable, stale, or
+        // malformed, this switch falls through to the existing ask behavior.
+        if mode == .alert,
+           contactClassifier.decision(for: c) == .knownContact {
+            knownContactsAllowedToday += 1
+            reply(true, false)
+            return
+        }
         // One question per process and destination. Without this a single
         // chatty process floods the queue with identical prompts.
         let isDuplicate = pendingAlerts.contains {
@@ -305,7 +340,14 @@ final class AppState: ObservableObject {
             reply(true, false)
             return
         }
+        firstContactAskedToday += 1
         pendingAlerts.append(PendingAlert(connection: c, reply: reply))
+    }
+
+    func firstContactContext(for connection: Connection) -> String? {
+        guard contactClassifier.isAvailable else { return nil }
+        let count = contactClassifier.knownDestinationCount(for: connection) ?? 0
+        return "First time this app has contacted this destination. You have allowed it to reach \(count) other place\(count == 1 ? "" : "s") in retained history."
     }
 
     func resolveAlert(_ alert: PendingAlert, allow: Bool, remember: Bool) {

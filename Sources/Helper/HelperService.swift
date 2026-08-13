@@ -179,6 +179,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// stall the connection that also carries policy calls.
     private let insightsQueryQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-queries", qos: .userInitiated)
     private let insightsQuerySlots = DispatchSemaphore(value: 8)
+    private let insightsContactCacheLock = NSLock()
+    private var insightsContactSnapshot: InsightsContactSnapshot?
     private let insightsDropLock = NSLock()
     private var insightsDropCount = 0
     private var lastInsightsDropLog = Date.distantPast
@@ -296,10 +298,16 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     private func startInsightsMaintenance() {
         guard insights != nil, insightsMaintenanceTimer == nil else { return }
-        insightsMaintenanceQueue.async { [weak self] in self?.pruneInsights() }
+        insightsMaintenanceQueue.async { [weak self] in
+            self?.pruneInsights()
+            self?.refreshInsightsContactSnapshot()
+        }
         let timer = DispatchSource.makeTimerSource(queue: insightsMaintenanceQueue)
         timer.schedule(deadline: .now() + 6 * 60 * 60, repeating: 6 * 60 * 60)
-        timer.setEventHandler { [weak self] in self?.pruneInsights() }
+        timer.setEventHandler { [weak self] in
+            self?.pruneInsights()
+            self?.refreshInsightsContactSnapshot()
+        }
         insightsMaintenanceTimer = timer
         timer.resume()
     }
@@ -336,10 +344,31 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         insightsObservationQueue.async { [weak self] in
             defer { self?.insightsObservationSlots.signal() }
-            do { try insights.record(observations) }
-            catch { PSLog.error(PSLog.helper, "Insights observation recording failed: \(error.localizedDescription)") }
+            do {
+                try insights.record(observations)
+                self?.insightsMaintenanceQueue.async { [weak self] in self?.refreshInsightsContactSnapshot() }
+            } catch {
+                PSLog.error(PSLog.helper, "Insights observation recording failed: \(error.localizedDescription)")
+            }
         }
         reply(true, nil)
+    }
+
+    /// Rebuilds the first-contact evidence on a utility queue. The snapshot is
+    /// swapped atomically only after the store query and validation succeed.
+    private func refreshInsightsContactSnapshot() {
+        guard let insights else { return }
+        do {
+            let snapshot = try insights.contactSnapshot()
+            insightsContactCacheLock.lock()
+            insightsContactSnapshot = snapshot
+            insightsContactCacheLock.unlock()
+        } catch {
+            insightsContactCacheLock.lock()
+            insightsContactSnapshot = nil
+            insightsContactCacheLock.unlock()
+            PSLog.error(PSLog.helper, "Insights contact history unavailable: \(error.localizedDescription)")
+        }
     }
 
     private func noteInsightsDrop(_ kind: String) {
@@ -883,6 +912,27 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
             reply(false, error.localizedDescription)
+        }
+    }
+
+    func getInsightsContactSnapshot(reply: @escaping (Data, String?) -> Void) {
+        insightsContactCacheLock.lock()
+        let snapshot = insightsContactSnapshot
+        insightsContactCacheLock.unlock()
+        guard let snapshot else {
+            reply(Data(), "insights contact history is unavailable")
+            return
+        }
+        do {
+            let data = try FreeSnitchWireCodec.encode(snapshot)
+            try snapshot.validate()
+            guard data.count <= InsightsLimits.maxReportBytes else {
+                reply(Data(), "insights contact history is oversized")
+                return
+            }
+            reply(data, nil)
+        } catch {
+            reply(Data(), "insights contact history is malformed: \(error.localizedDescription)")
         }
     }
 

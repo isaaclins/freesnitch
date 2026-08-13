@@ -47,6 +47,14 @@ struct ConnectionAlertView: View {
             .background(PSTheme.bgTertiary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
+            if let context = state.firstContactContext(for: alert.connection) {
+                Text(context)
+                    .font(.system(size: 11)).foregroundColor(PSTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Today: \(state.firstContactAskedToday) asked, \(state.knownContactsAllowedToday) silently allowed (already known)")
+                .font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Remember this decision", isOn: $remember)
                     .toggleStyle(.checkbox)

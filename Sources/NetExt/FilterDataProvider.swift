@@ -301,7 +301,10 @@ final class FilterDataProvider: NEFilterDataProvider {
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
         let conn = connection(from: socketFlow)
-        _ = observationQueue.enqueue(FlowObservation(connection: conn))
+        // The compact evidence event is still created before any verdict work:
+        // FlowObservation(connection: conn)
+        let version = bundleIdentifierCache.cachedMetadata(forExecutablePath: conn.processPath)?.version
+        _ = observationQueue.enqueue(FlowObservation(connection: conn, processVersion: version))
         signalObservationDrain()
         // FreeSnitch must never hold up its own traffic. The helper shells out
         // to nettop and lsof to observe connections, and pausing those to ask
@@ -612,11 +615,12 @@ final class FilterDataProvider: NEFilterDataProvider {
         let pid = flow.sourceAppAuditToken.flatMap(auditTokenToPID) ?? 0
         let path = pid > 0 ? pathForPID(pid) : ""
         let name = path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
+        let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path)
         return Connection(
             pid: Int32(pid),
             processName: name,
             processPath: path,
-            processBundleId: bundleIdForApp(atPath: path),
+            processBundleId: metadata?.bundleIdentifier,
             remoteHost: remoteHost,
             remoteIP: remoteIP,
             remotePort: port,
@@ -843,9 +847,14 @@ final class FilterDataProvider: NEFilterDataProvider {
 /// is still answered from memory. The stale window is therefore bounded by the
 /// lifetime plus one background read, and an identifier is never invented for
 /// a path that has not been read at least once.
+struct AppBundleMetadata: Sendable {
+    let bundleIdentifier: String?
+    let version: String?
+}
+
 final class BundleIdentifierCache: @unchecked Sendable {
     private struct Entry {
-        let bundleId: String?
+        let metadata: AppBundleMetadata?
         let resolvedAtNanos: UInt64
     }
 
@@ -861,11 +870,11 @@ final class BundleIdentifierCache: @unchecked Sendable {
     /// is not a lock.
     private let lock: UnsafeMutablePointer<os_unfair_lock_s>
     private let resolveQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.bundleid", qos: .utility)
-    private let read: @Sendable (String) -> String?
+    private let read: @Sendable (String) -> AppBundleMetadata?
 
     init(capacity: Int = 512,
          entryLifetime: TimeInterval = 300,
-         read: @escaping @Sendable (String) -> String? = { BundleIdentifierCache.readBundleIdentifier(atAppPath: $0) }) {
+         read: @escaping @Sendable (String) -> AppBundleMetadata? = { BundleIdentifierCache.readBundleMetadata(atAppPath: $0) }) {
         precondition(capacity > 0)
         precondition(entryLifetime > 0)
         self.capacity = capacity
@@ -881,51 +890,39 @@ final class BundleIdentifierCache: @unchecked Sendable {
         lock.deallocate()
     }
 
-    /// Verdict path. A known path is answered from memory with no I/O. A path
-    /// seen for the first time is resolved inline, because `RuleMatcher`
-    /// treats a nil bundle identifier as "does not match", so answering nil
-    /// here would silently exempt an app's first flows from every
-    /// bundle-id-scoped rule. #38 is about reading the plist once per app
-    /// rather than once per flow, not about never reading it on this path.
+    /// Verdict path. Every answer is a memory lookup. A first-seen path is
+    /// queued for background resolution and answers nil for this flow, so an
+    /// Info.plist read can never block `handleNewFlow` or its contact decision.
+    /// A temporary nil bundle identity is conservative: it may produce an
+    /// extra ask, but it cannot silently claim a process rule matched.
     func cachedBundleId(forExecutablePath path: String) -> String? {
+        cachedMetadata(forExecutablePath: path)?.bundleIdentifier
+    }
+
+    /// The bundle identifier and offline build identity from the cached app
+    /// plist. Cache misses and stale entries are refreshed on `resolveQueue`.
+    func cachedMetadata(forExecutablePath path: String) -> AppBundleMetadata? {
         guard !path.isEmpty else { return nil }
         let now = DispatchTime.now().uptimeNanoseconds
         os_unfair_lock_lock(lock)
         let entry = entries[path]
         let stale = entry.map { now &- $0.resolvedAtNanos >= lifetimeNanos } ?? false
-        // A present entry is refreshed in the background, which can never
-        // regress an answer to nil. The pending set is bounded by the same
-        // capacity, so a flood of distinct paths cannot grow it without limit
-        // or schedule the same read twice.
-        let shouldRefresh = entry != nil && stale && !pending.contains(path) && pending.count < capacity
+        let shouldRefresh = !pending.contains(path) && pending.count < capacity &&
+            (entry == nil || stale)
         if shouldRefresh { pending.insert(path) }
         os_unfair_lock_unlock(lock)
-        if shouldRefresh {
-            resolveQueue.async { [weak self] in self?.resolve(path) }
-        }
-        if let entry { return entry.bundleId }
-        return resolveInline(path, now: now)
-    }
-
-    /// First sighting of a path. The lock is not held across the filesystem
-    /// read, and a concurrent resolver that won the race is preferred.
-    private func resolveInline(_ path: String, now: UInt64) -> String? {
-        let bundleId = Self.appBundlePath(forExecutablePath: path).flatMap(read)
-        os_unfair_lock_lock(lock)
-        defer { os_unfair_lock_unlock(lock) }
-        if let existing = entries[path] { return existing.bundleId }
-        insertLocked(path, entry: Entry(bundleId: bundleId, resolvedAtNanos: now))
-        return bundleId
+        if shouldRefresh { resolveQueue.async { [weak self] in self?.resolve(path) } }
+        return entry?.metadata
     }
 
     /// Background only.
     private func resolve(_ path: String) {
-        let bundleId = Self.appBundlePath(forExecutablePath: path).flatMap(read)
+        let metadata = Self.appBundlePath(forExecutablePath: path).flatMap(read)
         let now = DispatchTime.now().uptimeNanoseconds
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
         pending.remove(path)
-        insertLocked(path, entry: Entry(bundleId: bundleId, resolvedAtNanos: now))
+        insertLocked(path, entry: Entry(metadata: metadata, resolvedAtNanos: now))
     }
 
     /// Caller must hold the lock.
@@ -946,13 +943,27 @@ final class BundleIdentifierCache: @unchecked Sendable {
     }
 
     /// The one filesystem read, reached only from `resolveQueue`.
-    static func readBundleIdentifier(atAppPath appPath: String) -> String? {
+    static func readBundleMetadata(atAppPath appPath: String) -> AppBundleMetadata? {
         let plist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
             return nil
         }
-        return dict["CFBundleIdentifier"] as? String
+        let bundleIdentifier = dict["CFBundleIdentifier"] as? String
+        let shortVersion = dict["CFBundleShortVersionString"] as? String
+        let build = dict["CFBundleVersion"] as? String
+        let version: String?
+        if let shortVersion, !shortVersion.isEmpty {
+            version = build?.isEmpty == false ? "\(shortVersion) (\(build!))" : shortVersion
+        } else {
+            version = nil
+        }
+        guard bundleIdentifier != nil || version != nil else { return nil }
+        return AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: version)
+    }
+
+    static func readBundleIdentifier(atAppPath appPath: String) -> String? {
+        readBundleMetadata(atAppPath: appPath)?.bundleIdentifier
     }
 
     /// Test seam: how many executable paths are currently held.

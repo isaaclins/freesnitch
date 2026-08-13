@@ -52,6 +52,10 @@ import Foundation
     /// pretending it has no data. The reply carries an encoded `InsightsReport`
     /// and an error string, never both.
     @objc optional func queryInsights(request: Data, reply: @escaping (Data, String?) -> Void)
+    /// A bounded, in-memory prepared set for first-contact classification.
+    /// The helper refreshes it off the verdict path; unavailable or stale data
+    /// is an error so Alert mode keeps asking.
+    @objc optional func getInsightsContactSnapshot(reply: @escaping (Data, String?) -> Void)
     func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void)
     func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void)
     func purgeInsights(reply: @escaping (Bool, String?) -> Void)

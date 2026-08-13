@@ -626,6 +626,31 @@ final class HelperClient: NSObject, ObservableObject {
         return true
     }
 
+    /// Fetches the helper-prepared contact set. This is deliberately a
+    /// snapshot read, not a per-flow database query. A missing or stale set is
+    /// returned as nil so Alert mode retains its existing ask behavior.
+    func insightsContactSnapshot(completion: @MainActor @escaping (InsightsContactSnapshot?) -> Void) {
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ _ in
+            Task { @MainActor in completion(nil) }
+        }) as? HelperProtocol else {
+            completion(nil)
+            return
+        }
+        guard proxy.getInsightsContactSnapshot != nil else {
+            completion(nil)
+            return
+        }
+        proxy.getInsightsContactSnapshot? { data, message in
+            guard message == nil, !data.isEmpty,
+                  let snapshot = try? FreeSnitchWireCodec.decode(InsightsContactSnapshot.self, from: data),
+                  (try? snapshot.validate()) != nil else {
+                Task { @MainActor in completion(nil) }
+                return
+            }
+            Task { @MainActor in completion(snapshot) }
+        }
+    }
+
     func queryInsightsRecordingEnabled(completion: @MainActor @escaping (Bool) -> Void) {
         guard let proxy = remote else {
             completion(false)

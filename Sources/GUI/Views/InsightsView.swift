@@ -16,6 +16,7 @@ struct InsightsView: View {
         VStack(spacing: 0) {
             header
             enforcementBanner
+            behaviourBanner
             Divider().background(PSTheme.stroke)
             content
             Divider().background(PSTheme.stroke)
@@ -107,6 +108,21 @@ struct InsightsView: View {
         }
     }
 
+    private var behaviourBanner: some View {
+        Group {
+            if !model.findings.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundColor(PSTheme.accentYellow)
+                    Text("\(model.changedAppCount) app\(model.changedAppCount == 1 ? "" : "s") changed behaviour after updating")
+                        .font(.system(size: 11, weight: .medium)).foregroundColor(PSTheme.textPrimary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(PSTheme.accentYellow.opacity(0.12))
+            }
+        }
+    }
+
     // MARK: Sections
 
     private var content: some View {
@@ -129,6 +145,7 @@ struct InsightsView: View {
             case .apps: appsSection
             case .unresolved: unresolvedSection
             case .proposals: proposalsSection
+            case .findings: findingsSection
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -311,6 +328,50 @@ struct InsightsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    // MARK: Changed behaviour
+
+    private var findingsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle("New after update", subtitle: "observed difference, not a verdict")
+            Text("These findings compare destinations observed under different offline app builds. They do not establish causation or intent. Apps without a reliable containing-app version are labelled unknown and are not guessed.")
+                .font(.system(size: 11)).foregroundColor(PSTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14).padding(.bottom, 8)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(model.findings) { finding in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 8) {
+                                Text(finding.displayName).font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(PSTheme.textPrimary)
+                                Text(finding.versionLabel).font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(finding.versionKnown ? PSTheme.textSecondary : PSTheme.accentYellow)
+                                Spacer()
+                            }
+                            HStack(spacing: 8) {
+                                Text(finding.destination).font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(PSTheme.textPrimary)
+                                PSChip(finding.wording, color: PSTheme.accentYellow, icon: "exclamationmark.magnifyingglass")
+                                Text("\(finding.connectionCount) connection\(finding.connectionCount == 1 ? "" : "s")")
+                                    .font(.system(size: 10)).foregroundColor(PSTheme.textSecondary)
+                                Spacer()
+                            }
+                            Text(finding.evidence).font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                            if let proposal = finding.proposedRule() {
+                                Button("Propose a rule") { model.proposeRule(for: proposal) }
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .overlay(Divider().background(PSTheme.stroke), alignment: .bottom)
+                    }
+                    if model.findings.isEmpty && !model.isLoading { emptyRow("No changed destinations in this range.") }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     // MARK: Proposals
 
     private var proposalsSection: some View {
@@ -461,6 +522,7 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
     case apps
     case unresolved
     case proposals
+    case findings
 
     var id: String { rawValue }
 
@@ -469,6 +531,7 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
         case .apps: return "Apps"
         case .unresolved: return "Addresses with no DNS answer"
         case .proposals: return "Proposed rules"
+        case .findings: return "New after update"
         }
     }
 }
@@ -490,6 +553,7 @@ final class InsightsViewModel: ObservableObject {
     @Published var destinations: [InsightsDestinationSummary] = []
     @Published var unresolved: [InsightsUnresolvedDestination] = []
     @Published var proposals: [InsightsProposedRule] = []
+    @Published var findings: [InsightsBehaviourFinding] = []
     @Published var overview: InsightsOverview?
     @Published var selectedApp: InsightsAppSummary?
     @Published var recordingEnabled = true
@@ -503,6 +567,8 @@ final class InsightsViewModel: ObservableObject {
     @Published var hasMoreUnresolved = false
     @Published var hasMoreProposals = false
     @Published private(set) var source: InsightsDataSource = .rawEvents
+
+    var changedAppCount: Int { Set(findings.map(\.appIdentity)).count }
 
     private weak var state: AppState?
     private var attached = false
@@ -530,6 +596,10 @@ final class InsightsViewModel: ObservableObject {
         acceptMessage = nil
         refreshRecordingState()
         loadOverview()
+        if section != .findings {
+            findings = []
+            loadFindings(offset: 0)
+        }
         switch section {
         case .apps:
             apps = []
@@ -541,6 +611,9 @@ final class InsightsViewModel: ObservableObject {
         case .proposals:
             proposals = []
             loadProposals(offset: 0)
+        case .findings:
+            findings = []
+            loadFindings(offset: 0)
         }
     }
 
@@ -554,6 +627,7 @@ final class InsightsViewModel: ObservableObject {
     func loadMoreDestinations() { loadDestinations(offset: destinations.count) }
     func loadMoreUnresolved() { loadUnresolved(offset: unresolved.count) }
     func loadMoreProposals() { loadProposals(offset: proposals.count) }
+    func loadMoreFindings() { loadFindings(offset: findings.count) }
 
     private func query(_ kind: InsightsQueryKind, offset: Int, appIdentity: String? = nil) -> InsightsQuery? {
         guard offset <= Self.pageSize * Self.maximumPages else { return nil }
@@ -611,6 +685,18 @@ final class InsightsViewModel: ObservableObject {
             self.source = report.source
             self.unresolved = offset == 0 ? report.unresolved : self.unresolved + report.unresolved
             self.hasMoreUnresolved = report.hasMore
+        }
+    }
+
+    private func loadFindings(offset: Int) {
+        guard let helper = state?.helper, let request = query(.findings, offset: offset) else { return }
+        isLoading = true
+        helper.insightsReport(request) { [weak self] report, error in
+            guard let self else { return }
+            self.isLoading = false
+            guard let report else { self.errorMessage = error; return }
+            self.source = report.source
+            self.findings = offset == 0 ? report.findings : self.findings + report.findings
         }
     }
 
@@ -693,6 +779,15 @@ final class InsightsViewModel: ObservableObject {
         if !proposals.contains(where: { $0.id == proposal.id }) {
             proposals.insert(proposal, at: 0)
         }
+        section = .proposals
+    }
+
+    func proposeRule(for proposal: InsightsProposedRule) {
+        guard !isCoveredByExistingRule(proposal) else {
+            acceptMessage = "A rule already covers \(proposal.destinationLabel) for \(proposal.appDisplayName)."
+            return
+        }
+        if !proposals.contains(where: { $0.id == proposal.id }) { proposals.insert(proposal, at: 0) }
         section = .proposals
     }
 

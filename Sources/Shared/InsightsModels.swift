@@ -7,6 +7,8 @@ public enum InsightsValidationError: Error, LocalizedError, Sendable {
     case oversizedPayload(Int)
     case invalidField(String)
     case tooManyRows(Int)
+    case tooManyContacts(Int)
+    case invalidContactSnapshot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +18,8 @@ public enum InsightsValidationError: Error, LocalizedError, Sendable {
         case .oversizedPayload(let count): return "insights payload is too large: \(count) bytes"
         case .invalidField(let field): return "invalid insights field: \(field)"
         case .tooManyRows(let count): return "insights report contains too many rows: \(count)"
+        case .tooManyContacts(let count): return "insights contact snapshot contains too many contacts: \(count)"
+        case .invalidContactSnapshot(let field): return "invalid insights contact snapshot: \(field)"
         }
     }
 }
@@ -46,6 +50,12 @@ public enum InsightsLimits {
     public static let maxQueryRequestBytes = 8 * 1024
     public static let maxReportBytes = 1024 * 1024
     public static let maxReportRowCount = maxQueryPageSize + 1
+    /// A prepared contact set is deliberately bounded. A contact omitted from
+    /// a bounded set is treated as new, never as known, so this bound can only
+    /// cause an extra prompt and can never silently allow unknown traffic.
+    public static let maxContactCount = 10_000
+    public static let maxContactSnapshotAge: TimeInterval = 5 * 60
+    public static let maxVersionLength = 256
     /// How many distinct process names an unresolved-IP row may name inline.
     public static let maxUnresolvedAppNames = 5
 }
@@ -87,6 +97,9 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     public let processBundleId: String?
     public let processPath: String
     public let processName: String
+    /// Marketing version plus build from the containing app's Info.plist.
+    /// Nil means no reliable containing app/version was available.
+    public let processVersion: String?
     public let remoteHost: String
     public let remoteIP: String
     public let remotePort: Int
@@ -95,7 +108,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     public let bytesIn: Int64?
     public let bytesOut: Int64?
 
-    public init(connection: Connection, observedAt: Date = Date()) {
+    public init(connection: Connection, observedAt: Date = Date(), processVersion: String? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.id = connection.id
         self.observedAt = observedAt
@@ -103,6 +116,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         self.processBundleId = connection.processBundleId
         self.processPath = connection.processPath
         self.processName = connection.processName
+        self.processVersion = AppVersionIdentity(processVersion)?.value
         self.remoteHost = connection.remoteHost
         self.remoteIP = connection.remoteIP
         self.remotePort = connection.remotePort
@@ -110,6 +124,49 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         self.protocolName = connection.protocolName
         self.bytesIn = connection.bytesIn >= 0 ? connection.bytesIn : nil
         self.bytesOut = connection.bytesOut >= 0 ? connection.bytesOut : nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, id, observedAt, pid, processBundleId, processPath, processName,
+             processVersion, remoteHost, remoteIP, remotePort, direction, protocolName, bytesIn, bytesOut
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        id = try c.decode(UUID.self, forKey: .id)
+        observedAt = try c.decode(Date.self, forKey: .observedAt)
+        pid = try c.decode(Int32.self, forKey: .pid)
+        processBundleId = try c.decodeIfPresent(String.self, forKey: .processBundleId)
+        processPath = try c.decode(String.self, forKey: .processPath)
+        processName = try c.decode(String.self, forKey: .processName)
+        processVersion = try c.decodeIfPresent(String.self, forKey: .processVersion)
+        remoteHost = try c.decode(String.self, forKey: .remoteHost)
+        remoteIP = try c.decode(String.self, forKey: .remoteIP)
+        remotePort = try c.decode(Int.self, forKey: .remotePort)
+        direction = try c.decode(RuleDirection.self, forKey: .direction)
+        protocolName = try c.decode(String.self, forKey: .protocolName)
+        bytesIn = try c.decodeIfPresent(Int64.self, forKey: .bytesIn)
+        bytesOut = try c.decodeIfPresent(Int64.self, forKey: .bytesOut)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(id, forKey: .id)
+        try c.encode(observedAt, forKey: .observedAt)
+        try c.encode(pid, forKey: .pid)
+        try c.encodeIfPresent(processBundleId, forKey: .processBundleId)
+        try c.encode(processPath, forKey: .processPath)
+        try c.encode(processName, forKey: .processName)
+        try c.encodeIfPresent(processVersion, forKey: .processVersion)
+        try c.encode(remoteHost, forKey: .remoteHost)
+        try c.encode(remoteIP, forKey: .remoteIP)
+        try c.encode(remotePort, forKey: .remotePort)
+        try c.encode(direction, forKey: .direction)
+        try c.encode(protocolName, forKey: .protocolName)
+        try c.encodeIfPresent(bytesIn, forKey: .bytesIn)
+        try c.encodeIfPresent(bytesOut, forKey: .bytesOut)
     }
 
     public func validate(now: Date = Date()) throws {
@@ -123,6 +180,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         }
         guard pid >= 0 else { throw InsightsValidationError.invalidField("pid") }
         try validateLength(processBundleId, InsightsLimits.maxBundleIDLength, "processBundleId")
+        try validateLength(processVersion, InsightsLimits.maxVersionLength, "processVersion")
         try validateLength(processPath, InsightsLimits.maxPathLength, "processPath")
         try validateLength(processName, InsightsLimits.maxNameLength, "processName")
         try validateLength(remoteHost, InsightsLimits.maxHostLength, "remoteHost")
@@ -145,6 +203,185 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         guard (value?.utf8.count ?? 0) <= maximum else {
             throw InsightsValidationError.invalidField(name)
         }
+    }
+}
+
+/// The offline identity of the containing app at observation time. A value is
+/// only reliable when it came from an enclosing .app's Info.plist. System
+/// binaries and standalone executables intentionally remain nil.
+public struct AppVersionIdentity: Codable, Hashable, Sendable {
+    public let value: String
+
+    public init?(_ value: String?) {
+        guard let value, !value.isEmpty, value.utf8.count <= InsightsLimits.maxVersionLength else { return nil }
+        self.value = value
+    }
+
+    public var label: String { value }
+}
+
+/// A pair used by both first-contact suppression and update findings. Keeping
+/// the key in shared code prevents the two policies from disagreeing about
+/// whether a hostname or address represents the destination.
+public struct InsightsContact: Codable, Hashable, Sendable {
+    public let appIdentity: String
+    public let destination: String
+
+    public init(appIdentity: String, destination: String) {
+        self.appIdentity = appIdentity
+        self.destination = PFHostValidator.kind(for: destination) == .hostname
+            ? destination.lowercased()
+            : destination
+    }
+
+    public init?(observation: FlowObservation) {
+        let app = observation.processBundleId?.isEmpty == false
+            ? observation.processBundleId!
+            : observation.processPath
+        let destination = Self.destination(for: observation.remoteHost, ip: observation.remoteIP)
+        guard !app.isEmpty, !destination.isEmpty else { return nil }
+        self.init(appIdentity: app, destination: destination)
+    }
+
+    public static func destination(for host: String, ip: String) -> String {
+        PFHostValidator.kind(for: host) == .hostname ? host.lowercased() : ip
+    }
+}
+
+/// This is prepared by the root helper away from the verdict path and handed
+/// to the GUI. `unavailable` is represented by a missing snapshot, not by an
+/// empty ready set: an empty set is evidence that the retained store was
+/// successfully inspected and therefore means every contact is new.
+public struct InsightsContactSnapshot: Codable, Sendable {
+    public let schemaVersion: Int
+    public let preparedAt: Date
+    public let contacts: [InsightsContact]
+    public let truncated: Bool
+
+    public init(contacts: [InsightsContact], preparedAt: Date = Date(), truncated: Bool = false) {
+        self.schemaVersion = InsightsLimits.schemaVersion
+        self.preparedAt = preparedAt
+        self.contacts = contacts
+        self.truncated = truncated
+    }
+
+    public func validate(now: Date = Date()) throws {
+        guard schemaVersion == InsightsLimits.schemaVersion else {
+            throw InsightsValidationError.unsupportedVersion(schemaVersion)
+        }
+        guard preparedAt.timeIntervalSince1970.isFinite,
+              preparedAt <= now.addingTimeInterval(5 * 60),
+              now.timeIntervalSince(preparedAt) <= InsightsLimits.maxContactSnapshotAge else {
+            throw InsightsValidationError.invalidContactSnapshot("preparedAt")
+        }
+        guard contacts.count <= InsightsLimits.maxContactCount else {
+            throw InsightsValidationError.tooManyContacts(contacts.count)
+        }
+        for contact in contacts {
+            guard !contact.appIdentity.isEmpty,
+                  contact.appIdentity.utf8.count <= InsightsLimits.maxPathLength,
+                  !contact.destination.isEmpty,
+                  contact.destination.utf8.count <= InsightsLimits.maxHostLength || contact.destination.utf8.count <= InsightsLimits.maxIPAddressLength,
+                  PFHostValidator.kind(for: contact.destination) == .hostname || PFHostValidator.kind(for: contact.destination) == .ip else {
+                throw InsightsValidationError.invalidContactSnapshot("contact")
+            }
+        }
+    }
+
+    public func contains(_ contact: InsightsContact) -> Bool {
+        contacts.contains(contact)
+    }
+}
+
+public enum InsightsContactDecision: String, Codable, Sendable {
+    case firstContact
+    case knownContact
+    /// No conclusion is safe. Alert mode keeps its existing ask behavior.
+    case askHistoryUnavailable
+}
+
+public struct InsightsContactClassifier: Sendable {
+    private let contacts: Set<InsightsContact>?
+
+    public init(snapshot: InsightsContactSnapshot?, now: Date = Date()) {
+        guard let snapshot, (try? snapshot.validate(now: now)) != nil else {
+            self.contacts = nil
+            return
+        }
+        self.contacts = Set(snapshot.contacts)
+    }
+
+    public var isAvailable: Bool { contacts != nil }
+
+    public func decision(for observation: FlowObservation) -> InsightsContactDecision {
+        guard let contacts else { return .askHistoryUnavailable }
+        guard let contact = InsightsContact(observation: observation) else { return .firstContact }
+        return contacts.contains(contact) ? .knownContact : .firstContact
+    }
+
+    public func decision(for connection: Connection) -> InsightsContactDecision {
+        decision(for: FlowObservation(connection: connection))
+    }
+
+    public func knownDestinationCount(for connection: Connection) -> Int? {
+        guard let contacts else { return nil }
+        let app = connection.processBundleId?.isEmpty == false
+            ? connection.processBundleId!
+            : connection.processPath
+        guard !app.isEmpty else { return 0 }
+        return contacts.reduce(into: 0) { count, contact in
+            if contact.appIdentity == app { count += 1 }
+        }
+    }
+}
+
+/// A finding is an observed destination difference, not a malware or causation
+/// claim. Missing version identities are displayed as unknown and never filled
+/// with a guessed marketing version.
+public struct InsightsBehaviourFinding: Codable, Sendable, Hashable, Identifiable {
+    public var id: String { appIdentity + "\\u{1F}" + destination + "\\u{1F}" + (newVersion ?? "unknown") }
+    public let appIdentity: String
+    public let displayName: String
+    public let oldVersion: String?
+    public let newVersion: String?
+    public let destination: String
+    public let firstSeen: Date
+    public let connectionCount: Int
+    public let versionKnown: Bool
+
+    public init(appIdentity: String, displayName: String, oldVersion: String?, newVersion: String?,
+                destination: String, firstSeen: Date, connectionCount: Int, versionKnown: Bool) {
+        self.appIdentity = appIdentity
+        self.displayName = displayName
+        self.oldVersion = oldVersion
+        self.newVersion = newVersion
+        self.destination = destination
+        self.firstSeen = firstSeen
+        self.connectionCount = connectionCount
+        self.versionKnown = versionKnown
+    }
+
+    public var versionLabel: String {
+        guard versionKnown else { return "Unknown app version" }
+        return "\(oldVersion ?? "unknown") -> \(newVersion ?? "unknown")"
+    }
+
+    public var wording: String {
+        versionKnown ? "new after update" : "new destination, app version unknown"
+    }
+
+    public var evidence: String {
+        "Observed \(connectionCount) connection\(connectionCount == 1 ? "" : "s") since \(firstSeen.formatted(date: .abbreviated, time: .shortened))."
+    }
+
+    public func proposedRule(processBundleId: String? = nil, processPath: String? = nil) -> InsightsProposedRule? {
+        guard PFHostValidator.kind(for: destination) == .hostname || PFHostValidator.kind(for: destination) == .ip else { return nil }
+        let domain = PFHostValidator.kind(for: destination) == .hostname ? destination : nil
+        let ip = domain == nil ? destination : nil
+        return InsightsProposedRule(appIdentity: appIdentity, appDisplayName: displayName,
+                                    processBundleId: processBundleId, processPath: processPath,
+                                    domain: domain, remoteIP: ip, connectionCount: connectionCount,
+                                    otherAppCount: 0, lastSeen: firstSeen)
     }
 }
 
@@ -243,6 +480,8 @@ public enum InsightsQueryKind: String, Codable, Sendable {
     case unresolved
     /// Proposed, never enforced, rules per D2 and D7.
     case proposals
+    /// Offline observations of destinations first seen after a reliable app build change.
+    case findings
     /// Store-wide counters used to describe the quality of the picture.
     case overview
 }
@@ -568,7 +807,53 @@ public struct InsightsReport: Codable, Sendable {
     public let destinations: [InsightsDestinationSummary]
     public let unresolved: [InsightsUnresolvedDestination]
     public let proposals: [InsightsProposedRule]
+    public let findings: [InsightsBehaviourFinding]
     public let overview: InsightsOverview?
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, kind, generatedAt, rangeStart, rangeEnd, source, recordingEnabled,
+             limit, offset, hasMore, apps, destinations, unresolved, proposals, findings, overview
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        kind = try c.decode(InsightsQueryKind.self, forKey: .kind)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        rangeStart = try c.decode(Date.self, forKey: .rangeStart)
+        rangeEnd = try c.decode(Date.self, forKey: .rangeEnd)
+        source = try c.decode(InsightsDataSource.self, forKey: .source)
+        recordingEnabled = try c.decode(Bool.self, forKey: .recordingEnabled)
+        limit = try c.decode(Int.self, forKey: .limit)
+        offset = try c.decode(Int.self, forKey: .offset)
+        hasMore = try c.decode(Bool.self, forKey: .hasMore)
+        apps = try c.decode([InsightsAppSummary].self, forKey: .apps)
+        destinations = try c.decode([InsightsDestinationSummary].self, forKey: .destinations)
+        unresolved = try c.decode([InsightsUnresolvedDestination].self, forKey: .unresolved)
+        proposals = try c.decode([InsightsProposedRule].self, forKey: .proposals)
+        findings = try c.decodeIfPresent([InsightsBehaviourFinding].self, forKey: .findings) ?? []
+        overview = try c.decodeIfPresent(InsightsOverview.self, forKey: .overview)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(generatedAt, forKey: .generatedAt)
+        try c.encode(rangeStart, forKey: .rangeStart)
+        try c.encode(rangeEnd, forKey: .rangeEnd)
+        try c.encode(source, forKey: .source)
+        try c.encode(recordingEnabled, forKey: .recordingEnabled)
+        try c.encode(limit, forKey: .limit)
+        try c.encode(offset, forKey: .offset)
+        try c.encode(hasMore, forKey: .hasMore)
+        try c.encode(apps, forKey: .apps)
+        try c.encode(destinations, forKey: .destinations)
+        try c.encode(unresolved, forKey: .unresolved)
+        try c.encode(proposals, forKey: .proposals)
+        try c.encode(findings, forKey: .findings)
+        try c.encodeIfPresent(overview, forKey: .overview)
+    }
 
     public init(kind: InsightsQueryKind,
                 generatedAt: Date = Date(),
@@ -583,6 +868,7 @@ public struct InsightsReport: Codable, Sendable {
                 destinations: [InsightsDestinationSummary] = [],
                 unresolved: [InsightsUnresolvedDestination] = [],
                 proposals: [InsightsProposedRule] = [],
+                findings: [InsightsBehaviourFinding] = [],
                 overview: InsightsOverview? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.kind = kind
@@ -598,6 +884,7 @@ public struct InsightsReport: Codable, Sendable {
         self.destinations = destinations
         self.unresolved = unresolved
         self.proposals = proposals
+        self.findings = findings
         self.overview = overview
     }
 
@@ -611,7 +898,7 @@ public struct InsightsReport: Codable, Sendable {
         guard schemaVersion == InsightsLimits.schemaVersion else {
             throw InsightsValidationError.unsupportedVersion(schemaVersion)
         }
-        let rows = apps.count + destinations.count + unresolved.count + proposals.count
+        let rows = apps.count + destinations.count + unresolved.count + proposals.count + findings.count
         guard rows <= InsightsLimits.maxReportRowCount else {
             throw InsightsValidationError.tooManyRows(rows)
         }

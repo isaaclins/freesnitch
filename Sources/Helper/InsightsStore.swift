@@ -97,6 +97,9 @@ final class InsightsStore: @unchecked Sendable {
                 try executeLocked("DELETE FROM daily_rollups WHERE utc_day < ?;") { statement in
                     try self.bindText(statement, index: 1, value: dayCutoff)
                 }
+                try executeLocked("DELETE FROM versioned_rollups WHERE utc_day < ?;") { statement in
+                    try self.bindText(statement, index: 1, value: dayCutoff)
+                }
                 try executeLocked("COMMIT;")
                 try verifyDatabaseFilesLocked()
             } catch {
@@ -169,6 +172,7 @@ final class InsightsStore: @unchecked Sendable {
                     process_bundle_id TEXT,
                     process_path TEXT NOT NULL,
                     process_name TEXT NOT NULL,
+                    process_version TEXT,
                     remote_host TEXT NOT NULL,
                     remote_ip TEXT NOT NULL,
                     remote_port INTEGER NOT NULL,
@@ -189,6 +193,15 @@ final class InsightsStore: @unchecked Sendable {
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_expiry ON dns_mappings(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_ip ON dns_mappings(ip);
                 CREATE INDEX IF NOT EXISTS idx_insights_destination ON flow_observations(remote_host, remote_ip);
+                CREATE TABLE IF NOT EXISTS versioned_rollups (
+                    app_identity TEXT NOT NULL,
+                    app_version TEXT NOT NULL,
+                    destination_key TEXT NOT NULL,
+                    utc_day TEXT NOT NULL,
+                    connection_count INTEGER NOT NULL,
+                    PRIMARY KEY(app_identity, app_version, destination_key, utc_day)
+                );
+                CREATE INDEX IF NOT EXISTS idx_insights_versioned_rollup_app ON versioned_rollups(app_identity, app_version);
                 CREATE TABLE IF NOT EXISTS daily_rollups (
                     app_identity TEXT NOT NULL,
                     destination_key TEXT NOT NULL,
@@ -206,6 +219,7 @@ final class InsightsStore: @unchecked Sendable {
             // Rollups carry bytes as well as counts. Older stores were created
             // before those columns existed, so they are added in place rather
             // than requiring a purge.
+            try addColumnIfMissingLocked(table: "flow_observations", column: "process_version")
             try addColumnIfMissingLocked(table: "daily_rollups", column: "bytes_in")
             try addColumnIfMissingLocked(table: "daily_rollups", column: "bytes_out")
             try verifyDatabaseFilesLocked()
@@ -219,9 +233,9 @@ final class InsightsStore: @unchecked Sendable {
     private func insertLocked(_ observation: FlowObservation) throws {
         try executeLocked("""
             INSERT OR IGNORE INTO flow_observations(
-                id,observed_at,pid,process_bundle_id,process_path,process_name,
+                id,observed_at,pid,process_bundle_id,process_path,process_name,process_version,
                 remote_host,remote_ip,remote_port,direction,protocol_name,bytes_in,bytes_out
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """) { statement in
                 try self.bindText(statement, index: 1, value: observation.id.uuidString)
                 try self.bindDouble(statement, index: 2, value: observation.observedAt.timeIntervalSince1970)
@@ -229,13 +243,14 @@ final class InsightsStore: @unchecked Sendable {
                 try self.bindOptionalText(statement, index: 4, value: observation.processBundleId)
                 try self.bindText(statement, index: 5, value: observation.processPath)
                 try self.bindText(statement, index: 6, value: observation.processName)
-                try self.bindText(statement, index: 7, value: observation.remoteHost)
-                try self.bindText(statement, index: 8, value: observation.remoteIP)
-                try self.bindInt(statement, index: 9, value: Int32(observation.remotePort))
-                try self.bindText(statement, index: 10, value: observation.direction.rawValue)
-                try self.bindText(statement, index: 11, value: observation.protocolName)
-                try self.bindOptionalInt64(statement, index: 12, value: observation.bytesIn)
-                try self.bindOptionalInt64(statement, index: 13, value: observation.bytesOut)
+                try self.bindOptionalText(statement, index: 7, value: observation.processVersion)
+                try self.bindText(statement, index: 8, value: observation.remoteHost)
+                try self.bindText(statement, index: 9, value: observation.remoteIP)
+                try self.bindInt(statement, index: 10, value: Int32(observation.remotePort))
+                try self.bindText(statement, index: 11, value: observation.direction.rawValue)
+                try self.bindText(statement, index: 12, value: observation.protocolName)
+                try self.bindOptionalInt64(statement, index: 13, value: observation.bytesIn)
+                try self.bindOptionalInt64(statement, index: 14, value: observation.bytesOut)
             }
     }
 
@@ -276,6 +291,19 @@ final class InsightsStore: @unchecked Sendable {
                 try self.bindInt64(statement, index: 4, value: observation.bytesIn ?? 0)
                 try self.bindInt64(statement, index: 5, value: observation.bytesOut ?? 0)
             }
+        if let version = observation.processVersion {
+            try executeLocked("""
+                INSERT INTO versioned_rollups(app_identity,app_version,destination_key,utc_day,connection_count)
+                VALUES (?,?,?,?,1)
+                ON CONFLICT(app_identity,app_version,destination_key,utc_day)
+                DO UPDATE SET connection_count=connection_count+1;
+                """) { statement in
+                    try self.bindText(statement, index: 1, value: app)
+                    try self.bindText(statement, index: 2, value: version)
+                    try self.bindText(statement, index: 3, value: destination)
+                    try self.bindText(statement, index: 4, value: self.utcDay(for: observation.observedAt))
+                }
+        }
     }
 
     private func addColumnIfMissingLocked(table: String, column: String) throws {
@@ -469,23 +497,27 @@ extension InsightsStore {
                        destinations: [InsightsDestinationSummary],
                        unresolved: [InsightsUnresolvedDestination],
                        proposals: [InsightsProposedRule],
+                       findings: [InsightsBehaviourFinding],
                        overview: InsightsOverview?,
                        hasMore: Bool)
             switch query.kind {
             case .apps:
                 let result = try appsLocked(query, source: source)
-                page = (result.rows, [], [], [], nil, result.hasMore)
+                page = (result.rows, [], [], [], [], nil, result.hasMore)
             case .destinations:
                 let result = try destinationsLocked(query, source: source)
-                page = ([], result.rows, [], [], nil, result.hasMore)
+                page = ([], result.rows, [], [], [], nil, result.hasMore)
             case .unresolved:
                 let result = try unresolvedLocked(query, source: source)
-                page = ([], [], result.rows, [], nil, result.hasMore)
+                page = ([], [], result.rows, [], [], nil, result.hasMore)
             case .proposals:
                 let result = try proposalsLocked(query, source: source)
-                page = ([], [], [], result.rows, nil, result.hasMore)
+                page = ([], [], [], result.rows, [], nil, result.hasMore)
+            case .findings:
+                let result = try findingsLocked(query, source: source)
+                page = ([], [], [], [], result.rows, nil, result.hasMore)
             case .overview:
-                page = ([], [], [], [], try overviewLocked(recordingEnabled: recording), false)
+                page = ([], [], [], [], [], try overviewLocked(recordingEnabled: recording), false)
             }
             return InsightsReport(kind: query.kind,
                                   generatedAt: now,
@@ -500,6 +532,7 @@ extension InsightsStore {
                                   destinations: page.destinations,
                                   unresolved: page.unresolved,
                                   proposals: page.proposals,
+                                  findings: page.findings,
                                   overview: page.overview)
         }
     }
@@ -864,6 +897,167 @@ extension InsightsStore {
             return $0.destinationLabel < $1.destinationLabel
         }
         return (ordered, trimmed.hasMore)
+    }
+
+    // MARK: Prepared contact history
+
+    /// Builds the bounded evidence set used by Alert mode. This method is only
+    /// called by helper background work or a helper query, never by the
+    /// extension's verdict callback.
+    func contactSnapshot(now: Date = Date()) throws -> InsightsContactSnapshot {
+        try queue.sync {
+            var contacts: [InsightsContact] = []
+            let sql = """
+                SELECT app_identity, destination FROM (
+                    SELECT \(Self.appIdentitySQL) AS app_identity, \(Self.destinationSQL) AS destination
+                    FROM flow_observations
+                    WHERE observed_at >= ?
+                    UNION
+                    SELECT app_identity, destination_key AS destination
+                    FROM daily_rollups
+                )
+                WHERE app_identity <> '' AND destination <> ''
+                GROUP BY app_identity, destination
+                ORDER BY app_identity ASC, destination ASC
+                LIMIT ?;
+                """
+            try queryLocked(sql, bind: { statement in
+                try self.bindDouble(statement, index: 1, value: now.timeIntervalSince1970 - InsightsLimits.rawRetention)
+                try self.bindInt(statement, index: 2, value: Int32(InsightsLimits.maxContactCount + 1))
+            }) { statement in
+                guard let app = self.columnText(statement, index: 0),
+                      let destination = self.columnText(statement, index: 1),
+                      !app.isEmpty,
+                      app.utf8.count <= InsightsLimits.maxPathLength,
+                      !destination.isEmpty,
+                      (PFHostValidator.kind(for: destination) == .hostname || PFHostValidator.kind(for: destination) == .ip) else {
+                    throw InsightsValidationError.invalidContactSnapshot("stored contact")
+                }
+                contacts.append(InsightsContact(appIdentity: app, destination: destination))
+            }
+            let truncated = contacts.count > InsightsLimits.maxContactCount
+            if truncated { contacts.removeLast() }
+            let snapshot = InsightsContactSnapshot(contacts: contacts, preparedAt: now, truncated: truncated)
+            try snapshot.validate(now: now)
+            return snapshot
+        }
+    }
+
+    // MARK: Changed-after-update findings
+
+    private func findingsLocked(_ query: InsightsQuery,
+                               source: InsightsDataSource) throws -> (rows: [InsightsBehaviourFinding], hasMore: Bool) {
+        // Versioned raw observations retain process names and first-seen times.
+        // A year-old rollup deliberately cannot manufacture those details, so
+        // it yields no finding rather than guessing an app build.
+        struct Group {
+            let app: String
+            let name: String
+            let version: String?
+            let destination: String
+            let first: Date
+            let count: Int
+        }
+        var groups: [Group] = []
+        if source == .rawEvents {
+        let sql = """
+            SELECT \(Self.appIdentitySQL) AS app, MAX(process_name), process_version,
+                   \(Self.destinationSQL) AS destination, MIN(observed_at), COUNT(*)
+            FROM flow_observations
+            WHERE observed_at >= ? AND observed_at <= ?
+            GROUP BY app, process_version, destination
+            ORDER BY app ASC, MIN(observed_at) ASC, destination ASC
+            LIMIT ?;
+            """
+        try queryLocked(sql, bind: { statement in
+            try self.bindRawRange(statement, query: query)
+            try self.bindInt(statement, index: 3, value: Int32(InsightsLimits.maxContactCount + 1))
+        }) { statement in
+            guard let app = self.columnText(statement, index: 0), !app.isEmpty,
+                  let name = self.columnText(statement, index: 1),
+                  let destination = self.columnText(statement, index: 3),
+                  let first = self.columnDate(statement, index: 4) else { return }
+            let version = self.columnText(statement, index: 2)
+            groups.append(Group(app: app, name: name, version: version, destination: destination,
+                                 first: first, count: Int(self.columnInt64(statement, index: 5))))
+        }
+        }
+        if source == .dailyRollups {
+            let rollupSQL = """
+                SELECT app_identity, app_version, destination_key, MIN(utc_day), SUM(connection_count)
+                FROM versioned_rollups
+                WHERE utc_day >= ? AND utc_day <= ?
+                GROUP BY app_identity, app_version, destination_key
+                ORDER BY app_identity ASC, MIN(utc_day) ASC, destination_key ASC
+                LIMIT ?;
+                """
+            try queryLocked(rollupSQL, bind: { statement in
+                try self.bindDayRange(statement, query: query)
+                try self.bindInt(statement, index: 3, value: Int32(InsightsLimits.maxContactCount + 1))
+            }) { statement in
+                guard let app = self.columnText(statement, index: 0), !app.isEmpty,
+                      let version = self.columnText(statement, index: 1), !version.isEmpty,
+                      let destination = self.columnText(statement, index: 2),
+                      let day = self.columnText(statement, index: 3),
+                      let first = self.date(fromUTCDay: day) else { return }
+                groups.append(Group(app: app, name: Self.fallbackName(for: app), version: version,
+                                    destination: destination, first: first,
+                                    count: Int(self.columnInt64(statement, index: 4))))
+            }
+        }
+
+        var findings: [InsightsBehaviourFinding] = []
+        let byApp = Dictionary(grouping: groups, by: \.app)
+        for (app, appGroups) in byApp {
+            let ordered = appGroups.sorted { $0.first < $1.first }
+            var baseline = Set<String>()
+            var currentVersion: String?
+            var updateVersion: String?
+            var oldVersion: String?
+            for group in ordered {
+                if let version = group.version {
+                    if version != currentVersion {
+                        if !baseline.isEmpty {
+                            updateVersion = version
+                            oldVersion = currentVersion
+                        }
+                        currentVersion = version
+                    }
+                    if let updateVersion, updateVersion == version,
+                       !baseline.contains(group.destination) {
+                        findings.append(InsightsBehaviourFinding(
+                            appIdentity: app,
+                            displayName: group.name,
+                            oldVersion: oldVersion,
+                            newVersion: version,
+                            destination: group.destination,
+                            firstSeen: group.first,
+                            connectionCount: group.count,
+                            versionKnown: true))
+                    }
+                } else if let currentVersion, !baseline.contains(group.destination) {
+                    // An unknown build never starts or replaces a baseline. It
+                    // may be shown as unknown when it adds a destination after
+                    // a reliable build, but no version is guessed.
+                    findings.append(InsightsBehaviourFinding(
+                        appIdentity: app,
+                        displayName: group.name,
+                        oldVersion: currentVersion,
+                        newVersion: nil,
+                        destination: group.destination,
+                        firstSeen: group.first,
+                        connectionCount: group.count,
+                        versionKnown: false))
+                }
+                baseline.insert(group.destination)
+            }
+        }
+        findings.sort {
+            if $0.appIdentity != $1.appIdentity { return $0.appIdentity < $1.appIdentity }
+            if $0.firstSeen != $1.firstSeen { return $0.firstSeen < $1.firstSeen }
+            return $0.destination < $1.destination
+        }
+        return trim(findings, limit: query.limit)
     }
 
     // MARK: Overview
