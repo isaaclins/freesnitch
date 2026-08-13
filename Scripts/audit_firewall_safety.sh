@@ -15,6 +15,8 @@ APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
 MODELS="$ROOT/Sources/Shared/Models.swift"
+WIRE_CODEC="$ROOT/Sources/Shared/WireCodec.swift"
+CLI_CONTRACT="$ROOT/Sources/CLI/CLIContract.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -40,7 +42,24 @@ require_text() {
 [[ -f "$SYSTEM_EXTENSION_MANAGER" ]] || fail "missing $SYSTEM_EXTENSION_MANAGER"
 [[ -f "$LAUNCHD_PLIST" ]] || fail "missing $LAUNCHD_PLIST"
 [[ -f "$MODELS" ]] || fail "missing $MODELS"
+[[ -f "$WIRE_CODEC" ]] || fail "missing $WIRE_CODEC"
+[[ -f "$CLI_CONTRACT" ]] || fail "missing $CLI_CONTRACT"
 
+# Date boundaries are explicit: XPC and snapshots retain Apple's reference
+# epoch, SQLite remains Unix seconds, and the CLI contract stays ISO 8601 text.
+require_text "$WIRE_CODEC" "date.timeIntervalSinceReferenceDate" \
+  "the wire codec does not encode dates with the reference epoch"
+require_text "$WIRE_CODEC" "Date(timeIntervalSinceReferenceDate: seconds)" \
+  "the wire codec does not decode dates with the reference epoch"
+require_text "$CLI_CONTRACT" "encoder.dateEncodingStrategy = .iso8601" \
+  "CLI JSON output is no longer ISO 8601"
+if grep -Fq "Date(timeIntervalSince1970" "$CLI_CONTRACT"; then
+  fail "CLI JSON dates interpret numeric values as Unix seconds"
+fi
+require_text "$CLI_HELPER" "FreeSnitchWireCodec.decode" \
+  "CLI helper responses do not use the explicit wire date codec"
+require_text "$HELPER" "FreeSnitchWireCodec.decode" \
+  "helper rule requests do not use the explicit wire date codec"
 require_text "$SYSTEM_EXTENSION_MANAGER" \
   "vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] = snapshotData" \
   "the GUI does not write the persisted boot snapshot to vendorConfiguration"

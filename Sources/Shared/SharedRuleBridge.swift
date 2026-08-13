@@ -125,17 +125,17 @@ public enum SharedRuleBridge {
     }
 
     public static func encode(_ snapshot: Snapshot) throws -> Data {
-        try JSONEncoder().encode(snapshot)
+        try FreeSnitchWireCodec.encode(snapshot)
     }
 
     public static func decode(_ data: Data) throws -> Snapshot {
-        try JSONDecoder().decode(Snapshot.self, from: data)
+        try FreeSnitchWireCodec.decode(Snapshot.self, from: data)
     }
 
     public static func encodeBootSnapshot(_ snapshot: Snapshot, now: Date = Date()) throws -> Data {
         let stored = BootSnapshot(snapshot: snapshot)
         try validateBootSnapshot(stored, now: now)
-        let data = try JSONEncoder().encode(stored)
+        let data = try FreeSnitchWireCodec.encode(stored)
         guard data.count <= maximumBootSnapshotEncodedBytes else {
             throw validationError("Boot snapshot exceeds the \(maximumBootSnapshotEncodedBytes)-byte limit.")
         }
@@ -147,7 +147,7 @@ public enum SharedRuleBridge {
         guard data.count <= maximumBootSnapshotEncodedBytes else {
             throw validationError("Boot snapshot exceeds the \(maximumBootSnapshotEncodedBytes)-byte limit.")
         }
-        let stored = try JSONDecoder().decode(BootSnapshot.self, from: data)
+        let stored = try FreeSnitchWireCodec.decode(BootSnapshot.self, from: data)
         try validateBootSnapshot(stored, now: now)
         return stored.snapshot
     }
@@ -182,10 +182,10 @@ public enum SharedRuleBridge {
     }
 
     public static func encode(_ status: SnapshotStatus) throws -> Data {
-        try JSONEncoder().encode(status)
+        try FreeSnitchWireCodec.encode(status)
     }
 
     public static func decodeStatus(_ data: Data) throws -> SnapshotStatus {
-        try JSONDecoder().decode(SnapshotStatus.self, from: data)
+        try FreeSnitchWireCodec.decode(SnapshotStatus.self, from: data)
     }
 }

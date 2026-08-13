@@ -37,7 +37,7 @@ final class CLIHelperClient: NSObject {
                            remediation: "Run `freesnitch settings helper recheck` and inspect the helper logs.")
         }
         do {
-            return try CLIJSON.decode(HelperStatus.self, from: data)
+            return try FreeSnitchWireCodec.decode(HelperStatus.self, from: data)
         } catch {
             throw CLIError(.operationFailed,
                            message: "The helper returned a status payload this CLI could not decode: \(error.localizedDescription).",
@@ -60,7 +60,7 @@ final class CLIHelperClient: NSObject {
 
     func addRule(_ rule: Rule) async throws {
         try await requireSuccess(timeout: timeout) { proxy, reply in
-            guard let data = try? JSONEncoder().encode(rule) else {
+            guard let data = try? FreeSnitchWireCodec.encode(rule) else {
                 reply(false, "could not encode rule")
                 return
             }
@@ -76,7 +76,7 @@ final class CLIHelperClient: NSObject {
 
     func importRules(_ rules: [Rule]) async throws {
         try await requireSuccess(timeout: timeout) { proxy, reply in
-            guard let data = try? JSONEncoder().encode(rules) else {
+            guard let data = try? FreeSnitchWireCodec.encode(rules) else {
                 reply(false, "could not encode imported rules")
                 return
             }
@@ -95,7 +95,7 @@ final class CLIHelperClient: NSObject {
         let data: Data = try await perform { proxy, reply in
             proxy.currentTrafficSample(reply: reply)
         }
-        if let samples = try? CLIJSON.decode([TrafficSample].self, from: data) {
+        if let samples = try? FreeSnitchWireCodec.decode([TrafficSample].self, from: data) {
             return samples
         }
         let sample: TrafficSample = try decode(TrafficSample.self, data: data, what: "traffic sample")
@@ -249,7 +249,7 @@ final class CLIHelperClient: NSObject {
 
     private func decode<T: Decodable>(_ type: T.Type, data: Data, what: String) throws -> T {
         do {
-            return try CLIJSON.decode(type, from: data)
+            return try FreeSnitchWireCodec.decode(type, from: data)
         } catch {
             throw CLIError(.operationFailed,
                            message: "The helper returned invalid \(what) data: \(error.localizedDescription).",

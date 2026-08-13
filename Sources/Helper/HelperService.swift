@@ -68,7 +68,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 )
             }
             let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: ruleHost, status: .pending)
-            guard let data = try? JSONEncoder().encode(stub) else { completion(true); return }
+            guard let data = try? FreeSnitchWireCodec.encode(stub) else { completion(true); return }
             self.broadcast { c in
                 c.notifyAlert(connectionJSON: data) { allow, _ in
                     self.askLock.lock()
@@ -87,7 +87,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 try? self.store.recordConnection(c)
             }
             self.broadcast { c in
-                if let data = try? JSONEncoder().encode(conns) {
+                if let data = try? FreeSnitchWireCodec.encode(conns) {
                     c.notifyConnection(connectionJSON: data)
                 }
             }
@@ -98,7 +98,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             self.latestTrafficSample = sample
             self.diagnosticsLock.unlock()
             self.broadcast { c in
-                if let data = try? JSONEncoder().encode(sample) {
+                if let data = try? FreeSnitchWireCodec.encode(sample) {
                     c.notifyTraffic(sampleJSON: data)
                 }
             }
@@ -109,7 +109,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             self.latestProcessUsage = usages
             self.diagnosticsLock.unlock()
             self.broadcast { c in
-                if let data = try? JSONEncoder().encode(usages) {
+                if let data = try? FreeSnitchWireCodec.encode(usages) {
                     c.notifyProcessUsage(usageJSON: data)
                 }
             }
@@ -168,7 +168,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             blockedToday: dns.statistics.blocked,
             mode: mode
         )
-        reply((try? JSONEncoder().encode(s)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(s)) ?? Data())
     }
 
     func setMode(rawValue: String, reply: @escaping (Bool, String?) -> Void) {
@@ -181,7 +181,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func reloadRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
-            let rules = try JSONDecoder().decode([Rule].self, from: rulesJSON)
+            let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
             for r in rules { try store.upsertRule(r) }
             dns.rules = store.allRules()
             do {
@@ -199,7 +199,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func addRule(ruleJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
-            let rule = try JSONDecoder().decode(Rule.self, from: ruleJSON)
+            let rule = try FreeSnitchWireCodec.decode(Rule.self, from: ruleJSON)
             try store.upsertRule(rule)
             dns.rules = store.allRules()
             // Saved but not enforced is a real difference; say so instead of
@@ -233,7 +233,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func listRules(profile: String, reply: @escaping (Data) -> Void) {
         let rules = store.allRules(profile: profile.isEmpty ? nil : profile)
-        reply((try? JSONEncoder().encode(rules)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(rules)) ?? Data())
     }
 
     /// Passive monitoring only. Starting the DNS proxy (which binds port 53 and
@@ -296,21 +296,21 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func currentConnections(reply: @escaping (Data) -> Void) {
         let conns = store.recentConnections(limit: 500)
-        reply((try? JSONEncoder().encode(conns)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
     }
 
     func currentTrafficSample(reply: @escaping (Data) -> Void) {
         diagnosticsLock.lock()
         let sample = latestTrafficSample ?? TrafficSample(timestamp: Date(), bytesIn: 0, bytesOut: 0)
         diagnosticsLock.unlock()
-        reply((try? JSONEncoder().encode(sample)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(sample)) ?? Data())
     }
 
     func currentProcessUsage(reply: @escaping (Data) -> Void) {
         diagnosticsLock.lock()
         let usages = latestProcessUsage
         diagnosticsLock.unlock()
-        reply((try? JSONEncoder().encode(usages)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(usages)) ?? Data())
     }
 
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
@@ -325,7 +325,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func listBlocklists(reply: @escaping (Data) -> Void) {
-        reply((try? JSONEncoder().encode(store.allBlocklists())) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(store.allBlocklists())) ?? Data())
     }
 
     func refreshBlocklists(reply: @escaping (Bool, String?) -> Void) {
@@ -379,12 +379,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func recentBlocked(limit: Int, reply: @escaping (Data) -> Void) {
         let conns = store.recentConnections(limit: limit, status: .denied)
-        reply((try? JSONEncoder().encode(conns)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
     }
 
     func recentDenied(limit: Int, reply: @escaping (Data) -> Void) {
         let conns = store.recentConnections(limit: limit, status: .denied)
-        reply((try? JSONEncoder().encode(conns)) ?? Data())
+        reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
     }
 
     private func recordPFError(_ error: Error) {
