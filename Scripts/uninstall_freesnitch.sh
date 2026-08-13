@@ -71,7 +71,7 @@ assert_exact_path() {
   local path="$1"
   [[ -n "$path" && "$path" == /* ]] || die "refusing a non-absolute path: $path"
   case "$path" in
-    "$APP"|"SUPPORT"|"INSIGHTS"|"HELPER_PLIST"|"PF_ANCHOR") ;;
+    "$APP"|"$SUPPORT"|"$INSIGHTS"|"$HELPER_PLIST"|"$PF_ANCHOR") ;;
     *) die "refusing an unexpected uninstall path: $path" ;;
   esac
 }
