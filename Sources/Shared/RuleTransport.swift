@@ -4,10 +4,24 @@ import Foundation
 /// Every caller validates the encoded byte count before asking JSON to decode,
 /// then validates the complete decoded value before it can be committed.
 public enum RuleTransportBoundary {
-    public static let maximumEncodedSnapshotBytes = 512 * 1024
+    /// The live payload is streamed over XPC, so it is bounded generously
+    /// enough that a policy at `maximumDecodedRuleCount` genuinely fits.
+    /// A realistic rule costs roughly 570 bytes encoded, so the maximum rule
+    /// count needs about 2.3 MB; this leaves headroom for long process paths
+    /// and notes without admitting an unbounded payload.
+    public static let maximumEncodedSnapshotBytes = 8 * 1024 * 1024
     public static let maximumEncodedRuleBatchBytes = maximumEncodedSnapshotBytes
     public static let maximumEncodedSingleRuleBytes = 32 * 1024
     public static let maximumDecodedRuleCount = 4096
+
+    /// The boot snapshot is different in kind: it is persisted by the system
+    /// inside NEFilterManager provider preferences rather than streamed, so it
+    /// stays small deliberately. Its rule cap is derived from its byte cap at
+    /// the measured cost per rule, so this channel is self-consistent too.
+    /// Exceeding it is reported as a persistence failure by the caller rather
+    /// than silently truncating policy.
+    public static let maximumEncodedBootSnapshotBytes = 512 * 1024
+    public static let maximumBootSnapshotRuleCount = 800
 
     public static let maximumProcessBundleIDBytes = 256
     public static let maximumProcessPathBytes = 4096
@@ -20,12 +34,14 @@ public enum RuleTransportBoundary {
 
     public enum PayloadKind: String, Sendable {
         case snapshot
+        case bootSnapshot
         case ruleBatch
         case singleRule
 
         fileprivate var label: String {
             switch self {
             case .snapshot: return "rule snapshot"
+            case .bootSnapshot: return "boot rule snapshot"
             case .ruleBatch: return "rule batch"
             case .singleRule: return "single rule"
             }
@@ -59,7 +75,7 @@ public enum RuleTransportBoundary {
     }
 
     public static func validateBootSnapshotBytes(_ data: Data) throws {
-        try validateEncodedBytes(data, kind: .snapshot, maximum: maximumEncodedSnapshotBytes)
+        try validateEncodedBytes(data, kind: .bootSnapshot, maximum: maximumEncodedBootSnapshotBytes)
     }
 
     public static func validateRuleBatchBytes(_ data: Data) throws {

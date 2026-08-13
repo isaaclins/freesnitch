@@ -13,8 +13,8 @@ public enum SharedRuleBridge {
     public static let bootSnapshotVendorConfigurationKey = "io.isaaclins.freesnitch.bootSnapshot"
     /// Keep provider preferences bounded because they are persisted by the
     /// system, not streamed like the live XPC payload.
-    public static let maximumBootSnapshotEncodedBytes = RuleTransportBoundary.maximumEncodedSnapshotBytes
-    public static let maximumBootSnapshotRuleCount = RuleTransportBoundary.maximumDecodedRuleCount
+    public static let maximumBootSnapshotEncodedBytes = RuleTransportBoundary.maximumEncodedBootSnapshotBytes
+    public static let maximumBootSnapshotRuleCount = RuleTransportBoundary.maximumBootSnapshotRuleCount
     public static let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
 
     /// Pure state for the asynchronous provider-preference writer. A caller
@@ -211,7 +211,7 @@ public enum SharedRuleBridge {
         let stored = BootSnapshot(snapshot: snapshot)
         try validateBootSnapshot(stored, now: now)
         let data = try FreeSnitchWireCodec.encode(stored)
-        try RuleTransportBoundary.validateSnapshotBytes(data)
+        try RuleTransportBoundary.validateBootSnapshotBytes(data)
         return data
     }
 

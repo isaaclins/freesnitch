@@ -113,7 +113,13 @@ public enum RuleExportCodec {
     /// larger is a mistake or an attack, not a backup.
     public static let maximumEncodedBytes = 16 * 1024 * 1024
     /// Bound the batch before any `Rule` is allocated.
-    public static let maximumRuleCount = 100_000
+    ///
+    /// This is deliberately the same limit the live rule transport can carry.
+    /// Accepting a larger file would let a user import and persist a policy
+    /// that could never be delivered to the network extension, which fails
+    /// open, so the rules would be listed in the app while nothing enforced
+    /// them.
+    public static let maximumRuleCount = RuleTransportBoundary.maximumDecodedRuleCount
     /// Bound each stored string so one rule cannot carry a megabyte of text.
     public static let maximumFieldLength = 4096
 

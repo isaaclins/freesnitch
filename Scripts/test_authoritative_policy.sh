@@ -60,10 +60,10 @@ expect(gate.apply(identical) == .idempotent, "equal-generation identical policy 
 print("authoritative policy harness: equal-generation identical accepted")
 SWIFT
 
+  # Compile the whole Shared module rather than a hand-listed subset, so
+  # adding a file there cannot silently break this gate.
   swiftc \
-    "$ROOT/Sources/Shared/Models.swift" \
-    "$ROOT/Sources/Shared/WireCodec.swift" \
-    "$ROOT/Sources/Shared/SharedRuleBridge.swift" \
+    "$ROOT"/Sources/Shared/*.swift \
     "$source" \
     -o "$binary"
   "$binary"
@@ -115,10 +115,7 @@ print("rule store sequencing harness: CLI generation \(cliSnapshot.generation), 
 SWIFT
 
   swiftc \
-    "$ROOT/Sources/Shared/Models.swift" \
-    "$ROOT/Sources/Shared/RuleStore.swift" \
-    "$ROOT/Sources/Shared/SharedRuleBridge.swift" \
-    "$ROOT/Sources/Shared/WireCodec.swift" \
+    "$ROOT"/Sources/Shared/*.swift \
     "$source" \
     -lsqlite3 \
     -o "$binary"
