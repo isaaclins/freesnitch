@@ -1,12 +1,5 @@
 import Foundation
 
-/// A narrow XPC surface for the sandboxed Network Extension. The extension
-/// can exchange only the versioned boot snapshot, not helper state or rules.
-@objc public protocol BootPolicyProtocol {
-    func loadBootSnapshot(reply: @escaping (Data) -> Void)
-    func storeBootSnapshot(snapshotJSON: Data, reply: @escaping (Bool, String?) -> Void)
-}
-
 @objc public protocol HelperProtocol {
     func getVersion(reply: @escaping (String) -> Void)
     func getStatus(reply: @escaping (Data) -> Void)
@@ -57,9 +50,5 @@ public enum HelperBridge {
     public static func exportedInterface() -> NSXPCInterface {
         let iface = NSXPCInterface(with: HelperClientProtocol.self)
         return iface
-    }
-
-    public static func bootPolicyInterface() -> NSXPCInterface {
-        NSXPCInterface(with: BootPolicyProtocol.self)
     }
 }

@@ -13,11 +13,8 @@ PROJECT_SPEC="$ROOT/project.yml"
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
-BOOT_POLICY_CLIENT="$ROOT/Sources/NetExt/BootPolicyClient.swift"
 LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
 MODELS="$ROOT/Sources/Shared/Models.swift"
-BOOT_POLICY_SERVICE="BHAF4L4726.io.isaaclins.freesnitch.boot"
-OLD_BOOT_POLICY_SERVICE="${BOOT_POLICY_SERVICE#BHAF4L4726.}"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -41,23 +38,31 @@ require_text() {
 [[ -f "$HELPER" ]] || fail "missing $HELPER"
 [[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
 [[ -f "$SYSTEM_EXTENSION_MANAGER" ]] || fail "missing $SYSTEM_EXTENSION_MANAGER"
-[[ -f "$BOOT_POLICY_CLIENT" ]] || fail "missing $BOOT_POLICY_CLIENT"
 [[ -f "$LAUNCHD_PLIST" ]] || fail "missing $LAUNCHD_PLIST"
 [[ -f "$MODELS" ]] || fail "missing $MODELS"
 
-launchd_boot_service_count="$(grep -Fo -- "$BOOT_POLICY_SERVICE" "$LAUNCHD_PLIST" | wc -l | tr -d ' ')"
-[[ "$launchd_boot_service_count" == "1" ]] \
-  || fail "the app-group-prefixed boot-policy service must appear exactly once in launchd plist"
-model_boot_service_count="$(grep -Fo -- "$BOOT_POLICY_SERVICE" "$MODELS" | wc -l | tr -d ' ')"
-[[ "$model_boot_service_count" == "1" ]] \
-  || fail "the shared boot-policy service constant is missing or duplicated"
-require_text "$BOOT_POLICY_CLIENT" \
-  "machServiceName: AppConstants.bootPolicyMachServiceName" \
-  "the boot-policy client does not use the canonical service-name constant"
-if grep -Fq -- "<key>${OLD_BOOT_POLICY_SERVICE}</key>" "$LAUNCHD_PLIST" \
-  || grep -Fq -- "\"${OLD_BOOT_POLICY_SERVICE}\"" \
-    "$MODELS" "$ROOT/Sources/Helper/main.swift" "$BOOT_POLICY_CLIENT"; then
-  fail "the old global boot-policy service name is still present"
+require_text "$SYSTEM_EXTENSION_MANAGER" \
+  "vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] = snapshotData" \
+  "the GUI does not write the persisted boot snapshot to vendorConfiguration"
+require_text "$FILTER" "filterConfiguration.vendorConfiguration" \
+  "the extension does not read filterConfiguration.vendorConfiguration"
+require_text "$BRIDGE" "applyingBootPolicySafety" \
+  "stale silent-deny boot policy downgrade is missing"
+require_text "$BRIDGE" "NewestWriteWinsQueue" \
+  "persisted snapshot coalescing seam is missing"
+require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.takeNewest()" \
+  "the GUI does not take the newest persisted snapshot"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.state?.clearFilterPersistenceFailure()" \
+  "persistence degradation is not cleared after a successful save"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if snapshotData != nil" \
+  "a successful save does not prove that a boot snapshot was persisted"
+if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
+  "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
+  fail "an old or experimental boot transport name or cache path is still present"
+fi
+if ! grep -Fq '<key>io.isaaclins.freesnitch.helper</key>' "$LAUNCHD_PLIST" \
+  || grep -Fq 'BHAF4L4726.io.isaaclins.freesnitch.boot' "$LAUNCHD_PLIST"; then
+  fail "helper launchd plist does not contain only the main helper MachService"
 fi
 
 # A missing GUI must never leave a socket flow paused forever or turn a GUI
@@ -67,10 +72,10 @@ require_text "$FILTER" "let asked = IPCConnection.shared.promptUser" \
   "the extension no longer asks the GUI through IPCConnection"
 require_text "$FILTER" "if !asked {" \
   "the no-GUI path is missing"
-require_text "$FILTER" "guard let snapshot = currentSnapshot() else" \
+require_text "$FILTER" "guard let snapshot = policy.snapshot else" \
   "the no-snapshot path is missing"
-require_text "$FILTER" "FILTER NOT READY: no rule snapshot received over XPC" \
-  "the extension does not log its no-snapshot state loudly"
+require_text "$FILTER" "persisted provider boot policy is missing; filtering will fail open" \
+  "the extension does not log its missing persisted-policy state loudly"
 require_text "$FILTER" "filter snapshot received over XPC" \
   "the extension does not log received snapshots"
 require_text "$IPC" "func updateSnapshot(snapshotJSON: Data, completionHandler: @escaping (Data) -> Void)" \

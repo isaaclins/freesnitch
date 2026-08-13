@@ -35,12 +35,19 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var bridge: AppCommunicationBridge?
     private var requestKind: RequestKind = .activation
     private var filterConfigurationActive = false
+    private var persistenceQueue = SharedRuleBridge.NewestWriteWinsQueue()
+    private var persistenceInFlight = false
+    private var persistenceWorkItem: DispatchWorkItem?
+    private var enableFilterRequested = false
 
     init(state: AppState) {
         self.state = state
         super.init()
         state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
             self?.recordSnapshotStatus(snapshotStatus)
+        }
+        state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
+            self?.requestPersistedSnapshot(snapshot)
         }
     }
 
@@ -85,44 +92,128 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     // MARK: - Content filter configuration
 
     private func enableFilter() {
+        enableFilterRequested = true
+        if let state {
+            requestPersistedSnapshot(state.currentFilterSnapshot(), immediate: true)
+        } else {
+            schedulePersistence(immediate: true)
+        }
+    }
+
+    /// Queue the newest policy for NEFilterManager.providerConfiguration. The
+    /// manager is the sole persistence owner. Saves are serialized because
+    /// NEFilterManager's load/save callbacks are asynchronous, and a newer
+    /// request always remains pending until the older save completes.
+    private func requestPersistedSnapshot(_ snapshot: SharedRuleBridge.Snapshot,
+                                          immediate: Bool = false) {
+        do {
+            persistenceQueue.enqueue(try SharedRuleBridge.encodeBootSnapshot(snapshot))
+            schedulePersistence(immediate: immediate)
+        } catch {
+            recordPersistenceFailure("encode", error: error)
+            if immediate {
+                enableFilterRequested = true
+                schedulePersistence(immediate: true)
+            }
+        }
+    }
+
+    private func schedulePersistence(immediate: Bool) {
+        persistenceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.flushPersistence()
+            }
+        }
+        persistenceWorkItem = work
+        let delay = immediate ? 0 : 0.2
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func flushPersistence() {
+        guard !persistenceInFlight else { return }
+        guard persistenceQueue.hasPending || enableFilterRequested else { return }
+        persistenceInFlight = true
+        let generationAtLoad = persistenceQueue.generation
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let loadError {
-                    self.recordFilterDiagnostic(state: "unknown", detail: "Could not read the content filter preferences: \(loadError.localizedDescription).")
-                    self.fail("filter load: \(loadError.localizedDescription)")
+                    self.persistenceInFlight = false
+                    self.recordPersistenceFailure("load", error: loadError)
+                    if self.enableFilterRequested {
+                        self.fail("filter load: \(loadError.localizedDescription)")
+                    }
+                    let hasNewerSnapshot = self.persistenceQueue.hasNewerWork(since: generationAtLoad)
+                    self.persistenceQueue.discardThrough(generationAtLoad)
+                    if hasNewerSnapshot {
+                        self.schedulePersistence(immediate: true)
+                    }
                     return
                 }
-                if mgr.providerConfiguration == nil {
-                    self.recordFilterDiagnostic(state: "missing", detail: "No FreeSnitch content filter configuration is installed.")
-                    let cfg = NEFilterProviderConfiguration()
-                    cfg.filterSockets = true
-                    cfg.filterPackets = false
-                    mgr.providerConfiguration = cfg
-                    mgr.localizedDescription = "FreeSnitch"
+
+                let snapshotData = self.persistenceQueue.takeNewest()?.data
+                let shouldEnable = self.enableFilterRequested
+                self.enableFilterRequested = false
+                let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
+                configuration.filterSockets = true
+                configuration.filterPackets = false
+                if let snapshotData {
+                    var vendorConfiguration = configuration.vendorConfiguration ?? [:]
+                    vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] = snapshotData
+                    configuration.vendorConfiguration = vendorConfiguration
                 }
-                mgr.isEnabled = true
+                mgr.providerConfiguration = configuration
+                if shouldEnable {
+                    mgr.localizedDescription = "FreeSnitch"
+                    mgr.isEnabled = true
+                }
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
+                        self.persistenceInFlight = false
                         if let saveError {
-                            self.recordFilterDiagnostic(state: "unknown", detail: "The content filter configuration could not be saved: \(saveError.localizedDescription).")
-                            self.fail("filter save: \(saveError.localizedDescription)")
-                            return
+                            self.recordPersistenceFailure("save", error: saveError)
+                            if shouldEnable {
+                                self.fail("filter save: \(saveError.localizedDescription)")
+                            }
+                        } else {
+                            if snapshotData != nil {
+                                self.state?.clearFilterPersistenceFailure()
+                                if shouldEnable || self.filterConfigurationActive {
+                                    self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
+                                }
+                            } else if shouldEnable {
+                                self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
+                            }
+                            if shouldEnable {
+                                self.filterConfigurationActive = true
+                                self.status = .active
+                                // Deliberately does NOT touch `helperConnected`: the
+                                // content filter and privileged helper are separate.
+                                self.state?.appendLog(level: "info", message: "Per-process firewall active.")
+                                self.registerIPC()
+                            }
                         }
-                        self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
-                        self.filterConfigurationActive = true
-                        self.status = .active
-                        // Deliberately does NOT touch `helperConnected`: the
-                        // content filter and the privileged helper are separate
-                        // subsystems, and claiming the helper is up here made
-                        // the UI report "connected" while XPC was dead.
-                        self.state?.appendLog(level: "info", message: "Per-process firewall active.")
-                        self.registerIPC()
+
+                        // A request that arrived while load/save was in flight
+                        // cannot be folded into the completed system write.
+                        // Start another serialized cycle for that newer data.
+                        if self.persistenceQueue.hasNewerWork(since: generationAtLoad)
+                            || self.enableFilterRequested {
+                            self.schedulePersistence(immediate: true)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func recordPersistenceFailure(_ operation: String, error: Error) {
+        let detail = "Persisted boot policy \(operation) failed: \(error.localizedDescription). Live filtering remains unchanged; a future extension start will fail open."
+        recordFilterDiagnostic(state: "degraded", detail: detail)
+        state?.recordFilterPersistenceFailure(detail)
+        os_log("%{public}@", log: log, type: .error, detail)
     }
 
     private func disableFilter() {

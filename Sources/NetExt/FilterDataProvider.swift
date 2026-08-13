@@ -4,7 +4,7 @@
 //
 //  A NEFilterDataProvider content filter (the same mechanism Little Snitch
 //  uses). Every new socket flow is evaluated against the rule set restored from
-//  the helper cache or delivered over XPC by the GUI. Flows with no decisive rule are PAUSED
+//  persisted provider configuration or delivered over XPC by the GUI. Flows with no decisive rule are PAUSED
 //  and the GUI is asked over XPC; the flow resumes with the user's verdict.
 //
 //  Requires the `com.apple.developer.networking.networkextension`
@@ -26,9 +26,7 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     private let matcher = RuleMatcher()
-    private let bootPolicy = BootPolicyClient()
     private let resolverBypass = ResolverBypass()
-    private let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
     private var snapshotOrigin: SnapshotOrigin = .none
@@ -49,24 +47,43 @@ final class FilterDataProvider: NEFilterDataProvider {
             self?.readSnapshotStatus()
                 ?? .unavailable("Network extension stopped before receiving the rule snapshot.")
         }
-        PSLog.error(
-            PSLog.netext,
-            "FILTER NOT READY: no rule snapshot received over XPC; loading the helper boot cache before allowing flows."
-        )
-        bootPolicy.load { [weak self] data in
-            guard let self else {
-                completionHandler(nil)
-                return
-            }
-            if let data {
-                self.loadBootSnapshot(data)
-            } else {
-                PSLog.error(
-                    PSLog.netext,
-                    "boot policy cache missing or unreadable; allowing flows until a trusted GUI snapshot arrives"
-                )
-            }
-            self.startFilterAfterBootSnapshot(completionHandler: completionHandler)
+
+        // Read the system-owned provider configuration synchronously before
+        // applying filter settings. We intentionally do not observe later
+        // configuration changes: while the GUI is present, its authenticated
+        // live XPC snapshot is authoritative, and a later persisted read must
+        // never replace a live policy.
+        PSLog.info(PSLog.netext, "FILTER START: reading persisted provider boot policy")
+        loadPersistedBootSnapshot()
+        startFilterAfterBootSnapshot(completionHandler: completionHandler)
+    }
+
+    private func loadPersistedBootSnapshot() {
+        guard let vendorConfiguration = filterConfiguration.vendorConfiguration,
+              let value = vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] else {
+            clearBootSnapshot("persisted provider boot policy is missing; filtering will fail open")
+            return
+        }
+        guard let data = value as? Data else {
+            clearBootSnapshot("persisted provider boot policy has an invalid property-list type; filtering will fail open")
+            return
+        }
+        loadBootSnapshot(data)
+    }
+
+    private func clearBootSnapshot(_ message: String) {
+        snapshotLock.lock()
+        let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
+        if !liveSnapshotAlreadyLoaded {
+            snapshot = nil
+            snapshotOrigin = .none
+            snapshotStatus = .unavailable(message)
+        }
+        snapshotLock.unlock()
+        if liveSnapshotAlreadyLoaded {
+            PSLog.info(PSLog.netext, "ignoring persisted boot policy because a trusted live GUI snapshot is already active")
+        } else {
+            PSLog.error(PSLog.netext, message)
         }
     }
 
@@ -302,16 +319,13 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private func loadBootSnapshot(_ data: Data) {
         do {
-            var received = try SharedRuleBridge.decode(data)
-            if received.mode == .silentDeny {
-                let age = Date().timeIntervalSince(received.updatedAt)
-                if age < 0 || age > staleSilentDenyAge {
-                    received.mode = .alert
-                    PSLog.error(
-                        PSLog.netext,
-                        "stale silent-deny boot policy downgraded to alert; explicit deny rules remain active and unanswered asks fail open"
-                    )
-                }
+            let decoded = try SharedRuleBridge.decodeBootSnapshot(data)
+            let received = SharedRuleBridge.applyingBootPolicySafety(decoded)
+            if decoded.mode == .silentDeny && received.mode == .alert {
+                PSLog.error(
+                    PSLog.netext,
+                    "stale silent-deny boot policy downgraded to alert; explicit deny rules remain active and unanswered asks fail open"
+                )
             }
             let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
             snapshotLock.lock()
@@ -329,11 +343,11 @@ final class FilterDataProvider: NEFilterDataProvider {
             }
             PSLog.info(
                 PSLog.netext,
-                "boot policy snapshot loaded from helper cache: mode \(received.mode.rawValue), \(received.rules.count) rules"
+                "boot policy snapshot loaded from persisted provider configuration: mode \(received.mode.rawValue), \(received.rules.count) rules"
             )
         } catch {
             let status = SharedRuleBridge.SnapshotStatus.invalid(
-                "Network extension boot policy cache was invalid: \(error.localizedDescription)"
+                "Network extension persisted boot policy was invalid: \(error.localizedDescription)"
             )
             snapshotLock.lock()
             let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
@@ -347,7 +361,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 PSLog.info(PSLog.netext, "ignoring invalid boot policy snapshot because a trusted live GUI snapshot is already active")
                 return
             }
-            PSLog.error(PSLog.netext, status.message ?? "Network extension boot policy cache was invalid.")
+            PSLog.error(PSLog.netext, status.message ?? "Network extension persisted boot policy was invalid.")
         }
     }
 
@@ -367,10 +381,9 @@ final class FilterDataProvider: NEFilterDataProvider {
             PSLog.info(PSLog.netext,
                        "filter snapshot received over XPC: mode \(received.mode.rawValue), "
                        + "\(received.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))")
-            // The helper validates and atomically stores only this already
-            // decoded snapshot. A cache write failure does not affect the
-            // currently active policy.
-            bootPolicy.store(data)
+            // Persistence is owned by the GUI through NEFilterManager. A live
+            // XPC update changes only this in-memory policy and never waits on
+            // disk, XPC, or another transport.
             return status
         } catch {
             let status = SharedRuleBridge.SnapshotStatus.invalid(

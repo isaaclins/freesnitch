@@ -1,12 +1,11 @@
 import Foundation
 
-final class HelperService: NSObject, HelperProtocol, BootPolicyProtocol, @unchecked Sendable {
+final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
     private let pf = PFManager()
     private let dns = DNSProxy()
     private let netmon = NetMonitor()
     private let blocklists: BlocklistManager
-    private let bootSnapshotStore: BootSnapshotStore
     private let listener: NSXPCListener
     private var clientConnections: [NSXPCConnection] = []
     private let clientLock = NSLock()
@@ -24,7 +23,6 @@ final class HelperService: NSObject, HelperProtocol, BootPolicyProtocol, @unchec
         let dbPath = (dbDir as NSString).appendingPathComponent("freesnitch.sqlite")
         self.store = try RuleStore(path: dbPath)
         self.blocklists = BlocklistManager(store: store)
-        self.bootSnapshotStore = BootSnapshotStore()
         self.listener = listener
         super.init()
 
@@ -153,41 +151,6 @@ final class HelperService: NSObject, HelperProtocol, BootPolicyProtocol, @unchec
     // from the one it shipped with.
     func getVersion(reply: @escaping (String) -> Void) {
         reply(AppBundleIdentity.current ?? AppConstants.version)
-    }
-
-    // MARK: - BootPolicyProtocol
-    func loadBootSnapshot(reply: @escaping (Data) -> Void) {
-        do {
-            let snapshot = try bootSnapshotStore.read()
-            let data = try SharedRuleBridge.encode(snapshot)
-            PSLog.info(
-                PSLog.helper,
-                "boot policy cache loaded: mode \(snapshot.mode.rawValue), \(snapshot.rules.count) rules"
-            )
-            reply(data)
-        } catch {
-            PSLog.error(
-                PSLog.helper,
-                "boot policy cache unavailable: \(error.localizedDescription); the extension will fail open"
-            )
-            reply(Data())
-        }
-    }
-
-    func storeBootSnapshot(snapshotJSON: Data, reply: @escaping (Bool, String?) -> Void) {
-        do {
-            let snapshot = try SharedRuleBridge.decode(snapshotJSON)
-            try bootSnapshotStore.write(snapshot)
-            PSLog.info(
-                PSLog.helper,
-                "boot policy cache stored: mode \(snapshot.mode.rawValue), \(snapshot.rules.count) rules"
-            )
-            reply(true, nil)
-        } catch {
-            let message = "boot policy cache was not stored: \(error.localizedDescription)"
-            PSLog.error(PSLog.helper, message)
-            reply(false, message)
-        }
     }
 
     func getStatus(reply: @escaping (Data) -> Void) {

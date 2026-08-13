@@ -20,13 +20,6 @@ public enum XPCPeerValidator {
         trustedPeer(connection, requirement: peerRequirement())
     }
 
-    /// The boot-policy listener is a separate cache-only XPC surface. Keep its
-    /// requirement separate so a network extension can never use the helper's
-    /// state-changing GUI and CLI API.
-    public static func isTrustedNetExt(_ connection: NSXPCConnection) -> Bool {
-        trustedPeer(connection, requirement: netExtRequirement())
-    }
-
     /// Used by the extension to keep a CLI inspection connection from taking
     /// ownership of the GUI connection that receives interactive alerts.
     /// Ad-hoc clients cannot become a Developer ID CLI, so this only affects
@@ -56,10 +49,6 @@ public enum XPCPeerValidator {
     /// silently accept different client identities.
     private static func peerRequirement() -> SecRequirement? {
         requirement(for: permittedPeerIdentifiers)
-    }
-
-    private static func netExtRequirement() -> SecRequirement? {
-        requirement(for: [AppConstants.bundleIdNetExt])
     }
 
     private static func requirement(for identifiers: [String]) -> SecRequirement? {

@@ -1,14 +1,63 @@
 import Foundation
 
 /// The rule snapshot exchanged between the GUI and the Network System
-/// Extension. The extension runs in a sandbox, so an app-group file would
-/// resolve to the wrong home for the root process. Live snapshots cross the
-/// existing app-extension XPC connection; the helper separately owns a
-/// versioned boot cache for extension startup.
+/// Extension. Live snapshots cross the existing app-extension XPC connection;
+/// the versioned boot envelope is persisted in the provider configuration for
+/// extension startup.
 public enum SharedRuleBridge {
-    /// Version the on-disk envelope separately from the live XPC payload. A
-    /// future build must reject an unknown cache instead of guessing its policy.
+    /// Version the persisted provider-configuration envelope separately from
+    /// the live XPC payload. A future build must reject an unknown snapshot
+    /// instead of guessing its policy.
     public static let bootSnapshotVersion = 1
+    /// Stable key in NEFilterProviderConfiguration.vendorConfiguration.
+    public static let bootSnapshotVendorConfigurationKey = "io.isaaclins.freesnitch.bootSnapshot"
+    /// Keep provider preferences bounded because they are persisted by the
+    /// system, not streamed like the live XPC payload.
+    public static let maximumBootSnapshotEncodedBytes = 512 * 1024
+    public static let maximumBootSnapshotRuleCount = 4096
+    public static let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
+
+    /// Pure state for the asynchronous provider-preference writer. A caller
+    /// may take only the newest pending payload after a load completes; any
+    /// request arriving during a save remains visible as newer work.
+    public struct NewestWriteWinsQueue: Sendable {
+        public struct Pending: Sendable {
+            public let generation: Int
+            public let data: Data
+        }
+
+        private(set) public var generation = 0
+        private var pendingData: Data?
+
+        public init() {}
+
+        public var hasPending: Bool { pendingData != nil }
+
+        @discardableResult
+        public mutating func enqueue(_ data: Data) -> Int {
+            generation += 1
+            pendingData = data
+            return generation
+        }
+
+        public mutating func takeNewest() -> Pending? {
+            guard let pendingData else { return nil }
+            self.pendingData = nil
+            return Pending(generation: generation, data: pendingData)
+        }
+
+        public func hasNewerWork(since generation: Int) -> Bool {
+            self.generation > generation
+        }
+
+        /// Drop the attempted generation after a failed preference load. A
+        /// request enqueued during that load has a larger generation and is
+        /// deliberately retained for one fresh attempt.
+        public mutating func discardThrough(_ generation: Int) {
+            guard self.generation <= generation else { return }
+            pendingData = nil
+        }
+    }
 
     public struct Snapshot: Codable, Sendable {
         public var mode: AppMode
@@ -83,20 +132,53 @@ public enum SharedRuleBridge {
         try JSONDecoder().decode(Snapshot.self, from: data)
     }
 
-    public static func encodeBootSnapshot(_ snapshot: Snapshot) throws -> Data {
-        try JSONEncoder().encode(BootSnapshot(snapshot: snapshot))
+    public static func encodeBootSnapshot(_ snapshot: Snapshot, now: Date = Date()) throws -> Data {
+        let stored = BootSnapshot(snapshot: snapshot)
+        try validateBootSnapshot(stored, now: now)
+        let data = try JSONEncoder().encode(stored)
+        guard data.count <= maximumBootSnapshotEncodedBytes else {
+            throw validationError("Boot snapshot exceeds the \(maximumBootSnapshotEncodedBytes)-byte limit.")
+        }
+        return data
     }
 
-    public static func decodeBootSnapshot(_ data: Data) throws -> Snapshot {
-        let stored = try JSONDecoder().decode(BootSnapshot.self, from: data)
-        guard stored.version == bootSnapshotVersion else {
-            throw NSError(
-                domain: "SharedRuleBridge",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Unsupported boot snapshot version \(stored.version)."]
-            )
+    public static func decodeBootSnapshot(_ data: Data, now: Date = Date()) throws -> Snapshot {
+        guard !data.isEmpty else { throw validationError("Boot snapshot is missing.") }
+        guard data.count <= maximumBootSnapshotEncodedBytes else {
+            throw validationError("Boot snapshot exceeds the \(maximumBootSnapshotEncodedBytes)-byte limit.")
         }
+        let stored = try JSONDecoder().decode(BootSnapshot.self, from: data)
+        try validateBootSnapshot(stored, now: now)
         return stored.snapshot
+    }
+
+    public static func applyingBootPolicySafety(_ snapshot: Snapshot, now: Date = Date()) -> Snapshot {
+        guard snapshot.mode == .silentDeny else { return snapshot }
+        let age = now.timeIntervalSince(snapshot.updatedAt)
+        guard age < 0 || age > staleSilentDenyAge else { return snapshot }
+        var downgraded = snapshot
+        downgraded.mode = .alert
+        return downgraded
+    }
+
+    private static func validateBootSnapshot(_ stored: BootSnapshot, now: Date) throws {
+        guard stored.version == bootSnapshotVersion else {
+            throw validationError("Unsupported boot snapshot version \(stored.version).")
+        }
+        guard stored.snapshot.rules.count <= maximumBootSnapshotRuleCount else {
+            throw validationError("Boot snapshot contains too many rules.")
+        }
+        guard stored.snapshot.updatedAt <= now else {
+            throw validationError("Boot snapshot is dated in the future.")
+        }
+    }
+
+    private static func validationError(_ message: String) -> NSError {
+        NSError(
+            domain: "SharedRuleBridge",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 
     public static func encode(_ status: SnapshotStatus) throws -> Data {

@@ -35,10 +35,16 @@ final class AppState: ObservableObject {
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
     )
+    @Published var filterPersistenceDegraded = false
+    @Published var filterPersistenceMessage: String?
     /// Set by SystemExtensionManager so the published snapshot state can also
     /// drive the extension lifecycle status without making the view model own
     /// that lifecycle.
     var filterSnapshotStatusHandler: ((SharedRuleBridge.SnapshotStatus) -> Void)?
+    /// SystemExtensionManager owns persisted provider configuration. Keeping
+    /// this callback separate from live XPC lets a save failure leave the
+    /// active in-memory policy untouched.
+    var filterSnapshotPersistenceHandler: ((SharedRuleBridge.Snapshot) -> Void)?
 
     /// Menu-bar speed readout. Off by default: the status item is a plain
     /// template glyph unless the user asks for numbers.
@@ -176,11 +182,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The current policy envelope used by both the live XPC update and the
+    /// persisted NetworkExtension provider configuration.
+    func currentFilterSnapshot() -> SharedRuleBridge.Snapshot {
+        SharedRuleBridge.Snapshot(mode: mode, rules: rules)
+    }
+
     /// Hand the active rules and mode to the Network System Extension over the
-    /// existing XPC channel. No app-group file is used because the extension
-    /// runs as root and would resolve that container under /var/root.
+    /// existing XPC channel and ask SystemExtensionManager to persist the same
+    /// versioned snapshot in vendorConfiguration.
     func syncSharedRules() {
-        let snapshot = SharedRuleBridge.Snapshot(mode: mode, rules: rules)
+        let snapshot = currentFilterSnapshot()
+        filterSnapshotPersistenceHandler?(snapshot)
         guard let data = try? SharedRuleBridge.encode(snapshot) else {
             let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the filter rule snapshot.")
             publishFilterSnapshotStatus(status)
@@ -196,6 +209,17 @@ final class AppState: ObservableObject {
     private func publishFilterSnapshotStatus(_ status: SharedRuleBridge.SnapshotStatus) {
         filterSnapshotStatus = status
         filterSnapshotStatusHandler?(status)
+    }
+
+    func recordFilterPersistenceFailure(_ message: String) {
+        filterPersistenceDegraded = true
+        filterPersistenceMessage = message
+        appendLog(level: "error", message: message)
+    }
+
+    func clearFilterPersistenceFailure() {
+        filterPersistenceDegraded = false
+        filterPersistenceMessage = nil
     }
 
     func setMode(_ m: AppMode) {
