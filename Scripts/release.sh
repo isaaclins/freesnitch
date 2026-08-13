@@ -618,7 +618,13 @@ generate_appcast() {
   if [[ -f "$ROOT/docs/appcast.xml" ]]; then
     cp "$ROOT/docs/appcast.xml" "$APPCAST_ARCHIVES/appcast.xml"
   fi
-  cp "$ZIP_PATH" "$APPCAST_ARCHIVES/$ZIP_NAME"
+  # The archive is normally built straight into the archive directory, so this
+  # would be a copy onto itself, which cp refuses and pipefail turns fatal.
+  if [[ "$ZIP_PATH" -ef "$APPCAST_ARCHIVES/$ZIP_NAME" ]]; then
+    printf 'Sparkle archive is already at %s; no copy needed.\n' "$APPCAST_ARCHIVES/$ZIP_NAME"
+  else
+    cp "$ZIP_PATH" "$APPCAST_ARCHIVES/$ZIP_NAME"
+  fi
   cp "$NOTES_INPUT" "$notes_txt"
 
   if [[ -n "${SPARKLE_EDDSA_PRIVATE_KEY_FILE:-}" ]]; then
