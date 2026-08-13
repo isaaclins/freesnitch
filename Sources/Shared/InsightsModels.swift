@@ -3,6 +3,7 @@ import Foundation
 public enum InsightsValidationError: Error, LocalizedError, Sendable {
     case unsupportedVersion(Int)
     case tooManyObservations(Int)
+    case tooManyMappings(Int)
     case oversizedPayload(Int)
     case invalidField(String)
 
@@ -10,6 +11,7 @@ public enum InsightsValidationError: Error, LocalizedError, Sendable {
         switch self {
         case .unsupportedVersion(let version): return "unsupported insights schema version \(version)"
         case .tooManyObservations(let count): return "too many insights observations: \(count)"
+        case .tooManyMappings(let count): return "too many insights DNS mappings: \(count)"
         case .oversizedPayload(let count): return "insights payload is too large: \(count) bytes"
         case .invalidField(let field): return "invalid insights field: \(field)"
         }
@@ -19,14 +21,17 @@ public enum InsightsValidationError: Error, LocalizedError, Sendable {
 public enum InsightsLimits {
     public static let schemaVersion = 1
     public static let maxBatchCount = 256
+    public static let maxDNSMappingCount = 256
     public static let maxBatchBytes = 256 * 1024
     public static let maxBundleIDLength = 256
     public static let maxPathLength = 4096
     public static let maxNameLength = 256
     public static let maxHostLength = 253
+    public static let maxIPAddressLength = 45
     public static let maxProtocolLength = 32
     public static let rawRetention: TimeInterval = 14 * 24 * 60 * 60
     public static let rollupRetentionDays = 365
+    public static let maxDNSMappingLifetime: TimeInterval = 7 * 24 * 60 * 60
 }
 
 public struct FlowObservation: Codable, Hashable, Sendable {
@@ -58,8 +63,8 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         self.remotePort = connection.remotePort
         self.direction = connection.direction
         self.protocolName = connection.protocolName
-        self.bytesIn = nil
-        self.bytesOut = nil
+        self.bytesIn = connection.bytesIn >= 0 ? connection.bytesIn : nil
+        self.bytesOut = connection.bytesOut >= 0 ? connection.bytesOut : nil
     }
 
     public func validate(now: Date = Date()) throws {
@@ -76,7 +81,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         try validateLength(processPath, InsightsLimits.maxPathLength, "processPath")
         try validateLength(processName, InsightsLimits.maxNameLength, "processName")
         try validateLength(remoteHost, InsightsLimits.maxHostLength, "remoteHost")
-        try validateLength(remoteIP, InsightsLimits.maxHostLength, "remoteIP")
+        try validateLength(remoteIP, InsightsLimits.maxIPAddressLength, "remoteIP")
         try validateLength(protocolName, InsightsLimits.maxProtocolLength, "protocolName")
         guard remotePort >= 0 && remotePort <= 65535 else {
             throw InsightsValidationError.invalidField("remotePort")
@@ -108,7 +113,7 @@ public struct FlowObservationBatch: Codable, Sendable {
     }
 
     public func validate(payloadBytes: Int, now: Date = Date()) throws {
-        guard payloadBytes <= InsightsLimits.maxBatchBytes else {
+        guard payloadBytes >= 0 && payloadBytes <= InsightsLimits.maxBatchBytes else {
             throw InsightsValidationError.oversizedPayload(payloadBytes)
         }
         guard schemaVersion == InsightsLimits.schemaVersion else {
@@ -118,5 +123,66 @@ public struct FlowObservationBatch: Codable, Sendable {
             throw InsightsValidationError.tooManyObservations(observations.count)
         }
         for observation in observations { try observation.validate(now: now) }
+    }
+}
+
+public struct DNSMapping: Codable, Hashable, Sendable {
+    public let schemaVersion: Int
+    public let domain: String
+    public let ip: String
+    public let observedAt: Date
+    public let expiresAt: Date
+
+    public init(domain: String, ip: String, observedAt: Date = Date(), expiresAt: Date? = nil) {
+        self.schemaVersion = InsightsLimits.schemaVersion
+        self.domain = domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        self.ip = ip
+        self.observedAt = observedAt
+        self.expiresAt = expiresAt ?? observedAt.addingTimeInterval(5 * 60)
+    }
+
+    public func validate(now: Date = Date()) throws {
+        guard schemaVersion == InsightsLimits.schemaVersion else {
+            throw InsightsValidationError.unsupportedVersion(schemaVersion)
+        }
+        guard domain.utf8.count > 0 && domain.utf8.count <= InsightsLimits.maxHostLength,
+              PFHostValidator.kind(for: domain) == .hostname else {
+            throw InsightsValidationError.invalidField("domain")
+        }
+        guard ip.utf8.count > 0 && ip.utf8.count <= InsightsLimits.maxIPAddressLength,
+              PFHostValidator.kind(for: ip) == .ip else {
+            throw InsightsValidationError.invalidField("ip")
+        }
+        guard observedAt.timeIntervalSince1970.isFinite,
+              expiresAt.timeIntervalSince1970.isFinite,
+              observedAt <= now.addingTimeInterval(5 * 60),
+              observedAt >= now.addingTimeInterval(-InsightsLimits.rawRetention),
+              expiresAt >= observedAt,
+              expiresAt <= observedAt.addingTimeInterval(InsightsLimits.maxDNSMappingLifetime) else {
+            throw InsightsValidationError.invalidField("DNS timestamps")
+        }
+    }
+}
+
+public struct DNSMappingBatch: Codable, Sendable {
+    public let schemaVersion: Int
+    public let mappings: [DNSMapping]
+
+    public init(mappings: [DNSMapping]) {
+        self.schemaVersion = InsightsLimits.schemaVersion
+        self.mappings = mappings
+    }
+
+    public func validate(payloadBytes: Int, now: Date = Date()) throws {
+        guard payloadBytes >= 0 && payloadBytes <= InsightsLimits.maxBatchBytes else {
+            throw InsightsValidationError.oversizedPayload(payloadBytes)
+        }
+        guard schemaVersion == InsightsLimits.schemaVersion else {
+            throw InsightsValidationError.unsupportedVersion(schemaVersion)
+        }
+        guard mappings.count <= InsightsLimits.maxDNSMappingCount else {
+            throw InsightsValidationError.tooManyMappings(mappings.count)
+        }
+        for mapping in mappings { try mapping.validate(now: now) }
     }
 }
