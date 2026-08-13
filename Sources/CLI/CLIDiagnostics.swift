@@ -6,7 +6,7 @@ struct ExtensionInspection {
     let filterConfigurationState: String
     let filterEnabledState: String
     let snapshotState: String
-    let running: Bool
+    let runningState: String
 }
 
 struct SystemExtensionObservation: Sendable {
@@ -32,40 +32,30 @@ enum ExtensionInspector {
             filter = FilterObservation(configuration: "not-in-build", enabled: "no", detail: "The monitor-only build has no content filter configuration.")
         }
 
-        var snapshot = SnapshotReport(state: "unknown", mode: nil, ruleCount: nil, updatedAt: nil, message: nil)
-        var running = false
-        var snapshotDetail: String?
-        do {
-            snapshot = try await CLIExtensionClient().snapshotStatus()
-            running = true
-            snapshotDetail = snapshot.message
-        } catch let error as ExtensionClientError {
-            snapshotDetail = error.message
-        } catch {
-            snapshotDetail = error.localizedDescription
-        }
-
-        var approval = system.state
-        if running && approval == "unknown" { approval = "approved" }
-        let message = [system.detail, filter.detail, snapshotDetail]
-            .compactMap { $0 }
+        let xpcMessage = "The bare CLI cannot inspect the network extension's app-group XPC service on the live shipping setup. Direct extension running and rule snapshot state are unknown; approval and filter configuration are reported separately."
+        let snapshot = SnapshotReport(state: "unknown",
+                                      mode: nil,
+                                      ruleCount: nil,
+                                      updatedAt: nil,
+                                      message: xpcMessage)
+        let message = [system.detail, filter.detail, xpcMessage]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         let report = ExtensionReport(
             identifier: AppConstants.bundleIdNetExt,
-            approval: approval,
-            running: running ? "yes" : "no",
+            approval: system.state,
+            running: "unknown",
             filterConfiguration: filter.configuration,
             filterEnabled: filter.enabled,
             snapshot: snapshot,
             message: message.isEmpty ? nil : message
         )
         return ExtensionInspection(report: report,
-                                   approvalState: approval,
+                                   approvalState: system.state,
                                    filterConfigurationState: filter.configuration,
                                    filterEnabledState: filter.enabled,
                                    snapshotState: snapshot.state,
-                                   running: running)
+                                   runningState: "unknown")
     }
 }
 
