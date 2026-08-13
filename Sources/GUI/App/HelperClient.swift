@@ -29,6 +29,18 @@ enum HelperInstallState: Equatable {
     var isHealthy: Bool { self == .enabled }
 }
 
+enum HelperVersionState: Equatable {
+    case unknown
+    case matching(String)
+    case mismatch(helper: String, app: String)
+}
+
+enum HelperRepairState: Equatable {
+    case idle
+    case inProgress
+    case manualRequired(String)
+}
+
 @MainActor
 final class HelperClient: NSObject, ObservableObject {
     @Published var connected: Bool = false
@@ -45,6 +57,12 @@ final class HelperClient: NSObject, ObservableObject {
     /// offering. Never acted on automatically; see startPolling().
     /// Version string reported by the running daemon, when it answers at all.
     @Published var helperVersion: String?
+    @Published var versionState: HelperVersionState = .unknown {
+        didSet { state?.helperVersionState = versionState }
+    }
+    @Published var repairState: HelperRepairState = .idle {
+        didSet { state?.helperRepairState = repairState }
+    }
     @Published var needsRepair = false {
         didSet { state?.helperNeedsRepair = needsRepair }
     }
@@ -53,6 +71,11 @@ final class HelperClient: NSObject, ObservableObject {
     private var service: SMAppService? {
         guard #available(macOS 13.0, *) else { return nil }
         return SMAppService.daemon(plistName: "io.isaaclins.freesnitch.helper.plist")
+    }
+
+    private var hasVersionMismatch: Bool {
+        if case .mismatch = versionState { return true }
+        return false
     }
 
     /// True when the bundle lives somewhere macOS will accept a background
@@ -177,6 +200,10 @@ final class HelperClient: NSObject, ObservableObject {
                     self.needsRepair = false
                     return
                 }
+                if self.hasVersionMismatch {
+                    self.ping()
+                    return
+                }
                 self.reconnectAndPing()
 
                 // Approved but silent (typically after an in-place app update,
@@ -238,16 +265,18 @@ final class HelperClient: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 guard !version.isEmpty else { self.setConnected(false); return }
-                // A helper left over from an older install answers happily but
-                // speaks a different protocol. Treat that as "not healthy" and
-                // offer the repair rather than silently running mismatched code.
-                if version != AppConstants.version {
-                    self.helperVersion = version
+                self.helperVersion = version
+                guard version == AppConstants.version else {
+                    // A helper left over from an older install answers happily,
+                    // so keep that fact separate from ordinary reachability.
+                    self.versionState = .mismatch(helper: version, app: AppConstants.version)
                     self.needsRepair = true
                     self.setConnected(false)
                     return
                 }
-                self.helperVersion = version
+                self.versionState = .matching(version)
+                self.repairState = .idle
+                self.needsRepair = false
                 self.setConnected(true)
             }
         }

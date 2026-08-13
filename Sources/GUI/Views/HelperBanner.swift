@@ -15,7 +15,9 @@ struct HelperBanner: View {
         VStack(spacing: 0) {
             if let info = BannerInfo(installState: state.helperInstallState,
                                      connected: state.helperConnected,
-                                     needsRepair: state.helperNeedsRepair) {
+                                     needsRepair: state.helperNeedsRepair,
+                                     versionState: state.helperVersionState,
+                                     repairState: state.helperRepairState) {
                 banner(info)
             }
             if let info = BannerInfo(extensionStatus: systemExtension.status,
@@ -67,7 +69,27 @@ private struct BannerInfo {
     let action: BannerAction?
 
     /// Returns nil when everything is healthy, so there is no banner or noise.
-    init?(installState: HelperInstallState, connected: Bool, needsRepair: Bool) {
+    init?(installState: HelperInstallState,
+          connected: Bool,
+          needsRepair: Bool,
+          versionState: HelperVersionState,
+          repairState: HelperRepairState) {
+        if case .mismatch(let helperVersion, let appVersion) = versionState {
+            icon = "exclamationmark.arrow.trianglehead.counterclockwise"
+            tint = PSTheme.accentYellow
+            title = "The FreeSnitch helper is out of date"
+            switch repairState {
+            case .inProgress:
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active yet. FreeSnitch is trying to restart it without changing the existing pf anchor."
+            case .manualRequired(let reason):
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. \(reason) Run `sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper` in Terminal. The current pf anchor is left in place while the helper is restarted."
+            case .idle:
+                detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active. FreeSnitch will try to restart the helper automatically."
+            }
+            action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
+            return
+        }
+
         switch installState {
         case .enabled where connected:
             return nil

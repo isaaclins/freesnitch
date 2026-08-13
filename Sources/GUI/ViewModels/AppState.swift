@@ -22,6 +22,8 @@ final class AppState: ObservableObject {
     @Published var pendingAlerts: [PendingAlert] = []
     @Published var helperConnected: Bool = false
     @Published var helperInstallState: HelperInstallState = .unknown
+    @Published var helperVersionState: HelperVersionState = .unknown
+    @Published var helperRepairState: HelperRepairState = .idle
     @Published var helperNeedsRepair: Bool = false
     @Published var pfctlEnabled: Bool = false
     @Published var dnsProxyEnabled: Bool = false
