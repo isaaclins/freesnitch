@@ -1,10 +1,5 @@
 import Foundation
 
-struct ExtensionRegisterReply {
-    let ok: Bool
-    let status: SharedRuleBridge.SnapshotStatus
-}
-
 enum ExtensionClientError: Error {
     case transport(String)
     case invalidResponse(String)
@@ -18,28 +13,13 @@ enum ExtensionClientError: Error {
 }
 
 /// XPC client for the extension's existing app-extension channel. It is used
-/// for doctor and for syncing a CLI rule/mode change. The extension validator
-/// accepts this client identifier, but the extension deliberately keeps the
-/// GUI as the interactive alert owner.
+/// only for delivering a CLI rule/mode change. The extension validator accepts
+/// this client identifier, but the extension deliberately keeps the GUI as the
+/// interactive alert owner. Status does not use this channel because the bare
+/// CLI cannot reliably inspect the live app-group service.
 final class CLIExtensionClient: NSObject {
     private var connection: NSXPCConnection?
     private let appCommunication = CLIAppCommunication()
-
-    func snapshotStatus() async throws -> SnapshotReport {
-        let reply: ExtensionRegisterReply = try await perform { proxy, completion in
-            proxy.register { ok, data in
-                guard let status = try? CLIJSON.decode(SharedRuleBridge.SnapshotStatus.self, from: data) else {
-                    completion(.failure(ExtensionClientError.invalidResponse("The network extension returned an unreadable snapshot status.")))
-                    return
-                }
-                completion(.success(ExtensionRegisterReply(ok: ok, status: status)))
-            }
-        }
-        guard reply.ok else {
-            throw ExtensionClientError.rejected(reply.status.message ?? "The network extension rejected the CLI connection.")
-        }
-        return Self.report(for: reply.status)
-    }
 
     func updateSnapshot(_ data: Data) async throws -> SnapshotReport {
         let status: SharedRuleBridge.SnapshotStatus = try await perform { proxy, completion in

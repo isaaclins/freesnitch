@@ -45,7 +45,7 @@ enum CLIHelp {
       freesnitch <command> [options]
 
     Read and diagnose:
-      status                         Show helper, enforcement, extension, and snapshot health.
+      status                         Show helper, enforcement, approval, filter, and XPC state.
       doctor                         Explain failures and the exact recovery action for each.
       monitor connections             Show the connections in the Network Monitor.
       monitor traffic                 Show the latest traffic samples.
@@ -115,18 +115,22 @@ enum CLIHelp {
     Usage: freesnitch status [--json]
 
     Shows the helper version and reachability, current mode, enforcement state,
-    system extension approval and running state, filter configuration, and the
-    last rule snapshot status. A reachable helper with an unhealthy extension
-    still returns a health report; use doctor for remediation text.
+    macOS system extension approval, GUI-published filter configuration, and
+    direct extension XPC state. The bare CLI cannot inspect the live app-group
+    XPC service, so extension running and rule snapshot are reported as unknown
+    rather than inferred from a failed query. Rule mutation commands separately
+    report whether snapshot delivery was verified.
     """
 
     private static let doctor = """
     Usage: freesnitch doctor [--json]
 
     Runs independent checks for helper reachability and version, system
-    extension approval, filter configuration, extension XPC reachability and
-    snapshot delivery, and pf anchor syntax. Every problem includes what is
-    wrong and what to do next.
+    extension approval, filter configuration, direct extension XPC state, and
+    pf anchor syntax. The bare CLI cannot inspect the live app-group XPC
+    service, so running and rule snapshot findings are UNKNOWN, not PROBLEM.
+    Rule mutation commands can still report whether snapshot delivery was
+    verified. Every provable problem includes what is wrong and what to do next.
     """
 
     private static let mode = """

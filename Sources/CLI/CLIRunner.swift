@@ -60,7 +60,7 @@ final class CLIRunner {
         appendExtensionFindings(findings: &findings, inspection: extensionInspection)
         appendPFFinding(findings: &findings, report: pf)
 
-        let healthy = findings.allSatisfy { $0.state == "ok" }
+        let healthy = findings.allSatisfy { $0.state != "problem" }
         let exitCode = findings.first(where: { $0.exitCode != nil })?.exitCode
             .flatMap { CLIExitCode(rawValue: $0) } ?? .success
         let report = DoctorReport(healthy: healthy,
@@ -705,15 +705,18 @@ final class CLIRunner {
           PF anchor: \(humanBool(report.helper.pfctlActive))
           DNS proxy: \(report.helper.dnsProxyActive ? "running" : "stopped") on port \(report.helper.dnsProxyPort)
           Extension approval: \(report.extensionStatus.approval)
-          Extension running: \(report.extensionStatus.running)
+          Extension XPC running: \(report.extensionStatus.running)
           Filter configuration: \(report.extensionStatus.filterConfiguration) (enabled \(report.extensionStatus.filterEnabled))
-          Rule snapshot: \(report.extensionStatus.snapshot.state)\(report.extensionStatus.snapshot.ruleCount.map { " (\($0) rules)" } ?? "")
+          Rule snapshot (direct extension XPC): \(report.extensionStatus.snapshot.state)\(report.extensionStatus.snapshot.ruleCount.map { " (\($0) rules)" } ?? "")
         \(report.extensionStatus.message.map { "  Detail: \($0)" } ?? "")
         """
     }
 
     private func humanDoctor(_ report: DoctorReport) -> String {
-        let header = report.healthy ? "FreeSnitch doctor: healthy" : "FreeSnitch doctor: problems found"
+        let hasUnknown = report.findings.contains { $0.state == "unknown" }
+        let header = report.healthy
+            ? (hasUnknown ? "FreeSnitch doctor: no provable problems" : "FreeSnitch doctor: healthy")
+            : "FreeSnitch doctor: problems found"
         let body = report.findings.map { finding in
             let label = finding.state.uppercased()
             return "[\(label)] \(finding.message)\n       What to do: \(finding.action)"
@@ -791,7 +794,7 @@ final class CLIRunner {
         case "not-in-build": findings.append(DoctorFinding(id: "extension_approval", state: "ok", message: "This monitor-only build intentionally does not embed the network extension.", action: "Use the firewall build generated from project-netext.yml to diagnose per-process filtering.", exitCode: nil))
         case "approved": findings.append(DoctorFinding(id: "extension_approval", state: "ok", message: "The network extension is approved.", action: "No action needed.", exitCode: nil))
         case "not-approved": findings.append(DoctorFinding(id: "extension_approval", state: "problem", message: "The network extension is not approved or is not installed.", action: "Use a signed firewall build, activate FreeSnitch, and approve the extension in System Settings > Privacy & Security when macOS asks.", exitCode: CLIExitCode.extensionNotApproved.rawValue))
-        default: findings.append(DoctorFinding(id: "extension_approval", state: "unknown", message: "macOS did not provide a reliable network extension approval state.", action: "Run doctor from the signed app bundle on the firewall build and inspect System Settings > Privacy & Security.", exitCode: CLIExitCode.operationFailed.rawValue))
+        default: findings.append(DoctorFinding(id: "extension_approval", state: "unknown", message: "macOS did not provide a reliable network extension approval state.", action: "Run doctor from the signed app bundle on the firewall build and inspect System Settings > Privacy & Security.", exitCode: nil))
         }
 
         switch inspection.filterConfigurationState {
@@ -799,25 +802,30 @@ final class CLIRunner {
         case "installed" where inspection.filterEnabledState == "yes": findings.append(DoctorFinding(id: "filter_configuration", state: "ok", message: "The content filter configuration is installed and enabled.", action: "No action needed.", exitCode: nil))
         case "installed": findings.append(DoctorFinding(id: "filter_configuration", state: "problem", message: "The network extension is approved, but the content filter configuration is installed and disabled.", action: "Launch the FreeSnitch GUI once so it can enable the filter configuration, then rerun doctor.", exitCode: CLIExitCode.filterConfigurationMissing.rawValue))
         case "missing": findings.append(DoctorFinding(id: "filter_configuration", state: "problem", message: "The network extension is approved, but no content filter configuration is installed.", action: "Launch the FreeSnitch GUI once; after activation completes it installs the filter configuration. Then rerun doctor.", exitCode: CLIExitCode.filterConfigurationMissing.rawValue))
-        default: findings.append(DoctorFinding(id: "filter_configuration", state: "unknown", message: "The content filter configuration could not be read.", action: "Run doctor from the signed firewall build and inspect Network Extension permissions.", exitCode: CLIExitCode.operationFailed.rawValue))
+        default: findings.append(DoctorFinding(id: "filter_configuration", state: "unknown", message: "The content filter configuration could not be read.", action: "Run doctor from the signed firewall build and inspect Network Extension permissions.", exitCode: nil))
         }
 
         if inspection.approvalState == "not-in-build" {
             findings.append(DoctorFinding(id: "extension_running", state: "ok", message: "No network extension XPC listener is expected in this monitor-only build.", action: "Use the firewall build to test extension XPC.", exitCode: nil))
-        } else if inspection.running {
-            findings.append(DoctorFinding(id: "extension_running", state: "ok", message: "The network extension XPC listener is running.", action: "No action needed.", exitCode: nil))
         } else {
-            findings.append(DoctorFinding(id: "extension_running", state: "problem", message: "The network extension is not answering its XPC service.", action: "Approve and activate the extension, ensure the filter configuration is enabled, and rerun doctor.", exitCode: CLIExitCode.extensionNotApproved.rawValue))
+            switch inspection.runningState {
+            case "yes":
+                findings.append(DoctorFinding(id: "extension_running", state: "ok", message: "The network extension XPC listener is running.", action: "No action needed.", exitCode: nil))
+            case "no":
+                findings.append(DoctorFinding(id: "extension_running", state: "problem", message: "The network extension is not answering its XPC service.", action: "Approve and activate the extension, ensure the filter configuration is enabled, and rerun doctor.", exitCode: CLIExitCode.extensionNotApproved.rawValue))
+            default:
+                findings.append(DoctorFinding(id: "extension_running", state: "unknown", message: "The CLI cannot inspect the network extension's direct XPC state on the live shipping setup, so running is unknown.", action: "Do not infer an extension failure from this finding. A helper-mediated extension health query is required for a direct running check.", exitCode: nil))
+            }
         }
 
         if inspection.approvalState == "not-in-build" {
             findings.append(DoctorFinding(id: "filter_snapshot", state: "ok", message: "No network extension snapshot is expected in this monitor-only build.", action: "Use the firewall build to test rule snapshot delivery.", exitCode: nil))
         } else if inspection.snapshotState == "ready" {
             findings.append(DoctorFinding(id: "filter_snapshot", state: "ok", message: "A rule snapshot was delivered over XPC and is ready for filtering.", action: "No action needed.", exitCode: nil))
-        } else if inspection.running {
+        } else if inspection.runningState == "yes" {
             findings.append(DoctorFinding(id: "filter_snapshot", state: "problem", message: "The extension is running but has no ready rule snapshot from a trusted client.", action: "Run `freesnitch mode alert` or a rules mutation to deliver a snapshot, then rerun doctor. Filtering remains fail-open until one arrives.", exitCode: CLIExitCode.snapshotMissing.rawValue))
         } else {
-            findings.append(DoctorFinding(id: "filter_snapshot", state: "unknown", message: "Snapshot delivery could not be tested because the extension is not running.", action: "Fix extension approval and XPC reachability first, then rerun doctor.", exitCode: nil))
+            findings.append(DoctorFinding(id: "filter_snapshot", state: "unknown", message: "The CLI cannot query the extension's direct XPC snapshot state on the live shipping setup, so the rule snapshot is unknown.", action: "Do not infer a missing snapshot from this finding. Use a rule mutation to test snapshot delivery; a helper-mediated health query is required for a persistent status check.", exitCode: nil))
         }
     }
 
@@ -825,7 +833,7 @@ final class CLIRunner {
         switch report.valid {
         case "valid", "not-installed": findings.append(DoctorFinding(id: "pf_anchor", state: "ok", message: report.message ?? "The pf anchor is healthy.", action: "No action needed.", exitCode: nil))
         case "invalid": findings.append(DoctorFinding(id: "pf_anchor", state: "problem", message: report.message ?? "The pf anchor is invalid.", action: "Remove or correct the offending rule, then retry the enforcement command. Keep `pkill -x FreeSnitch` available as the emergency fail-open escape hatch.", exitCode: CLIExitCode.pfAnchorFailure.rawValue))
-        default: findings.append(DoctorFinding(id: "pf_anchor", state: "unknown", message: report.message ?? "The pf anchor could not be checked.", action: "Run doctor with the necessary local pf permissions, then retry the syntax check.", exitCode: CLIExitCode.operationFailed.rawValue))
+        default: findings.append(DoctorFinding(id: "pf_anchor", state: "unknown", message: report.message ?? "The pf anchor could not be checked.", action: "Run doctor with the necessary local pf permissions, then retry the syntax check.", exitCode: nil))
         }
     }
 
