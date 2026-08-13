@@ -222,9 +222,11 @@ require_clean_main_and_pushed() {
   [[ -n "$upstream" ]] || die "main has no upstream branch; push main before releasing"
 
   local counts ahead behind
+  # git separates the two counters with a tab, so split on whitespace rather
+  # than assuming a single space. Stripping on a space kept the whole string
+  # in both variables and made this gate reject every possible state.
   counts="$(git rev-list --left-right --count "HEAD...$upstream")"
-  ahead="${counts%% *}"
-  behind="${counts##* }"
+  read -r ahead behind <<<"$counts"
   [[ "$ahead" == "0" && "$behind" == "0" ]] || \
     die "main is not synchronized with $upstream (ahead $ahead, behind $behind)"
 
