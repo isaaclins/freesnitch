@@ -108,6 +108,18 @@ struct RulesManagerView: View {
                 groupRow("Third Party Apps", icon: "shippingbox")
 
                 sidebarHeader("Blocklists").padding(.top, 8)
+                Text("Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.")
+                    .font(.system(size: 10))
+                    .foregroundColor(PSTheme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                if !state.enforcementEnabled && state.blocklists.contains(where: { $0.enabled }) {
+                    Text("Enforcement is off, so enabled blocklists are currently blocking nothing.")
+                        .font(.system(size: 10))
+                        .foregroundColor(PSTheme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10)
+                }
                 ForEach(state.blocklists) { b in
                     blocklistRow(b)
                 }
