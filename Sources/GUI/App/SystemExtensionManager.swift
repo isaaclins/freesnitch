@@ -178,17 +178,21 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.fail("filter save: \(saveError.localizedDescription)")
                             }
                         } else {
-                            self.state?.clearFilterPersistenceFailure()
+                            if snapshotData != nil {
+                                self.state?.clearFilterPersistenceFailure()
+                                if shouldEnable || self.filterConfigurationActive {
+                                    self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
+                                }
+                            } else if shouldEnable {
+                                self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
+                            }
                             if shouldEnable {
-                                self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                                 self.filterConfigurationActive = true
                                 self.status = .active
                                 // Deliberately does NOT touch `helperConnected`: the
                                 // content filter and privileged helper are separate.
                                 self.state?.appendLog(level: "info", message: "Per-process firewall active.")
                                 self.registerIPC()
-                            } else if self.filterConfigurationActive {
-                                self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                             }
                         }
 

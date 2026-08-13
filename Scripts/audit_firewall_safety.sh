@@ -54,8 +54,8 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.takeNewest()" \
   "the GUI does not take the newest persisted snapshot"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.state?.clearFilterPersistenceFailure()" \
   "persistence degradation is not cleared after a successful save"
-require_text "$SYSTEM_EXTENSION_MANAGER" "else if self.filterConfigurationActive" \
-  "a successful ordinary save does not restore the active filter diagnostic"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if snapshotData != nil" \
+  "a successful save does not prove that a boot snapshot was persisted"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"
