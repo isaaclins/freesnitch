@@ -57,6 +57,7 @@ final class HelperClient: NSObject, ObservableObject {
     private var pollTimer: Timer?
     private var isRepairing = false
     private var automaticRepairAttemptedVersion: String?
+    private var repairConfirmationID = UUID()
     private var enabledButSilentSince: Date?
     /// Approved but unreachable for long enough that re-registering is worth
     /// offering. Never acted on automatically; see startPolling().
@@ -206,13 +207,28 @@ final class HelperClient: NSObject, ObservableObject {
                 return
             }
             isRepairing = false
+            scheduleRepairConfirmation()
             reconnectAndPing(force: true)
         } catch {
             finishRepairFailure("SMAppService could not register the new helper: \(error.localizedDescription). A full root LaunchDaemon restart may require administrator privileges.")
         }
     }
 
+    private func scheduleRepairConfirmation() {
+        let confirmationID = UUID()
+        repairConfirmationID = confirmationID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.repairConfirmationID == confirmationID else { return }
+                guard self.hasVersionMismatch else { return }
+                guard case .inProgress = self.repairState else { return }
+                self.repairState = .manualRequired("SMAppService accepted the repair, but the helper did not reconnect with the new version.")
+            }
+        }
+    }
+
     private func finishRepairFailure(_ message: String) {
+        repairConfirmationID = UUID()
         isRepairing = false
         repairState = .manualRequired(message)
         needsRepair = true
@@ -342,6 +358,7 @@ final class HelperClient: NSObject, ObservableObject {
                 }
                 self.versionState = .matching(version)
                 self.automaticRepairAttemptedVersion = nil
+                self.repairConfirmationID = UUID()
                 self.repairState = .idle
                 self.needsRepair = false
                 self.setConnected(true)
