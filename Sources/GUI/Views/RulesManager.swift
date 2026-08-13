@@ -221,14 +221,14 @@ struct RulesManagerView: View {
             .buttonStyle(.borderless)
             .disabled(!state.helperConnected)
             .help(state.helperConnected
-                  ? "Import rules from a plain JSON array. This replaces the current rules."
+                  ? "Import rules from a FreeSnitch export, or from a legacy plain JSON array. This replaces the current rules."
                   : "Approve the FreeSnitch helper before importing rules.")
             Button(action: { exportRules() }) {
                 Image(systemName: "tray.and.arrow.up.fill")
             }
             .buttonStyle(.borderless)
             .disabled(state.rules.isEmpty)
-            .help(state.rules.isEmpty ? "There are no rules to export." : "Export rules as a plain JSON array.")
+            .help(state.rules.isEmpty ? "There are no rules to export." : "Export rules as a \(RuleExportDocument.formatIdentifier) document the CLI can import.")
             Button(action: { showingRuleEditor = true }) {
                 Image(systemName: "plus")
             }
@@ -564,11 +564,20 @@ struct RulesManagerView: View {
             }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            // Bound the file by its size before it is read into memory.
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            try RuleExportCodec.validateEncodedSize(size)
             let data = try Data(contentsOf: url)
-            pendingImportRules = try JSONDecoder().decode([Rule].self, from: data)
+            // Decode and validate the whole batch before the confirmation
+            // dialog appears: an import is all-or-nothing.
+            pendingImportRules = try RuleExportCodec.decode(data).rules
             showingImportConfirmation = true
+        } catch let error as RuleExportError {
+            pendingImportRules.removeAll()
+            showError("\(error.errorDescription ?? "The rule file could not be imported.") \(error.remediation)")
         } catch {
-            showError("Could not read a plain rule JSON array: \(error.localizedDescription)")
+            pendingImportRules.removeAll()
+            showError("Could not read the rule file: \(error.localizedDescription)")
         }
     }
 
@@ -682,6 +691,9 @@ struct RulesManagerView: View {
     }
 }
 
+/// Writes the canonical `freesnitch.rules.v1` document and reads both accepted
+/// input shapes through the shared contract, so GUI and CLI backups are
+/// interchangeable.
 private struct RuleJSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
 
@@ -695,13 +707,11 @@ private struct RuleJSONDocument: FileDocument {
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        rules = try JSONDecoder().decode([Rule].self, from: data)
+        rules = try RuleExportCodec.decode(data).rules
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return FileWrapper(regularFileWithContents: try encoder.encode(rules))
+        FileWrapper(regularFileWithContents: try RuleExportCodec.encode(rules))
     }
 }
 

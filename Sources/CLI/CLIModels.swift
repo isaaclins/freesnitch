@@ -104,12 +104,8 @@ struct PolicyChangeReport: Encodable {
     let extensionMessage: String?
 }
 
-struct RuleExportDocument: Encodable, Decodable {
-    let format: String
-    let version: Int
-    let exportedAt: Date
-    let rules: [Rule]
-}
+// The export document itself lives in Sources/Shared/RuleExportFormat.swift so
+// the GUI and the CLI read and write the same file contract.
 
 struct RuleExportReport: Encodable {
     let count: Int

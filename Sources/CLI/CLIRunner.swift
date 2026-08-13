@@ -261,21 +261,33 @@ final class CLIRunner {
         if path == "-" {
             data = FileHandle.standardInput.readDataToEndOfFile()
         } else {
-            do { data = try Data(contentsOf: URL(fileURLWithPath: path)) }
-            catch {
+            let url = URL(fileURLWithPath: path)
+            do {
+                // Bound the file by its size before it is read into memory.
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                try RuleExportCodec.validateEncodedSize(size)
+                data = try Data(contentsOf: url)
+            } catch let error as RuleExportError {
+                throw importRejection(error)
+            } catch {
                 throw CLIError(.invalidArgument, message: "Could not read import file \(path): \(error.localizedDescription).", remediation: "Provide a readable JSON export or use - for standard input.")
             }
         }
-        let rules: [Rule]
-        if let document = try? CLIJSON.decode(RuleExportDocument.self, from: data) {
-            rules = document.rules
-        } else if let raw = try? CLIJSON.decode([Rule].self, from: data) {
-            rules = raw
-        } else {
+        // Decode and validate the complete batch before the helper is touched:
+        // a rejected file changes nothing.
+        let imported: RuleImport
+        do { imported = try RuleExportCodec.decode(data) }
+        catch let error as RuleExportError { throw importRejection(error) }
+        catch {
             throw CLIError(.invalidArgument,
-                           message: "The import is not a FreeSnitch rule export or Rule array.",
+                           code: "rule_import_rejected",
+                           message: "The import file could not be decoded: \(error.localizedDescription).",
                            remediation: "Create a file with `freesnitch rules export` or provide a JSON array of Rule objects.")
         }
+        let rules = imported.rules
+        let sourceNote = imported.source == .legacyRuleArray
+            ? " (legacy plain JSON array)"
+            : " (\(RuleExportDocument.formatIdentifier))"
         let helper = CLIHelperClient()
         _ = try await helper.prepare()
         try await helper.importRules(rules)
@@ -289,28 +301,39 @@ final class CLIRunner {
                                       extensionMessage: sync.message)
         let warning = sync.message.map { "\nWarning: \($0)" } ?? ""
         return CommandResult(data: report,
-                             human: "Imported \(rules.count) rules from \(path) as an upsert/merge.\nExtension synchronization: \(sync.state) (generation \(snapshot.generation)).\(warning)")
+                             human: "Imported \(rules.count) rules from \(path)\(sourceNote) as an upsert/merge.\nExtension synchronization: \(sync.state) (generation \(snapshot.generation)).\(warning)")
+    }
+
+    private func importRejection(_ error: RuleExportError) -> CLIError {
+        CLIError(.invalidArgument,
+                 code: "rule_import_rejected",
+                 message: error.errorDescription ?? "The rule file could not be imported.",
+                 remediation: error.remediation)
     }
 
     private func exportRules(_ path: String?) async throws -> CommandResult {
         let helper = CLIHelperClient()
         _ = try await helper.prepare()
         let rules = try await helper.listRules()
-        let document = RuleExportDocument(format: "freesnitch.rules.v1",
-                                          version: 1,
-                                          exportedAt: Date(),
-                                          rules: rules)
+        let document = RuleExportDocument(rules: rules)
+        let encodedDocument: Data
+        do { encodedDocument = try RuleExportCodec.encode(rules, exportedAt: document.exportedAt) }
+        catch let error as RuleExportError {
+            throw CLIError(.operationFailed,
+                           code: "rule_export_rejected",
+                           message: error.errorDescription ?? "The rules could not be exported.",
+                           remediation: error.remediation)
+        }
         if let path, path != "-" {
             do {
-                try CLIJSON.encode(document).write(to: URL(fileURLWithPath: path), options: .atomic)
+                try encodedDocument.write(to: URL(fileURLWithPath: path), options: .atomic)
             } catch {
                 throw CLIError(.operationFailed, message: "Could not write export file \(path): \(error.localizedDescription).", remediation: "Choose a writable output path.")
             }
             let report = RuleExportReport(count: rules.count, output: path, format: document.format)
             return CommandResult(data: report, human: "Exported \(rules.count) rules to \(path).")
         }
-        let encoded = CLIOutput.encode(document)
-        return CommandResult(data: document, human: String(data: encoded, encoding: .utf8) ?? "")
+        return CommandResult(data: document, human: String(data: encodedDocument, encoding: .utf8) ?? "")
     }
 
     private func monitor(_ command: MonitorCommand) async throws -> CommandResult {
