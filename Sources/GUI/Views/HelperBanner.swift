@@ -77,7 +77,7 @@ private struct BannerInfo {
         if case .mismatch(let helperVersion, let appVersion) = versionState {
             icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
-            title = "The FreeSnitch helper is out of date"
+            title = "The FreeSnitch helper version does not match"
             switch repairState {
             case .inProgress:
                 detail = "The running helper is v\(helperVersion), but this app is v\(appVersion). Helper-side fixes are not active yet. FreeSnitch is trying to restart it without changing the existing pf anchor."
