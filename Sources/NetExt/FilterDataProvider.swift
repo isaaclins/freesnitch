@@ -311,7 +311,6 @@ final class FilterDataProvider: NEFilterDataProvider {
         // point with no destination at all, and that limitation is reported
         // rather than hidden behind a wildcard address.
         let destinationKnown = !conn.remoteIP.isEmpty || !conn.remoteHost.isEmpty
-        if !destinationKnown { noteUnknownDestination(socketFlow, port: conn.remotePort) }
         let policy = currentPolicy()
         if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { return .allow() }
         // Equivalent to `guard let snapshot = currentSnapshot() else`, but
@@ -325,9 +324,9 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         switch matcher.decision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode) {
         case .allow:
-            return reportingLateDestination(.allow(), for: flow, destinationKnown: destinationKnown)
+            return reportingLateDestination(.allow(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
         case .deny:
-            return reportingLateDestination(.drop(), for: flow, destinationKnown: destinationKnown)
+            return reportingLateDestination(.drop(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
         case .ask:
             promptAndResume(flow: flow, conn: conn)
             return .pause()
@@ -353,10 +352,16 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// waiting for an address, so it is deliberately not used.
     private func reportingLateDestination(_ verdict: NEFilterNewFlowVerdict,
                                           for flow: NEFilterFlow,
+                                          port: Int,
                                           destinationKnown: Bool) -> NEFilterNewFlowVerdict {
         guard !destinationKnown else { return verdict }
         verdict.shouldReport = true
+        // Register first. The summary reads the tracker's exact cumulative
+        // count, so it must never run in the gap before this identifier exists.
         rememberFlaggedFlow(flow.identifier)
+        if let socketFlow = flow as? NEFilterSocketFlow {
+            noteUnknownDestination(socketFlow, port: port)
+        }
         return verdict
     }
 
@@ -519,7 +524,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             lock.lock(); defer { lock.unlock() }
             guard let self, !settled else { return }
             settled = true
-            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, for: flow, destinationKnown: destinationKnown))
+            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
         }
 
         let asked = IPCConnection.shared.promptUser(flowJSON: data) { allow, _ in
