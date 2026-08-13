@@ -102,8 +102,8 @@ final class HelperClient: NSObject, ObservableObject {
     private var isRepairing = false
     private var repairConfirmationID = UUID()
     private var enabledButSilentSince: Date?
-    /// Approved but unreachable for long enough that re-registering is worth
-    /// offering. Never acted on automatically; see startPolling().
+    /// Approved but unreachable for long enough that non-destructive recovery
+    /// is worth offering. Never acted on automatically; see startPolling().
     /// Version string reported by the running daemon, when it answers at all.
     @Published var helperVersion: String?
     @Published var versionState: HelperVersionState = .unknown {
