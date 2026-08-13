@@ -63,7 +63,7 @@ app → libsystem_resolver → 127.0.0.1:53 (FreeSnitch DNS proxy)
                               └─ default              ──→ DoH forward (Cloudflare/Quad9/Google)
 ```
 
-Both UDP and TCP DNS are handled. DoH is `application/dns-message` POST to a single configurable upstream.
+Both UDP and TCP DNS are handled. DoH is `application/dns-message` POST to a single configurable upstream. Blocklists are enforced only in this helper DNS proxy, and only when Enforcement is enabled. They filter DNS names sent to `127.0.0.1:53`; they do not stop hardcoded IP connections or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH. Blocklist entries are not sent to the Network Extension or written to the pfctl anchor.
 
 ## pfctl path
 
@@ -107,4 +107,4 @@ Process: bundle ID match wins; otherwise path prefix.
 - Rules reach the sandboxed extension via the app-group container (`Shared/SharedRuleBridge.swift`), mirrored by the GUI on every rule/mode change.
 - Activation: `GUI/App/SystemExtensionManager.swift` (`OSSystemExtensionRequest` + `NEFilterManager`).
 
-Shipping requires the `content-filter-provider-systemextension` entitlement (self-serve Network Extensions capability on the App ID), Developer ID signing + notarization, and the app installed in `/Applications`. See `Sources/NetExt/README.md`. The helper (pfctl + DNS) remains for rule storage and DNS blocklists.
+Shipping requires the `content-filter-provider-systemextension` entitlement (self-serve Network Extensions capability on the App ID), Developer ID signing + notarization, and the app installed in `/Applications`. See `Sources/NetExt/README.md`. The helper (pfctl + DNS) remains responsible for rule storage, pfctl rules, and DNS blocklists; the Network Extension does not receive blocklist entries.
