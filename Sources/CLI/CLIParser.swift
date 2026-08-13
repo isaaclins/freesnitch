@@ -370,7 +370,14 @@ enum CLIParser {
             case "--process-path": processPath = try cursor.value(for: token)
             case "--process-name", "--process": processName = try cursor.value(for: token)
             case "--host", "--remote-host": remoteHost = try cursor.value(for: token)
-            case "--ip", "--remote-ip": remoteIP = try cursor.value(for: token)
+            case "--ip", "--remote-ip":
+                let value = try cursor.value(for: token)
+                if let reason = RuleAddressValidator.rejectionReason(forRemoteIP: value) {
+                    throw CLIError(.invalidArgument,
+                                   message: "invalid remote IP `\(value)`: \(reason).",
+                                   remediation: RuleAddressValidator.remediation)
+                }
+                remoteIP = value
             case "--port", "--remote-port":
                 let value = try cursor.value(for: token)
                 guard let port = Int(value), (1...65535).contains(port) else {
