@@ -563,7 +563,7 @@ final class CLIRunner {
         HelperReport(reachable: true,
                      version: status.version,
                      expectedVersion: CLIAppBundle.expectedBuildIdentity,
-                     versionMatches: AppConstants.identitiesMatch(status.version, CLIAppBundle.expectedBuildIdentity),
+                     versionMatches: AppConstants.identityMatches(reported: status.version, expected: CLIAppBundle.expectedBuildIdentity),
                      running: status.running,
                      pfctlActive: status.pfctlActive,
                      pfctlError: status.pfctlError,
@@ -774,7 +774,7 @@ final class CLIRunner {
         if let status {
             findings.append(DoctorFinding(id: "helper_reachable", state: "ok", message: "The privileged helper is reachable.", action: "No action needed.", exitCode: nil))
             let expectedIdentity = CLIAppBundle.expectedBuildIdentity
-            let versionMatches = AppConstants.identitiesMatch(status.version, expectedIdentity)
+            let versionMatches = AppConstants.identityMatches(reported: status.version, expected: expectedIdentity)
             findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper and app both report version \(status.version)." : "The helper reports version \(status.version), but this app is \(expectedIdentity). Helper-side fixes are not active until it is replaced.", action: versionMatches ? "No action needed." : "Open FreeSnitch and use Repair, or run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
             return
         }

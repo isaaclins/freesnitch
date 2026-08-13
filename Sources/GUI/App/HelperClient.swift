@@ -347,7 +347,7 @@ final class HelperClient: NSObject, ObservableObject {
                 guard let self else { return }
                 guard !version.isEmpty else { self.setConnected(false); return }
                 self.helperVersion = version
-                guard AppConstants.identitiesMatch(version, AppConstants.buildIdentity) else {
+                guard AppConstants.identityMatches(reported: version, expected: AppConstants.buildIdentity) else {
                     // A helper left over from an older install answers happily,
                     // so keep that fact separate from ordinary reachability.
                     self.versionState = .mismatch(helper: version, app: AppConstants.buildIdentity)

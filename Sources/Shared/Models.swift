@@ -286,20 +286,31 @@ public struct AppConstants {
         return "\(version) (\(buildNumber))"
     }
 
-    /// Compare two reported build identities.
+    /// Does a peer's reported identity describe the build we expect.
     ///
-    /// When both sides know their build number, they must agree exactly. When
-    /// either side could not read one, fall back to the marketing version,
-    /// because claiming a mismatch we cannot prove would be a false alarm, and
-    /// a false alarm in a security tool is its own kind of bug.
-    public static func identitiesMatch(_ lhs: String, _ rhs: String) -> Bool {
-        if lhs == rhs { return true }
-        let lhsHasBuild = lhs.contains("(")
-        let rhsHasBuild = rhs.contains("(")
-        if lhsHasBuild && rhsHasBuild { return false }
-        let lhsVersion = lhs.split(separator: " ").first.map(String.init) ?? lhs
-        let rhsVersion = rhs.split(separator: " ").first.map(String.init) ?? rhs
-        return lhsVersion == rhsVersion
+    /// The comparison is deliberately asymmetric.
+    ///
+    /// `expected` comes from a real bundle and normally knows its build
+    /// number. When it does, a peer that reports no build number is a helper
+    /// built before this check existed, and being unable to answer the
+    /// question is itself proof that it is stale. Treating that as a match was
+    /// the first version of this fix, and it meant the very first upgrade
+    /// carrying the fix could not detect the stale helper it was written for.
+    ///
+    /// When `expected` has no build number, typically a CLI running outside an
+    /// app bundle, nothing can be proven, so fall back to the marketing
+    /// version. A mismatch we cannot demonstrate must not be reported: a
+    /// firewall that cries wolf gets ignored.
+    public static func identityMatches(reported: String, expected: String) -> Bool {
+        if reported == expected { return true }
+        guard expected.contains("(") else {
+            return marketingVersion(of: reported) == marketingVersion(of: expected)
+        }
+        return false
+    }
+
+    private static func marketingVersion(of identity: String) -> String {
+        identity.split(separator: " ").first.map(String.init) ?? identity
     }
     /// The privileged recovery command for replacing a stale helper. Shared so
     /// the GUI banner and the CLI doctor cannot drift into telling the user two

@@ -23,7 +23,7 @@ final class CLIHelperClient: NSObject {
                            message: "The FreeSnitch helper answered with an empty version.",
                            remediation: "Run `freesnitch settings helper recheck`, then approve FreeSnitch in System Settings > General > Login Items & Extensions.")
         }
-        guard AppConstants.identitiesMatch(version, CLIAppBundle.expectedBuildIdentity) else {
+        guard AppConstants.identityMatches(reported: version, expected: CLIAppBundle.expectedBuildIdentity) else {
             throw CLIError(.helperVersionMismatch,
                            message: "The helper is version \(version), but this app is version \(CLIAppBundle.expectedBuildIdentity).",
                            remediation: "Replace or repair the FreeSnitch app so the bundled helper and CLI come from the same build.")
