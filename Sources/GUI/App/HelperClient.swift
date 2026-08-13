@@ -435,7 +435,7 @@ final class HelperClient: NSObject, ObservableObject {
             }
         }
         remote?.getStatus { [weak self] data in
-            let status = try? JSONDecoder().decode(HelperStatus.self, from: data)
+            let status = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: data)
             Task { @MainActor in
                 self?.status = status
                 // Adopt the persisted mode instead of leaving the GUI on its
@@ -455,7 +455,7 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     func addRule(_ rule: Rule, completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let data = try? JSONEncoder().encode(rule) else {
+        guard let data = try? FreeSnitchWireCodec.encode(rule) else {
             completion(false, "Could not encode the rule JSON object.")
             return
         }
@@ -469,7 +469,7 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     func reloadRules(_ rules: [Rule], completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let data = try? JSONEncoder().encode(rules) else {
+        guard let data = try? FreeSnitchWireCodec.encode(rules) else {
             completion(false, "Could not encode the rule JSON array.")
             return
         }
@@ -529,7 +529,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     func listRules(profile: String = "", completion: @MainActor @escaping ([Rule]) -> Void) {
         remote?.listRules(profile: profile) { data in
-            let rules = (try? JSONDecoder().decode([Rule].self, from: data)) ?? []
+            let rules = (try? FreeSnitchWireCodec.decode([Rule].self, from: data)) ?? []
             Task { @MainActor in completion(rules) }
         }
     }
@@ -592,22 +592,22 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
     init(state: AppState?) { self.state = state }
 
     func notifyConnection(connectionJSON: Data) {
-        guard let conns = try? JSONDecoder().decode([Connection].self, from: connectionJSON) else { return }
+        guard let conns = try? FreeSnitchWireCodec.decode([Connection].self, from: connectionJSON) else { return }
         Task { @MainActor in self.state?.updateConnections(conns) }
     }
 
     func notifyTraffic(sampleJSON: Data) {
-        guard let sample = try? JSONDecoder().decode(TrafficSample.self, from: sampleJSON) else { return }
+        guard let sample = try? FreeSnitchWireCodec.decode(TrafficSample.self, from: sampleJSON) else { return }
         Task { @MainActor in self.state?.appendSample(sample) }
     }
 
     func notifyProcessUsage(usageJSON: Data) {
-        guard let usages = try? JSONDecoder().decode([ProcessUsage].self, from: usageJSON) else { return }
+        guard let usages = try? FreeSnitchWireCodec.decode([ProcessUsage].self, from: usageJSON) else { return }
         Task { @MainActor in self.state?.updateProcessUsages(usages) }
     }
 
     func notifyAlert(connectionJSON: Data, reply: @escaping (Bool, Bool) -> Void) {
-        guard let conn = try? JSONDecoder().decode(Connection.self, from: connectionJSON) else { reply(true, false); return }
+        guard let conn = try? FreeSnitchWireCodec.decode(Connection.self, from: connectionJSON) else { reply(true, false); return }
         Task { @MainActor in self.state?.presentAlert(for: conn, reply: reply) }
     }
 
