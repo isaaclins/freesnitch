@@ -266,6 +266,47 @@ public struct AppConstants {
     public static let teamID = "BHAF4L4726"
     public static let version: String =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
+
+    /// The build number, when the running code has an Info.plist to read it
+    /// from. A bare command line tool has none, so this is optional rather
+    /// than defaulted: a wrong build number is worse than an absent one.
+    public static let buildNumber: String? =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+
+    /// Marketing version plus build, for example "0.2.0 (12)".
+    ///
+    /// The marketing version alone cannot identify a build. Every build of
+    /// this release reports "0.2.0", so a helper left over from an earlier
+    /// build answers with a version identical to the running app and a stale
+    /// helper stays invisible. That is exactly the incident behind #24, where
+    /// a build 10 helper served a build 11 app and the pf fix silently never
+    /// took effect.
+    public static var buildIdentity: String {
+        guard let buildNumber else { return version }
+        return "\(version) (\(buildNumber))"
+    }
+
+    /// Compare two reported build identities.
+    ///
+    /// When both sides know their build number, they must agree exactly. When
+    /// either side could not read one, fall back to the marketing version,
+    /// because claiming a mismatch we cannot prove would be a false alarm, and
+    /// a false alarm in a security tool is its own kind of bug.
+    public static func identitiesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+        let lhsHasBuild = lhs.contains("(")
+        let rhsHasBuild = rhs.contains("(")
+        if lhsHasBuild && rhsHasBuild { return false }
+        let lhsVersion = lhs.split(separator: " ").first.map(String.init) ?? lhs
+        let rhsVersion = rhs.split(separator: " ").first.map(String.init) ?? rhs
+        return lhsVersion == rhsVersion
+    }
+    /// The privileged recovery command for replacing a stale helper. Shared so
+    /// the GUI banner and the CLI doctor cannot drift into telling the user two
+    /// different things.
+    public static let helperKickstartCommand =
+        "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
+
     public static let dnsProxyPort: UInt16 = 53
     public static let defaultDoHUpstream = "https://cloudflare-dns.com/dns-query"
 

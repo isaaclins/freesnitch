@@ -562,8 +562,8 @@ final class CLIRunner {
     private func helperReport(_ status: HelperStatus) -> HelperReport {
         HelperReport(reachable: true,
                      version: status.version,
-                     expectedVersion: AppConstants.version,
-                     versionMatches: status.version == AppConstants.version,
+                     expectedVersion: CLIAppBundle.expectedBuildIdentity,
+                     versionMatches: AppConstants.identitiesMatch(status.version, CLIAppBundle.expectedBuildIdentity),
                      running: status.running,
                      pfctlActive: status.pfctlActive,
                      pfctlError: status.pfctlError,
@@ -773,7 +773,9 @@ final class CLIRunner {
     private func appendHelperFindings(findings: inout [DoctorFinding], status: HelperStatus?, error: CLIError?, observedVersion: String?) {
         if let status {
             findings.append(DoctorFinding(id: "helper_reachable", state: "ok", message: "The privileged helper is reachable.", action: "No action needed.", exitCode: nil))
-            findings.append(DoctorFinding(id: "helper_version", state: status.version == AppConstants.version ? "ok" : "problem", message: status.version == AppConstants.version ? "The helper and CLI both report version \(status.version)." : "The helper reports version \(status.version), not CLI version \(AppConstants.version).", action: status.version == AppConstants.version ? "No action needed." : "Replace or repair FreeSnitch so the app, helper, and CLI are from the same build.", exitCode: status.version == AppConstants.version ? nil : CLIExitCode.helperVersionMismatch.rawValue))
+            let expectedIdentity = CLIAppBundle.expectedBuildIdentity
+            let versionMatches = AppConstants.identitiesMatch(status.version, expectedIdentity)
+            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper and app both report version \(status.version)." : "The helper reports version \(status.version), but this app is \(expectedIdentity). Helper-side fixes are not active until it is replaced.", action: versionMatches ? "No action needed." : "Open FreeSnitch and use Repair, or run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
             return
         }
         let reachable = error?.exitCode == .helperVersionMismatch

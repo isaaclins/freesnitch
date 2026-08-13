@@ -42,7 +42,7 @@ enum HelperRepairState: Equatable {
 }
 
 enum HelperRecovery {
-    static let kickstartCommand = "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
+    static let kickstartCommand = AppConstants.helperKickstartCommand
 }
 
 @MainActor
@@ -347,10 +347,10 @@ final class HelperClient: NSObject, ObservableObject {
                 guard let self else { return }
                 guard !version.isEmpty else { self.setConnected(false); return }
                 self.helperVersion = version
-                guard version == AppConstants.version else {
+                guard AppConstants.identitiesMatch(version, AppConstants.buildIdentity) else {
                     // A helper left over from an older install answers happily,
                     // so keep that fact separate from ordinary reachability.
-                    self.versionState = .mismatch(helper: version, app: AppConstants.version)
+                    self.versionState = .mismatch(helper: version, app: AppConstants.buildIdentity)
                     self.needsRepair = true
                     self.setConnected(false)
                     self.beginAutomaticRepair(for: version)
