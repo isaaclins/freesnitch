@@ -47,7 +47,15 @@ public enum SharedRuleBridge {
         }
 
         public func hasNewerWork(since generation: Int) -> Bool {
-            self.generation != generation || pendingData != nil
+            self.generation > generation
+        }
+
+        /// Drop the attempted generation after a failed preference load. A
+        /// request enqueued during that load has a larger generation and is
+        /// deliberately retained for one fresh attempt.
+        public mutating func discardThrough(_ generation: Int) {
+            guard self.generation <= generation else { return }
+            pendingData = nil
         }
     }
 

@@ -145,7 +145,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     if self.enableFilterRequested {
                         self.fail("filter load: \(loadError.localizedDescription)")
                     }
-                    if self.persistenceQueue.hasNewerWork(since: generationAtLoad) {
+                    let hasNewerSnapshot = self.persistenceQueue.hasNewerWork(since: generationAtLoad)
+                    self.persistenceQueue.discardThrough(generationAtLoad)
+                    if hasNewerSnapshot {
                         self.schedulePersistence(immediate: true)
                     }
                     return
