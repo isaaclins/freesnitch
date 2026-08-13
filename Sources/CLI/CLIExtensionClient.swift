@@ -24,7 +24,7 @@ final class CLIExtensionClient: NSObject {
     func updateSnapshot(_ data: Data) async throws -> SnapshotReport {
         let status: SharedRuleBridge.SnapshotStatus = try await perform { proxy, completion in
             proxy.updateSnapshot(snapshotJSON: data) { response in
-                guard let status = try? CLIJSON.decode(SharedRuleBridge.SnapshotStatus.self, from: response) else {
+                guard let status = try? SharedRuleBridge.decodeStatus(response) else {
                     completion(.failure(ExtensionClientError.invalidResponse("The network extension returned an unreadable snapshot acknowledgement.")))
                     return
                 }

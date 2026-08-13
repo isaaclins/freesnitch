@@ -58,6 +58,11 @@ if grep -Fq "Date(timeIntervalSince1970" "$CLI_CONTRACT"; then
 fi
 require_text "$CLI_HELPER" "FreeSnitchWireCodec.decode" \
   "CLI helper responses do not use the explicit wire date codec"
+require_text "$CLI_EXTENSION" "SharedRuleBridge.decodeStatus(response)" \
+  "CLI snapshot acknowledgements do not use the extension wire codec"
+if grep -Fq "CLIJSON.decode(SharedRuleBridge.SnapshotStatus" "$CLI_EXTENSION"; then
+  fail "CLI snapshot acknowledgements use the public CLI JSON codec"
+fi
 require_text "$HELPER" "FreeSnitchWireCodec.decode" \
   "helper rule requests do not use the explicit wire date codec"
 require_text "$SYSTEM_EXTENSION_MANAGER" \
