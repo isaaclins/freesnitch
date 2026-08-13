@@ -259,9 +259,6 @@ public struct AppConstants {
     /// App<->extension XPC. Must be prefixed by an app group the process owns,
     /// so a regular (non-daemon) app can vend it via NSXPCListener.
     public static let ipcMachServiceName = "BHAF4L4726.io.isaaclins.freesnitch.ipc"
-    /// Read-only boot-policy transport between the sandboxed extension and the
-    /// privileged helper. It is separate from the helper's state-changing API.
-    public static let bootPolicyMachServiceName = "BHAF4L4726.io.isaaclins.freesnitch.boot"
     public static let appGroup = "BHAF4L4726.io.isaaclins.freesnitch"
     public static let teamID = "BHAF4L4726"
     public static let version: String =
@@ -327,14 +324,5 @@ public struct AppConstants {
         let dir = base.appendingPathComponent("FreeSnitch", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
-    }
-
-    public static var sharedDataDir: URL {
-        let dir = URL(fileURLWithPath: "/Library/Application Support/FreeSnitch", isDirectory: true)
-        return dir
-    }
-
-    public static var bootSnapshotURL: URL {
-        sharedDataDir.appendingPathComponent("boot-snapshot.json", isDirectory: false)
     }
 }
