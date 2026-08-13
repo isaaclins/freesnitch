@@ -27,6 +27,7 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private let matcher = RuleMatcher()
     private let resolverBypass = ResolverBypass()
+    private let bundleIdentifierCache = BundleIdentifierCache()
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
     private var snapshotOrigin: SnapshotOrigin = .none
@@ -380,15 +381,13 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     /// Best-effort bundle id from the .app enclosing the executable.
     /// (`NEFilterFlow.sourceAppIdentifier` is unavailable on macOS.)
+    ///
+    /// Memory only. The verdict path must never wait on a filesystem read, so
+    /// an unresolved path answers nil here, exactly like an executable that
+    /// lives outside an .app bundle already does, and the Info.plist read runs
+    /// on a background queue for the benefit of later flows.
     private func bundleIdForApp(atPath path: String) -> String? {
-        guard !path.isEmpty, let r = path.range(of: ".app/", options: .backwards) else { return nil }
-        let appPath = String(path[..<r.upperBound])
-        let plist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)),
-              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            return nil
-        }
-        return dict["CFBundleIdentifier"] as? String
+        bundleIdentifierCache.cachedBundleId(forExecutablePath: path)
     }
 
     // MARK: - Rule snapshot
@@ -483,6 +482,133 @@ final class FilterDataProvider: NEFilterDataProvider {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
         return snapshotStatus
+    }
+}
+
+/// Bounded executable-path to bundle-identifier cache for the verdict path.
+///
+/// `cachedBundleId(forExecutablePath:)` is memory only: it holds the lock just
+/// long enough for one dictionary lookup, and no lock holder ever touches the
+/// filesystem. Every Info.plist read happens on `resolveQueue`, so a cache
+/// miss answers nil immediately rather than blocking `handleNewFlow`, and only
+/// one read is scheduled per path even during a burst of new flows.
+///
+/// The key is the executable path exactly as `proc_pidpath` reports it, not the
+/// enclosing .app, because splitting the path allocates a string and that
+/// allocation dominated the lookup. Finding the .app and reading its plist both
+/// belong to the background resolve. An executable outside an .app bundle is
+/// cached as nil, which is the answer the filter already gives it.
+///
+/// Bound: at most `capacity` executable paths. When the map is full the path
+/// that was resolved longest ago is evicted (first resolved, first out), so
+/// this long-lived root-adjacent process cannot grow the map without limit.
+/// Eviction runs on `resolveQueue`, never on the verdict path.
+///
+/// Staleness: a path can be reused by a replaced app, so an entry older than
+/// `entryLifetime` is re-read in the background while the previous identifier
+/// is still answered from memory. The stale window is therefore bounded by the
+/// lifetime plus one background read, and an identifier is never invented for
+/// a path that has not been read at least once.
+final class BundleIdentifierCache: @unchecked Sendable {
+    private struct Entry {
+        let bundleId: String?
+        let resolvedAtNanos: UInt64
+    }
+
+    let capacity: Int
+    let entryLifetime: TimeInterval
+
+    private var entries: [String: Entry] = [:]
+    private var evictionOrder: [String] = []
+    private var pending: Set<String> = []
+    private let lifetimeNanos: UInt64
+    /// Stable address for the whole lifetime of the cache. A Swift property of
+    /// type `os_unfair_lock_s` gives no such guarantee, and a lock that moves
+    /// is not a lock.
+    private let lock: UnsafeMutablePointer<os_unfair_lock_s>
+    private let resolveQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.bundleid", qos: .utility)
+    private let read: @Sendable (String) -> String?
+
+    init(capacity: Int = 512,
+         entryLifetime: TimeInterval = 300,
+         read: @escaping @Sendable (String) -> String? = { BundleIdentifierCache.readBundleIdentifier(atAppPath: $0) }) {
+        precondition(capacity > 0)
+        precondition(entryLifetime > 0)
+        self.capacity = capacity
+        self.entryLifetime = entryLifetime
+        self.lifetimeNanos = UInt64(entryLifetime * 1_000_000_000)
+        self.read = read
+        self.lock = .allocate(capacity: 1)
+        self.lock.initialize(to: os_unfair_lock_s())
+    }
+
+    deinit {
+        lock.deinitialize(count: 1)
+        lock.deallocate()
+    }
+
+    /// Verdict path. Never reads from disk, and answers nil for a path that has
+    /// not been resolved yet.
+    func cachedBundleId(forExecutablePath path: String) -> String? {
+        guard !path.isEmpty else { return nil }
+        let now = DispatchTime.now().uptimeNanoseconds
+        os_unfair_lock_lock(lock)
+        let entry = entries[path]
+        let stale = entry.map { now &- $0.resolvedAtNanos >= lifetimeNanos } ?? true
+        // The pending set is bounded by the same capacity, so a flood of
+        // distinct paths can neither grow it without limit nor schedule the
+        // same read twice.
+        let shouldResolve = stale && !pending.contains(path) && pending.count < capacity
+        if shouldResolve { pending.insert(path) }
+        os_unfair_lock_unlock(lock)
+        if shouldResolve {
+            resolveQueue.async { [weak self] in self?.resolve(path) }
+        }
+        return entry?.bundleId
+    }
+
+    /// Background only.
+    private func resolve(_ path: String) {
+        let bundleId = Self.appBundlePath(forExecutablePath: path).flatMap(read)
+        let now = DispatchTime.now().uptimeNanoseconds
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        pending.remove(path)
+        if entries[path] == nil {
+            if entries.count >= capacity, !evictionOrder.isEmpty {
+                entries.removeValue(forKey: evictionOrder.removeFirst())
+            }
+            evictionOrder.append(path)
+        }
+        entries[path] = Entry(bundleId: bundleId, resolvedAtNanos: now)
+    }
+
+    /// The enclosing .app for an executable path, or nil when there is none.
+    static func appBundlePath(forExecutablePath path: String) -> String? {
+        guard !path.isEmpty, let r = path.range(of: ".app/", options: .backwards) else { return nil }
+        return String(path[..<r.upperBound])
+    }
+
+    /// The one filesystem read, reached only from `resolveQueue`.
+    static func readBundleIdentifier(atAppPath appPath: String) -> String? {
+        let plist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return nil
+        }
+        return dict["CFBundleIdentifier"] as? String
+    }
+
+    /// Test seam: how many executable paths are currently held.
+    var cachedPathCount: Int {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        return entries.count
+    }
+
+    /// Test seam: block until the reads scheduled so far have finished.
+    func waitForPendingResolves() {
+        resolveQueue.sync {}
     }
 }
 #endif
