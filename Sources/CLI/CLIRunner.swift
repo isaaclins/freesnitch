@@ -779,8 +779,11 @@ final class CLIRunner {
             return
         }
         let reachable = error?.exitCode == .helperVersionMismatch
-        findings.append(DoctorFinding(id: "helper_reachable", state: reachable ? "ok" : "problem", message: reachable ? "The helper answered, but it is not the version this CLI expects." : "The privileged helper could not be reached.", action: reachable ? "See the helper version finding." : "Run `freesnitch settings helper recheck`; approve FreeSnitch in Login Items, then run doctor again.", exitCode: reachable ? nil : (error?.exitCode ?? CLIExitCode.helperUnreachable).rawValue))
-        findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? "The helper reports version \(observedVersion ?? "unknown"); the CLI expects \(AppConstants.version)." : "The helper version could not be checked.", action: reachable ? "Replace or repair the app bundle so the helper and CLI match." : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
+        findings.append(DoctorFinding(id: "helper_reachable", state: reachable ? "ok" : "problem", message: reachable ? "The helper answered, but it is not the build this app expects." : "The privileged helper could not be reached.", action: reachable ? "See the helper version finding." : "Run `freesnitch settings helper recheck`; approve FreeSnitch in Login Items, then run doctor again.", exitCode: reachable ? nil : (error?.exitCode ?? CLIExitCode.helperUnreachable).rawValue))
+        let staleExpected = CLIAppBundle.expectedBuildIdentity
+        let staleReported = observedVersion ?? "unknown"
+        let staleMessage = "A helper from an earlier install is still running. It reports \(staleReported), but this app is \(staleExpected), so helper-side fixes are not active."
+        findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? staleMessage : "The helper version could not be checked.", action: reachable ? "Open FreeSnitch and use Repair, or run: \(AppConstants.helperKickstartCommand)" : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
     }
 
     private func appendExtensionFindings(findings: inout [DoctorFinding], inspection: ExtensionInspection) {
