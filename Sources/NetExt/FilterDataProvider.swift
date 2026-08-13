@@ -209,6 +209,12 @@ final class FilterDataProvider: NEFilterDataProvider {
         self.observationSignalLock.initialize(to: os_unfair_lock_s())
         self.destinationAccountingLock = .allocate(capacity: 1)
         self.destinationAccountingLock.initialize(to: os_unfair_lock_s())
+        // Do not emit a summary for the first unknown flow before its verdict
+        // has registered the identifier with the late-destination tracker.
+        // Starting the cadence now makes the first line a real one-minute
+        // summary rather than the misleading sentence "0 flows had no
+        // destination" triggered by the first event.
+        self.lastDestinationLogNanos = DispatchTime.now().uptimeNanoseconds
         super.init()
     }
 
