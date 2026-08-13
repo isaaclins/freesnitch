@@ -252,6 +252,20 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         blocklists.onUpdate = { [weak self] _ in
             self?.dns.blocklist = self?.blocklists.domains ?? []
         }
+        // Address feeds are a different kind of list from the domain lists:
+        // they are enforced where addresses are actually seen, in the pf
+        // anchor, not in the DNS proxy. PFManager renders them behind the
+        // user's own rules and behind the explicit loopback, DHCP and resolver
+        // passes, so a feed can never take this machine off the network.
+        blocklists.onIPBlocklistUpdate = { [weak self] set, _ in
+            guard let self else { return }
+            do {
+                try self.pf.setIPBlocklist(set, resolverAddresses: self.configuredResolverAddresses())
+            } catch {
+                PSLog.error(PSLog.pf,
+                            "address feed could not be published to the pf anchor: \(error.localizedDescription)")
+            }
+        }
         netmon.onConnections = { [weak self] conns in
             guard let self else { return }
             for c in conns {
@@ -294,6 +308,18 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         netmon.start()
         startInsightsMaintenance()
         Task { await blocklists.refresh() }
+        Task { await blocklists.refreshIPBlocklists() }
+    }
+
+    /// The resolvers that must stay reachable no matter what any feed lists.
+    /// A DoH upstream is a hostname, so only literal addresses are passed on;
+    /// PFManager treats an empty list as "exempt nothing extra", and the
+    /// loopback and DHCP passes are unconditional in either case.
+    private func configuredResolverAddresses() -> [String] {
+        let upstream = dns.dohURL
+        guard let host = URL(string: upstream)?.host,
+              PFHostValidator.kind(for: host) != .hostname else { return [] }
+        return [host]
     }
 
     private func startInsightsMaintenance() {
