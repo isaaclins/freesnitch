@@ -443,7 +443,10 @@ require_text "$PROJECT_SPEC" "Contents/Helpers/freesnitch" \
 if grep -R -E -q "SecRequirementCreateWithString|SecCodeCheckValidity" "$ROOT/Sources/CLI" --include='*.swift'; then
   fail "the CLI contains a second peer-validation or code-signature bypass"
 fi
-requirement_count="$(grep -RohF 'let requirementText = "anchor apple generic"' "$ROOT/Sources" --include='*.swift' | wc -l | tr -d ' ')"
+# grep exits 1 when the requirement has been deleted outright, which is exactly
+# the case this gate exists to catch. Without the guard, pipefail would abort
+# the script with no message instead of naming the missing requirement.
+requirement_count="$( { grep -RohF 'let requirementText = "anchor apple generic"' "$ROOT/Sources" --include='*.swift' || true; } | wc -l | tr -d ' ')"
 [[ "$requirement_count" == "1" ]] || fail "the GUI XPC requirement is duplicated or missing"
 accept_body="$(awk '
   /shouldAcceptNewConnection newConnection: NSXPCConnection/ {
@@ -674,6 +677,25 @@ if ! text_within_block "$DNS_PROXY" 'guard let onAsk else[[:space:]]*\{' 'settle
 fi
 if ! text_within_block "$DNS_PROXY" 'let settleOnce' 'if answered'; then
   fail "the DNS proxy ask path can reply to the same query twice"
+fi
+
+# The evaluation order is derived from the snapshot. If a future edit assigns
+# the snapshot directly, the two can disagree and a flow is judged by one
+# snapshot's rules in another snapshot's order. Only the setter may assign it.
+# rg exits 1 when it matches nothing, which under `set -euo pipefail` would end
+# this script silently and make every gate below look like it passed. The
+# no-match case is the good case here, so it must not abort the run.
+stray_snapshot_writes=$( { rg -n '^\s*snapshot = ' "$FILTER" || true; } | { rg -v 'snapshot = newValue' || true; } | wc -l | tr -d ' ')
+if [ "$stray_snapshot_writes" != "0" ]; then
+  fail "the network extension assigns its rule snapshot outside setSnapshotLocked, so the prepared rule order can go stale"
+fi
+
+# Both verdict paths must scan a prepared order rather than sorting per flow.
+if rg -q 'decision\(for:[^)]*rules:' "$FILTER"; then
+  fail "the network extension orders the rule set on the verdict path instead of scanning a prepared set"
+fi
+if rg -q 'decision\(for:[^)]*rules:' "$DNS_PROXY"; then
+  fail "the DNS proxy orders the rule set per query instead of scanning a prepared set"
 fi
 
 printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, and activation ordering are present.\n'

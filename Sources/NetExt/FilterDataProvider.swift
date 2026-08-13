@@ -122,6 +122,12 @@ final class FilterDataProvider: NEFilterDataProvider {
     private let bundleIdentifierCache = BundleIdentifierCache()
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
+    /// The evaluation order derived from `snapshot`. Ordering per flow repeated
+    /// a filter, a copy, and a sort for every connection, while the order only
+    /// ever changes when the snapshot does. Always assigned through
+    /// `setSnapshotLocked` so a scan can never use one snapshot's rules in
+    /// another snapshot's order.
+    private var preparedRules = PreparedRuleSet(rules: [])
     private var snapshotOrigin: SnapshotOrigin = .none
     private var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension has not received a rule snapshot from the GUI."
@@ -196,11 +202,18 @@ final class FilterDataProvider: NEFilterDataProvider {
         loadBootSnapshot(data)
     }
 
+    /// Sets the snapshot and the order derived from it as one step. Callers
+    /// must already hold `snapshotLock`.
+    private func setSnapshotLocked(_ newValue: SharedRuleBridge.Snapshot?) {
+        snapshot = newValue
+        preparedRules = PreparedRuleSet(rules: newValue?.rules ?? [])
+    }
+
     private func clearBootSnapshot(_ message: String) {
         snapshotLock.lock()
         let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
         if !liveSnapshotAlreadyLoaded {
-            snapshot = nil
+            setSnapshotLocked(nil)
             snapshotOrigin = .none
             snapshotStatus = .unavailable(message)
         }
@@ -252,7 +265,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             // not ready.
             return .allow()
         }
-        switch matcher.decision(for: conn, rules: snapshot.rules, defaultMode: snapshot.mode) {
+        switch matcher.decision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode) {
         case .allow:
             return reportingLateDestination(.allow(), destinationKnown: destinationKnown)
         case .deny:
@@ -584,7 +597,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             snapshotLock.lock()
             let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
             if !liveSnapshotAlreadyLoaded {
-                snapshot = received
+                setSnapshotLocked(received)
                 snapshotOrigin = .boot
                 snapshotStatus = status
             }
@@ -605,7 +618,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             snapshotLock.lock()
             let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
             if !liveSnapshotAlreadyLoaded {
-                snapshot = nil
+                setSnapshotLocked(nil)
                 snapshotOrigin = .none
                 snapshotStatus = status
             }
@@ -623,7 +636,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             let received = try SharedRuleBridge.decode(data)
             let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
             snapshotLock.lock()
-            snapshot = received
+            setSnapshotLocked(received)
             snapshotOrigin = .live
             snapshotStatus = status
             snapshotLock.unlock()
@@ -650,10 +663,10 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
     }
 
-    private func currentPolicy() -> (snapshot: SharedRuleBridge.Snapshot?, origin: SnapshotOrigin) {
+    private func currentPolicy() -> (snapshot: SharedRuleBridge.Snapshot?, origin: SnapshotOrigin, prepared: PreparedRuleSet) {
         snapshotLock.lock()
         defer { snapshotLock.unlock() }
-        return (snapshot, snapshotOrigin)
+        return (snapshot, snapshotOrigin, preparedRules)
     }
 
     private func readSnapshotStatus() -> SharedRuleBridge.SnapshotStatus {
