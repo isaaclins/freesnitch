@@ -7,7 +7,7 @@ private let insightsSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_t
 /// Root-owned evidence storage. Evidence is separate from RuleStore and is not
 /// placed in the user's app-group state.
 final class InsightsStore: @unchecked Sendable {
-    static let defaultPath = "/Library/Application Support/FreeSnitch/insights.sqlite"
+    static let defaultPath = "/Library/Application Support/FreeSnitch/Insights/insights.sqlite"
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-store")
@@ -137,6 +137,8 @@ final class InsightsStore: @unchecked Sendable {
 
     private func openLocked() throws {
         let directory = (path as NSString).deletingLastPathComponent
+        let sharedParent = (directory as NSString).deletingLastPathComponent
+        try secureSharedParent(sharedParent)
         try secureDirectory(directory)
         let existingFiles = try inspectExistingDatabaseFiles()
 
@@ -323,14 +325,26 @@ final class InsightsStore: @unchecked Sendable {
         guard sqlite3_bind_null(statement, index) == SQLITE_OK else { throw storeError(sqliteMessage()) }
     }
 
+    private func secureSharedParent(_ directory: String) throws {
+        var info = stat()
+        guard lstat(directory, &info) == 0 else {
+            throw storeError("shared support directory is missing: \(directory)")
+        }
+        guard (info.st_mode & S_IFMT) == S_IFDIR,
+              info.st_uid == expectedUID,
+              (info.st_mode & 0o022) == 0 else {
+            throw storeError("insecure shared support directory: \(directory)")
+        }
+    }
+
     private func secureDirectory(_ directory: String) throws {
         var info = stat()
         if lstat(directory, &info) == 0 {
             try verifyPath(directory, info: info, kind: S_IFDIR, mode: 0o700)
             return
         }
-        guard errno == ENOENT else { throw storeError("cannot inspect store directory") }
-        try fileManager.createDirectory(atPath: directory, withIntermediateDirectories: true,
+        guard errno == ENOENT else { throw storeError("cannot inspect Insights directory") }
+        try fileManager.createDirectory(atPath: directory, withIntermediateDirectories: false,
                                         attributes: [.posixPermissions: 0o700])
         try secureNewPath(directory, mode: 0o700, kind: S_IFDIR)
     }
