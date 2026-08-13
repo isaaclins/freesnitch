@@ -10,7 +10,7 @@ import Foundation
 public enum BlocklistBridge {
     public static let version: UInt16 = 1
     public static let maxEntries = 1_000_000
-    public static let headerSize = 12
+    public static let headerSize = 28
     public static let fingerprintSize = 16
     public static let maxSnapshotBytes = headerSize + maxEntries * fingerprintSize
 
@@ -30,6 +30,7 @@ public enum BlocklistBridge {
         case unsupportedVersion(UInt16)
         case invalidEntryCount
         case invalidLength
+        case invalidChecksum
         case duplicateEntry
         case unsortedEntries
 
@@ -40,6 +41,7 @@ public enum BlocklistBridge {
             case .unsupportedVersion(let value): return "unsupported blocklist snapshot version \(value)"
             case .invalidEntryCount: return "blocklist snapshot entry count exceeds the safety limit"
             case .invalidLength: return "invalid blocklist snapshot length"
+            case .invalidChecksum: return "invalid blocklist snapshot checksum"
             case .duplicateEntry: return "duplicate blocklist snapshot entry"
             case .unsortedEntries: return "blocklist snapshot entries are not sorted"
             }
@@ -84,6 +86,7 @@ public enum BlocklistBridge {
         append(UInt16(version).bigEndian, to: &data)
         append(UInt16(0).bigEndian, to: &data) // reserved
         append(UInt32(0).bigEndian, to: &data)
+        data.append(contentsOf: SHA256.hash(data: Data()).prefix(fingerprintSize))
         return data
     }
 
@@ -110,10 +113,15 @@ public enum BlocklistBridge {
         append(UInt16(version).bigEndian, to: &data)
         append(UInt16(0).bigEndian, to: &data) // reserved
         append(UInt32(fingerprints.count).bigEndian, to: &data)
+
+        var body = Data()
+        body.reserveCapacity(fingerprints.count * fingerprintSize)
         for value in fingerprints.sorted(by: isOrderedBefore) {
-            append(value.high.bigEndian, to: &data)
-            append(value.low.bigEndian, to: &data)
+            append(value.high.bigEndian, to: &body)
+            append(value.low.bigEndian, to: &body)
         }
+        data.append(contentsOf: SHA256.hash(data: body).prefix(fingerprintSize))
+        data.append(body)
         return data
     }
 
@@ -126,11 +134,17 @@ public enum BlocklistBridge {
         }
         let snapshotVersion = readUInt16(data, at: 4)
         guard snapshotVersion == version else { throw Error.unsupportedVersion(snapshotVersion) }
+        guard readUInt16(data, at: 6) == 0 else { throw Error.invalidHeader }
         let count = Int(readUInt32(data, at: 8))
         guard count <= maxEntries else { throw Error.invalidEntryCount }
         guard count <= (Int.max - headerSize) / fingerprintSize,
               headerSize + count * fingerprintSize == data.count else {
             throw Error.invalidLength
+        }
+        let body = data.subdata(in: headerSize..<data.count)
+        let checksum = SHA256.hash(data: body).prefix(fingerprintSize)
+        guard data.subdata(in: 12..<headerSize) == Data(checksum) else {
+            throw Error.invalidChecksum
         }
 
         var result = Set<Fingerprint>(minimumCapacity: count)
