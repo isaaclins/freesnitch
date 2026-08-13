@@ -266,9 +266,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         reply(true, nil)
     }
 
+    // The helper is the trust boundary for rules. The CLI and the GUI validate
+    // for a good error message; the helper validates because a malformed
+    // address must never reach the store, whatever the caller did.
+    private func rejectionReason(for rule: Rule) -> String? {
+        guard let reason = RuleAddressValidator.rejectionReason(forRemoteIP: rule.remoteIP) else { return nil }
+        return "rule \(rule.id.uuidString) has an invalid remote IP `\(rule.remoteIP ?? "")`: \(reason). \(RuleAddressValidator.remediation)"
+    }
+
     func reloadRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
             let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
+            // Reject the whole batch instead of storing a partial import.
+            if let reason = rules.compactMap({ rejectionReason(for: $0) }).first {
+                reply(false, reason)
+                return
+            }
             for r in rules { try store.upsertRule(r) }
             dns.rules = store.allRules()
             do {
@@ -287,6 +300,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func addRule(ruleJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
             let rule = try FreeSnitchWireCodec.decode(Rule.self, from: ruleJSON)
+            if let reason = rejectionReason(for: rule) {
+                reply(false, reason)
+                return
+            }
             try store.upsertRule(rule)
             dns.rules = store.allRules()
             // Saved but not enforced is a real difference; say so instead of
