@@ -30,6 +30,13 @@ final class AppState: ObservableObject {
     @Published var topDomains: [DomainStats] = []
     @Published var topCountries: [CountryStats] = []
     @Published var searchQuery: String = ""
+    @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
+        "Network extension IPC is not connected."
+    )
+    /// Set by SystemExtensionManager so the published snapshot state can also
+    /// drive the extension lifecycle status without making the view model own
+    /// that lifecycle.
+    var filterSnapshotStatusHandler: ((SharedRuleBridge.SnapshotStatus) -> Void)?
 
     /// Menu-bar speed readout. Off by default: the status item is a plain
     /// template glyph unless the user asks for numbers.
@@ -138,21 +145,26 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Hand the active rules and mode to the Network System Extension, which
-    /// cannot read the helper database.
-    ///
-    /// The app group file is written for older builds, but it cannot be the
-    /// transport: the extension runs as root, so its container resolves to
-    /// /var/root/Library/Group Containers while this process writes to the
-    /// user's home. The extension read "no such file" every two seconds and
-    /// fell back to asking about everything and honouring no rules. XPC is the
-    /// channel that actually reaches it.
+    /// Hand the active rules and mode to the Network System Extension over the
+    /// existing XPC channel. No app-group file is used because the extension
+    /// runs as root and would resolve that container under /var/root.
     func syncSharedRules() {
-        SharedRuleBridge.write(mode: mode, rules: rules)
         let snapshot = SharedRuleBridge.Snapshot(mode: mode, rules: rules)
-        if let data = try? JSONEncoder().encode(snapshot) {
-            IPCConnection.shared.sendSnapshot(data)
+        guard let data = try? SharedRuleBridge.encode(snapshot) else {
+            let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the filter rule snapshot.")
+            publishFilterSnapshotStatus(status)
+            return
         }
+        IPCConnection.shared.sendSnapshot(data) { [weak self] status in
+            Task { @MainActor in
+                self?.publishFilterSnapshotStatus(status)
+            }
+        }
+    }
+
+    private func publishFilterSnapshotStatus(_ status: SharedRuleBridge.SnapshotStatus) {
+        filterSnapshotStatus = status
+        filterSnapshotStatusHandler?(status)
     }
 
     func setMode(_ m: AppMode) {

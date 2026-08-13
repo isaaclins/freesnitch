@@ -4,6 +4,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
+BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
+IPC="$ROOT/Sources/Shared/IPCConnection.swift"
+APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -18,6 +21,9 @@ require_text() {
 }
 
 [[ -f "$FILTER" ]] || fail "missing $FILTER"
+[[ -f "$BRIDGE" ]] || fail "missing $BRIDGE"
+[[ -f "$IPC" ]] || fail "missing $IPC"
+[[ -f "$APP_STATE" ]] || fail "missing $APP_STATE"
 
 # A missing GUI must never leave a socket flow paused forever or turn a GUI
 # outage into a network outage. Keep this check tied to the actual branch that
@@ -26,6 +32,21 @@ require_text "$FILTER" "let asked = IPCConnection.shared.promptUser" \
   "the extension no longer asks the GUI through IPCConnection"
 require_text "$FILTER" "if !asked {" \
   "the no-GUI path is missing"
+require_text "$FILTER" "guard let snapshot = currentSnapshot() else" \
+  "the no-snapshot path is missing"
+require_text "$FILTER" "FILTER NOT READY: no rule snapshot received over XPC" \
+  "the extension does not log its no-snapshot state loudly"
+require_text "$FILTER" "filter snapshot received over XPC" \
+  "the extension does not log received snapshots"
+require_text "$IPC" "func updateSnapshot(snapshotJSON: Data, completionHandler: @escaping (Data) -> Void)" \
+  "the XPC provider interface has no snapshot update acknowledgement"
+require_text "$APP_STATE" "IPCConnection.shared.sendSnapshot(data)" \
+  "the GUI does not push snapshots over XPC"
+if grep -Fq "SharedRuleBridge.read" "$FILTER" \
+   || grep -Fq "containerURL(forSecurityApplicationGroupIdentifier" "$FILTER" \
+   || grep -Fq "containerURL(forSecurityApplicationGroupIdentifier" "$BRIDGE"; then
+  fail "the extension still reads policy from a process-local app-group file"
+fi
 
 # Each fail-open check is scoped to its own brace block. A window of N lines
 # would let one block borrow another block's allow verdict and hide a
@@ -100,4 +121,4 @@ if ! allow_within_block "$FILTER" 'workQueue\.asyncAfter'; then
   fail "the interactive timeout does not fail open with an allow verdict"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, and timeout are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, and XPC snapshots are present.\n'

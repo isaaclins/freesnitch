@@ -3,8 +3,8 @@
 //  FreeSnitch Network System Extension
 //
 //  A NEFilterDataProvider content filter (the same mechanism Little Snitch
-//  uses). Every new socket flow is evaluated against the rule set mirrored into
-//  the app-group container by the GUI. Flows with no decisive rule are PAUSED
+//  uses). Every new socket flow is evaluated against the rule set delivered
+//  over XPC by the GUI. Flows with no decisive rule are PAUSED
 //  and the GUI is asked over XPC; the flow resumes with the user's verdict.
 //
 //  Requires the `com.apple.developer.networking.networkextension`
@@ -20,32 +20,35 @@ import Security
 
 final class FilterDataProvider: NEFilterDataProvider {
     private let matcher = RuleMatcher()
-    private var snapshot = SharedRuleBridge.Snapshot(mode: .alert, rules: [])
-    private var reloadTimer: DispatchSourceTimer?
-    private var hasPushedSnapshot = false
+    private let snapshotLock = NSLock()
+    private var snapshot: SharedRuleBridge.Snapshot?
+    private var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
+        "Network extension has not received a rule snapshot from the GUI."
+    )
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
     private let askTimeout: TimeInterval = 60
 
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
         IPCConnection.shared.onSnapshot = { [weak self] data in
-            guard let self,
-                  let snapshot = try? JSONDecoder().decode(SharedRuleBridge.Snapshot.self, from: data) else { return }
-            self.workQueue.async {
-                self.snapshot = snapshot
-                self.hasPushedSnapshot = true
+            guard let self else {
+                return .unavailable("Network extension stopped before receiving the rule snapshot.")
             }
+            return self.receiveSnapshot(data)
         }
+        IPCConnection.shared.snapshotStatus = { [weak self] in
+            self?.readSnapshotStatus()
+                ?? .unavailable("Network extension stopped before receiving the rule snapshot.")
+        }
+        PSLog.error(PSLog.netext,
+                    "FILTER NOT READY: no rule snapshot received over XPC; allowing flows until the GUI delivers one.")
         IPCConnection.shared.startListener()
-        loadRules()
-        startReloadTimer()
         // Empty rule list + .filterData default => every flow reaches handleNewFlow.
+        // handleNewFlow explicitly allows flows until a valid XPC snapshot exists.
         let settings = NEFilterSettings(rules: [], defaultAction: .filterData)
         apply(settings) { error in completionHandler(error) }
     }
 
     override func stopFilter(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        reloadTimer?.cancel()
-        reloadTimer = nil
         completionHandler()
     }
 
@@ -56,6 +59,13 @@ final class FilterDataProvider: NEFilterDataProvider {
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
         if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
+        guard let snapshot = currentSnapshot() else {
+            // No GUI-delivered policy is a degraded state, not an alert-mode
+            // policy. Allowing here keeps a missing GUI from becoming a network
+            // outage while the published status tells the UI that filtering is
+            // not ready.
+            return .allow()
+        }
         switch matcher.decision(for: conn, rules: snapshot.rules, defaultMode: snapshot.mode) {
         case .allow:
             return .allow()
@@ -204,21 +214,46 @@ final class FilterDataProvider: NEFilterDataProvider {
         return dict["CFBundleIdentifier"] as? String
     }
 
-    // MARK: - Rules
+    // MARK: - Rule snapshot
 
-    /// Once the app has pushed a rule set over XPC, the file is stale by
-    /// definition and re-reading it would revert to "ask about everything".
-    private func loadRules() {
-        guard !hasPushedSnapshot else { return }
-        snapshot = SharedRuleBridge.read()
+    private func receiveSnapshot(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
+        do {
+            let received = try SharedRuleBridge.decode(data)
+            let status = SharedRuleBridge.SnapshotStatus.ready(for: received)
+            snapshotLock.lock()
+            snapshot = received
+            snapshotStatus = status
+            snapshotLock.unlock()
+
+            let allowCount = received.rules.filter { $0.action == .allow }.count
+            let denyCount = received.rules.filter { $0.action == .deny }.count
+            let askCount = received.rules.filter { $0.action == .ask }.count
+            PSLog.info(PSLog.netext,
+                       "filter snapshot received over XPC: mode \(received.mode.rawValue), "
+                       + "\(received.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))")
+            return status
+        } catch {
+            let status = SharedRuleBridge.SnapshotStatus.invalid(
+                "Network extension received an invalid rule snapshot: \(error.localizedDescription)"
+            )
+            snapshotLock.lock()
+            snapshotStatus = status
+            snapshotLock.unlock()
+            PSLog.error(PSLog.netext, status.message ?? "Network extension received an invalid rule snapshot.")
+            return status
+        }
     }
 
-    private func startReloadTimer() {
-        let t = DispatchSource.makeTimerSource(queue: workQueue)
-        t.schedule(deadline: .now() + 2, repeating: .seconds(2))
-        t.setEventHandler { [weak self] in self?.loadRules() }
-        t.resume()
-        reloadTimer = t
+    private func currentSnapshot() -> SharedRuleBridge.Snapshot? {
+        snapshotLock.lock()
+        defer { snapshotLock.unlock() }
+        return snapshot
+    }
+
+    private func readSnapshotStatus() -> SharedRuleBridge.SnapshotStatus {
+        snapshotLock.lock()
+        defer { snapshotLock.unlock() }
+        return snapshotStatus
     }
 }
 #endif
