@@ -176,7 +176,7 @@ public enum BlocklistBridge {
         var labels = value.split(separator: ".")
         guard labels.count >= 2 else { return [value] }
         var result = [value]
-        while labels.count >= 2 {
+        while labels.count > 2 {
             labels.removeFirst()
             result.append(labels.joined(separator: "."))
         }
