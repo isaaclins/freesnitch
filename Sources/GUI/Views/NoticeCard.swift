@@ -20,6 +20,38 @@ struct NoticeCard: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
+        Group {
+            if compact {
+                // 380pt of popover minus an inline button leaves the text a
+                // column three words wide, so the button drops to its own line
+                // and the sentence gets the whole width (#91).
+                VStack(alignment: .leading, spacing: 8) {
+                    message
+                    if actionTitle != nil {
+                        HStack { Spacer(minLength: 0); button }
+                    }
+                }
+            } else {
+                // The icon rides with the first line of text, the button is
+                // centred on the card. Aligning the whole row to the top left
+                // the button hanging above its own centre line (#93).
+                HStack(alignment: .center, spacing: 10) {
+                    message
+                    Spacer(minLength: 8)
+                    button
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(compact ? 10 : 12)
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private var message: some View {
         HStack(alignment: detail == nil ? .center : .top, spacing: 10) {
             Image(systemName: icon)
                 .foregroundStyle(tint)
@@ -35,19 +67,15 @@ struct NoticeCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 8)
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(compact ? .small : .regular)
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(compact ? 10 : 12)
-        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(tint.opacity(0.25), lineWidth: 1)
-        )
+    }
+
+    @ViewBuilder
+    private var button: some View {
+        if let actionTitle, let action {
+            Button(actionTitle, action: action)
+                .buttonStyle(.borderedProminent)
+                .controlSize(compact ? .small : .regular)
+        }
     }
 }

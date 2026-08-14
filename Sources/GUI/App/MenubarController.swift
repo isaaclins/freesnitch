@@ -33,8 +33,15 @@ final class MenubarController {
                                               close: { [weak self] in self?.popover.performClose(nil) })
             .environmentObject(state)
             .environmentObject(windows)
-            .frame(width: 380, height: 540)
-        popover.contentViewController = NSHostingController(rootView: popoverView)
+            .frame(width: 380)
+        let hosting = NSHostingController(rootView: popoverView)
+        // The popover is as tall as what it has to say. Pinned to 540 points
+        // it clipped its own header and its last menu item as soon as a helper
+        // banner appeared, because the content simply overflowed the frame
+        // (#91). `preferredContentSize` keeps the popover tracking the height
+        // SwiftUI actually needs, banner or no banner.
+        hosting.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = hosting
 
         render()
 

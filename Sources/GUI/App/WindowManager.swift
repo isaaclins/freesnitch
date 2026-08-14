@@ -85,6 +85,7 @@ final class WindowManager {
             defaultSize: NSSize(width: 1200, height: 780),
             minSize: NSSize(width: 1040, height: 620),
             autosaveName: Self.mainWindowAutosaveName,
+            windowClass: ToolbarLockedWindow.self,
             content: MainWindowView(model: mainModel, systemExtension: systemExtension)
                 .environmentObject(state)
         )
@@ -95,6 +96,14 @@ final class WindowManager {
         mainToolbarController = controller
         window.toolbar = controller.makeToolbar()
         window.toolbarStyle = .unified
+        // This toolbar carries the window's title, its sidebar control and its
+        // search field, so a window without it has no title and no way to
+        // search. AppKit persists the hidden state with the window, and it
+        // could be reached from the toolbar's own contextual menu, so a single
+        // stray right click left the app permanently disfigured (#90).
+        // ToolbarLockedWindow refuses the command; this repairs a window that
+        // was already stored in that state.
+        window.toolbar?.isVisible = true
         // Finder's sidebar material runs the full height of the window, behind
         // the title bar, and the toolbar floats on top of it. That needs the
         // content view to own the title bar area and the title bar itself to
@@ -131,9 +140,10 @@ final class WindowManager {
         defaultSize: NSSize,
         minSize: NSSize,
         autosaveName: String,
+        windowClass: NSWindow.Type = NSWindow.self,
         content: Content
     ) -> NSWindow {
-        let window = NSWindow(
+        let window = windowClass.init(
             contentRect: NSRect(origin: .zero, size: defaultSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
@@ -278,3 +288,4 @@ final class WindowManager {
         }
     }
 }
+

@@ -48,7 +48,10 @@ struct ProfilesSettingsView: View {
             noticeText(message, tint: .red)
         }
         if !profileClient.isAvailable {
-            noticeText("Profiles come from the privileged helper. Approve the helper in Settings; this list fills in on its own once it connects.",
+            // Says why every control on this page is disabled, in the same
+            // words the controls themselves carry (#98).
+            noticeText(profileClient.unavailableReason
+                       + " The list fills in on its own once it connects.",
                        tint: .secondary)
         }
     }

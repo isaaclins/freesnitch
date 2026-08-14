@@ -153,13 +153,14 @@ struct RulesManagerView: View {
                 groupRow("Third Party Apps", icon: "shippingbox")
             }
 
+            // No section header: the toggle is the header. Two lines saying
+            // "Blocklists", one of them a title and one of them a switch, made
+            // the reader look for the difference between them (#95).
             Section {
                 enforcementRow
                 ForEach(state.blocklists) { b in
                     blocklistRow(b)
                 }
-            } header: {
-                blocklistsHeader
             }
         }
         .contextMenu(forSelectionType: Category.self) { categories in
@@ -182,6 +183,10 @@ struct RulesManagerView: View {
     /// The one thing a reader wants when they learn enforcement is off is to
     /// turn it on, so this is a real toggle rather than a warning label (#80).
     ///
+    /// It is labelled for what it governs, "Blocklists", and carries the
+    /// information affordance itself, because the explanation is about this
+    /// switch and not about the heading above it (#95).
+    ///
     /// It shows what the helper reports, not what the GUI last asked for: the
     /// switch is disabled and reads as pending while a change is in flight, and
     /// a refusal puts it back and says why, right here where it was flipped.
@@ -189,12 +194,11 @@ struct RulesManagerView: View {
         VStack(alignment: .leading, spacing: 3) {
             Toggle(isOn: enforcementBinding) {
                 Label {
-                    // "Enforcement is off" does not fit beside a switch in a
-                    // 204pt sidebar and truncated to "Enforcement is…", which
-                    // is worse than saying it once. The switch carries the
-                    // state; the line below says what it means.
-                    Text("Enforcement")
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text("Blocklists")
+                            .lineLimit(1)
+                        blocklistHelpButton
+                    }
                 } icon: {
                     Image(systemName: state.enforcementEnabled ? "shield.lefthalf.filled" : "shield.slash")
                         .foregroundStyle(enforcementTint)
@@ -204,8 +208,8 @@ struct RulesManagerView: View {
             .controlSize(.mini)
             .disabled(state.enforcementChangePending || !state.helperConnected)
             .help(state.enforcementEnabled
-                  ? "Enforcement is on: the pf anchor is loaded and the DNS proxy is running."
-                  : "Enforcement is off: FreeSnitch is watching and blocking nothing.")
+                  ? "Blocklists are in force: the pf anchor is loaded and the DNS proxy is running."
+                  : "Blocklists are off: FreeSnitch is watching and blocking nothing.")
             enforcementCaption
         }
         .padding(.vertical, 2)
@@ -264,37 +268,33 @@ struct RulesManagerView: View {
     /// with Space or Return; hovering also opens it, but only after a delay, so
     /// that passing the pointer over the header on the way somewhere else does
     /// not throw a popover in the reader's face (#84).
-    private var blocklistsHeader: some View {
-        HStack(spacing: 4) {
-            Text("Blocklists")
-            Button {
+    private var blocklistHelpButton: some View {
+        Button {
+            cancelBlocklistHelpHover()
+            showingBlocklistHelp.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .imageScale(.small)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("About blocklists")
+        .onHover { hovering in
+            if hovering {
+                scheduleBlocklistHelpHover()
+            } else {
                 cancelBlocklistHelpHover()
-                showingBlocklistHelp.toggle()
-            } label: {
-                Image(systemName: "info.circle")
-                    .imageScale(.small)
+                showingBlocklistHelp = false
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("About blocklists")
-            .onHover { hovering in
-                if hovering {
-                    scheduleBlocklistHelpHover()
-                } else {
-                    cancelBlocklistHelpHover()
-                    showingBlocklistHelp = false
-                }
-            }
-            // The width has to be set before fixedSize, or the text is measured
-            // unwrapped and the popover clips its last lines.
-            .popover(isPresented: $showingBlocklistHelp, arrowEdge: .trailing) {
-                Text(Self.blocklistExplanation)
-                    .font(.callout)
-                    .frame(width: 250, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(14)
-            }
-            Spacer(minLength: 0)
+        }
+        // The width has to be set before fixedSize, or the text is measured
+        // unwrapped and the popover clips its last lines.
+        .popover(isPresented: $showingBlocklistHelp, arrowEdge: .trailing) {
+            Text(Self.blocklistExplanation)
+                .font(.callout)
+                .frame(width: 250, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(14)
         }
     }
 
@@ -534,6 +534,9 @@ struct RulesManagerView: View {
             }
             .width(min: 64, max: 104)
         }
+        // A dragged column divider redistributes width instead of pushing the
+        // columns behind it off the edge of the pane (#92).
+        .background(TableColumnGuard())
         // Selection-aware, so right clicking a row that is not selected
         // selects it first and the menu applies to what the user just pointed
         // at, exactly like the Finder (#78).
@@ -847,12 +850,11 @@ struct RulesManagerView: View {
         return "Any"
     }
 
+    /// Every field copies on click (#94), so the pane behaves the way the Get
+    /// Info panes it is modelled on do.
     private func infoField(_ label: String, _ value: String) -> some View {
         LabeledContent(label) {
-            Text(value)
-                .textSelection(.enabled)
-                .multilineTextAlignment(.trailing)
-                .help(value)
+            CopyableValue(value: value)
         }
     }
 

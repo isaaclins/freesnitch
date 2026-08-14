@@ -31,6 +31,18 @@ final class ProfileClient: ObservableObject {
         refresh()
     }
 
+    /// Whether the helper is actually answering. A transport exists from the
+    /// moment the app tries to connect, so on its own it says nothing about
+    /// reachability: every profile control was enabled while the helper was
+    /// unreachable, and clicking one produced a line of red text instead of an
+    /// action (#98).
+    func setHelperReachable(_ reachable: Bool) {
+        guard helperReachable != reachable else { return }
+        helperReachable = reachable
+    }
+
+    @Published private(set) var helperReachable = false
+
     /// Fills the view model with a snapshot the helper would normally supply,
     /// so the Profiles screen can be reviewed in demo mode. Never called
     /// outside FREESNITCH_DEMO; it only writes the published snapshot and
@@ -38,11 +50,81 @@ final class ProfileClient: ObservableObject {
     func adoptDemoSnapshot(_ snapshot: ProfileSnapshot) {
         self.snapshot = snapshot
         self.demoMode = true
+        // The transport is handed over before the demo snapshot is seeded, so
+        // the first refresh has already failed against a helper that is not
+        // there. That message is not about anything the demo can do (#98).
+        self.errorMessage = nil
     }
 
     private var demoMode = false
 
-    var isAvailable: Bool { transport != nil || demoMode }
+    /// Applies a command to the seeded snapshot. Demo only: it touches nothing
+    /// outside this object and never reaches the helper, pf, or the network.
+    private func applyInDemo(_ command: ProfileCommand) {
+        guard var snapshot else { return }
+        errorMessage = nil
+        switch command {
+        case .snapshot, .refreshBlocklists, .undoSwitch:
+            return
+        case .createProfile(let name, let mode, let icon):
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            guard !snapshot.profiles.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+                errorMessage = "A profile named \(trimmed) already exists."
+                return
+            }
+            snapshot.profiles.append(Profile(name: trimmed, mode: mode, icon: icon))
+        case .updateProfile(let profile):
+            guard let index = snapshot.profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+            let previousName = snapshot.profiles[index].name
+            snapshot.profiles[index] = profile
+            if snapshot.activeProfile == previousName { snapshot.activeProfile = profile.name }
+        case .deleteProfile(let name):
+            guard name != Profile.defaultName else {
+                errorMessage = "The default profile cannot be deleted."
+                return
+            }
+            snapshot.profiles.removeAll { $0.name == name }
+            if snapshot.activeProfile == name { snapshot.activeProfile = Profile.defaultName }
+        case .setActiveProfile(let name):
+            snapshot.activeProfile = name
+        case .setBlocklistEnabled(let id, let profileName, let enabled):
+            if let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) {
+                snapshot.blocklists[index].enabled = enabled
+            }
+            if enabled { snapshot.selectedBlocklistIDs.insert(id) } else { snapshot.selectedBlocklistIDs.remove(id) }
+            if let index = snapshot.profiles.firstIndex(where: { $0.name == profileName }) {
+                if enabled {
+                    snapshot.profiles[index].blocklistIDs.insert(id)
+                } else {
+                    snapshot.profiles[index].blocklistIDs.remove(id)
+                }
+            }
+        case .addCustomBlocklist(let name, let url, _):
+            snapshot.blocklists.append(BlocklistInfo(name: name, url: url, enabled: true, lastUpdated: Date(), entryCount: 0))
+        case .updateBlocklistURL(let id, let url):
+            guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return }
+            snapshot.blocklists[index].url = url
+        case .removeBlocklist(let id):
+            snapshot.blocklists.removeAll { $0.id == id }
+            snapshot.selectedBlocklistIDs.remove(id)
+        case .bindCurrentNetwork, .unbindNetwork:
+            return
+        }
+        for index in snapshot.profiles.indices {
+            snapshot.profiles[index].isActive = snapshot.profiles[index].name == snapshot.activeProfile
+        }
+        self.snapshot = snapshot
+    }
+
+    var isAvailable: Bool { (transport != nil && helperReachable) || demoMode }
+
+    /// Why the profile controls are disabled, for the one place that says so.
+    var unavailableReason: String {
+        transport == nil
+            ? "Profiles live in the privileged helper. Approve the helper first, then reopen this window."
+            : "FreeSnitch cannot reach the privileged helper, so profiles cannot be changed right now."
+    }
 
     var profiles: [Profile] { snapshot?.profiles ?? [] }
 
@@ -114,8 +196,17 @@ final class ProfileClient: ObservableObject {
     }
 
     private func send(_ command: ProfileCommand) {
+        // Demo mode reports itself available, so every profile control is
+        // enabled. Sending to a helper that is not there made those controls
+        // inert: the sheet accepted a name and nothing happened (#98). In demo
+        // mode the seeded snapshot is the helper, and nothing leaves this
+        // object.
+        if demoMode {
+            applyInDemo(command)
+            return
+        }
         guard let transport else {
-            errorMessage = "Profiles live in the privileged helper. Approve the helper first, then reopen this window."
+            errorMessage = unavailableReason
             return
         }
         let data: Data
@@ -129,6 +220,11 @@ final class ProfileClient: ObservableObject {
         transport(data) { [weak self] payload, message in
             Task { @MainActor in
                 guard let self else { return }
+                // A request sent before the demo snapshot was seeded can still
+                // fail against a helper that is not there. Its error is not
+                // about anything the demo can do, and it landed as a red line
+                // across the top of the Profiles page (#98).
+                guard !self.demoMode else { return }
                 self.isBusy = false
                 if let message, !message.isEmpty {
                     self.errorMessage = message

@@ -14,6 +14,27 @@ import SwiftUI
 /// The search field in particular is an `NSSearchToolbarItem`, which is exactly
 /// what Finder and Mail use: it collapses to a button when the window is narrow
 /// and expands on click, which no hand-placed field does.
+/// A window whose toolbar is structure rather than decoration.
+///
+/// The main window's toolbar holds the title, the sidebar control and the
+/// search field. AppKit offers Hide Toolbar from the toolbar's own contextual
+/// menu and remembers the answer, so one right click took the title, the search
+/// and the sidebar button away for good and the window came back that way on
+/// every later launch (#90). Finder, Mail and System Settings all refuse this
+/// for the same reason: there is nothing left to show.
+final class ToolbarLockedWindow: NSWindow {
+    override func toggleToolbarShown(_ sender: Any?) {}
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(toggleToolbarShown(_:)), #selector(runToolbarCustomizationPalette(_:)):
+            return false
+        default:
+            return super.validateUserInterfaceItem(item)
+        }
+    }
+}
+
 @MainActor
 final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private static let sidebarItemID = NSToolbarItem.Identifier("freesnitch.sidebar")

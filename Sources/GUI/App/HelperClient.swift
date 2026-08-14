@@ -540,6 +540,9 @@ final class HelperClient: NSObject, ObservableObject {
         let wasConnected = connected
         connected = value
         state?.helperConnected = value
+        // Profile controls follow reachability, not the mere existence of a
+        // transport, so they are disabled while nothing can answer them (#98).
+        ProfileClient.shared.setHelperReachable(value)
         guard value, !wasConnected else { return }
         // Every fresh connection re-runs the bootstrap. A helper that just
         // restarted (crash, repair, reboot) has no monitor running and no

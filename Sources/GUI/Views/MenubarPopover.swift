@@ -1,5 +1,14 @@
 import SwiftUI
 
+/// The menu bar extra's panel.
+///
+/// A status item popover is judged against Control Center and the Wi-Fi menu,
+/// not against a window: one column, system materials, quiet section labels,
+/// rows that highlight under the pointer, and no boxes drawn around things
+/// that are not controls. This one used to be a fixed 380x540 slab of
+/// hand-sized fonts with two coloured squares in its header, and it clipped
+/// its own first and last rows because the content did not fit the frame it
+/// was given (#91).
 struct MenubarPopoverView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
@@ -8,76 +17,35 @@ struct MenubarPopoverView: View {
     @State private var showModePicker = false
     @ObservedObject private var profileClient = ProfileClient.shared
 
+    /// Control Center's panels are 320 points wide. So is this.
+    private static let width: CGFloat = 320
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            headerBar
-                .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
-
+            header
             HelperBanner(systemExtension: systemExtension, compact: true)
-
             if let notice = profileClient.visibleNotice {
                 ProfileSwitchBanner(notice: notice,
                                     canUndo: profileClient.canUndo,
                                     onUndo: { profileClient.undoSwitch() },
                                     onDismiss: { profileClient.dismissNotice() })
-                    .padding(.horizontal, 12).padding(.bottom, 6)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
             }
-
-            trafficGraph
-                .padding(.horizontal, 12)
-
-            Text("Recent Network Activity")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(PSTheme.textSecondary)
-                .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
-
-            recentActivityList
-
-            HStack {
-                deniedRow
-            }
-            .padding(.horizontal, 12).padding(.vertical, 6)
-
-            Divider().background(PSTheme.stroke)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Button(action: { close(); windows.showRulesManager() }) {
-                    HStack {
-                        Text("Manage Rules…").font(.system(size: 13))
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                }
-                .buttonStyle(.plain).foregroundColor(PSTheme.textPrimary)
-
-                Button(action: { close(); windows.showNetworkMonitor() }) {
-                    HStack {
-                        Text("Network Monitor…").font(.system(size: 13))
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                }
-                .buttonStyle(.plain).foregroundColor(PSTheme.textPrimary)
-
-                Button(action: { close(); windows.showSettings() }) {
-                    HStack {
-                        Text("FreeSnitch Settings…").font(.system(size: 13))
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                }
-                .buttonStyle(.plain).foregroundColor(PSTheme.textPrimary)
-            }
-            .padding(.bottom, 8)
+            trafficSection
+            activitySection
+            Divider().padding(.top, 8)
+            actions
         }
-        .frame(width: 380, height: 540)
-        .background(PSTheme.bgPrimary)
+        // Width only. A fixed height made the popover overflow its own frame
+        // and clip the header and the last menu item whenever a banner
+        // appeared (#91); the panel is now as tall as what it has to say.
+        .frame(width: Self.width)
     }
 
-    private var headerBar: some View {
+    // MARK: Header
+
+    private var header: some View {
         HStack(spacing: 8) {
             ModeButton(mode: state.mode, showing: $showModePicker)
                 .popover(isPresented: $showModePicker, arrowEdge: .bottom) {
@@ -87,227 +55,266 @@ struct MenubarPopoverView: View {
                     }
                 }
             profileChip
-            Spacer()
-            Button(action: { close(); windows.showSettings() }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(PSTheme.textSecondary)
-                    .frame(width: 32, height: 32)
-                    .background(PSTheme.bgTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            .buttonStyle(.plain)
-            .help("FreeSnitch Settings")
-            Button(action: { close(); windows.showNetworkMonitor() }) {
-                Image(systemName: "globe")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white)
-                    .frame(width: 32, height: 32)
-                    .background(Color(red: 0.30, green: 0.55, blue: 1.0))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            .buttonStyle(.plain)
-            .help("Network Monitor")
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 12)
+        // The popover's arrow eats into the top of the content, so the header
+        // needs more room above it than a window's would.
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 
     /// The active profile is always on screen. A strict profile applying
     /// silently is the same failure as #12, #13 and #17.
     private var profileChip: some View {
-        Button(action: { close(); windows.showProfiles() }) {
-            HStack(spacing: 6) {
+        Button {
+            close()
+            windows.showProfiles()
+        } label: {
+            HStack(spacing: 5) {
                 Image(systemName: profileClient.activeProfile?.icon ?? "person.crop.circle")
-                    .font(.system(size: 11))
-                    .foregroundColor(PSTheme.accentBlue)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Profile").font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
-                    Text(profileClient.menuBarLabel)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(PSTheme.textPrimary)
-                        .lineLimit(1)
-                }
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+                Text(profileClient.menuBarLabel)
+                    .font(.subheadline)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(PSTheme.bgTertiary)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(.quaternary.opacity(0.6), in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .help("The active profile. Change it on the Profiles page.")
     }
 
-    private var trafficGraph: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(PSTheme.bgTertiary)
-            TrafficBarsChart(history: state.trafficHistory)
-                .padding(8)
-            VStack(alignment: .leading) {
-                HStack {
-                    Text(PSFormat.bytes(state.totalOut))
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(Color.purple.opacity(0.45))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    Spacer()
-                }
-                Spacer()
-                HStack {
-                    Text(PSFormat.bytes(state.totalIn))
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(Color.blue.opacity(0.45))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    Spacer()
-                }
+    // MARK: Traffic
+
+    /// The totals used to sit as coloured pills on top of the bars they
+    /// describe, so the reading covered the data (#91). They belong in a
+    /// legend, where the colour ties each number to its series.
+    private var trafficSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                legend(color: PSTheme.trafficOut, label: "Sent", value: PSFormat.bytes(state.totalOut))
+                legend(color: PSTheme.trafficIn, label: "Received", value: PSFormat.bytes(state.totalIn))
+                Spacer(minLength: 0)
+            }
+            ZStack(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.quaternary.opacity(0.5))
+                TrafficBarsChart(history: state.trafficHistory)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 10)
+                    .padding(.bottom, 18)
                 HStack {
                     Text("5 minutes ago")
-                        .font(.system(size: 10))
-                        .foregroundColor(PSTheme.textMuted)
                     Spacer()
                     Text("now")
-                        .font(.system(size: 10))
-                        .foregroundColor(PSTheme.textMuted)
                 }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 5)
             }
-            .padding(10)
+            .frame(height: 132)
         }
-        .frame(height: 160)
+        .padding(.horizontal, 12)
     }
 
-    private var recentActivityList: some View {
-        VStack(spacing: 0) {
-            ForEach(uniqueRecentProcesses().prefix(3)) { ps in
-                HStack(spacing: 10) {
-                    if let icon = ps.icon {
-                        Image(nsImage: icon).resizable().frame(width: 18, height: 18)
-                    } else {
-                        Image(systemName: "app.dashed").foregroundColor(PSTheme.textSecondary)
-                            .frame(width: 18, height: 18)
+    private func legend(color: Color, label: String, value: String) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Activity
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("Recent Network Activity")
+            if state.topProcesses.isEmpty {
+                Text("No traffic recorded yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(state.topProcesses.prefix(3)) { ps in
+                    MenubarRow(action: { close(); windows.showNetworkMonitor() }) {
+                        HStack(spacing: 8) {
+                            if let icon = ps.icon {
+                                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+                            } else {
+                                Image(systemName: "app.dashed")
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 18, height: 18)
+                            }
+                            Text(ps.name).lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(PSFormat.bytes(ps.total))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
                     }
-                    Text(ps.name).font(.system(size: 13))
-                        .foregroundColor(PSTheme.textPrimary)
-                    Spacer()
                 }
-                .padding(.horizontal, 16).padding(.vertical, 5)
+            }
+            MenubarRow(action: { close(); windows.showNetworkMonitor() }) {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle().fill(state.deniedCount > 0 ? Color(nsColor: .systemRed) : Color.secondary)
+                        Text("\(state.deniedCount)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                    }
+                    .frame(width: 18, height: 18)
+                    Text("Recently Denied")
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
+        .padding(.top, 10)
     }
 
-    private var deniedRow: some View {
-        Button(action: { close(); windows.showNetworkMonitor() }) {
-            HStack {
-                ZStack {
-                    Circle().fill(PSTheme.accentRed)
-                    Text("\(state.deniedCount)").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
-                }.frame(width: 22, height: 22)
-                Text("Recently Denied")
-                    .font(.system(size: 13))
-                    .foregroundColor(PSTheme.textPrimary)
-                Spacer()
-                Image(systemName: "chevron.right").foregroundColor(PSTheme.textMuted)
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 4)
+    }
+
+    // MARK: Actions
+
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MenubarRow(action: { close(); windows.showRulesManager() }) {
+                menuLabel("Manage Rules\u{2026}", symbol: "list.bullet.rectangle")
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 4).padding(.vertical, 4)
+            MenubarRow(action: { close(); windows.showNetworkMonitor() }) {
+                menuLabel("Network Monitor\u{2026}", symbol: "globe")
+            }
+            MenubarRow(action: { close(); windows.showSettings() }) {
+                menuLabel("FreeSnitch Settings\u{2026}", symbol: "gearshape")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
     }
 
-    private func uniqueRecentProcesses() -> [AppState.ProcessStats] {
-        state.topProcesses
+    private func menuLabel(_ title: String, symbol: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text(title)
+            Spacer(minLength: 0)
+        }
     }
 }
 
+/// A row in the panel: full width, highlighted under the pointer, the way an
+/// item in a menu is. Plain text rows that did not react to the pointer were
+/// the reason the panel read as a document rather than as a menu.
+struct MenubarRow<Content: View>: View {
+    let action: () -> Void
+    @ViewBuilder var content: () -> Content
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .font(.body)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(hovering ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .onHover { hovering = $0 }
+    }
+}
+/// The mode is the app's most consequential setting, so it reads as a control
+/// with a value, like a pop-up button, rather than as a coloured tile.
 struct ModeButton: View {
     let mode: AppMode
     @Binding var showing: Bool
+
     var body: some View {
         Button(action: { showing.toggle() }) {
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle().fill(modeColor)
-                    Image(systemName: modeIcon).font(.system(size: 11, weight: .bold)).foregroundColor(.white)
-                }.frame(width: 24, height: 24)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Mode").font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
-                    Text(modeLabel).font(.system(size: 13, weight: .semibold)).foregroundColor(PSTheme.textPrimary)
-                }
+            HStack(spacing: 5) {
+                Image(systemName: mode.symbol)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(mode.tint)
+                Text(mode.title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(PSTheme.bgTertiary)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(.quaternary.opacity(0.6), in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("The filtering mode. Alert asks about new connections.")
     }
-    private var modeColor: Color {
-        switch mode {
-        case .alert: return PSTheme.accentYellow
-        case .silentAllow: return PSTheme.accentGreen
-        case .silentDeny: return PSTheme.accentRed
-        }
-    }
-    private var modeIcon: String {
-        switch mode {
-        case .alert: return "bell.fill"
-        case .silentAllow: return "checkmark"
-        case .silentDeny: return "xmark"
-        }
-    }
-    private var modeLabel: String {
-        switch mode {
-        case .alert: return "Alert"
-        case .silentAllow: return "Silent Allow"
-        case .silentDeny: return "Silent Deny"
-        }
-    }
-}
 
+}
+/// Choosing the mode, as a menu of choices with the current one ticked, which
+/// is what a Mac shows when one of a few options is in force.
 struct ModePicker: View {
     let current: AppMode
     let onPick: (AppMode) -> Void
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "chevron.left").foregroundColor(PSTheme.textSecondary)
-                Text("Mode").font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(PSTheme.textPrimary)
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Mode")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+            ForEach(AppMode.allCases, id: \.self) { mode in
+                pickerRow(mode)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(PSTheme.bgTertiary)
-            Divider()
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(AppMode.allCases, id: \.self) { mode in
-                    pickerRow(mode, mode.title, mode.symbol, mode.tint)
-                }
-            }
-            .padding(.vertical, 8)
         }
+        .padding(.bottom, 8)
         .frame(width: 240)
-        .background(PSTheme.bgPrimary)
     }
-    private func pickerRow(_ m: AppMode, _ label: String, _ icon: String, _ color: Color) -> some View {
-        Button(action: { onPick(m) }) {
-            HStack(spacing: 12) {
-                if current == m {
-                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
-                        .foregroundColor(PSTheme.textPrimary)
-                        .frame(width: 14)
-                } else {
-                    Spacer().frame(width: 14)
-                }
-                ZStack {
-                    Circle().fill(color)
-                    Image(systemName: icon).font(.system(size: 11, weight: .bold)).foregroundColor(.white)
-                }.frame(width: 22, height: 22)
-                Text(label).font(.system(size: 13)).foregroundColor(PSTheme.textPrimary)
-                Spacer()
+
+    private func pickerRow(_ mode: AppMode) -> some View {
+        MenubarRow(action: { onPick(mode) }) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.bold))
+                    .opacity(current == mode ? 1 : 0)
+                    .frame(width: 12)
+                Image(systemName: mode.symbol)
+                    .foregroundStyle(mode.tint)
+                    .frame(width: 18)
+                Text(mode.title)
+                Spacer(minLength: 0)
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12).padding(.vertical, 6)
         }
-        .buttonStyle(.plain)
     }
 }
 
@@ -326,12 +333,15 @@ struct TrafficBarsChart: View {
                 HStack(alignment: .center, spacing: 1.5) {
                     ForEach(0..<samples.count, id: \.self) { i in
                         let s = samples[i]
+                        // The two directions carry the app's own traffic
+                        // colours, the same ones the Network Monitor uses, so
+                        // one glance means the same thing in both places.
                         VStack(spacing: 0) {
                             Rectangle()
-                                .fill(LinearGradient(colors: [Color.purple.opacity(0.95), Color.purple.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                                .fill(PSTheme.trafficOut)
                                 .frame(width: barW, height: max(2, CGFloat(s.bytesOut)/maxOut * midY * 0.95))
                             Rectangle()
-                                .fill(LinearGradient(colors: [Color.blue.opacity(0.7), Color.blue.opacity(0.95)], startPoint: .top, endPoint: .bottom))
+                                .fill(PSTheme.trafficIn)
                                 .frame(width: barW, height: max(2, CGFloat(s.bytesIn)/maxIn * midY * 0.95))
                         }
                     }
