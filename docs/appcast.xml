@@ -3,6 +3,31 @@
     <channel>
         <title>FreeSnitch</title>
         <item>
+            <title>0.4.1</title>
+            <pubDate>Fri, 14 Aug 2026 10:00:04 +0200</pubDate>
+            <sparkle:version>28</sparkle:version>
+            <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[# FreeSnitch 0.4.1
+
+## Repair Helper now repairs
+
+After an automatic update, the app would notice that the privileged helper was still running the previous build, say so clearly, and then tell you to open Terminal and run a `sudo` command. Meanwhile the network extension had no helper to talk to, so **traffic was not being filtered** until you did it by hand.
+
+A button called Repair Helper has to actually repair. It now restarts the helper for you, and macOS asks you to authorize it the normal way. If you dismiss that prompt nothing happens and the banner stays, which is how declining should work.
+
+The action is deliberately narrow: it restarts the existing service and never unregisters it. Unregistering an enabled helper can remove the service outright, which is exactly why this was left manual before. Your approval in System Settings is untouched.
+
+If the restart genuinely cannot be carried out, the command is still shown, as a fallback rather than as the plan.
+]]></description>
+            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch-0.4.1.zip" length="10038106" type="application/octet-stream" sparkle:edSignature="xffMHEG8OaUG7djV9MTpivbN9rZHnuRp9613UIJ27Je8uMwSYpZSld2RbzTzggJev+y1z1ddcfOJb8Jzba9jDA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch28-27.delta" sparkle:deltaFrom="27" length="500466" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="ByFlJhkTIwU/zEMi+Ja3FAMDiuQFABS+GBV0gCTHZNySYHcIQCLVwC6qqNlHjUwLnPmHNvPLlJYJA0ugkW3oDA=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch28-26.delta" sparkle:deltaFrom="26" length="4791650" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="8uEq/h2tfq0gNiotPhLb/HIK+vDdxkIp1vmJwDbVFivw0T3lR6qt9YeHXipJOW9WBSvSZLdy9D0ALxhOZGMDCg=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch28-25.delta" sparkle:deltaFrom="25" length="4796994" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="os5szwa9Pv4CjI+JPufbe3G3PbLXi21qjZTnhu0f4wUql1O+9b8nhlfTl2+g4030F8K/l1XO/A62jqr4oxzBDQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.4.0</title>
             <pubDate>Fri, 14 Aug 2026 09:43:11 +0200</pubDate>
             <sparkle:version>27</sparkle:version>
@@ -99,10 +124,6 @@ Pages follow the sidebar: `⌘1` Network Monitor, `⌘2` Rules, `⌘3` Insights,
 - `⌘,` cleared the page name from the window's title bar.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.0/FreeSnitch-0.4.0.zip" length="10031127" type="application/octet-stream" sparkle:edSignature="cWxqXar1rnb2rfMo/2qfffTDN4r1+4GXuuGrZ7LzM/GYxvOLGZasUAxZIRzLK/ZkE5WwhHTvObYO684XCd0RDg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.0/FreeSnitch27-26.delta" sparkle:deltaFrom="26" length="3977110" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="pbAGYz96sGmkCZ1IoEXNq/Lkug2hDGsPi4LtFi8nxSk+crS1ZPB5Yvk1cAp7vtI4z35WoVbexlC8iM27ju1/AQ=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.0/FreeSnitch27-25.delta" sparkle:deltaFrom="25" length="4785942" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="gFxeG3elSwHiL8ZBUFHADWEOSy7T86Omojs9zGVzUYIqoH1Hhmu6OisQ81SnjA4yJ2YSpK4n/JWyt8KRvhCwCA=="/>
-            </sparkle:deltas>
         </item>
         <item>
             <title>0.3.1</title>
@@ -136,83 +157,6 @@ If you installed 0.3.0 and your rules appeared to vanish, they were never lost. 
 Unchanged from 0.3.0. See the [0.3.0 notes](https://github.com/isaaclins/freesnitch/releases/tag/v0.3.0) for the full feature list, safety model, and known limitations.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.3.1/FreeSnitch-0.3.1.zip" length="6238113" type="application/octet-stream" sparkle:edSignature="L4j6KkwGsyDo2KPyB6ZzFOM3JPyo5c7I5mfugRQBaFLnl7z2N8qg8cUCGf2GZGr4d4vgV6AYdcuosCWT/LchDg=="/>
-        </item>
-        <item>
-            <title>0.3.0</title>
-            <pubDate>Thu, 13 Aug 2026 20:16:22 +0200</pubDate>
-            <sparkle:version>25</sparkle:version>
-            <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="plain-text"><![CDATA[FreeSnitch is an open-source macOS application firewall. It shows you which processes reach the network, where they connect, and lets you decide what happens next. Everything stays on your Mac: no account, no telemetry, no phone-home.
-
-This is the first public release.
-
-## Install
-
-1. Download `FreeSnitch.dmg` below, open it, and drag FreeSnitch to Applications.
-2. Launch FreeSnitch and approve the system extension when macOS asks. Approval happens in System Settings, under Login Items and Extensions, Network Extensions.
-3. Approve the privileged helper once. The helper is what enforces policy, including before you log in.
-
-The app is signed with a Developer ID and notarized by Apple, so Gatekeeper accepts it without any right-click workaround. Verify that yourself before trusting it:
-
-```sh
-spctl --assess --type execute --verbose /Applications/FreeSnitch.app
-codesign --verify --strict --deep --verbose=2 /Applications/FreeSnitch.app
-xcrun stapler validate /Applications/FreeSnitch.app
-```
-
-Requires macOS 13 Ventura or later.
-
-## What you get
-
-- **A live map of outbound connections**, grouped by process, with byte counts, destination, country, and port.
-- **Alert mode**, which asks before a new connection is allowed, and **Silent Allow**, which records without interrupting you.
-- **Rules** by process, hostname, IP, CIDR range, and port, with priorities, temporary rules, and groups.
-- **A DNS proxy with DNS-over-HTTPS** upstreams and domain blocklists.
-- **Kernel-level enforcement** through a `pfctl` anchor for IP, CIDR, and port rules, alongside the per-flow network extension.
-- **A full command line interface**, `freesnitch`, covering rules, status, diagnostics, and import/export.
-- **Policy at boot**, so rules apply between startup and your first login instead of leaving a gap.
-
-## Safety model
-
-A firewall that fails badly is worse than no firewall, so the failure behavior is explicit and tested:
-
-- The filter **fails open**. If it cannot reach policy, traffic is allowed rather than silently cutting your machine off the network.
-- Loopback, the app's own traffic, DHCP, and your configured DNS resolvers are never blocked, so a bad rule cannot lock you out of your own network stack.
-- XPC channels carrying policy **validate the peer's code signature**, so an unsigned local process cannot inject rules.
-- Rule payloads are **bounded before they are decoded** in privileged processes, by byte count, rule count, and per-field length, and the transport, boot, and import limits are consistent with each other.
-- The helper owns the **authoritative policy snapshot**, so the GUI cannot overwrite a CLI change with stale state.
-- DNS policy is published as **one atomic snapshot**, so a query is never judged against a mixture of old and new rules, and is verified race-free under ThreadSanitizer.
-- Rule backups use **one versioned file contract** shared by the GUI and CLI, validated as a whole before anything is written, so an import is all-or-nothing.
-- The helper reports the build it is **actually running**, separately from the build installed on disk, so an update that leaves a stale privileged daemon behind is surfaced with its exact fix instead of being hidden.
-
-All of this is enforced by a safety audit and four verification harnesses that must pass before a release can be built.
-
-## Known limitations
-
-Read these before relying on it:
-
-- **Blocklists filter DNS names only, and only while Enforcement is on.** Software that connects to hardcoded IP addresses, or resolves names through its own encrypted DNS such as Chrome or Firefox DoH, is not stopped by a blocklist. Per-process, IP, CIDR, and port rules still apply. See [#22](https://github.com/isaaclins/freesnitch/issues/22) and [#51](https://github.com/isaaclins/freesnitch/issues/51).
-- **No traffic history view yet.** Grouping who talks to what over time, and proposing rules from it, is designed but not shipped: [#23](https://github.com/isaaclins/freesnitch/issues/23).
-- **The CLI cannot answer pending connection alerts yet**: [#25](https://github.com/isaaclins/freesnitch/issues/25).
-- **Profiles are not implemented yet**: [#31](https://github.com/isaaclins/freesnitch/issues/31).
-- Rule policy is bounded at 4096 rules for live delivery and 800 rules for the pre-login boot snapshot. Exceeding the boot limit is reported rather than silently truncated.
-
-## Uninstall
-
-FreeSnitch installs a privileged helper and a system extension, so dragging the app to the Trash is not enough. From a checkout of this tag:
-
-```sh
-sudo Scripts/uninstall_freesnitch.sh --yes
-```
-
-That deactivates the system extension, unloads and removes the helper, flushes the `pfctl` anchor, and removes the app.
-
-## Verify what you are running
-
-FreeSnitch is auditable on purpose. The source for this build is the `v0.3.0` tag, and you can build and sign it yourself with `Scripts/release.sh`. The safety properties above live in `Scripts/audit_firewall_safety.sh`, which you can run against the source to confirm the claims in this document are actually enforced.
-]]></description>
-            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.3.0/FreeSnitch-0.3.0.zip" length="6234816" type="application/octet-stream" sparkle:edSignature="OOpBeSm0cWsbxvX9GzGzSjfJt9siO6Jk9wfpTBuYctBhik7g0P2smLU4ALvZwn5ijtz1JbuJfBhp23ghx7/3Cg=="/>
         </item>
     </channel>
 </rss>
