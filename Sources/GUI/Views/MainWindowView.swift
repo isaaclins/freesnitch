@@ -56,6 +56,7 @@ struct MainWindowView: View {
     @ObservedObject var model: MainWindowModel
     let systemExtension: SystemExtensionManager
     @State private var isSidebarVisible = true
+    @State private var sidebarAcceptsSelection = false
     @ObservedObject private var profileClient = ProfileClient.shared
 
     var body: some View {
@@ -75,10 +76,8 @@ struct MainWindowView: View {
         // NSToolbar.
         HStack(spacing: 0) {
             if isSidebarVisible {
-                sidebar
-                    .frame(width: 200)
-                    .background(PSTheme.bgSidebar)
-                Divider().background(PSTheme.stroke)
+                sidebar.frame(width: 200)
+                Divider()
             }
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -90,11 +89,8 @@ struct MainWindowView: View {
                             withAnimation(.easeInOut(duration: 0.15)) { isSidebarVisible = true }
                         } label: {
                             Image(systemName: "sidebar.left")
-                                .foregroundColor(PSTheme.textMuted)
-                                .padding(6)
-                                .background(PSTheme.bgTertiary, in: RoundedRectangle(cornerRadius: 6))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderless)
                         .help("Show the sidebar")
                         .padding(8)
                     }
@@ -104,56 +100,53 @@ struct MainWindowView: View {
         .background(PSTheme.bgPrimary)
     }
 
+    /// A real sidebar `List`, so the window's own navigation gets the same
+    /// Finder metrics, selection and keyboard traversal as the pages inside it.
+    /// Its material is supplied by `.listStyle(.sidebar)` and must not be
+    /// painted over.
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(spacing: 0) {
+            // No app-name caption here: the window title bar already says
+            // FreeSnitch, and Finder's sidebar starts at its first row. Only
+            // the collapse control remains, aligned like a toolbar button.
             HStack {
-                Text("FreeSnitch")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(PSTheme.textMuted)
                 Spacer()
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { isSidebarVisible = false }
                 } label: {
                     Image(systemName: "sidebar.left")
-                        .foregroundColor(PSTheme.textMuted)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help("Hide the sidebar")
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            ForEach(MainPage.allCases) { page in
-                sidebarRow(page)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private func sidebarRow(_ page: MainPage) -> some View {
-        let isSelected = model.page == page
-        return Button {
-            model.page = page
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: page.symbol)
-                    .frame(width: 16)
-                    .foregroundColor(isSelected ? PSTheme.accentBlue : PSTheme.textSecondary)
-                Text(page.title)
-                    .font(.system(size: 13))
-                    .foregroundColor(isSelected ? PSTheme.textPrimary : PSTheme.textSecondary)
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(isSelected ? PSTheme.accentBlue.opacity(0.16) : .clear,
-                        in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
+
+            List(selection: pageSelection) {
+                ForEach(MainPage.allCases) { page in
+                    Label(page.title, systemImage: page.symbol)
+                        .tag(page)
+                }
+            }
+            .listStyle(.sidebar)
+            .onAppear {
+                DispatchQueue.main.async { sidebarAcceptsSelection = true }
+            }
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
+    }
+
+    /// Writes are ignored until the list has appeared, because a freshly
+    /// focused outline can report a selection of its own before anyone clicks,
+    /// and here that would silently switch the window to another page.
+    private var pageSelection: Binding<MainPage?> {
+        Binding(
+            get: { model.page },
+            set: { newValue in
+                guard sidebarAcceptsSelection else { return }
+                guard let newValue, newValue != model.page else { return }
+                model.page = newValue
+            }
+        )
     }
 
     @ViewBuilder
@@ -168,7 +161,6 @@ struct MainWindowView: View {
         case .profiles:
             ProfilesSettingsView(profileClient: profileClient)
                 .padding(16)
-                .background(PSTheme.bgPrimary)
         case .settings:
             SettingsView(systemExtension: systemExtension)
         }

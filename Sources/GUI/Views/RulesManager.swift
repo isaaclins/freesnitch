@@ -10,6 +10,7 @@ struct RulesManagerView: View {
     @State private var selectedRuleIDs: Set<UUID> = []
     @State private var sortOrder: [KeyPathComparator<Rule>] = [KeyPathComparator(\Rule.displayProcessName)]
     @State private var sidebarAcceptsSelection = false
+    @State private var showingBlocklistHelp = false
     @State private var showingRuleEditor = false
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -93,7 +94,7 @@ struct RulesManagerView: View {
         List(selection: sidebarSelection) {
             Section("Rules") {
                 navRow(.all, label: "All Rules", icon: "list.bullet", count: state.rules.count)
-                navRow(.active, label: "Active", icon: "checkmark.circle.fill", color: .green, count: state.rules.filter { $0.enabled && $0.action == .allow }.count)
+                navRow(.active, label: "Allow", icon: "checkmark.circle.fill", color: .green, count: state.rules.filter { $0.enabled && $0.action == .allow }.count)
                 navRow(.deny, label: "Deny", icon: "minus.circle.fill", color: .red, count: state.rules.filter { $0.action == .deny }.count)
                 navRow(.recentChanges, label: "Recent Changes", icon: "clock.fill", count: recentChangesCount)
                 navRow(.recentlyUsed, label: "Recently Used", icon: "clock.arrow.circlepath", count: state.rules.filter { $0.lastUsedAt != nil }.count)
@@ -108,30 +109,52 @@ struct RulesManagerView: View {
                 groupRow("Third Party Apps", icon: "shippingbox")
             }
 
-            Section("Blocklists") {
-                // List rows truncate to one line by default, which silently ate
-                // most of both warnings. lineLimit(nil) plus fixedSize is what
-                // makes a multi-line row keep its full height inside a List.
-                Text("Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
+            Section {
                 if !state.enforcementEnabled && state.blocklists.contains(where: { $0.enabled }) {
-                    Text("Enforcement is off, so enabled blocklists are currently blocking nothing.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Label("Enforcement is off", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .help(Self.enforcementOffExplanation)
                 }
                 ForEach(state.blocklists) { b in
                     blocklistRow(b)
                 }
+            } header: {
+                blocklistsHeader
             }
         }
         .listStyle(.sidebar)
         .onAppear {
             DispatchQueue.main.async { sidebarAcceptsSelection = true }
+        }
+    }
+
+    static let blocklistExplanation = "Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH."
+    static let enforcementOffExplanation = "Enforcement is off, so enabled blocklists are currently blocking nothing."
+
+    /// Six lines of explanation used to sit permanently in the sidebar, which
+    /// is not what a Mac app does with reference text. It now lives behind the
+    /// info affordance next to the header, revealed on hover.
+    private var blocklistsHeader: some View {
+        HStack(spacing: 4) {
+            Text("Blocklists")
+            Image(systemName: "info.circle")
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            showingBlocklistHelp = hovering
+        }
+        // The width has to be set before fixedSize, or the text is measured
+        // unwrapped and the popover clips its last lines. No .help() here: the
+        // tooltip fired at the same time as the popover and the two overlapped.
+        .popover(isPresented: $showingBlocklistHelp, arrowEdge: .trailing) {
+            Text(Self.blocklistExplanation)
+                .font(.callout)
+                .frame(width: 250, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(14)
         }
     }
 
@@ -201,12 +224,25 @@ struct RulesManagerView: View {
         }
     }
 
+    /// One content bar, carrying the section title, the count and the actions,
+    /// on the system bar material.
+    ///
+    /// It replaces a strip of borderless glyphs above a 22pt bold title that
+    /// repeated what the window title bar already says. Mail and Finder put the
+    /// section and its count in one bar and never restate the title in the
+    /// content.
     private var toolbar: some View {
         HStack(spacing: 10) {
-            TextField("Search", text: searchBinding)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 280)
-            Spacer()
+            Text(categoryTitle)
+                .font(.headline)
+                .lineLimit(1)
+            Text("\(filteredRules.count)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Spacer(minLength: 12)
+            NativeSearchField(text: searchBinding)
+                .frame(width: 180)
             Button(action: { showingImporter = true }) {
                 Image(systemName: "tray.and.arrow.down.fill")
             }
@@ -228,22 +264,13 @@ struct RulesManagerView: View {
             .disabled(!state.helperConnected)
             .help(state.helperConnected ? "Add a rule." : "Approve the FreeSnitch helper before adding rules.")
         }
-        .padding(8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 
     private var rulesList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text(categoryTitle).font(.title2).fontWeight(.semibold)
-                Text("\(filteredRules.count) rules")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-
             if filteredRules.isEmpty {
                 emptyState
             } else {
@@ -361,7 +388,7 @@ struct RulesManagerView: View {
     private var categoryTitle: String {
         switch selectedCategory {
         case .all: return "All Rules"
-        case .active: return "Active"
+        case .active: return "Allow"
         case .deny: return "Deny"
         case .recentChanges: return "Recent Changes"
         case .recentlyUsed: return "Recently Used"
@@ -426,29 +453,35 @@ struct RulesManagerView: View {
     private var infoPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "info.circle.fill").foregroundStyle(Color.accentColor)
                 Text("Information").font(.headline)
                 Spacer()
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
+            Divider()
 
             if selectedRules.count > 1 {
                 multiRuleDetails(selectedRules)
             } else if let r = selectedRules.first {
                 ruleDetails(r)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("The filtering behavior of FreeSnitch is defined by the rules listed here.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Text("Select a rule to see its details. See the FreeSnitch Help, chapter [Anatomy of a rule](https://github.com/isaaclins/freesnitch#anatomy-of-a-rule) for more information.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                // Also a Form, so the inspector keeps one background from top
+                // to bottom instead of a grouped card sitting on bare window
+                // black whenever nothing is selected.
+                Form {
+                    Section {
+                        Text("The filtering behavior of FreeSnitch is defined by the rules listed here.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Select a rule to see its details. See the FreeSnitch Help, chapter [Anatomy of a rule](https://github.com/isaaclins/freesnitch#anatomy-of-a-rule) for more information.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                .padding(.horizontal, 14)
+                .formStyle(.grouped)
             }
         }
     }
@@ -476,15 +509,18 @@ struct RulesManagerView: View {
                 if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
             }
             internetAccessPolicyDetails(for: r)
+            // The actions belong inside the form. Sitting below it, they were
+            // the only thing standing on the bare window background, which read
+            // as a black strip pasted under the inspector.
+            Section {
+                HStack {
+                    Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
+                    Spacer()
+                    Button("Remove", role: .destructive) { removeRule(r) }
+                }
+            }
         }
         .formStyle(.grouped)
-
-        HStack {
-            Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
-            Spacer()
-            Button("Remove", role: .destructive) { removeRule(r) }
-        }
-        .padding(14)
     }
 
     @ViewBuilder
@@ -495,17 +531,17 @@ struct RulesManagerView: View {
             }
             summarySection("Process", items: summaryItems(rules) { $0.displayProcessName })
             summarySection("Action", items: summaryItems(rules) { $0.actionLabel })
+            Section {
+                HStack {
+                    Button(allSelectedRulesDisabled ? "Enable" : "Disable") {
+                        setRulesEnabled(!allSelectedRulesDisabled)
+                    }
+                    Spacer()
+                    Button("Remove", role: .destructive) { removeSelectedRules() }
+                }
+            }
         }
         .formStyle(.grouped)
-
-        HStack {
-            Button(allSelectedRulesDisabled ? "Enable" : "Disable") {
-                setRulesEnabled(!allSelectedRulesDisabled)
-            }
-            Spacer()
-            Button("Remove", role: .destructive) { removeSelectedRules() }
-        }
-        .padding(14)
     }
 
     private func summarySection(_ title: String, items: [RuleSummaryItem]) -> some View {

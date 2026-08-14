@@ -27,18 +27,23 @@ struct HelperBanner: View {
         }
     }
 
+    /// An inset notice card, not a full-bleed coloured slab.
+    ///
+    /// This used to be a maroon band pinned edge to edge under the title bar
+    /// with a 1pt tinted rule beneath it, which is not a shape macOS uses
+    /// anywhere. System Settings states a problem in a rounded, lightly tinted
+    /// card inside the content, and that is what this is now.
     private func banner(_ info: BannerInfo) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: info.icon)
-                .foregroundColor(info.tint)
-                .font(.system(size: compact ? 12 : 14, weight: .semibold))
-            VStack(alignment: .leading, spacing: 3) {
+                .foregroundStyle(info.tint)
+                .font(compact ? .callout : .title3)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(info.title)
-                    .font(.system(size: compact ? 11 : 12, weight: .semibold))
-                    .foregroundColor(PSTheme.textPrimary)
+                    .font(compact ? .caption.weight(.semibold) : .callout.weight(.semibold))
                 Text(info.detail)
-                    .font(.system(size: compact ? 10 : 11))
-                    .foregroundColor(PSTheme.textSecondary)
+                    .font(compact ? .caption2 : .callout)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
@@ -48,10 +53,14 @@ struct HelperBanner: View {
                     .controlSize(compact ? .small : .regular)
             }
         }
-        .padding(.horizontal, compact ? 10 : 14)
-        .padding(.vertical, compact ? 8 : 10)
-        .background(info.tint.opacity(0.12))
-        .overlay(Rectangle().frame(height: 1).foregroundColor(info.tint.opacity(0.35)), alignment: .bottom)
+        .padding(compact ? 10 : 12)
+        .background(info.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(info.tint.opacity(0.25), lineWidth: 1)
+        )
+        .padding(.horizontal, compact ? 8 : 12)
+        .padding(.vertical, compact ? 6 : 10)
     }
 }
 
