@@ -138,10 +138,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "insights": self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
+                // The connection alert is the app's most consequential screen
+                // and the only one that cannot be reached from the sidebar, so
+                // without this it is the one screen nobody can review before it
+                // ships. The reply is a no-op here; nothing is enforced.
+                case "alert": self.seedDemoAlert()
                 default: break
                 }
             }
         }
+    }
+
+    private func seedDemoAlert() {
+        // Built here rather than picked out of `state.connections`: a running
+        // helper replaces that list with live data, so the demo alert appeared
+        // or did not depending on what the Mac happened to be doing.
+        let now = Date()
+        let connection = Connection(pid: 4242,
+                                    processName: "Discord",
+                                    processPath: "/Applications/Discord.app",
+                                    processBundleId: "com.hnc.Discord",
+                                    remoteHost: "gateway.discord.gg",
+                                    remoteIP: "162.159.128.233",
+                                    remotePort: 443,
+                                    direction: .outgoing,
+                                    status: .pending,
+                                    bytesIn: 0,
+                                    bytesOut: 0,
+                                    countryCode: "NL",
+                                    city: "Amsterdam",
+                                    latitude: 52.37,
+                                    longitude: 4.90,
+                                    firstSeen: now,
+                                    lastSeen: now)
+        state.pendingAlerts = [AppState.PendingAlert(connection: connection) { _, _ in }]
     }
 
     private func seedDemoState() {
