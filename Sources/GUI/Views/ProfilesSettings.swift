@@ -4,183 +4,387 @@ import SwiftUI
 /// which networks select it, and the rules that only apply there.
 struct ProfilesSettingsView: View {
     @ObservedObject var profileClient: ProfileClient
+    /// Which profile the detail pane is showing. Not the same thing as the
+    /// active profile: reading a profile must not switch to it.
+    @State private var selectedProfileName: String?
+    @State private var showingCreateSheet = false
     @State private var newProfileName = ""
     @State private var newProfileMode: AppMode = .alert
     @State private var newBlocklistName = ""
     @State private var newBlocklistURL = ""
     @State private var blocklistError: String?
 
+    /// Text fields stop at a readable measure instead of spanning the window
+    /// (#88). A name is a few words; a URL is longer but still not a window.
+    private static let nameFieldWidth: CGFloat = 200
+    private static let urlFieldWidth: CGFloat = 340
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            if let notice = profileClient.visibleNotice {
-                ProfileSwitchBanner(notice: notice,
-                                    canUndo: profileClient.canUndo,
-                                    onUndo: { profileClient.undoSwitch() },
-                                    onDismiss: { profileClient.dismissNotice() })
+        VStack(spacing: 0) {
+            notices
+            HStack(spacing: 0) {
+                profileList
+                    .frame(width: 220)
+                Divider()
+                detailPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if let message = profileClient.errorMessage {
-                Text(message).font(.caption).foregroundColor(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !profileClient.isAvailable {
-                Text("Profiles come from the privileged helper. Approve the helper in the General tab; this list fills in on its own once it connects.")
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+        }
+        .sheet(isPresented: $showingCreateSheet) { createSheet }
+    }
+
+    // MARK: Notices
+
+    @ViewBuilder
+    private var notices: some View {
+        if let notice = profileClient.visibleNotice {
+            ProfileSwitchBanner(notice: notice,
+                                canUndo: profileClient.canUndo,
+                                onUndo: { profileClient.undoSwitch() },
+                                onDismiss: { profileClient.dismissNotice() })
+                .padding(10)
+        }
+        if let message = profileClient.errorMessage {
+            noticeText(message, tint: .red)
+        }
+        if !profileClient.isAvailable {
+            noticeText("Profiles come from the privileged helper. Approve the helper in Settings; this list fills in on its own once it connects.",
+                       tint: .secondary)
+        }
+    }
+
+    private func noticeText(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+    }
+
+    // MARK: The list
+
+    /// The list of profiles, with the create and delete controls under it,
+    /// which is where a Mac app keeps them.
+    private var profileList: some View {
+        HeaderedPane {
+            PaneHeader("Profiles", count: profileClient.profiles.count)
+        } content: {
+            VStack(spacing: 0) {
+                List(selection: $selectedProfileName) {
                     ForEach(profileClient.profiles) { profile in
-                        profileRow(profile)
+                        HStack(spacing: 6) {
+                            Image(systemName: profile.icon)
+                                .foregroundStyle(Color.accentColor)
+                            Text(profile.name).lineLimit(1)
+                            Spacer(minLength: 4)
+                            if profile.isActive {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.green)
+                                    .help("The active profile")
+                            }
+                        }
+                        .tag(profile.name)
                     }
-                    Divider()
-                    createProfileSection
-                    Divider()
-                    blocklistSection
-                    Divider()
-                    networkSection
                 }
-                .padding(.trailing, 4)
+                .listStyle(.inset)
+                .contextMenu(forSelectionType: String.self) { names in
+                    if let name = names.first, let profile = profile(named: name) {
+                        Button("Activate") { profileClient.activate(profileName: name) }
+                            .disabled(!profileClient.isAvailable || profile.isActive)
+                        if name != Profile.defaultName {
+                            Divider()
+                            Button("Delete Profile", role: .destructive) {
+                                profileClient.deleteProfile(name: name)
+                            }
+                            .disabled(!profileClient.isAvailable)
+                        }
+                    }
+                }
+                Divider()
+                listFooter
             }
         }
     }
 
-    private var header: some View {
-        HStack {
-            Text("Profiles").font(.headline)
+    private var listFooter: some View {
+        HStack(spacing: 4) {
+            Button {
+                newProfileName = ""
+                newProfileMode = .alert
+                showingCreateSheet = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!profileClient.isAvailable)
+            .help("Create a profile")
+            Button {
+                guard let name = selectedProfileName, name != Profile.defaultName else { return }
+                profileClient.deleteProfile(name: name)
+                selectedProfileName = Profile.defaultName
+            } label: {
+                Image(systemName: "minus")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!profileClient.isAvailable
+                      || selectedProfileName == nil
+                      || selectedProfileName == Profile.defaultName)
+            .help(selectedProfileName == Profile.defaultName
+                  ? "The default profile cannot be deleted."
+                  : "Delete the selected profile")
             Spacer()
-            Text("Active: \(profileClient.activeProfileName)")
-                .font(.caption).foregroundColor(.secondary)
             Button("Refresh") { profileClient.refresh() }
+                .buttonStyle(.borderless)
                 .disabled(!profileClient.isAvailable)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
-    private func profileRow(_ profile: Profile) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: profile.icon)
-                Text(profile.name).font(.body.weight(.medium))
-                Spacer()
-                if profile.isActive {
-                    PSChip("Active", color: PSTheme.accentGreen)
-                } else {
-                    Button("Activate") { profileClient.activate(profileName: profile.name) }
-                        .disabled(!profileClient.isAvailable)
-                }
-            }
-            HStack {
-                Picker("Strictness", selection: Binding(
-                    get: { profile.mode },
-                    set: { newValue in
-                        var updated = profile
-                        updated.mode = newValue
-                        profileClient.updateProfile(updated)
-                    }
-                )) {
-                    ForEach(AppMode.allCases, id: \.self) { mode in
-                        Label(mode.title, systemImage: mode.symbol).tag(mode)
-                    }
-                }
-                .frame(maxWidth: 260)
-                .disabled(!profileClient.isAvailable)
-                Spacer()
-                if profile.name != Profile.defaultName {
-                    Button(role: .destructive) {
-                        profileClient.deleteProfile(name: profile.name)
-                    } label: {
-                        Text("Delete")
-                    }
-                    .disabled(!profileClient.isAvailable)
-                }
-            }
-            Text(profileDescription(profile))
-                .font(.caption).foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.vertical, 4)
-    }
+    // MARK: The detail
 
-    private func profileDescription(_ profile: Profile) -> String {
-        let always = profileClient.snapshot?.alwaysRuleCount ?? 0
-        let boundNetworks = (profileClient.snapshot?.bindings ?? [])
-            .filter { $0.profileName == profile.name }
-            .count
-        let networks = boundNetworks == 1 ? "1 network" : "\(boundNetworks) networks"
-        return "Applies the \(always) Always rules plus this profile's own rules. \(profile.blocklistIDs.count) blocklists selected. \(networks) bound."
-    }
-
-    private var createProfileSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("New profile").font(.subheadline.weight(.semibold))
-            Text("A new profile is never empty: it inherits every Always rule immediately, without copying them.")
-                .font(.caption).foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                TextField("Name", text: $newProfileName)
-                Picker("", selection: $newProfileMode) {
-                    ForEach(AppMode.allCases, id: \.self) { mode in
-                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+    @ViewBuilder
+    private var detailPane: some View {
+        if let profile = selectedProfile {
+            HeaderedPane {
+                PaneHeader(profile.name) {
+                    if profile.isActive {
+                        PSChip("Active", color: PSTheme.accentGreen)
+                    } else {
+                        Button("Activate") { profileClient.activate(profileName: profile.name) }
+                            .disabled(!profileClient.isAvailable)
                     }
                 }
-                .labelsHidden()
-                .frame(width: 140)
-                Button("Create") {
-                    profileClient.createProfile(name: newProfileName, mode: newProfileMode, icon: "mappin.and.ellipse")
-                    newProfileName = ""
-                }
-                .disabled(!profileClient.isAvailable || newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } content: {
+                profileDetail(profile)
             }
-        }
-    }
-
-    private var blocklistSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Blocklists in \(profileClient.activeProfileName)").font(.subheadline.weight(.semibold))
-                Spacer()
-                Button("Refresh Lists") { profileClient.refreshBlocklists() }
-                    .disabled(!profileClient.isAvailable)
-            }
-            Text("Deny lists stack: any number can apply at once, and order never matters. They filter DNS names only.")
-                .font(.caption).foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(profileClient.snapshot?.blocklists ?? []) { blocklist in
-                HStack {
-                    Toggle("", isOn: Binding(
-                        get: { blocklist.enabled },
-                        set: { profileClient.setBlocklist(blocklist.id, enabled: $0, profileName: profileClient.activeProfileName) }
-                    ))
-                    .labelsHidden()
-                    VStack(alignment: .leading) {
-                        Text(blocklist.name).font(.body)
-                        Text(blocklist.url).font(.caption2).foregroundColor(.secondary).lineLimit(1)
-                    }
+        } else {
+            HeaderedPane {
+                PaneHeader("Profile")
+            } content: {
+                VStack(spacing: 6) {
                     Spacer()
-                    Text("\(blocklist.entryCount)").font(.caption.monospacedDigit()).foregroundColor(.secondary)
-                    Button(role: .destructive) { profileClient.removeBlocklist(blocklist.id) } label: {
-                        Image(systemName: "trash")
-                    }
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("Select a profile to see what it applies.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// Mode, blocklists and network binding, all on screen at once, with the
+    /// long list in the middle taking the slack (#88).
+    private func profileDetail(_ profile: Profile) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            modeRow(profile)
+            Divider()
+            blocklistSection(profile)
+            Divider()
+            // The blocklist list above is the only part that should give way
+            // when the window is short; the network binding is three lines and
+            // must not be the thing that gets clipped off the bottom.
+            networkSection(profile)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+        }
+    }
+
+    private func modeRow(_ profile: Profile) -> some View {
+        HStack(spacing: 10) {
+            Picker("Strictness", selection: Binding(
+                get: { profile.mode },
+                set: { newValue in
+                    var updated = profile
+                    updated.mode = newValue
+                    profileClient.updateProfile(updated)
+                }
+            )) {
+                ForEach(AppMode.allCases, id: \.self) { mode in
+                    Label(mode.title, systemImage: mode.symbol).tag(mode)
+                }
+            }
+            .frame(maxWidth: 280)
+            .disabled(!profileClient.isAvailable)
+            Spacer(minLength: 8)
+            Text(summary(profile))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+    }
+
+    private func summary(_ profile: Profile) -> String {
+        let always = profileClient.snapshot?.alwaysRuleCount ?? 0
+        return "Applies the \(always) Always rules plus this profile's own rules."
+    }
+
+    private func blocklistSection(_ profile: Profile) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Blocklists") {
+                Button("Refresh Lists") { profileClient.refreshBlocklists() }
                     .buttonStyle(.borderless)
                     .disabled(!profileClient.isAvailable)
+            }
+            List {
+                ForEach(profileClient.snapshot?.blocklists ?? []) { blocklist in
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: Binding(
+                            get: { profile.blocklistIDs.contains(blocklist.id) },
+                            set: { profileClient.setBlocklist(blocklist.id, enabled: $0, profileName: profile.name) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .labelsHidden()
+                        .disabled(!profileClient.isAvailable)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(blocklist.name).lineLimit(1)
+                            Text(blocklist.url)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 6)
+                        Text("\(blocklist.entryCount)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Button(role: .destructive) {
+                            profileClient.removeBlocklist(blocklist.id)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(!profileClient.isAvailable)
+                    }
                 }
             }
-            HStack {
+            .listStyle(.inset)
+            .frame(maxHeight: .infinity)
+            HStack(spacing: 8) {
                 TextField("List name", text: $newBlocklistName)
+                    .frame(maxWidth: Self.nameFieldWidth)
                 TextField("https://example.org/hosts.txt", text: $newBlocklistURL)
-                Button("Add") { addCustomBlocklist() }
+                    .frame(maxWidth: Self.urlFieldWidth)
+                Button("Add") { addCustomBlocklist(to: profile) }
                     .disabled(!profileClient.isAvailable)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
             if let blocklistError {
-                Text(blocklistError).font(.caption).foregroundColor(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                captionText(blocklistError, tint: .red)
+            } else {
+                captionText("Deny lists stack and filter DNS names only. Custom lists must use HTTPS.", tint: .secondary)
             }
-            Text("Custom lists must use HTTPS.")
-                .font(.caption).foregroundColor(.secondary)
         }
     }
 
-    private func addCustomBlocklist() {
+    private func networkSection(_ profile: Profile) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Networks") {
+                Button("Use \(profile.name) here") {
+                    profileClient.bindCurrentNetwork(toProfile: profile.name)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!profileClient.isAvailable || profileClient.snapshot?.currentGatewayMAC == nil)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(gatewayLabel).font(.caption.monospaced()).foregroundStyle(.secondary)
+                ForEach(bindings(for: profile)) { binding in
+                    HStack(spacing: 6) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .foregroundStyle(Color.accentColor)
+                        Text(binding.gatewayMAC).font(.caption.monospaced())
+                        Spacer(minLength: 6)
+                        Button("Remove") { profileClient.unbindNetwork(gatewayMAC: binding.gatewayMAC) }
+                            .buttonStyle(.borderless)
+                            .disabled(!profileClient.isAvailable)
+                    }
+                }
+                if bindings(for: profile).isEmpty {
+                    Text("No network selects this profile yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            captionText("FreeSnitch recognises a network by the MAC address of its gateway. It never reads the Wi-Fi name and never asks for Location Services.",
+                        tint: .secondary)
+        }
+    }
+
+    private func sectionHeader<Trailing: View>(_ title: String,
+                                               @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+
+    private func captionText(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+    }
+
+    // MARK: Creating
+
+    /// Creating a profile is an action behind the plus button, not a form that
+    /// sits on the page forever (#88).
+    private var createSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Profile").font(.headline)
+            Text("A new profile is never empty: it inherits every Always rule immediately, without copying them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Form {
+                TextField("Name", text: $newProfileName)
+                    .frame(maxWidth: Self.nameFieldWidth)
+                Picker("Strictness", selection: $newProfileMode) {
+                    ForEach(AppMode.allCases, id: \.self) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .frame(maxWidth: 280)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { showingCreateSheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Create") {
+                    let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    profileClient.createProfile(name: name, mode: newProfileMode, icon: "mappin.and.ellipse")
+                    selectedProfileName = name
+                    newProfileName = ""
+                    showingCreateSheet = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!profileClient.isAvailable
+                          || newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func addCustomBlocklist(to profile: Profile) {
         do {
             _ = try BlocklistURLValidator.validate(newBlocklistURL)
             blocklistError = nil
@@ -190,37 +394,26 @@ struct ProfilesSettingsView: View {
         }
         profileClient.addCustomBlocklist(name: newBlocklistName,
                                          url: newBlocklistURL,
-                                         profileName: profileClient.activeProfileName)
+                                         profileName: profile.name)
         newBlocklistName = ""
         newBlocklistURL = ""
     }
 
-    private var networkSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Networks").font(.subheadline.weight(.semibold))
-            Text("FreeSnitch recognises a network by the MAC address of its gateway. It never reads the Wi-Fi name and never asks for Location Services. A network only ever selects a profile after you bind it here.")
-                .font(.caption).foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Text(gatewayLabel).font(.caption.monospaced())
-                Spacer()
-                Button("Use \(profileClient.activeProfileName) here") {
-                    profileClient.bindCurrentNetwork(toProfile: profileClient.activeProfileName)
-                }
-                .disabled(!profileClient.isAvailable || profileClient.snapshot?.currentGatewayMAC == nil)
-            }
-            ForEach(profileClient.snapshot?.bindings ?? []) { binding in
-                HStack {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                    Text(binding.gatewayMAC).font(.caption.monospaced())
-                    Text("selects").font(.caption).foregroundColor(.secondary)
-                    Text(binding.profileName).font(.caption.weight(.medium))
-                    Spacer()
-                    Button("Remove") { profileClient.unbindNetwork(gatewayMAC: binding.gatewayMAC) }
-                        .buttonStyle(.borderless)
-                }
-            }
+    // MARK: Lookups
+
+    private var selectedProfile: Profile? {
+        if let selectedProfileName, let match = profile(named: selectedProfileName) {
+            return match
         }
+        return profileClient.profiles.first { $0.isActive } ?? profileClient.profiles.first
+    }
+
+    private func profile(named name: String) -> Profile? {
+        profileClient.profiles.first { $0.name == name }
+    }
+
+    private func bindings(for profile: Profile) -> [ProfileNetworkBinding] {
+        (profileClient.snapshot?.bindings ?? []).filter { $0.profileName == profile.name }
     }
 
     private var gatewayLabel: String {

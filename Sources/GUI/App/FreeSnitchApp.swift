@@ -311,6 +311,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             BlocklistInfo(name: "1Host Lite", url: "", enabled: true, entryCount: 94647),
             BlocklistInfo(name: "HaGeZi Threat", url: "", enabled: true, entryCount: 301675)
         ]
+
+        seedDemoProfiles()
+    }
+
+    /// Profiles live in the helper, so without this the Profiles screen is
+    /// empty in demo mode and cannot be reviewed before it ships.
+    private func seedDemoProfiles() {
+        let lists = Array(state.blocklists.prefix(6))
+        let home = Profile(name: "default",
+                           mode: .alert,
+                           icon: "house",
+                           isActive: true,
+                           blocklistIDs: Set(lists.prefix(3).map(\.id)))
+        let cafe = Profile(name: "Cafe",
+                           mode: .silentDeny,
+                           icon: "cup.and.saucer",
+                           blocklistIDs: Set(lists.map(\.id)))
+        let work = Profile(name: "Work",
+                           mode: .silentAllow,
+                           icon: "building.2",
+                           blocklistIDs: [])
+        let snapshot = ProfileSnapshot(
+            profiles: [home, cafe, work],
+            activeProfile: home.name,
+            alwaysRuleCount: 9,
+            activeProfileRuleCount: 3,
+            blocklists: state.blocklists,
+            selectedBlocklistIDs: home.blocklistIDs,
+            bindings: [
+                ProfileNetworkBinding(profileName: "default", gatewayMAC: "a4:2b:8c:11:04:9f"),
+                ProfileNetworkBinding(profileName: "Cafe", gatewayMAC: "de:ad:be:ef:00:11")
+            ],
+            currentGatewayMAC: "a4:2b:8c:11:04:9f",
+            notice: nil,
+            canUndo: false)
+        ProfileClient.shared.adoptDemoSnapshot(snapshot)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

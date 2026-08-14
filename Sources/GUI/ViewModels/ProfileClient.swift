@@ -31,7 +31,18 @@ final class ProfileClient: ObservableObject {
         refresh()
     }
 
-    var isAvailable: Bool { transport != nil }
+    /// Fills the view model with a snapshot the helper would normally supply,
+    /// so the Profiles screen can be reviewed in demo mode. Never called
+    /// outside FREESNITCH_DEMO; it only writes the published snapshot and
+    /// sends nothing anywhere.
+    func adoptDemoSnapshot(_ snapshot: ProfileSnapshot) {
+        self.snapshot = snapshot
+        self.demoMode = true
+    }
+
+    private var demoMode = false
+
+    var isAvailable: Bool { transport != nil || demoMode }
 
     var profiles: [Profile] { snapshot?.profiles ?? [] }
 
