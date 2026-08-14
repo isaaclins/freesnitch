@@ -28,9 +28,6 @@ final class WindowManager {
     private var pageCancellable: AnyCancellable?
     /// Menu items do not retain their target, so the Insights action object
     /// lives here for as long as the menu does.
-    private var insightsMenuTarget: MenuActionTarget?
-    private var menuTrackingObserver: NSObjectProtocol?
-    private static let insightsMenuTitle = "Insights…"
     private static let mainWindowAutosaveName = "FreeSnitch.MainWindow"
     private static let selectedPageKey = "FreeSnitch.SelectedPage"
 
@@ -41,7 +38,6 @@ final class WindowManager {
         self.mainModel = MainWindowModel(page: stored.flatMap(MainPage.init(rawValue:)) ?? .monitor)
         observeAlerts()
         observeSelectedPage()
-        installInsightsMenuItem()
     }
 
     // MARK: - The one main window
@@ -61,12 +57,21 @@ final class WindowManager {
 
     /// Every entry point lands here: switch the existing window to the page
     /// and focus it. A second window is never created.
+    func showPage(_ page: MainPage) { show(page) }
+
     private func show(_ page: MainPage) {
         mainModel.page = page
         let window = mainWindow ?? makeMainWindow()
         mainWindow = window
         window.subtitle = page.title
         focus(window)
+        // Re-assert on the next tick. Command-comma reaches us through the
+        // SwiftUI Settings scene, and that scene's own window closing itself
+        // afterwards clears this window's subtitle, so the title bar lost the
+        // page name for exactly that one entry point.
+        DispatchQueue.main.async { [weak window] in
+            window?.subtitle = page.title
+        }
     }
 
     private func makeMainWindow() -> NSWindow {
@@ -90,38 +95,6 @@ final class WindowManager {
                 UserDefaults.standard.set(page.rawValue, forKey: Self.selectedPageKey)
                 self?.mainWindow?.subtitle = page.title
             }
-    }
-
-    /// The app menu is built by SwiftUI commands, so the Insights item is
-    /// inserted next to the other window commands here rather than competing
-    /// with them for ownership of that menu. SwiftUI can rebuild that menu
-    /// afterwards, so the item is also re-checked whenever a menu opens: an
-    /// entry point that quietly disappears is the same as not having one.
-    private func installInsightsMenuItem() {
-        insightsMenuTarget = MenuActionTarget { [weak self] in
-            Task { @MainActor in self?.showInsights() }
-        }
-        DispatchQueue.main.async { [weak self] in self?.ensureInsightsMenuItem() }
-        menuTrackingObserver = NotificationCenter.default.addObserver(
-            forName: NSMenu.didBeginTrackingNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.ensureInsightsMenuItem() }
-        }
-    }
-
-    private func ensureInsightsMenuItem() {
-        guard let target = insightsMenuTarget,
-              let appMenu = NSApp.mainMenu?.items.first?.submenu,
-              !appMenu.items.contains(where: { $0.title == Self.insightsMenuTitle }) else { return }
-        let item = NSMenuItem(title: Self.insightsMenuTitle,
-                              action: #selector(MenuActionTarget.perform(_:)),
-                              keyEquivalent: "i")
-        item.keyEquivalentModifierMask = [.command, .option]
-        item.target = target
-        let anchor = appMenu.items.firstIndex { $0.title.hasPrefix("Rules") }
-        appMenu.insertItem(item, at: anchor.map { $0 + 1 } ?? appMenu.items.count)
     }
 
     // MARK: - Window factory

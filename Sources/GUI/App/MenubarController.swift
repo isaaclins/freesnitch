@@ -68,8 +68,16 @@ final class MenubarController {
 
     private func showContextMenu() {
         let menu = NSMenu()
-        menu.addItem(makeItem("Network Monitor…", #selector(openMonitor), keyEq: "n", modifiers: [.command, .option]))
-        menu.addItem(makeItem("Rules…", #selector(openRules), keyEq: "r", modifiers: [.command, .option]))
+        // Same numbering as the sidebar and the app menu, so this menu teaches
+        // the binding instead of contradicting it. All five pages are listed:
+        // leaving two of them out was how Profiles ended up unreachable from
+        // the keyboard.
+        menu.addItem(makeItem("Network Monitor…", #selector(openMonitor), keyEq: "1", modifiers: [.command]))
+        menu.addItem(makeItem("Rules…", #selector(openRules), keyEq: "2", modifiers: [.command]))
+        menu.addItem(makeItem("Insights…", #selector(openInsights), keyEq: "3", modifiers: [.command]))
+        menu.addItem(makeItem("Profiles…", #selector(openProfiles), keyEq: "4", modifiers: [.command]))
+        // Settings keeps Command-comma as well: that one is a system-wide
+        // convention and people press it wherever Settings happens to sit.
         menu.addItem(makeItem("Settings…", #selector(openSettings), keyEq: ",", modifiers: [.command]))
         menu.addItem(.separator())
         let modeMenu = NSMenu(title: "Mode")
@@ -102,6 +110,8 @@ final class MenubarController {
 
     @objc private func openMonitor() { windows.showNetworkMonitor() }
     @objc private func openRules() { windows.showRulesManager() }
+    @objc private func openInsights() { windows.showInsights() }
+    @objc private func openProfiles() { windows.showProfiles() }
     @objc private func openSettings() { windows.showSettings() }
     @objc private func modeAlert() { state.setMode(.alert) }
     @objc private func modeAllow() { state.setMode(.silentAllow) }

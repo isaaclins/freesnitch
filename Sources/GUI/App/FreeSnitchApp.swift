@@ -6,6 +6,13 @@ struct FreeSnitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     private let sparkleUpdater = SparkleUpdaterController()
 
+    /// Command-1 for the first sidebar row, and so on. Beyond nine there is no
+    /// digit left to press, so those pages keep the menu item without a
+    /// shortcut rather than being given an arbitrary one.
+    private func pageShortcut(_ index: Int) -> KeyEquivalent {
+        KeyEquivalent(Character(String(index + 1)))
+    }
+
     var body: some Scene {
         // An App needs a scene, and the app menu's Settings item plus ⌘, come
         // from this one existing. Its content is a redirector rather than the
@@ -19,14 +26,19 @@ struct FreeSnitchApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: sparkleUpdater.updater)
                 Divider()
-                Button("Network Monitor…") {
-                    delegate.windowManager.showNetworkMonitor()
+                // Positional, not mnemonic: these switch between sidebar
+                // pages, and every Mac app with a sidebar or tabs binds that to
+                // Command-1 through Command-n. Letter mnemonics belong to
+                // commands, and Command-Option-N in particular read as "new".
+                // Numbering here follows MainPage.allCases, which is the same
+                // order the sidebar draws, so the number you press is the row
+                // you see and reordering the sidebar cannot make a shortcut lie.
+                ForEach(Array(MainPage.allCases.enumerated()), id: \.element.id) { index, page in
+                    Button(page.title) {
+                        delegate.windowManager.showPage(page)
+                    }
+                    .keyboardShortcut(pageShortcut(index), modifiers: .command)
                 }
-                .keyboardShortcut("n", modifiers: [.command, .option])
-                Button("Rules…") {
-                    delegate.windowManager.showRulesManager()
-                }
-                .keyboardShortcut("r", modifiers: [.command, .option])
             }
         }
     }
