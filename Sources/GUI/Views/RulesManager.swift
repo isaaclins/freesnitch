@@ -29,6 +29,12 @@ struct RulesManagerView: View {
     /// Which pane owns the keyboard. Tab moves it, and the focused list shows
     /// the focused selection colour instead of the unfocused grey (#85).
     @FocusState private var focusedPane: RulesPane?
+    /// The inspector's width, kept across launches the way a Mac app keeps the
+    /// width of any pane the user has sized (#82).
+    @AppStorage("FreeSnitch.RulesInspectorWidth") private var inspectorWidth: Double = 240
+    /// The width the current drag started from, so the pane tracks the pointer
+    /// instead of accumulating every delta on top of itself.
+    @State private var inspectorDragStart: Double?
     @ObservedObject private var profileClient = ProfileClient.shared
 
     enum Category: Hashable {
@@ -59,9 +65,9 @@ struct RulesManagerView: View {
                 // rather than permanently spending a third of the window to say
                 // that nothing is (#81).
                 if !selectedRules.isEmpty {
-                    Divider()
+                    inspectorDivider
                     infoPane
-                        .frame(width: 240)
+                        .frame(width: inspectorWidth)
                         .focusable()
                         .focused($focusedPane, equals: .inspector)
                         .paneFocusRing(focusedPane == .inspector)
@@ -754,6 +760,47 @@ struct RulesManagerView: View {
         // stay parked on a pane that no longer exists.
         if focusedPane == .inspector { focusedPane = .table }
     }
+
+    /// The inspector's leading edge is a real drag handle: a divider on its
+    /// own is one point wide and impossible to hit, so the hit area is widened
+    /// without changing the layout, and the cursor says what it does (#82).
+    ///
+    /// The width is clamped, because a pane dragged to nothing is a pane the
+    /// user cannot get back, and a Form needs a floor to lay its fields out.
+    private var inspectorDivider: some View {
+        // The handle is a real strip in the layout with the divider line drawn
+        // down its middle, not an oversized overlay on a one point divider:
+        // hit testing does not reliably reach an overlay outside its parent's
+        // bounds, so that version looked draggable and was not.
+        // The line is drawn rather than composed from a Divider: a Divider
+        // takes its orientation from its layout context and has no intrinsic
+        // height outside an HStack, so wrapping one in the strip produced a
+        // 6x0 handle that was invisible and could not be hit.
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: 1)
+            PaneResizeHandle { dx in
+                let start = inspectorDragStart ?? inspectorWidth
+                if inspectorDragStart == nil { inspectorDragStart = start }
+                // The pane is on the trailing edge, so dragging left makes it
+                // wider.
+                inspectorWidth = min(Self.inspectorMaxWidth,
+                                     max(Self.inspectorMinWidth, start - Double(dx)))
+            } onEnd: {
+                inspectorDragStart = nil
+            }
+        }
+        .frame(width: Self.inspectorHandleWidth)
+        .accessibilityLabel("Resize the Information pane")
+    }
+
+    private static let inspectorHandleWidth: CGFloat = 6
+
+    /// Below this the fields in the inspector cannot lay out; above it the pane
+    /// starts eating the table it is describing.
+    static let inspectorMinWidth: Double = 220
+    static let inspectorMaxWidth: Double = 460
 
     /// Tab order is categories, rules, inspector. The first Tab press on a page
     /// nobody has touched puts focus on the category list rather than doing
