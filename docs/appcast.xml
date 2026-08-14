@@ -3,6 +3,34 @@
     <channel>
         <title>FreeSnitch</title>
         <item>
+            <title>0.4.2</title>
+            <pubDate>Fri, 14 Aug 2026 10:29:14 +0200</pubDate>
+            <sparkle:version>29</sparkle:version>
+            <sparkle:shortVersionString>0.4.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[# FreeSnitch 0.4.2
+
+## Uninstalling actually uninstalls
+
+The Uninstall screen used to print a list of `sudo` commands and ask you to run them in Terminal. One of them was `sudo bash Scripts/uninstall_freesnitch.sh`, a script that only exists if you cloned the source. If you installed FreeSnitch the normal way, from the disk image, you were given instructions you could not follow.
+
+**Remove FreeSnitch** now removes FreeSnitch. It unregisters the privileged helper, flushes its firewall anchor, deletes its data and deletes the app, asking you to authorize that once, the way any Mac app does. Then it deletes your own FreeSnitch files, which needs no password, so it does not ask for one.
+
+All that is left afterwards is a restart, because macOS only finishes removing a network extension on restart. The screen tells you that instead of handing you a list of chores.
+
+You no longer need to visit System Settings to remove the helper either; that was the one step FreeSnitch refused to do for you, and during an uninstall it is exactly what you asked for.
+
+If the removal fails, the commands are still shown, as a fallback rather than as the plan, and without the script you do not have.
+]]></description>
+            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.2/FreeSnitch-0.4.2.zip" length="10058962" type="application/octet-stream" sparkle:edSignature="gmjddjeOuAjk5KSJALHc/H6JjWd7uThMOYt1MzRYN4LQ8H737V1yMuAKdKsiSpEEoAHrrtmtzxQs3lTkbPXmBg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.2/FreeSnitch29-28.delta" sparkle:deltaFrom="28" length="507942" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="zFM5VnhvX4ODIriFz3Opr6LADhjW7EfVUE3QTljY9Kcf/vkBvo1Vp2qPiyScC28WzuxcyMEczRIqtAkzh56sDg=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.2/FreeSnitch29-27.delta" sparkle:deltaFrom="27" length="575518" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="I2nIAbu/RmWN38iOraN+5x+eoqAh+jp2868ofA2hXcME4bSMxSqPRPDq9Pw5LThCN6ry8ha/YNdDbF/29kf1BQ=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.2/FreeSnitch29-26.delta" sparkle:deltaFrom="26" length="4799750" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="vTE7S7iwmWI+yohjKdVoJjLjo0DYrIRBTcu6bIX2Fx9mHymzt8wMrw+cR4DIYmnGxsz/Cv2/quvLFzpjQLPsAQ=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.2/FreeSnitch29-25.delta" sparkle:deltaFrom="25" length="4813438" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="MKkOJT7hXfQzzj6YcDBUWOHbD7HiRxVVd3ghZyC8ioB9jXkSkkPG97mRlSRNt18RM1BINTly3hbUbT1uxDtxAA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.4.1</title>
             <pubDate>Fri, 14 Aug 2026 10:00:04 +0200</pubDate>
             <sparkle:version>28</sparkle:version>
@@ -21,11 +49,6 @@ The action is deliberately narrow: it restarts the existing service and never un
 If the restart genuinely cannot be carried out, the command is still shown, as a fallback rather than as the plan.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch-0.4.1.zip" length="10038106" type="application/octet-stream" sparkle:edSignature="xffMHEG8OaUG7djV9MTpivbN9rZHnuRp9613UIJ27Je8uMwSYpZSld2RbzTzggJev+y1z1ddcfOJb8Jzba9jDA=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch28-27.delta" sparkle:deltaFrom="27" length="500466" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="ByFlJhkTIwU/zEMi+Ja3FAMDiuQFABS+GBV0gCTHZNySYHcIQCLVwC6qqNlHjUwLnPmHNvPLlJYJA0ugkW3oDA=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch28-26.delta" sparkle:deltaFrom="26" length="4791650" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="8uEq/h2tfq0gNiotPhLb/HIK+vDdxkIp1vmJwDbVFivw0T3lR6qt9YeHXipJOW9WBSvSZLdy9D0ALxhOZGMDCg=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch28-25.delta" sparkle:deltaFrom="25" length="4796994" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="os5szwa9Pv4CjI+JPufbe3G3PbLXi21qjZTnhu0f4wUql1O+9b8nhlfTl2+g4030F8K/l1XO/A62jqr4oxzBDQ=="/>
-            </sparkle:deltas>
         </item>
         <item>
             <title>0.4.0</title>
@@ -124,39 +147,6 @@ Pages follow the sidebar: `⌘1` Network Monitor, `⌘2` Rules, `⌘3` Insights,
 - `⌘,` cleared the page name from the window's title bar.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.0/FreeSnitch-0.4.0.zip" length="10031127" type="application/octet-stream" sparkle:edSignature="cWxqXar1rnb2rfMo/2qfffTDN4r1+4GXuuGrZ7LzM/GYxvOLGZasUAxZIRzLK/ZkE5WwhHTvObYO684XCd0RDg=="/>
-        </item>
-        <item>
-            <title>0.3.1</title>
-            <pubDate>Thu, 13 Aug 2026 20:26:19 +0200</pubDate>
-            <sparkle:version>26</sparkle:version>
-            <sparkle:shortVersionString>0.3.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="plain-text"><![CDATA[A same-day fix for a defect found while verifying 0.3.0 on a real installation.
-
-## What was wrong
-
-If your rule store contained a rule that a later validation rule rejects, the helper answered rule requests with an empty payload. Every rule disappeared from the app and from `freesnitch rules list`, while sitting intact in the database, and the error blamed a version mismatch that did not exist.
-
-This affected reverse-DNS rules (`.in-addr.arpa`, `.ip6.arpa`) that earlier builds created before those names were refused as destinations. On the machine this was found on, 19 of 113 distinct rule hostnames were of that kind, and that was enough to hide all 217 rules.
-
-Because the same encoder produces the snapshot delivered to the network extension, this could also stop policy reaching the filter, which fails open.
-
-## The fix
-
-Bounding a payload and judging its content are now separate jobs:
-
-- **Bounds** (byte size and rule count) still apply to everything crossing a process boundary. That is the protection added in 0.3.0 and it is unchanged.
-- **Content** is judged where rules ENTER the policy: adding, updating, or importing. Reverse-DNS destinations are still refused there, exactly as before.
-- **Reading your own stored rules back out no longer re-judges them**, so a rule accepted by an older build stays visible and manageable.
-- A failure on an XPC path is now logged with its reason instead of being flattened into an empty reply.
-
-If you installed 0.3.0 and your rules appeared to vanish, they were never lost. Update to 0.3.1 and they are all there.
-
-## Everything else
-
-Unchanged from 0.3.0. See the [0.3.0 notes](https://github.com/isaaclins/freesnitch/releases/tag/v0.3.0) for the full feature list, safety model, and known limitations.
-]]></description>
-            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.3.1/FreeSnitch-0.3.1.zip" length="6238113" type="application/octet-stream" sparkle:edSignature="L4j6KkwGsyDo2KPyB6ZzFOM3JPyo5c7I5mfugRQBaFLnl7z2N8qg8cUCGf2GZGr4d4vgV6AYdcuosCWT/LchDg=="/>
         </item>
     </channel>
 </rss>
