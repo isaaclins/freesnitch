@@ -57,9 +57,9 @@ struct SettingsView: View {
                 }
                 Section("Mode") {
                     Picker("Default mode", selection: Binding(get: { state.mode }, set: { state.setMode($0) })) {
-                        Text("Alert").tag(AppMode.alert)
-                        Text("Silent Allow").tag(AppMode.silentAllow)
-                        Text("Silent Deny").tag(AppMode.silentDeny)
+                        ForEach(AppMode.allCases, id: \.self) { mode in
+                            Label(mode.title, systemImage: mode.symbol).tag(mode)
+                        }
                     }
                 }
             }

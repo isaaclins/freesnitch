@@ -40,7 +40,7 @@ struct InsightsView: View {
         HStack(spacing: 10) {
             Picker("Section", selection: $model.section) {
                 ForEach(InsightsSection.allCases) { section in
-                    Text(section.shortLabel).tag(section)
+                    Text(segmentLabel(section)).tag(section)
                 }
             }
             .pickerStyle(.segmented)
@@ -85,16 +85,11 @@ struct InsightsView: View {
     /// bands stacked across the top; they are notice cards now, and they only
     /// take space when there is something to say.
     @ViewBuilder private var notices: some View {
-        let hasNotice = notBlockingMessage != nil || !model.findings.isEmpty || model.errorMessage != nil
+        let hasNotice = notBlockingMessage != nil || model.errorMessage != nil
         if hasNotice {
             VStack(spacing: 8) {
                 if let message = notBlockingMessage {
                     NoticeCard(title: message, icon: "exclamationmark.shield", tint: .orange)
-                }
-                if !model.findings.isEmpty {
-                    NoticeCard(title: "\(model.changedAppCount) app\(model.changedAppCount == 1 ? "" : "s") changed behaviour after updating",
-                               icon: "arrow.triangle.2.circlepath",
-                               tint: .orange)
                 }
                 if let error = model.errorMessage {
                     NoticeCard(title: error, icon: "exclamationmark.triangle", tint: .red)
@@ -103,6 +98,16 @@ struct InsightsView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
         }
+    }
+
+    /// The count of changed apps rides on the segment that shows them, the way
+    /// Mail puts a count on the mailbox, instead of a banner that announced the
+    /// number without offering a way to go and look (#89). It is not a real
+    /// badge because `NSSegmentedControl` has no badge, so it is the count in
+    /// the label, which costs no extra row and still disappears at zero.
+    private func segmentLabel(_ section: InsightsSection) -> String {
+        guard section == .findings, model.changedAppCount > 0 else { return section.shortLabel }
+        return "\(section.shortLabel) (\(model.changedAppCount))"
     }
 
     private var notBlockingMessage: String? {

@@ -13,6 +13,9 @@ struct RulesManagerView: View {
     @State private var sortOrder: [KeyPathComparator<Rule>] = [KeyPathComparator(\Rule.displayProcessName)]
     @State private var sidebarAcceptsSelection = false
     @State private var showingBlocklistHelp = false
+    /// Pending hover-open for the blocklist popover, cancelled when the pointer
+    /// leaves before the dwell elapses.
+    @State private var blocklistHelpHover: DispatchWorkItem?
     @State private var showingRuleEditor = false
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -44,10 +47,17 @@ struct RulesManagerView: View {
                 sidebar.frame(width: 204)
                 Divider()
                 mainPane
-                Divider()
-                infoPane.frame(width: 240)
+                // The inspector is only on screen while something is selected,
+                // rather than permanently spending a third of the window to say
+                // that nothing is (#81).
+                if !selectedRules.isEmpty {
+                    Divider()
+                    infoPane.frame(width: 240)
+                }
             }
         }
+        // Escape clears the selection, which also dismisses the inspector.
+        .onExitCommand { clearSelection() }
         .sheet(isPresented: $showingRuleEditor) {
             RuleEditorView(activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
         }
@@ -139,30 +149,59 @@ struct RulesManagerView: View {
     static let enforcementOffExplanation = "Enforcement is off, so enabled blocklists are currently blocking nothing."
 
     /// Six lines of explanation used to sit permanently in the sidebar, which
-    /// is not what a Mac app does with reference text. It now lives behind the
-    /// info affordance next to the header, revealed on hover.
+    /// is not what a Mac app does with reference text. It lives behind the info
+    /// affordance next to the header.
+    ///
+    /// The affordance is a real `Button`, so it takes keyboard focus and opens
+    /// with Space or Return; hovering also opens it, but only after a delay, so
+    /// that passing the pointer over the header on the way somewhere else does
+    /// not throw a popover in the reader's face (#84).
     private var blocklistsHeader: some View {
         HStack(spacing: 4) {
             Text("Blocklists")
-            Image(systemName: "info.circle")
-                .imageScale(.small)
-                .foregroundStyle(.secondary)
+            Button {
+                cancelBlocklistHelpHover()
+                showingBlocklistHelp.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+                    .imageScale(.small)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("About blocklists")
+            .onHover { hovering in
+                if hovering {
+                    scheduleBlocklistHelpHover()
+                } else {
+                    cancelBlocklistHelpHover()
+                    showingBlocklistHelp = false
+                }
+            }
+            // The width has to be set before fixedSize, or the text is measured
+            // unwrapped and the popover clips its last lines.
+            .popover(isPresented: $showingBlocklistHelp, arrowEdge: .trailing) {
+                Text(Self.blocklistExplanation)
+                    .font(.callout)
+                    .frame(width: 250, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+            }
             Spacer(minLength: 0)
         }
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            showingBlocklistHelp = hovering
-        }
-        // The width has to be set before fixedSize, or the text is measured
-        // unwrapped and the popover clips its last lines. No .help() here: the
-        // tooltip fired at the same time as the popover and the two overlapped.
-        .popover(isPresented: $showingBlocklistHelp, arrowEdge: .trailing) {
-            Text(Self.blocklistExplanation)
-                .font(.callout)
-                .frame(width: 250, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(14)
-        }
+    }
+
+    /// Hover opens the popover only after the pointer has stayed put. 0.75s is
+    /// the dwell the report asked for and is close to the system tooltip delay.
+    private func scheduleBlocklistHelpHover() {
+        cancelBlocklistHelpHover()
+        let work = DispatchWorkItem { showingBlocklistHelp = true }
+        blocklistHelpHover = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: work)
+    }
+
+    private func cancelBlocklistHelpHover() {
+        blocklistHelpHover?.cancel()
+        blocklistHelpHover = nil
     }
 
     /// `List` owns selection, so category changes arrive through this binding
@@ -353,15 +392,30 @@ struct RulesManagerView: View {
             Text(emptySubtitle)
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 360)
+            if showsLoginItemsButton {
+                Button("Open Login Items") { SystemSettings.openLoginItems() }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.top, 4)
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Only for the "helper not approved" state, and not while a blocklist is
+    /// selected, where the empty pane is about the list rather than the helper.
+    private var showsLoginItemsButton: Bool {
+        if case .blocklist = selectedCategory { return false }
+        if !searchText.isEmpty { return false }
+        return !state.helperConnected
+    }
+
     private var emptyIcon: String {
         if case .blocklist = selectedCategory { return "shield.lefthalf.filled" }
         if !searchText.isEmpty { return "magnifyingglass" }
-        if !state.helperConnected { return "bolt.horizontal.circle" }
+        // Was `bolt.horizontal.circle`, which reads as a squiggle and says
+        // nothing about a helper waiting for approval (#83).
+        if !state.helperConnected { return "gearshape.badge.checkmark" }
         return "list.bullet"
     }
 
@@ -386,7 +440,9 @@ struct RulesManagerView: View {
             return "No rule matches \u{201C}\(searchText)\u{201D}."
         }
         if !state.helperConnected {
-            return "Rules are managed by the FreeSnitch helper. Approve it in System Settings under General > Login Items. This window fills in on its own once it connects."
+            // One line. The button below does the navigating that three lines
+            // of prose used to describe (#83).
+            return "Approve FreeSnitch in Login Items, and this fills in on its own."
         }
         if state.rules.isEmpty {
             return "Rules are created automatically when you allow or deny a connection alert."

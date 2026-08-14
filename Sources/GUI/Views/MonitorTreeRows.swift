@@ -29,7 +29,13 @@ struct MonitorTreeList: View {
             ForEach(visible.apps) { app in
                 DisclosureGroup(isExpanded: expansion(of: app)) {
                     ForEach(app.destinations) { destination in
+                        // Selecting a disclosure group highlights its children
+                        // as well, so a destination row can be sitting on the
+                        // accent colour without being selected itself. It has
+                        // to know, or its blue bar vanishes the same way the
+                        // app row's did (#76).
                         MonitorDestinationRow(destination: destination,
+                                              selected: selectedAppID == app.id,
                                               peakTraffic: app.peakDestinationTraffic,
                                               decision: controller.decision(for: MonitorRuleTarget.destination(destination, in: app)),
                                               pending: controller.isPending(MonitorRuleTarget.destination(destination, in: app)),
@@ -44,6 +50,7 @@ struct MonitorTreeList: View {
                     }
                 } label: {
                     MonitorAppRow(app: app,
+                                  selected: selectedAppID == app.id,
                                   peakTraffic: controller.snapshot.peakAppTraffic,
                                   decision: controller.decision(for: MonitorRuleTarget.app(app)),
                                   pending: controller.isPending(MonitorRuleTarget.app(app)),
@@ -117,6 +124,10 @@ struct MonitorTreeList: View {
 
 struct MonitorAppRow: View {
     let app: MonitorAppNode
+    /// A selected row is drawn on the accent colour, which swallows anything
+    /// else drawn in a saturated colour, so every coloured element on the row
+    /// needs to know (#75, #76).
+    let selected: Bool
     let peakTraffic: Int64
     let decision: Rule?
     let pending: Bool
@@ -143,11 +154,12 @@ struct MonitorAppRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            MonitorTrafficBars(traffic: app.traffic, peak: peakTraffic)
+            MonitorTrafficBars(traffic: app.traffic, peak: peakTraffic, onSelection: selected)
             MonitorDecisionControls(decision: decision,
                                     pending: pending,
                                     addressable: MonitorRuleTarget.app(app)?.isAddressable ?? false,
                                     subject: "every connection from \(app.name)",
+                                    onSelection: selected,
                                     onDecide: onDecide,
                                     onClear: onClear)
         }
@@ -159,6 +171,9 @@ struct MonitorAppRow: View {
 
 struct MonitorDestinationRow: View {
     let destination: MonitorDestinationNode
+    /// True while the parent app row is selected, because the selection fill
+    /// extends over the children too.
+    var selected: Bool = false
     let peakTraffic: Int64
     let decision: Rule?
     let pending: Bool
@@ -182,11 +197,12 @@ struct MonitorDestinationRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            MonitorTrafficBars(traffic: destination.traffic, peak: peakTraffic)
+            MonitorTrafficBars(traffic: destination.traffic, peak: peakTraffic, onSelection: selected)
             MonitorDecisionControls(decision: decision,
                                     pending: pending,
                                     addressable: isAddressable,
                                     subject: destination.label,
+                                    onSelection: selected,
                                     onDecide: onDecide,
                                     onClear: onClear)
         }
@@ -215,12 +231,20 @@ struct MonitorDestinationRow: View {
 struct MonitorTrafficBars: View {
     let traffic: MonitorTrafficTotals
     let peak: Int64
-    private static let width: CGFloat = 42
+    /// On a selected row the accent fill is behind these, and the sent bar was
+    /// drawn in system blue, so it disappeared into the selection entirely
+    /// (#76). On selection both bars switch to the selected-content colour and
+    /// separate by weight instead of by hue.
+    var onSelection: Bool = false
+    static let width: CGFloat = 42
+
+    static let sentColor = PSTheme.trafficOut
+    static let receivedColor = PSTheme.trafficIn
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            bar(value: traffic.bytesOut, color: PSTheme.trafficOut)
-            bar(value: traffic.bytesIn, color: PSTheme.trafficIn)
+            bar(value: traffic.bytesOut, color: Self.sentColor)
+            bar(value: traffic.bytesIn, color: Self.receivedColor)
         }
         .frame(width: Self.width, alignment: .leading)
         .help("Sent \(PSFormat.bytes(traffic.bytesOut)), received \(PSFormat.bytes(traffic.bytesIn))")
@@ -229,10 +253,20 @@ struct MonitorTrafficBars: View {
 
     private func bar(value: Int64, color: Color) -> some View {
         ZStack(alignment: .leading) {
-            Capsule().fill(.quaternary).frame(height: 3)
-            Capsule().fill(color).frame(width: filledWidth(value), height: 3)
+            Capsule()
+                .fill(onSelection ? AnyShapeStyle(Color.white.opacity(0.25)) : AnyShapeStyle(.quaternary))
+                .frame(height: 3)
+            Capsule()
+                .fill(onSelection ? selectedFill(for: color) : color)
+                .frame(width: filledWidth(value), height: 3)
         }
         .frame(width: Self.width, height: 3)
+    }
+
+    /// Sent stays solid, received goes translucent, so the pair is still two
+    /// distinguishable values on top of the accent colour.
+    private func selectedFill(for color: Color) -> Color {
+        color == Self.sentColor ? .white : .white.opacity(0.55)
     }
 
     private func filledWidth(_ value: Int64) -> CGFloat {
@@ -256,25 +290,26 @@ struct MonitorDecisionControls: View {
     let pending: Bool
     let addressable: Bool
     let subject: String
+    var onSelection: Bool = false
     let onDecide: (RuleAction) -> Void
     let onClear: () -> Void
 
     var body: some View {
         HStack(spacing: 2) {
             button(action: .allow,
-                   symbol: "checkmark.circle",
+                   symbol: "checkmark.circle.fill",
                    color: .green,
                    help: "Allow \(subject). Writes a rule you can see and change in Rules.")
             button(action: .deny,
-                   symbol: "xmark.circle",
+                   symbol: "xmark.circle.fill",
                    color: .red,
                    help: "Deny \(subject). Writes a rule you can see and change in Rules.")
             if decision != nil {
                 Button(action: onClear) {
-                    Image(systemName: "arrow.uturn.backward.circle")
+                    Image(systemName: "arrow.uturn.backward.circle.fill")
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(onSelection ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                 .disabled(pending)
                 .help("Remove the rule this row created and go back to no decision.")
             }
@@ -285,25 +320,35 @@ struct MonitorDecisionControls: View {
         .help(addressable ? "" : "This row has no destination a rule can name.")
     }
 
-    /// Borderless symbol buttons, filled when the rule for this exact row is
-    /// the active choice. They used to be hand-drawn rounded chips in green and
-    /// red, which read as two tiny custom widgets on every row.
+    /// Filled symbol buttons, drawn in two layers.
+    ///
+    /// Outlined symbols read as decoration rather than as controls (#75), so
+    /// the glyph is always filled. What the rule state changes is the pair of
+    /// colours: at rest a tinted glyph on a faint disc, in force a white glyph
+    /// on a solid disc, which stays obvious on a selected row too.
     private func button(action: RuleAction, symbol: String, color: Color, help: String) -> some View {
         let isActive = decision?.action == action
         let isDisabledRule = isActive && decision?.enabled == false
         return Button {
             onDecide(action)
         } label: {
-            // Tinted even when inactive: the colour is what tells allow from
-            // deny at a glance, and filling it in is what says which one is in
-            // force.
             Image(systemName: symbol)
-                .symbolVariant(isActive && !isDisabledRule ? .fill : .none)
-                .foregroundStyle(color.opacity(isActive ? 1 : 0.85))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(glyphColor(isActive: isActive), discColor(color, isActive: isActive))
         }
         .buttonStyle(.borderless)
         .disabled(pending)
         .help(isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help)
+    }
+
+    private func glyphColor(isActive: Bool) -> Color {
+        if isActive { return .white }
+        return onSelection ? .white : .white.opacity(0.9)
+    }
+
+    private func discColor(_ color: Color, isActive: Bool) -> Color {
+        if isActive { return color }
+        return onSelection ? color.opacity(0.55) : color.opacity(0.85)
     }
 }
 

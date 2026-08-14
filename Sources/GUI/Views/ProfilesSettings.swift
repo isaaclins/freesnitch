@@ -78,9 +78,9 @@ struct ProfilesSettingsView: View {
                         profileClient.updateProfile(updated)
                     }
                 )) {
-                    Text("Alert").tag(AppMode.alert)
-                    Text("Silent Allow").tag(AppMode.silentAllow)
-                    Text("Silent Deny").tag(AppMode.silentDeny)
+                    ForEach(AppMode.allCases, id: \.self) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
                 }
                 .frame(maxWidth: 260)
                 .disabled(!profileClient.isAvailable)
@@ -119,9 +119,9 @@ struct ProfilesSettingsView: View {
             HStack {
                 TextField("Name", text: $newProfileName)
                 Picker("", selection: $newProfileMode) {
-                    Text("Alert").tag(AppMode.alert)
-                    Text("Silent Allow").tag(AppMode.silentAllow)
-                    Text("Silent Deny").tag(AppMode.silentDeny)
+                    ForEach(AppMode.allCases, id: \.self) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
                 }
                 .labelsHidden()
                 .frame(width: 140)

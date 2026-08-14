@@ -278,9 +278,9 @@ struct ModePicker: View {
             .background(PSTheme.bgTertiary)
             Divider()
             VStack(alignment: .leading, spacing: 0) {
-                pickerRow(.alert, "Alert", "bell.fill", PSTheme.accentYellow)
-                pickerRow(.silentAllow, "Silent Allow", "checkmark", PSTheme.accentGreen)
-                pickerRow(.silentDeny, "Silent Deny", "xmark", PSTheme.accentRed)
+                ForEach(AppMode.allCases, id: \.self) { mode in
+                    pickerRow(mode, mode.title, mode.symbol, mode.tint)
+                }
             }
             .padding(.vertical, 8)
         }
