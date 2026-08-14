@@ -145,8 +145,20 @@ struct AlertOverlayContainer: View {
 
 /// Content for the standalone floating alert panel (no dimming backdrop).
 /// Shows the first pending alert; updates to the next one as each is resolved.
+/// Carries the size the alert card actually wants out to the window that hosts
+/// it. Nothing else can supply it: see `WindowManager.resizeAlertWindow`.
+struct AlertContentSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.height > 0 { value = next }
+    }
+}
+
 struct AlertWindowContent: View {
     @EnvironmentObject var state: AppState
+    var onContentSize: (CGSize) -> Void = { _ in }
+
     var body: some View {
         Group {
             if let alert = state.pendingAlerts.first {
@@ -155,6 +167,17 @@ struct AlertWindowContent: View {
                 Color.clear.frame(width: 440, height: 1)
             }
         }
+        // Measured at its natural height rather than at whatever height the
+        // window happens to have, so the number reported back is the one the
+        // card wants and not the one it was given.
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: AlertContentSizeKey.self, value: proxy.size)
+            }
+        )
+        .onPreferenceChange(AlertContentSizeKey.self) { onContentSize($0) }
+        .frame(maxHeight: .infinity, alignment: .top)
         // The panel has a title bar for window behaviour only: it is
         // transparent, has no title and no buttons. Without this, SwiftUI still
         // inset the content by its height, so the gap above the icon was the

@@ -24,6 +24,10 @@ final class WindowManager {
     private var mainWindow: NSWindow?
     private let mainModel: MainWindowModel
     private var alertWindow: NSWindow?
+    /// The alert is centred once, after its first real measurement.
+    private var alertHasBeenCentered = false
+    /// The last size the alert card reported for itself.
+    private var alertContentSize: CGSize?
     private var mainToolbarController: MainToolbarController?
     private var alertCancellable: AnyCancellable?
     private var pageCancellable: AnyCancellable?
@@ -200,13 +204,38 @@ final class WindowManager {
     }
 
     private func presentAlertWindow() {
-        // Use a hosting *controller* so the panel auto-sizes to the alert's
-        // content. Long process names and hostnames grow the card correctly.
-        // (Reading NSHostingView.fittingSize before the view is laid out
-        // returns zero and would clip the content.)
-        let hosting = NSHostingController(rootView: AlertWindowContent().environmentObject(state))
-        let window = NSPanel(contentViewController: hosting)
-        window.styleMask = [.titled, .fullSizeContentView]
+        alertHasBeenCentered = false
+        alertContentSize = nil
+        // A hosting *view*, not a hosting controller. A controller drives the
+        // window from its own fitting size: AppKit turns that into a frame with
+        // a title bar added on top, and re-applies it whenever anything else
+        // sets the frame, so the panel always carried a title bar's worth of
+        // dead space under the buttons and could not be told otherwise. The
+        // card measures itself instead and the window follows it (#73).
+        let hosting = NSHostingView(rootView: AlertWindowContent(onContentSize: { [weak self] size in
+            self?.resizeAlertWindow(to: size)
+        }).environmentObject(state))
+        hosting.sizingOptions = []
+        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 400),
+                             styleMask: [.titled, .fullSizeContentView],
+                             backing: .buffered,
+                             defer: false)
+        // A plain container between the window and the hosting view. Left as
+        // the content view directly, the hosting view still published an
+        // intrinsic size, the window adopted it as a *content* size, and the
+        // title bar's height came back on top of the frame right after the
+        // measurement had removed it. A plain NSView has no intrinsic size to
+        // adopt.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 400))
+        hosting.frame = container.bounds
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        window.contentView = container
+        // Assigned before the view goes on screen: the card measures itself
+        // during that first layout pass, and a measurement that arrives before
+        // this is set is dropped and never repeated, because the size it
+        // reports does not change afterwards.
+        alertWindow = window
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
@@ -215,6 +244,37 @@ final class WindowManager {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        alertWindow = window
+        // The card may have measured itself before the window was on screen.
+        if let measured = alertContentSize { resizeAlertWindow(to: measured) }
+    }
+
+    /// Sizes the panel to the card inside it.
+    ///
+    /// The panel is titled for window behaviour only, and its content ignores
+    /// the safe area, so a title bar's worth of height was left over as dead
+    /// space under the buttons: the hosting controller sizes the *content*,
+    /// AppKit adds the title bar to the *frame*, and the content then fills the
+    /// taller frame from the top. `fittingSize`, `sizeThatFits` and
+    /// `contentLayoutRect` all report the padded height, so the only honest
+    /// number is the one the content measures for itself (#73).
+    private func resizeAlertWindow(to size: CGSize) {
+        guard size.height > 1, size.width > 1 else { return }
+        alertContentSize = size
+        guard let window = alertWindow else { return }
+        let frame = window.frame
+        guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
+        // Grow and shrink from the top edge, so a card that changes height does
+        // not crawl up the screen.
+        window.setFrame(NSRect(x: frame.origin.x,
+                               y: frame.maxY - size.height,
+                               width: size.width,
+                               height: size.height),
+                        display: true)
+        // The panel was centred at its pre-measurement height, so centre it
+        // once more now that the height is real.
+        if !alertHasBeenCentered {
+            alertHasBeenCentered = true
+            window.center()
+        }
     }
 }
