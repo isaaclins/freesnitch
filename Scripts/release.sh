@@ -748,12 +748,32 @@ commit_and_publish() {
   git push origin main
   git push origin "$tag"
 
+  # Sparkle names deltas by BUILD number, not marketing version:
+  # FreeSnitch32-31.delta patches build 31 up to build 32. Globbing these
+  # with "$VERSION" silently matched nothing, so every release published
+  # signed delta enclosures whose files were never uploaded and 404'd.
   local assets=("$DMG_PATH" "$ZIP_PATH")
   local delta
-  for delta in "$APPCAST_ARCHIVES"/FreeSnitch"${VERSION}"-*.delta; do
+  for delta in "$APPCAST_ARCHIVES"/FreeSnitch"${BUILD_NUMBER}"-*.delta; do
     [[ -f "$delta" ]] || continue
     assets+=("$delta")
   done
+
+  # Every enclosure the new appcast item advertises must be in the upload set.
+  # A feed that points at a file we never attached is indistinguishable from a
+  # tampered feed, so refuse to publish rather than ship one.
+  local advertised missing=() asset found
+  while IFS= read -r advertised; do
+    [[ -n "$advertised" ]] || continue
+    found=0
+    for asset in "${assets[@]}"; do
+      [[ "$(basename "$asset")" == "$advertised" ]] && { found=1; break; }
+    done
+    (( found )) || missing+=("$advertised")
+  done < <(grep -o "releases/download/${tag}/[^\"]*" "$BUILD_ROOT/appcast.xml" | sed 's#.*/##' | sort -u)
+  (( ${#missing[@]} == 0 )) || \
+    die "appcast advertises files that are not being uploaded: ${missing[*]}"
+
   gh release create "$tag" "${assets[@]}" \
     --repo "$REPOSITORY" \
     --verify-tag \
