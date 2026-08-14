@@ -8,6 +8,8 @@ struct RulesManagerView: View {
     @State private var selectedCategory: Category = .all
     @State private var searchText: String = ""
     @State private var selectedRuleIDs: Set<UUID> = []
+    @State private var sortOrder: [KeyPathComparator<Rule>] = [KeyPathComparator(\Rule.displayProcessName)]
+    @State private var sidebarAcceptsSelection = false
     @State private var showingRuleEditor = false
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -36,14 +38,13 @@ struct RulesManagerView: View {
         VStack(spacing: 0) {
             HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
-                sidebar.frame(width: 220).background(PSTheme.bgSidebar)
-                Divider().background(PSTheme.stroke)
+                sidebar.frame(width: 204)
+                Divider()
                 mainPane
-                Divider().background(PSTheme.stroke)
-                infoPane.frame(width: 240).background(PSTheme.bgSecondary)
+                Divider()
+                infoPane.frame(width: 240)
             }
         }
-        .background(PSTheme.bgPrimary)
         .sheet(isPresented: $showingRuleEditor) {
             RuleEditorView(activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
         }
@@ -85,145 +86,126 @@ struct RulesManagerView: View {
         }
     }
 
+    /// The sidebar is a real `List`, so it inherits Finder's sidebar metrics,
+    /// selection, keyboard traversal and accessibility instead of imitating
+    /// them with buttons and hand-drawn highlight rectangles.
     private var sidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                sidebarHeader("Rules")
+        List(selection: sidebarSelection) {
+            Section("Rules") {
                 navRow(.all, label: "All Rules", icon: "list.bullet", count: state.rules.count)
-                navRow(.active, label: "Active", icon: "checkmark.circle.fill", color: PSTheme.accentGreen, count: state.rules.filter { $0.enabled && $0.action == .allow }.count)
-                navRow(.deny, label: "Deny", icon: "minus.circle.fill", color: PSTheme.accentRed, count: state.rules.filter { $0.action == .deny }.count)
+                navRow(.active, label: "Active", icon: "checkmark.circle.fill", color: .green, count: state.rules.filter { $0.enabled && $0.action == .allow }.count)
+                navRow(.deny, label: "Deny", icon: "minus.circle.fill", color: .red, count: state.rules.filter { $0.action == .deny }.count)
                 navRow(.recentChanges, label: "Recent Changes", icon: "clock.fill", count: recentChangesCount)
                 navRow(.recentlyUsed, label: "Recently Used", icon: "clock.arrow.circlepath", count: state.rules.filter { $0.lastUsedAt != nil }.count)
-                navRow(.temporary, label: "Temporary", icon: "hourglass", color: PSTheme.accentYellow, count: state.rules.filter { $0.temporary }.count)
-                navRow(.unapproved, label: "Unapproved", icon: "questionmark.circle.fill", count: state.rules.filter { $0.action == .ask }.count, badge: true)
+                navRow(.temporary, label: "Temporary", icon: "hourglass", color: .orange, count: state.rules.filter { $0.temporary }.count)
+                navRow(.unapproved, label: "Unapproved", icon: "questionmark.circle.fill", count: state.rules.filter { $0.action == .ask }.count)
+            }
 
-                sidebarHeader("Rule Groups").padding(.top, 8)
-                Text("Categories only")
-                    .font(.system(size: 10))
-                    .foregroundColor(PSTheme.textMuted)
-                    .padding(.horizontal, 10)
+            Section("Rule Groups") {
                 groupRow("iCloud Services", icon: "icloud.fill")
                 groupRow("macOS Services", icon: "applelogo")
                 groupRow("Apple Apps", icon: "app.gift")
                 groupRow("Third Party Apps", icon: "shippingbox")
+            }
 
-                sidebarHeader("Blocklists").padding(.top, 8)
+            Section("Blocklists") {
+                // List rows truncate to one line by default, which silently ate
+                // most of both warnings. lineLimit(nil) plus fixedSize is what
+                // makes a multi-line row keep its full height inside a List.
                 Text("Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.")
-                    .font(.system(size: 10))
-                    .foregroundColor(PSTheme.textMuted)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10)
                 if !state.enforcementEnabled && state.blocklists.contains(where: { $0.enabled }) {
                     Text("Enforcement is off, so enabled blocklists are currently blocking nothing.")
-                        .font(.system(size: 10))
-                        .foregroundColor(PSTheme.textMuted)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 10)
                 }
                 ForEach(state.blocklists) { b in
                     blocklistRow(b)
                 }
             }
-            .padding(.vertical, 6)
+        }
+        .listStyle(.sidebar)
+        .onAppear {
+            DispatchQueue.main.async { sidebarAcceptsSelection = true }
         }
     }
 
-    private func sidebarHeader(_ s: String) -> some View {
-        HStack {
-            Text(s).font(.system(size: 11, weight: .semibold)).foregroundColor(PSTheme.textMuted)
-            Spacer()
-        }.padding(.horizontal, 10).padding(.top, 6)
-    }
-
-    private func navRow(_ cat: Category, label: String, icon: String, color: Color = PSTheme.accentBlue, count: Int, badge: Bool = false) -> some View {
-        Button(action: { selectCategory(cat) }) {
-            HStack(spacing: 8) {
-                Image(systemName: icon).foregroundColor(color)
-                    .font(.system(size: 12)).frame(width: 16)
-                Text(label).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
-                Spacer()
-                if count > 0 {
-                    // Finder and Mail draw sidebar counts as plain secondary
-                    // text, and reserve a filled capsule for something that
-                    // actually demands attention. The old code drew every count
-                    // as white text on a neutral fill, which was invisible the
-                    // moment the app stopped forcing dark mode.
-                    if badge {
-                        Text("\(count)").font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .foregroundStyle(.white)
-                            .background(Color.accentColor, in: Capsule())
-                    } else {
-                        Text("\(count)").font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                }
+    /// `List` owns selection, so category changes arrive through this binding
+    /// rather than from a tap handler on every row. Rejecting nil keeps a
+    /// category always selected, the way Finder never clears its sidebar.
+    ///
+    /// Writes are ignored until the list has appeared. Roughly one launch in
+    /// three, the freshly focused outline reported a selection of its own
+    /// before anyone touched it, and the window opened on "iCloud Services"
+    /// instead of "All Rules". A real click cannot arrive in the same runloop
+    /// pass as onAppear, so only that spurious first write is dropped.
+    private var sidebarSelection: Binding<Category?> {
+        Binding(
+            get: { selectedCategory },
+            set: { newValue in
+                guard sidebarAcceptsSelection else { return }
+                guard let newValue, newValue != selectedCategory else { return }
+                selectCategory(newValue)
             }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(selectedCategory == cat ? PSTheme.accent.opacity(0.18) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
+        )
+    }
+
+    private func navRow(_ cat: Category, label: String, icon: String, color: Color = .accentColor, count: Int) -> some View {
+        Label {
+            Text(label)
+        } icon: {
+            Image(systemName: icon).foregroundStyle(color)
         }
-        .buttonStyle(.plain)
+        .badge(count)
+        .tag(cat)
     }
 
     private func groupRow(_ label: String, icon: String) -> some View {
-        Button(action: { selectCategory(.group(label)) }) {
-            HStack(spacing: 8) {
-                Image(systemName: icon).foregroundColor(PSTheme.accent).frame(width: 16)
-                Text(label).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
-                Spacer()
-            }
-            .padding(.horizontal, 10).padding(.vertical, 3)
-            .background(selectedCategory == .group(label) ? PSTheme.accent.opacity(0.18) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
+        Label {
+            Text(label)
+        } icon: {
+            Image(systemName: icon).foregroundStyle(Color.accentColor)
         }
-        .buttonStyle(.plain)
+        .tag(Category.group(label))
         .help("Rule Groups are categories for viewing rules, not enforcement switches.")
     }
 
     private func blocklistRow(_ b: BlocklistInfo) -> some View {
-        Button(action: { selectCategory(.blocklist(b.id)) }) {
-            HStack(spacing: 8) {
-                Toggle("", isOn: Binding(
-                    get: { b.enabled },
-                    set: { setBlocklist(b, enabled: $0) }
-                ))
-                .toggleStyle(.checkbox)
-                .controlSize(.mini)
-                .labelsHidden()
-                Image(systemName: "shield.lefthalf.filled").foregroundColor(PSTheme.accentRed).frame(width: 16)
-                Text(b.name).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary).lineLimit(1)
-                Spacer()
+        HStack(spacing: 8) {
+            Toggle("", isOn: Binding(
+                get: { b.enabled },
+                set: { setBlocklist(b, enabled: $0) }
+            ))
+            .toggleStyle(.checkbox)
+            .labelsHidden()
+            .help("Enable or disable this blocklist.")
+            Label {
+                Text(b.name).lineLimit(1)
+            } icon: {
+                Image(systemName: "shield.lefthalf.filled").foregroundStyle(.red)
             }
-            .padding(.horizontal, 10).padding(.vertical, 3)
-            .background(selectedCategory == .blocklist(b.id) ? PSTheme.accent.opacity(0.18) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help("Enable or disable this blocklist.")
+        .tag(Category.blocklist(b.id))
     }
 
     private var mainPane: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider().background(PSTheme.stroke)
+            Divider()
             rulesList
         }
     }
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundColor(PSTheme.textMuted).font(.system(size: 11))
-                TextField("Search", text: searchBinding).textFieldStyle(.plain).foregroundColor(PSTheme.textPrimary)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(PSTheme.bgTertiary)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            TextField("Search", text: searchBinding)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 280)
             Spacer()
             Button(action: { showingImporter = true }) {
                 Image(systemName: "tray.and.arrow.down.fill")
@@ -247,55 +229,100 @@ struct RulesManagerView: View {
             .help(state.helperConnected ? "Add a rule." : "Approve the FreeSnitch helper before adding rules.")
         }
         .padding(8)
-        .foregroundColor(PSTheme.textSecondary)
     }
 
     private var rulesList: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(categoryTitle).font(.system(size: 22, weight: .bold)).foregroundColor(PSTheme.textPrimary)
-                Text("\(filteredRules.count) rules").font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
+            HStack(spacing: 8) {
+                Text(categoryTitle).font(.title2).fontWeight(.semibold)
+                Text("\(filteredRules.count) rules")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
                 Spacer()
-            }.padding(.horizontal, 14).padding(.vertical, 10)
-
-            HStack {
-                Text("Process").font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textMuted)
-                Spacer()
-                Text("Rule").font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textMuted)
             }
             .padding(.horizontal, 14)
-
-            Divider().background(PSTheme.stroke)
+            .padding(.vertical, 10)
 
             if filteredRules.isEmpty {
                 emptyState
             } else {
-                List(selection: $selectedRuleIDs) {
-                    ForEach(Array(filteredRules.enumerated()), id: \.element.id) { idx, r in
-                        RuleRowView(rule: r, alt: idx % 2 == 1, selected: selectedRuleIDs.contains(r.id))
-                            .contentShape(Rectangle())
-                            .tag(r.id)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .tint(PSTheme.accent)
+                rulesTable
             }
         }
+    }
+
+    /// A real `Table`, which brings sortable and resizable column headers,
+    /// `NSTableView` selection and keyboard traversal for free.
+    ///
+    /// The hand-drawn rows it replaces showed four fixed glyphs on every row
+    /// (person, dot, check, cross) that were painted identically regardless of
+    /// the rule, so the list could not tell you whether a rule allowed or
+    /// denied anything. Those are now actual columns backed by actual fields.
+    ///
+    /// Only the four columns that fit the default window are shown. Direction,
+    /// Scope and Priority stay in the Information pane: this window carries two
+    /// sidebars plus the info pane, which leaves the table about 443pt, and
+    /// each extra column pushed the total past it. The table then scrolled
+    /// sideways and hid Action, which is the one column a firewall must never
+    /// hide.
+    ///
+    /// The widths are min/max, never `ideal`: an `ideal` width is taken as the
+    /// layout width rather than a hint, so the columns refused to shrink and
+    /// scrolled instead.
+    private var rulesTable: some View {
+        Table(sortedRules, selection: $selectedRuleIDs, sortOrder: $sortOrder) {
+            TableColumn("Process", value: \.displayProcessName) { rule in
+                Label {
+                    Text(rule.displayProcessName).lineLimit(1)
+                } icon: {
+                    if let icon = AppIcon.resolve(bundleId: rule.processBundleId,
+                                                  path: rule.processPath,
+                                                  name: rule.processName) {
+                        Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: "questionmark.app.dashed")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .help(rule.processPath ?? rule.displayProcessName)
+            }
+            .width(min: 104)
+
+            TableColumn("Destination", value: \.displayDestination) { rule in
+                Text(rule.displayDestination)
+                    .lineLimit(1)
+                    .help(rule.displayDestination)
+            }
+            .width(min: 104)
+
+            TableColumn("Action", value: \.actionSortKey) { rule in
+                Label(rule.actionLabel, systemImage: rule.actionSymbol)
+                    .foregroundStyle(rule.actionTint)
+            }
+            .width(min: 62, max: 96)
+
+            TableColumn("Status", value: \.statusSortKey) { rule in
+                Text(rule.statusLabel)
+                    .foregroundStyle(rule.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            }
+            .width(min: 64, max: 104)
+        }
+    }
+
+    private var sortedRules: [Rule] {
+        filteredRules.sorted(using: sortOrder)
     }
 
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
             Image(systemName: emptyIcon)
-                .font(.system(size: 38)).foregroundColor(PSTheme.textMuted)
+                .font(.system(size: 38)).foregroundStyle(.secondary)
             Text(emptyTitle)
-                .font(.system(size: 15, weight: .semibold)).foregroundColor(PSTheme.textSecondary)
+                .font(.headline).foregroundStyle(.secondary)
             Text(emptySubtitle)
-                .font(.system(size: 12)).foregroundColor(PSTheme.textMuted)
+                .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 360)
             Spacer()
         }
@@ -397,90 +424,95 @@ struct RulesManagerView: View {
     }
 
     private var infoPane: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "info.circle.fill").foregroundColor(PSTheme.accentBlue)
-                Text("Information").font(.system(size: 14, weight: .semibold)).foregroundColor(PSTheme.textPrimary)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle.fill").foregroundStyle(Color.accentColor)
+                Text("Information").font(.headline)
                 Spacer()
             }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+
             if selectedRules.count > 1 {
                 multiRuleDetails(selectedRules)
             } else if let r = selectedRules.first {
                 ruleDetails(r)
             } else {
-                Text("The filtering behavior of FreeSnitch is defined by the rules listed here.")
-                    .font(.system(size: 12)).foregroundColor(PSTheme.textSecondary)
-                Text("Select a rule to see its details. See the FreeSnitch Help, chapter [Anatomy of a rule](https://github.com/isaaclins/freesnitch#anatomy-of-a-rule) for more information.")
-                    .font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
-                Spacer()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("The filtering behavior of FreeSnitch is defined by the rules listed here.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("Select a rule to see its details. See the FreeSnitch Help, chapter [Anatomy of a rule](https://github.com/isaaclins/freesnitch#anatomy-of-a-rule) for more information.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
             }
+        }
+    }
+
+    // A grouped Form scrolls itself and supplies its own group insets, so it
+    // must not be wrapped in a ScrollView or given the old manual padding.
+    @ViewBuilder
+    private func ruleDetails(_ r: Rule) -> some View {
+        Form {
+            Section {
+                infoField("Process", r.displayProcessName)
+                if let p = r.processPath, !p.isEmpty { infoField("Path", p) }
+                if let b = r.processBundleId, !b.isEmpty { infoField("Bundle ID", b) }
+                infoField("Host", ruleHost(r))
+                if let port = r.remotePort, port > 0 { infoField("Port", "\(port)") }
+            }
+            Section {
+                infoField("Direction", r.directionLabel)
+                infoField("Action", r.actionLabel)
+                infoField("Scope", r.scopeLabel)
+                infoField("Priority", "\(r.priority)")
+                infoField("Applies to", r.profile == Profile.alwaysName ? "Always" : "Only in \(r.profile)")
+                infoField("Status", r.statusLabel)
+                infoField("Hits", "\(r.hitCount)")
+                if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
+            }
+            internetAccessPolicyDetails(for: r)
+        }
+        .formStyle(.grouped)
+
+        HStack {
+            Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
+            Spacer()
+            Button("Remove", role: .destructive) { removeRule(r) }
         }
         .padding(14)
     }
 
     @ViewBuilder
-    private func ruleDetails(_ r: Rule) -> some View {
-        Divider().background(PSTheme.stroke)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                infoField("Process", r.processName ?? "Any Process")
-                if let p = r.processPath, !p.isEmpty { infoField("Path", p) }
-                if let b = r.processBundleId, !b.isEmpty { infoField("Bundle ID", b) }
-                infoField("Host", ruleHost(r))
-                if let port = r.remotePort, port > 0 { infoField("Port", "\(port)") }
-                infoField("Direction", r.direction.rawValue.capitalized)
-                infoField("Action", r.action.rawValue.capitalized)
-                infoField("Scope", r.scope.rawValue.capitalized)
-                infoField("Priority", "\(r.priority)")
-                infoField("Applies to", r.profile == Profile.alwaysName ? "Always" : "Only in \(r.profile)")
-                infoField("Status", r.enabled ? "Enabled" : "Disabled")
-                infoField("Hits", "\(r.hitCount)")
-                if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
-                internetAccessPolicyDetails(for: r)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        HStack {
-            Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
-                .buttonStyle(.bordered)
-            Spacer()
-            Button(role: .destructive) { removeRule(r) } label: { Text("Remove") }
-                .buttonStyle(.borderedProminent).tint(.red)
-        }
-    }
-
-    @ViewBuilder
     private func multiRuleDetails(_ rules: [Rule]) -> some View {
-        Divider().background(PSTheme.stroke)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                PSChip("\(rules.count) selected", color: PSTheme.accentBlue, icon: "checkmark.circle")
-                summarySection("Process", items: summaryItems(rules) { $0.processName ?? "Any Process" })
-                summarySection("Action", items: summaryItems(rules) { $0.action.rawValue.capitalized })
+        Form {
+            Section {
+                infoField("Selected", "\(rules.count) rules")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            summarySection("Process", items: summaryItems(rules) { $0.displayProcessName })
+            summarySection("Action", items: summaryItems(rules) { $0.actionLabel })
         }
+        .formStyle(.grouped)
+
         HStack {
             Button(allSelectedRulesDisabled ? "Enable" : "Disable") {
                 setRulesEnabled(!allSelectedRulesDisabled)
             }
-            .buttonStyle(.bordered)
             Spacer()
-            Button(role: .destructive) { removeSelectedRules() } label: { Text("Remove") }
-                .buttonStyle(.borderedProminent).tint(.red)
+            Button("Remove", role: .destructive) { removeSelectedRules() }
         }
+        .padding(14)
     }
 
     private func summarySection(_ title: String, items: [RuleSummaryItem]) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textMuted)
+        Section(title) {
             ForEach(items) { item in
-                HStack(spacing: 6) {
-                    Text(item.label).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text("\(item.count)").font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(PSTheme.textSecondary)
+                LabeledContent(item.label) {
+                    Text("\(item.count)").monospacedDigit()
                 }
             }
         }
@@ -501,21 +533,15 @@ struct RulesManagerView: View {
 
     private func internetAccessPolicySection(_ policy: InternetAccessPolicy, remoteHost: String?) -> some View {
         let matches = policy.matchingConnections(for: remoteHost)
-        return VStack(alignment: .leading, spacing: 8) {
-            Divider().background(PSTheme.stroke)
-            Text("Internet Access Policy")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(PSTheme.accentBlue)
+        return Section("Internet Access Policy") {
             if let developerName = policy.developerName, !developerName.isEmpty {
                 infoField("Source", developerName)
             }
             infoField("Description", policy.applicationDescription)
             ForEach(Array(matches.enumerated()), id: \.offset) { item in
-                VStack(alignment: .leading, spacing: 4) {
-                    infoField("Purpose", item.element.purpose)
-                    if let consequences = item.element.denyConsequences, !consequences.isEmpty {
-                        infoField("If blocked", consequences)
-                    }
+                infoField("Purpose", item.element.purpose)
+                if let consequences = item.element.denyConsequences, !consequences.isEmpty {
+                    infoField("If blocked", consequences)
                 }
             }
         }
@@ -528,12 +554,12 @@ struct RulesManagerView: View {
     }
 
     private func infoField(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textMuted)
-            Text(value).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
+        LabeledContent(label) {
+            Text(value)
                 .textSelection(.enabled)
+                .multilineTextAlignment(.trailing)
+                .help(value)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func selectCategory(_ category: Category) {
@@ -747,7 +773,6 @@ private struct RuleEditorView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add Rule")
                 .font(.title2.weight(.semibold))
-                .foregroundColor(PSTheme.textPrimary)
             Form {
                 Section("Match") {
                     TextField("Process name", text: $processName)
@@ -793,7 +818,6 @@ private struct RuleEditorView: View {
         }
         .padding(20)
         .frame(width: 470, height: 520)
-        .background(PSTheme.bgPrimary)
     }
 
     private var canSave: Bool {
@@ -832,66 +856,68 @@ private struct RuleSummaryItem: Identifiable {
     var id: String { label }
 }
 
-struct RuleRowView: View {
-    let rule: Rule
-    let alt: Bool
-    let selected: Bool
+/// Display and sort keys for the rules `Table`.
+///
+/// These live next to the table rather than on the shared `Rule` model,
+/// because they are presentation concerns and the model is also compiled into
+/// the helper, the extension and the CLI.
+extension Rule {
+    var displayProcessName: String { processName ?? "Any Process" }
 
-    var body: some View {
-        HStack(spacing: 8) {
-            if let icon = AppIcon.resolve(bundleId: rule.processBundleId, path: rule.processPath, name: rule.processName) {
-                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-            } else {
-                Image(systemName: "person.crop.circle.dashed").foregroundColor(PSTheme.textSecondary)
-                    .frame(width: 16)
-            }
-            Text(rule.processName ?? "Any Process").font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
-                .lineLimit(1)
-                .frame(width: 160, alignment: .leading)
-
-            HStack(spacing: 6) {
-                actionIcons
-                if let n = ruleCount {
-                    Text(n).font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .background(PSTheme.bgTertiary)
-                        .clipShape(Capsule())
-                        .foregroundColor(PSTheme.textSecondary)
-                }
-                Image(systemName: "exclamationmark.shield.fill")
-                    .foregroundColor(PSTheme.accentRed)
-                    .font(.system(size: 11))
-                Text(rule.notes ?? rule.remoteHost ?? "")
-                    .font(.system(size: 12))
-                    .foregroundColor(PSTheme.textPrimary)
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 14).padding(.vertical, 6)
-        .background(selected ? PSTheme.accent.opacity(0.18) : (alt ? PSTheme.bgRowAlt : PSTheme.bgRow))
+    var displayDestination: String {
+        if let host = remoteHost, !host.isEmpty { return host }
+        if let ip = remoteIP, !ip.isEmpty { return ip }
+        if let port = remotePort, port > 0 { return "Port \(port)" }
+        if let notes, !notes.isEmpty { return notes }
+        return "Any"
     }
 
-    private var actionIcons: some View {
-        HStack(spacing: 3) {
-            iconCell(systemName: "person.fill", color: PSTheme.textSecondary)
-            iconCell(systemName: "circle.fill", color: PSTheme.accentBlue)
-            iconCell(systemName: "checkmark", color: PSTheme.accentGreen)
-            iconCell(systemName: "xmark", color: PSTheme.accentRed)
+    var directionLabel: String { direction.rawValue.capitalized }
+    var scopeLabel: String { scope.rawValue.capitalized }
+
+    var actionLabel: String {
+        switch action {
+        case .allow: return "Allow"
+        case .deny: return "Deny"
+        case .ask: return "Ask"
         }
     }
 
-    private func iconCell(systemName: String, color: Color) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 3).fill(PSTheme.bgTertiary).frame(width: 14, height: 14)
-            Image(systemName: systemName).font(.system(size: 8, weight: .bold)).foregroundColor(color)
+    var actionSymbol: String {
+        switch action {
+        case .allow: return "checkmark.circle.fill"
+        case .deny: return "minus.circle.fill"
+        case .ask: return "questionmark.circle.fill"
         }
     }
 
-    private var ruleCount: String? {
-        if let host = rule.remoteHost, host.allSatisfy({ $0.isNumber || $0 == "," }) {
-            return host
+    var actionTint: Color {
+        switch action {
+        case .allow: return .green
+        case .deny: return .red
+        case .ask: return .orange
         }
-        if rule.priority > 0 { return "\(rule.priority)" }
-        return nil
+    }
+
+    /// Sorting an action column alphabetically would interleave Allow and Ask.
+    /// Deny first is the order that matters when auditing a firewall.
+    var actionSortKey: Int {
+        switch action {
+        case .deny: return 0
+        case .ask: return 1
+        case .allow: return 2
+        }
+    }
+
+    var statusLabel: String {
+        if !enabled { return "Disabled" }
+        if temporary { return "Temporary" }
+        return "Enabled"
+    }
+
+    var statusSortKey: Int {
+        if !enabled { return 0 }
+        if temporary { return 1 }
+        return 2
     }
 }
