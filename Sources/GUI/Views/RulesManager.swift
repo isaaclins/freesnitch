@@ -116,9 +116,21 @@ struct RulesManagerView: View {
     /// The sidebar is a real `List`, so it inherits Finder's sidebar metrics,
     /// selection, keyboard traversal and accessibility instead of imitating
     /// them with buttons and hand-drawn highlight rectangles.
+    ///
+    /// Its title is a pane header rather than the list's first section header,
+    /// so it sits on the same baseline as the other panes and its divider joins
+    /// theirs (#77).
     private var sidebar: some View {
+        HeaderedPane {
+            PaneHeader("Rules", count: state.rules.count)
+        } content: {
+            sidebarList
+        }
+    }
+
+    private var sidebarList: some View {
         List(selection: sidebarSelection) {
-            Section("Rules") {
+            Section {
                 navRow(.all, label: "All Rules", icon: "list.bullet", count: state.rules.count)
                 navRow(.active, label: "Allow", icon: "checkmark.circle.fill", color: .green, count: state.rules.filter { $0.enabled && $0.action == .allow }.count)
                 navRow(.deny, label: "Deny", icon: "minus.circle.fill", color: .red, count: state.rules.filter { $0.action == .deny }.count)
@@ -350,9 +362,9 @@ struct RulesManagerView: View {
     }
 
     private var mainPane: some View {
-        VStack(spacing: 0) {
+        HeaderedPane {
             toolbar
-            Divider()
+        } content: {
             rulesList
         }
     }
@@ -363,15 +375,7 @@ struct RulesManagerView: View {
     /// Search is not here. It is an `NSSearchToolbarItem` in the window's real
     /// toolbar, like Finder's.
     private var toolbar: some View {
-        HStack(spacing: 10) {
-            Text(categoryTitle)
-                .font(.headline)
-                .lineLimit(1)
-            Text("\(filteredRules.count)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Spacer(minLength: 12)
+        PaneHeader(categoryTitle, count: filteredRules.count) {
             Button(action: { showingImporter = true }) {
                 Image(systemName: "tray.and.arrow.down.fill")
             }
@@ -393,8 +397,6 @@ struct RulesManagerView: View {
             .disabled(!state.helperConnected)
             .help(state.helperConnected ? "Add a rule." : "Approve the FreeSnitch helper before adding rules.")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     private var rulesList: some View {
@@ -594,16 +596,16 @@ struct RulesManagerView: View {
     }
 
     private var infoPane: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Information").font(.headline)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.bar)
-            Divider()
+        HeaderedPane {
+            PaneHeader("Information")
+        } content: {
+            infoPaneContent
+        }
+    }
 
+    @ViewBuilder
+    private var infoPaneContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if selectedRules.count > 1 {
                 multiRuleDetails(selectedRules)
             } else if let r = selectedRules.first {
