@@ -27,40 +27,20 @@ struct HelperBanner: View {
         }
     }
 
-    /// An inset notice card, not a full-bleed coloured slab.
-    ///
-    /// This used to be a maroon band pinned edge to edge under the title bar
-    /// with a 1pt tinted rule beneath it, which is not a shape macOS uses
-    /// anywhere. System Settings states a problem in a rounded, lightly tinted
-    /// card inside the content, and that is what this is now.
+    /// An inset notice card, not a full-bleed coloured slab: see `NoticeCard`,
+    /// which every panel now shares so a warning looks the same everywhere.
     private func banner(_ info: BannerInfo) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: info.icon)
-                .foregroundStyle(info.tint)
-                .font(compact ? .callout : .title3)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(info.title)
-                    .font(compact ? .caption.weight(.semibold) : .callout.weight(.semibold))
-                Text(info.detail)
-                    .font(compact ? .caption2 : .callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            if let action = info.action {
-                Button(action.title) { action.run(state, systemExtension) }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(compact ? .small : .regular)
-            }
-        }
-        .padding(compact ? 10 : 12)
-        .background(info.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(info.tint.opacity(0.25), lineWidth: 1)
-        )
-        .padding(.horizontal, compact ? 8 : 12)
-        .padding(.vertical, compact ? 6 : 10)
+        NoticeCard(title: info.title,
+                   detail: info.detail,
+                   icon: info.icon,
+                   tint: info.tint,
+                   compact: compact,
+                   actionTitle: info.action?.title,
+                   action: info.action.map { action in
+                       { action.run(state, systemExtension) }
+                   })
+            .padding(.horizontal, compact ? 8 : 12)
+            .padding(.vertical, compact ? 6 : 10)
     }
 }
 
@@ -85,7 +65,7 @@ private struct BannerInfo {
           repairState: HelperRepairState) {
         if case .mismatch(let helperVersion, let appVersion) = versionState {
             icon = "wrench.and.screwdriver.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "The running helper is not the installed build"
             switch repairState {
             case .inProgress:
@@ -104,37 +84,37 @@ private struct BannerInfo {
             return nil
         case .enabled where needsRepair:
             icon = "wrench.and.screwdriver.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "The helper needs repairing"
             detail = "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact."
             action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
         case .enabled:
             icon = "hourglass"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "Connecting to the FreeSnitch helper…"
             detail = "The helper is approved but hasn't answered yet. This usually clears within a few seconds."
             action = nil
         case .requiresApproval:
             icon = "exclamationmark.triangle.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "FreeSnitch needs your approval to monitor traffic"
             detail = "Open System Settings under General > Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
             action = BannerAction(title: "Open Login Items") { state, _ in state.helper.openLoginItemsSettings() }
         case .notRegistered:
             icon = "bolt.horizontal.circle.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "The FreeSnitch helper isn't registered yet"
             detail = "The helper runs the traffic monitor and the firewall rules. Register it from this signed app, then approve it in System Settings if macOS asks."
             action = BannerAction(title: "Register Helper") { state, _ in state.helper.registerDaemon() }
         case .unknown:
             icon = "questionmark.circle.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "The FreeSnitch helper state is unknown"
             detail = "Refresh the helper state or run the CLI diagnostics. No registration change was attempted."
             action = BannerAction(title: "Check Again") { state, _ in state.helper.refreshInstallState(); state.helper.ping() }
         case .wrongLocation:
             icon = "arrow.down.app.fill"
-            tint = PSTheme.accentRed
+            tint = Color.red
             title = "Move FreeSnitch to your Applications folder"
             detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. Drag FreeSnitch.app into Applications, then open it from there."
             action = BannerAction(title: "Reveal in Finder") { _, _ in
@@ -142,7 +122,7 @@ private struct BannerInfo {
             }
         case .notFound:
             icon = "exclamationmark.triangle.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "macOS cannot find the FreeSnitch helper registration"
             if HelperClient.hasBundledHelper {
                 detail = "This signed app still contains the helper declaration and executable, but SMAppService lost or cannot find its registration record. Background App Activity may still show FreeSnitch as on while launchd has no service. Register it again; toggling that switch alone is not sufficient."
@@ -153,7 +133,7 @@ private struct BannerInfo {
             }
         case .failed(let message):
             icon = "xmark.octagon.fill"
-            tint = PSTheme.accentRed
+            tint = Color.red
             title = "Helper installation failed"
             detail = "\(message) Move FreeSnitch into /Applications and try again."
             action = BannerAction(title: "Retry") { state, _ in state.helper.registerDaemon() }
@@ -167,13 +147,13 @@ private struct BannerInfo {
             return nil
         case .activating:
             icon = "hourglass"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "Starting the FreeSnitch firewall"
             detail = "The network extension is starting. Filtering is not active until the extension is approved and receives the current rule snapshot."
             action = nil
         case .needsApproval:
             icon = "exclamationmark.triangle.fill"
-            tint = PSTheme.accentYellow
+            tint = Color.orange
             title = "FreeSnitch needs approval to filter traffic"
             detail = "The network extension is staged but not approved. Until you approve it under General > Login Items & Extensions > Network Extensions, FreeSnitch can monitor traffic but cannot filter connections or show alerts."
             action = BannerAction(title: "Open Network Extensions") { _, manager in
@@ -181,13 +161,13 @@ private struct BannerInfo {
             }
         case .unsupported:
             icon = "xmark.octagon.fill"
-            tint = PSTheme.accentRed
+            tint = Color.red
             title = "Network filtering is unavailable in this build"
             detail = "This copy of FreeSnitch does not include a supported Network Extension. Traffic monitoring can continue, but the firewall is not filtering connections."
             action = nil
         case .failed(let message):
             icon = "xmark.octagon.fill"
-            tint = PSTheme.accentRed
+            tint = Color.red
             title = "FreeSnitch is not filtering traffic"
             detail = "The network extension failed: \(message)"
             action = nil
@@ -197,13 +177,13 @@ private struct BannerInfo {
                 return nil
             case .unavailable:
                 icon = "exclamationmark.shield.fill"
-                tint = PSTheme.accentYellow
+                tint = Color.orange
                 title = "FreeSnitch is not filtering traffic"
                 detail = "The network extension is active, but it has not received a rule snapshot. FreeSnitch is monitoring traffic only until the rules are delivered."
                 action = nil
             case .invalid:
                 icon = "xmark.octagon.fill"
-                tint = PSTheme.accentRed
+                tint = Color.red
                 title = "FreeSnitch could not deliver its rules"
                 let reason = snapshotStatus.message ?? "the rule snapshot was rejected"
                 detail = "The network extension is active, but its rule snapshot is invalid: \(reason). FreeSnitch is not filtering traffic."

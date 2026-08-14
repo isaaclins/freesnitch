@@ -14,15 +14,13 @@ struct InsightsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            enforcementBanner
-            behaviourBanner
-            Divider().background(PSTheme.stroke)
+            toolbar
+            Divider()
+            notices
             content
-            Divider().background(PSTheme.stroke)
+            Divider()
             footer
         }
-        .background(PSTheme.bgPrimary)
         .onAppear { model.attach(state) }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
             Button("Cancel", role: .cancel) {}
@@ -32,66 +30,78 @@ struct InsightsView: View {
         }
     }
 
-    // MARK: Header
+    // MARK: Toolbar
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Insights").font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(PSTheme.textPrimary)
-                Text("What each app talked to, and what you could do about it.")
-                    .font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
+    /// One bar, the way Activity Monitor does it: the section switcher on the
+    /// left, the controls that scope what it shows on the right. It used to be
+    /// a title block repeating the window title, over a second strip holding a
+    /// full-width segmented control.
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            Picker("Section", selection: $model.section) {
+                ForEach(InsightsSection.allCases) { section in
+                    Text(section.shortLabel).tag(section)
+                }
             }
-            Spacer()
-            Picker("", selection: $model.range) {
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .onChange(of: model.section) { _ in model.reload() }
+
+            Spacer(minLength: 12)
+
+            Picker("Range", selection: $model.range) {
                 ForEach(InsightsRange.allCases) { range in
                     Text(range.label).tag(range)
                 }
             }
+            .labelsHidden()
             .pickerStyle(.menu)
-            .frame(width: 150)
+            .fixedSize()
             .onChange(of: model.range) { _ in model.reload() }
 
             Toggle("Recording", isOn: Binding(get: { model.recordingEnabled },
                                               set: { model.setRecording($0) }))
                 .toggleStyle(.switch)
-                .font(.system(size: 11))
-                .foregroundColor(PSTheme.textSecondary)
+                .controlSize(.small)
 
             Button {
                 model.reload()
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.plain)
-            .foregroundColor(PSTheme.textSecondary)
             .help("Reload")
 
-            Button(role: .destructive) {
+            Button("Purge…", role: .destructive) {
                 model.confirmingPurge = true
-            } label: {
-                Text("Purge…").font(.system(size: 11, weight: .semibold))
             }
-            .foregroundColor(PSTheme.accentRed)
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.bar)
     }
 
-    /// D9's non-negotiable sentence. If nothing is being blocked, say so here,
-    /// not somewhere in Settings.
-    @ViewBuilder private var enforcementBanner: some View {
-        if let message = notBlockingMessage {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.shield")
-                    .foregroundColor(PSTheme.accentYellow)
-                Text(message)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(PSTheme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
+    /// D9's non-negotiable sentence, plus anything else this screen has to
+    /// admit before you read a number off it. All three used to be coloured
+    /// bands stacked across the top; they are notice cards now, and they only
+    /// take space when there is something to say.
+    @ViewBuilder private var notices: some View {
+        let hasNotice = notBlockingMessage != nil || !model.findings.isEmpty || model.errorMessage != nil
+        if hasNotice {
+            VStack(spacing: 8) {
+                if let message = notBlockingMessage {
+                    NoticeCard(title: message, icon: "exclamationmark.shield", tint: .orange)
+                }
+                if !model.findings.isEmpty {
+                    NoticeCard(title: "\(model.changedAppCount) app\(model.changedAppCount == 1 ? "" : "s") changed behaviour after updating",
+                               icon: "arrow.triangle.2.circlepath",
+                               tint: .orange)
+                }
+                if let error = model.errorMessage {
+                    NoticeCard(title: error, icon: "exclamationmark.triangle", tint: .red)
+                }
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(PSTheme.accentYellow.opacity(0.12))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
     }
 
@@ -107,58 +117,15 @@ struct InsightsView: View {
         }
     }
 
-    private var behaviourBanner: some View {
-        Group {
-            if !model.findings.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath").foregroundColor(PSTheme.accentYellow)
-                    Text("\(model.changedAppCount) app\(model.changedAppCount == 1 ? "" : "s") changed behaviour after updating")
-                        .font(.system(size: 11, weight: .medium)).foregroundColor(PSTheme.textPrimary)
-                    Spacer()
-                }
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(PSTheme.accentYellow.opacity(0.12))
-            }
-        }
-    }
-
     // MARK: Sections
 
-    private var content: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $model.section) {
-                ForEach(InsightsSection.allCases) { section in
-                    Text(section.label).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .onChange(of: model.section) { _ in model.reload() }
-
-            if let error = model.errorMessage {
-                errorRow(error)
-            }
-
-            switch model.section {
-            case .apps: appsSection
-            case .unresolved: unresolvedSection
-            case .proposals: proposalsSection
-            case .findings: findingsSection
-            }
+    @ViewBuilder private var content: some View {
+        switch model.section {
+        case .apps: appsSection
+        case .unresolved: unresolvedSection
+        case .proposals: proposalsSection
+        case .findings: findingsSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func errorRow(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle").foregroundColor(PSTheme.accentRed)
-            Text(message).font(.system(size: 11)).foregroundColor(PSTheme.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-        .padding(.horizontal, 14).padding(.vertical, 6)
-        .background(PSTheme.accentRed.opacity(0.12))
     }
 
     // MARK: Apps and their destinations
@@ -167,116 +134,108 @@ struct InsightsView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 sectionTitle("Apps", subtitle: "\(model.apps.count) recorded")
-                ScrollView {
-                    LazyVStack(spacing: 0) {
+                if model.apps.isEmpty && !model.isLoading {
+                    emptyState("Nothing recorded in this range yet.")
+                } else {
+                    // A real List: system selection highlight, arrow keys, and
+                    // the sidebar look the rest of the app now uses. This was a
+                    // ScrollView of tap-gesture rows painting their own accent.
+                    List(selection: appSelection) {
                         ForEach(model.apps) { app in
                             appRow(app)
                         }
                         if model.hasMoreApps {
                             Button("Load more apps") { model.loadMoreApps() }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 11))
-                                .foregroundColor(PSTheme.accentBlue)
-                                .padding(8)
-                        }
-                        if model.apps.isEmpty && !model.isLoading {
-                            emptyRow("Nothing recorded in this range yet.")
+                                .buttonStyle(.link)
                         }
                     }
+                    .listStyle(.sidebar)
                 }
             }
-            .frame(width: 300)
-            .background(PSTheme.bgSidebar)
+            .frame(width: 280)
 
-            Divider().background(PSTheme.stroke)
+            Divider()
 
             VStack(alignment: .leading, spacing: 0) {
                 if let app = model.selectedApp {
                     sectionTitle(app.displayName,
                                  subtitle: "\(app.destinationCount) destinations, \(app.connectionCount) connections")
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
+                    if model.destinations.isEmpty && !model.isLoading {
+                        emptyState("No destinations recorded for this app in this range.")
+                    } else {
+                        List {
                             ForEach(model.destinations) { destination in
                                 destinationRow(destination, app: app)
                             }
                             if model.hasMoreDestinations {
                                 Button("Load more destinations") { model.loadMoreDestinations() }
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(PSTheme.accentBlue)
-                                    .padding(8)
-                            }
-                            if model.destinations.isEmpty && !model.isLoading {
-                                emptyRow("No destinations recorded for this app in this range.")
+                                    .buttonStyle(.link)
                             }
                         }
+                        .listStyle(.inset)
                     }
                 } else {
-                    emptyRow("Select an app to see what it talked to.")
-                    Spacer()
+                    emptyState("Select an app to see what it talked to.")
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
+    /// Selection lives in the view model, because picking an app is also what
+    /// loads its destinations.
+    private var appSelection: Binding<InsightsAppSummary.ID?> {
+        Binding(get: { model.selectedApp?.id },
+                set: { id in
+                    guard let id, let app = model.apps.first(where: { $0.id == id }) else { return }
+                    model.select(app)
+                })
+    }
+
     private func appRow(_ app: InsightsAppSummary) -> some View {
-        let selected = model.selectedApp?.appIdentity == app.appIdentity
-        return HStack(spacing: 8) {
+        HStack(spacing: 8) {
             if let icon = AppIcon.resolve(bundleId: app.processBundleId, path: app.processPath, name: app.displayName) {
                 Image(nsImage: icon).resizable().frame(width: 20, height: 20)
             } else {
-                Image(systemName: "app.dashed").foregroundColor(PSTheme.textMuted)
+                Image(systemName: "app.dashed").foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(app.displayName).font(.system(size: 12, weight: .medium))
-                    .foregroundColor(PSTheme.textPrimary).lineLimit(1)
+                Text(app.displayName).font(.body).lineLimit(1)
                 Text("\(app.destinationCount) destinations · \(PSFormat.compactCount(app.connectionCount)) connections")
-                    .font(.system(size: 10)).foregroundColor(PSTheme.textMuted).lineLimit(1)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             Text(PSFormat.bytes(app.bytesIn + app.bytesOut))
-                .font(.system(size: 10)).foregroundColor(PSTheme.textSecondary)
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(selected ? PSTheme.accent.opacity(0.18) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture { model.select(app) }
     }
 
     private func destinationRow(_ destination: InsightsDestinationSummary, app: InsightsAppSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(destination.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(PSTheme.textPrimary)
+                Text(destination.displayName).font(.body)
                 if !destination.isNameKnown {
-                    PSChip("no DNS name seen", color: PSTheme.accentYellow, icon: "questionmark.circle")
+                    PSChip("no DNS name seen", color: .orange, icon: "questionmark.circle")
                 }
                 Spacer()
                 Text("\(PSFormat.compactCount(destination.connectionCount)) connections")
-                    .font(.system(size: 10)).foregroundColor(PSTheme.textSecondary)
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 Text(PSFormat.bytes(destination.bytesIn + destination.bytesOut))
-                    .font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                    .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
             }
             HStack(spacing: 8) {
                 if let note = destination.correlationNote {
-                    PSChip(note, color: PSTheme.accentBlue, icon: "person.2")
+                    PSChip(note, color: .accentColor, icon: "person.2")
                 }
                 if destination.isNameKnown, let ip = destination.remoteIP {
-                    Text(ip).font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(PSTheme.textMuted)
+                    Text(ip).font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Propose a rule") { model.proposeRule(for: destination, app: app) }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(PSTheme.accentBlue)
+                    .controlSize(.small)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(PSTheme.bgRow.opacity(0.5))
-        .overlay(Divider().background(PSTheme.stroke), alignment: .bottom)
+        .padding(.vertical, 4)
     }
 
     // MARK: Unresolved addresses
@@ -284,44 +243,35 @@ struct InsightsView: View {
     private var unresolvedSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionTitle("Addresses with no DNS answer",
-                         subtitle: "\(model.unresolved.count) in this range")
-            Text(InsightsUnresolvedDestination.signalWording)
-                .font(.system(size: 11)).foregroundColor(PSTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 14).padding(.bottom, 8)
-            ScrollView {
-                LazyVStack(spacing: 0) {
+                         subtitle: "\(model.unresolved.count) in this range",
+                         note: InsightsUnresolvedDestination.signalWording)
+            if model.unresolved.isEmpty && !model.isLoading {
+                emptyState("Every recorded address had a DNS answer in this range.")
+            } else {
+                List {
                     ForEach(model.unresolved) { entry in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
-                                Text(entry.remoteIP)
-                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                    .foregroundColor(PSTheme.textPrimary)
+                                Text(entry.remoteIP).font(.body.monospaced())
                                 Spacer()
                                 Text("\(PSFormat.compactCount(entry.connectionCount)) connections")
-                                    .font(.system(size: 10)).foregroundColor(PSTheme.textSecondary)
+                                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                                 Text(PSFormat.bytes(entry.bytesIn + entry.bytesOut))
-                                    .font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                                    .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                             }
                             Text(entry.appNames.isEmpty
                                  ? "\(entry.appCount) app\(entry.appCount == 1 ? "" : "s")"
                                  : "reached by \(entry.appNames.joined(separator: ", "))")
-                                .font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .overlay(Divider().background(PSTheme.stroke), alignment: .bottom)
-                    }
-                    if model.unresolved.isEmpty && !model.isLoading {
-                        emptyRow("Every recorded address had a DNS answer in this range.")
+                        .padding(.vertical, 2)
                     }
                     if model.hasMoreUnresolved {
                         Button("Load more addresses") { model.loadMoreUnresolved() }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11))
-                            .foregroundColor(PSTheme.accentBlue)
-                            .padding(8)
+                            .buttonStyle(.link)
                     }
                 }
+                .listStyle(.inset)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -331,41 +281,39 @@ struct InsightsView: View {
 
     private var findingsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("New after update", subtitle: "observed difference, not a verdict")
-            Text("These findings compare destinations observed under different offline app builds. They do not establish causation or intent. Apps without a reliable containing-app version are labelled unknown and are not guessed.")
-                .font(.system(size: 11)).foregroundColor(PSTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 14).padding(.bottom, 8)
-            ScrollView {
-                LazyVStack(spacing: 0) {
+            sectionTitle("New after update",
+                         subtitle: "observed difference, not a verdict",
+                         note: "These findings compare destinations observed under different offline app builds. They do not establish causation or intent. Apps without a reliable containing-app version are labelled unknown and are not guessed.")
+            if model.findings.isEmpty && !model.isLoading {
+                emptyState("No changed destinations in this range.")
+            } else {
+                List {
                     ForEach(model.findings) { finding in
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
-                                Text(finding.displayName).font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(PSTheme.textPrimary)
-                                Text(finding.versionLabel).font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(finding.versionKnown ? PSTheme.textSecondary : PSTheme.accentYellow)
+                                Text(finding.displayName).font(.body.weight(.semibold))
+                                Text(finding.versionLabel)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(finding.versionKnown ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
                                 Spacer()
                             }
                             HStack(spacing: 8) {
-                                Text(finding.destination).font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(PSTheme.textPrimary)
-                                PSChip(finding.wording, color: PSTheme.accentYellow, icon: "exclamationmark.magnifyingglass")
+                                Text(finding.destination).font(.body)
+                                PSChip(finding.wording, color: .orange, icon: "exclamationmark.magnifyingglass")
                                 Text("\(finding.connectionCount) connection\(finding.connectionCount == 1 ? "" : "s")")
-                                    .font(.system(size: 10)).foregroundColor(PSTheme.textSecondary)
+                                    .font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                             }
-                            Text(finding.evidence).font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                            Text(finding.evidence).font(.caption).foregroundStyle(.secondary)
                             if let proposal = finding.proposedRule() {
                                 Button("Propose a rule") { model.proposeRule(for: proposal) }
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .controlSize(.small)
                             }
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .overlay(Divider().background(PSTheme.stroke), alignment: .bottom)
+                        .padding(.vertical, 4)
                     }
-                    if model.findings.isEmpty && !model.isLoading { emptyRow("No changed destinations in this range.") }
                 }
+                .listStyle(.inset)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -375,31 +323,28 @@ struct InsightsView: View {
 
     private var proposalsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("Proposed rules", subtitle: "nothing here is in force")
-            Text("Each proposal is app-specific and, wherever a name is known, scoped to that name rather than to an address. FreeSnitch never turns a proposal into a rule by itself: you accept them one at a time.")
-                .font(.system(size: 11)).foregroundColor(PSTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 14).padding(.bottom, 8)
+            sectionTitle("Proposed rules",
+                         subtitle: "nothing here is in force",
+                         note: "Each proposal is app-specific and, wherever a name is known, scoped to that name rather than to an address. FreeSnitch never turns a proposal into a rule by itself: you accept them one at a time.")
             if let message = model.acceptMessage {
-                Text(message).font(.system(size: 11)).foregroundColor(PSTheme.accentGreen)
-                    .padding(.horizontal, 14).padding(.bottom, 6)
+                Label(message, systemImage: "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 12).padding(.bottom, 6)
             }
-            ScrollView {
-                LazyVStack(spacing: 0) {
+            if model.proposals.isEmpty && !model.isLoading {
+                emptyState("No proposals in this range.")
+            } else {
+                List {
                     ForEach(model.proposals) { proposal in
                         proposalRow(proposal)
                     }
-                    if model.proposals.isEmpty && !model.isLoading {
-                        emptyRow("No proposals in this range.")
-                    }
                     if model.hasMoreProposals {
                         Button("Load more proposals") { model.loadMoreProposals() }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11))
-                            .foregroundColor(PSTheme.accentBlue)
-                            .padding(8)
+                            .buttonStyle(.link)
                     }
                 }
+                .listStyle(.inset)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -408,80 +353,98 @@ struct InsightsView: View {
     private func proposalRow(_ proposal: InsightsProposedRule) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
-                Text("\(proposal.appDisplayName) may not reach \(proposal.destinationLabel)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(PSTheme.textPrimary)
+                Text("\(proposal.appDisplayName) may not reach \(proposal.destinationLabel)").font(.body)
                 if proposal.isDomainScoped {
-                    PSChip("domain rule", color: PSTheme.accentGreen, icon: "globe")
+                    PSChip("domain rule", color: .green, icon: "globe")
                 } else {
-                    PSChip("address-pinned", color: PSTheme.accentYellow, icon: "number")
+                    PSChip("address-pinned", color: .orange, icon: "number")
                 }
                 if proposal.otherAppCount > 0 {
                     PSChip("also contacted by \(proposal.otherAppCount) other app\(proposal.otherAppCount == 1 ? "" : "s")",
-                           color: PSTheme.accentBlue, icon: "person.2")
+                           color: .accentColor, icon: "person.2")
                 }
                 Spacer()
             }
             Text(proposal.evidence)
-                .font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+                .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if proposal.requiresExplicitIPChoice {
-                Text("No DNS name was ever seen for this address, so this rule can only pin the address itself. Addresses rotate, and a pinned rule silently stops matching when they do. Accept it only if you want that.")
-                    .font(.system(size: 10)).foregroundColor(PSTheme.accentYellow)
+                Label("No DNS name was ever seen for this address, so this rule can only pin the address itself. Addresses rotate, and a pinned rule silently stops matching when they do. Accept it only if you want that.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
                 if model.accepted.contains(proposal.id) {
                     Label("Added to your rules", systemImage: "checkmark.circle")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(PSTheme.accentGreen)
+                        .font(.callout).foregroundStyle(.green)
                 } else {
                     Button(proposal.requiresExplicitIPChoice
                            ? "Block this address for \(proposal.appDisplayName) anyway"
                            : "Block for \(proposal.appDisplayName)") {
                         model.accept(proposal, widened: false)
                     }
-                    .font(.system(size: 10, weight: .semibold))
+                    .controlSize(.small)
 
                     if proposal.isDomainScoped {
                         Button("Block for every app") { model.accept(proposal, widened: true) }
-                            .font(.system(size: 10))
+                            .controlSize(.small)
                     }
                 }
                 Spacer()
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
-        .overlay(Divider().background(PSTheme.stroke), alignment: .bottom)
+        .padding(.vertical, 4)
     }
 
     // MARK: Shared pieces
 
-    private func sectionTitle(_ title: String, subtitle: String) -> some View {
-        HStack(spacing: 6) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(PSTheme.textPrimary)
-            Text(subtitle).font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
-            Spacer()
-            if model.isLoading { ProgressView().controlSize(.small) }
+    /// A group header, not a second toolbar: the title, the count that scopes
+    /// it, and the policy sentence a section is required to carry.
+    private func sectionTitle(_ title: String, subtitle: String, note: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                if model.isLoading { ProgressView().controlSize(.small) }
+            }
+            if let note {
+                // Explanatory text is capped at a readable measure instead of
+                // running the full width of the window.
+                Text(note)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 620, alignment: .leading)
+            }
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
-    private func emptyRow(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    /// Centred and muted, the way macOS shows a list with nothing in it.
+    private func emptyState(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 24)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(model.sourceNote).font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
-            Text(model.namingNote).font(.system(size: 10)).foregroundColor(PSTheme.textMuted)
+            Text(model.sourceNote).font(.footnote).foregroundStyle(.secondary)
+            Text(model.namingNote).font(.footnote).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(PSTheme.bgSecondary)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.bar)
     }
 }
 
@@ -531,6 +494,18 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
         case .unresolved: return "Addresses with no DNS answer"
         case .proposals: return "Proposed rules"
         case .findings: return "New after update"
+        }
+    }
+
+    /// What the segmented control shows. The full label is a sentence and would
+    /// force the switcher to the width of the window; the section header below
+    /// still spells it out.
+    var shortLabel: String {
+        switch self {
+        case .apps: return "Apps"
+        case .unresolved: return "Unresolved"
+        case .proposals: return "Proposals"
+        case .findings: return "Changed"
         }
     }
 }
@@ -593,6 +568,10 @@ final class InsightsViewModel: ObservableObject {
     func reload() {
         errorMessage = nil
         acceptMessage = nil
+        if InsightsDemoData.isEnabled {
+            loadDemoData()
+            return
+        }
         refreshRecordingState()
         loadOverview()
         if section != .findings {
@@ -619,7 +598,30 @@ final class InsightsViewModel: ObservableObject {
     func select(_ app: InsightsAppSummary) {
         selectedApp = app
         destinations = []
+        if InsightsDemoData.isEnabled {
+            destinations = InsightsDemoData.destinations(for: app.appIdentity)
+            return
+        }
         loadDestinations(offset: 0)
+    }
+
+    /// Demo mode has no helper, so every query returns nothing and this screen
+    /// cannot be reviewed or screenshotted before it ships. Guarded by the same
+    /// environment variable as the rest of the demo harness, so an installed
+    /// copy never sees it.
+    private func loadDemoData() {
+        isLoading = false
+        recordingEnabled = true
+        hasMoreApps = false
+        hasMoreDestinations = false
+        hasMoreUnresolved = false
+        hasMoreProposals = false
+        apps = InsightsDemoData.apps
+        unresolved = InsightsDemoData.unresolved
+        proposals = InsightsDemoData.proposals
+        findings = InsightsDemoData.findings
+        if selectedApp == nil { selectedApp = apps.first }
+        destinations = InsightsDemoData.destinations(for: selectedApp?.appIdentity ?? "")
     }
 
     func loadMoreApps() { loadApps(offset: apps.count) }

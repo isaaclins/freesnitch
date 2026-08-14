@@ -104,16 +104,25 @@ struct PSChip: View {
     init(_ text: String, color: Color = PSTheme.accent, icon: String? = nil) {
         self.text = text; self.color = color; self.icon = icon
     }
+    /// A quiet annotation, not a button.
+    ///
+    /// These used to be saturated tinted capsules with a matching border, which
+    /// read as small buttons sitting next to the real ones. The colour now
+    /// survives only in the symbol, where it still carries the severity, while
+    /// the text stays a system label on a neutral fill.
     var body: some View {
         HStack(spacing: 4) {
-            if let icon { Image(systemName: icon).font(.system(size: 9, weight: .bold)) }
-            Text(text).font(.system(size: 10, weight: .semibold))
+            if let icon {
+                Image(systemName: icon)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(color)
+            }
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(color.opacity(0.18))
-        .foregroundColor(color)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(color.opacity(0.3), lineWidth: 0.5))
+        .background(.quaternary, in: Capsule())
     }
 }
 
