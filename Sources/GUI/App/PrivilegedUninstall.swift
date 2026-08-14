@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Performs the privileged half of an uninstall, behind one authorization
@@ -32,8 +33,7 @@ enum PrivilegedUninstall {
     private static let keepDatabase = """
     do shell script "/sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
-    /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'; \
-    /bin/rm -rf '/Applications/FreeSnitch.app'" with administrator privileges
+    /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'" with administrator privileges
     """
 
     /// The same, plus the policy database. Separate constant rather than a
@@ -42,9 +42,30 @@ enum PrivilegedUninstall {
     do shell script "/sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'; \
-    /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite'; \
-    /bin/rm -rf '/Applications/FreeSnitch.app'" with administrator privileges
+    /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite'" with administrator privileges
     """
+
+    /// Hand the app bundle to Finder instead of deleting it.
+    ///
+    /// This is the whole reason the privileged script above no longer touches
+    /// `/Applications/FreeSnitch.app`. Moving an app that hosts a system
+    /// extension to the Trash **through Finder** is what triggers macOS's own
+    /// extension removal. Objective Development document exactly this for
+    /// Little Snitch, and warn in the same breath not to remove such an app
+    /// "by any other means (like Terminal ...) because otherwise macOS won't
+    /// remove the system extension".
+    ///
+    /// `/bin/rm -rf` on the bundle, which is what this used to do, is that
+    /// forbidden path: it takes the app away and leaves the extension
+    /// installed, which is the opposite of uninstalling.
+    static func trashApplicationBundle(completion: @escaping (String?) -> Void) {
+        let bundleURL = Bundle.main.bundleURL
+        NSWorkspace.shared.recycle([bundleURL]) { _, error in
+            DispatchQueue.main.async {
+                completion(error?.localizedDescription)
+            }
+        }
+    }
 
     /// Blocks on the authorization prompt; call it off the main thread.
     static func run(removingDatabase: Bool) -> Result<Void, Failure> {

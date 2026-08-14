@@ -207,8 +207,11 @@ struct UninstallView: View {
                 ProgressView("Removing FreeSnitch…").controlSize(.small)
             case .done:
                 Text("FreeSnitch has been removed").font(.subheadline.weight(.semibold))
-                step(1, "Restart your Mac. macOS finishes removing a network extension only on restart, and until then it still holds a record for it.")
-                step(2, "After the restart, `systemextensionsctl list` prints no FreeSnitch row. Nothing else is left behind.")
+                Text("The helper is unregistered, the data is gone, and FreeSnitch is in your Trash. macOS removes the network extension as part of that move.")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                step(1, "Check it worked: `systemextensionsctl list` should print no FreeSnitch row. If it still does, macOS did not complete the removal.")
+                step(2, "If a FreeSnitch row remains, open System Settings > General > Login Items & Extensions, click the i next to Network Extensions, and choose Delete Extension. A restart also clears records left in this state.")
             case .failed(let reason):
                 Text("FreeSnitch could not finish removing itself").font(.subheadline.weight(.semibold))
                 Text(reason)
@@ -262,7 +265,6 @@ struct UninstallView: View {
         if removeDatabase {
             lines.append("sudo /bin/rm -f \"\(databasePath)\"")
         }
-        lines.append("sudo /bin/rm -rf \"\(appPath)\"")
         return lines.joined(separator: "\n")
     }
 
@@ -299,8 +301,17 @@ struct UninstallView: View {
                 switch outcome {
                 case .success:
                     PrivilegedUninstall.removeUserData()
-                    state.appendLog(level: "info", message: "Uninstall completed; a restart finishes extension removal.")
-                    finishState = .done
+                    // Finder moves the bundle, not us. That is what makes
+                    // macOS remove the embedded system extension; deleting the
+                    // bundle directly strands it.
+                    PrivilegedUninstall.trashApplicationBundle { problem in
+                        if let problem {
+                            finishState = .failed("FreeSnitch removed its helper and data, but could not move itself to the Trash: \(problem) Drag FreeSnitch from Applications to the Trash in Finder to finish, which is also what removes the system extension.")
+                            return
+                        }
+                        state.appendLog(level: "info", message: "Uninstall completed; the app was moved to the Trash.")
+                        finishState = .done
+                    }
                 case .failure(.cancelled):
                     finishState = .idle
                 case .failure(.failed(let reason)):

@@ -920,6 +920,18 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q 'pfctl -d|rm -f /etc/
 fi
 require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
   "the privileged uninstall no longer flushes the FreeSnitch anchor"
+# The app bundle must go to the Trash through Finder, never be deleted.
+# Moving an app that hosts a system extension to the Trash is what makes macOS
+# remove the extension; deleting the bundle directly takes the app away and
+# leaves the extension installed. Objective Development document this for
+# Little Snitch and warn against removing such an app by any other means.
+if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q "rm -rf '/Applications"; then
+  fail "the privileged uninstall deletes the app bundle, which strands the system extension"
+fi
+require_text "$PRIVILEGED_UNINSTALL" "NSWorkspace.shared.recycle" \
+  "the uninstall does not hand the app bundle to Finder, so macOS will not remove the system extension"
+require_text "$UNINSTALL_VIEW" "trashApplicationBundle" \
+  "the uninstall screen never moves the app to the Trash"
 # Uninstall must REMOVE the content filter configuration, not merely disable
 # it. macOS keeps a system extension record alive while a
 # NEFilterProviderConfiguration still references it, which is why uninstalling
