@@ -49,8 +49,15 @@ final class AppState: ObservableObject {
         "Network extension IPC is not connected."
     )
     @Published var authoritativeSnapshotGeneration: UInt64?
+    /// The helper session the last authoritative snapshot came from. Shown
+    /// beside the generation because only the pair explains an ordering
+    /// rejection.
+    @Published var authoritativeSnapshotEpoch: UInt64?
     @Published var filterPersistenceDegraded = false
     @Published var filterPersistenceMessage: String?
+    /// What the app is doing, or wants the user to do, about an extension that
+    /// refused the helper's policy. Never a request to restart the Mac.
+    @Published var filterRecoveryMessage: String?
     /// Set by SystemExtensionManager so the published snapshot state can also
     /// drive the extension lifecycle status without making the view model own
     /// that lifecycle.
@@ -245,11 +252,14 @@ final class AppState: ObservableObject {
             self.mode = snapshot.mode
             self.rules = snapshot.rules
             self.authoritativeSnapshotGeneration = snapshot.generation
+            self.authoritativeSnapshotEpoch = snapshot.epoch
             AppPreferences.set(snapshot.mode.rawValue, forKey: AppPreferences.Key.mode, notify: false)
             self.filterSnapshotPersistenceHandler?(snapshot)
 
             guard let data = try? RuleTransportBoundary.encodeSnapshot(snapshot) else {
-                let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the helper authoritative rule snapshot within the transport limits.", generation: snapshot.generation)
+                let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the helper authoritative rule snapshot within the transport limits.",
+                                                                     generation: snapshot.generation,
+                                                                     epoch: snapshot.epoch)
                 self.publishFilterSnapshotStatus(status)
                 return
             }
@@ -265,6 +275,14 @@ final class AppState: ObservableObject {
     private func publishFilterSnapshotStatus(_ status: SharedRuleBridge.SnapshotStatus) {
         filterSnapshotStatus = status
         filterSnapshotStatusHandler?(status)
+    }
+
+    /// Recorded by SystemExtensionManager while it clears a rejected snapshot.
+    /// A ready snapshot clears the message, so the UI never keeps warning about
+    /// a state that has already recovered.
+    func recordFilterRecovery(_ message: String?) {
+        filterRecoveryMessage = message
+        if let message { appendLog(level: "info", message: message) }
     }
 
     func recordFilterPersistenceFailure(_ message: String) {

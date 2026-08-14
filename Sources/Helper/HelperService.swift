@@ -216,6 +216,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         if self.insights == nil {
             PSLog.error(PSLog.helper, "Insights store failed to open; observation recording is unavailable.")
         }
+        // Opening the session first advances the epoch and makes the current
+        // generation durable, so the policy state read below already carries
+        // both halves of the ordering the extension compares.
+        let session = self.store.beginPolicySession()
         let persistedPolicy = store.policyState()
         self.mode = persistedPolicy.mode
         self.policyGeneration = persistedPolicy.generation
@@ -230,6 +234,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             self?.broadcast { client in
                 client.notifyLog(level: "error", message: message)
             }
+        }
+
+        if session.persisted {
+            PSLog.info(PSLog.helper,
+                       "policy session \(session.epoch) opened at generation \(session.generation)")
+        } else {
+            PSLog.error(
+                PSLog.helper,
+                "policy session \(session.epoch) could not be persisted; this session stays authoritative, "
+                + "but a later helper start may reuse epoch \(session.epoch) and be compared by generation alone."
+            )
         }
 
         dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))
@@ -344,8 +359,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func republishActivePolicy() {
         policyQueue.sync {
             let state = store.activePolicyState()
-            mode = state.mode
-            policyGeneration = state.generation
+            adoptLocked(state)
             dns.applyPolicy(mode: state.mode, rules: state.rules)
         }
         broadcast { client in
@@ -604,9 +618,25 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func authoritativePolicyState() -> RuleStore.PolicyState {
         policyQueue.sync {
             let state = store.policyState()
-            mode = state.mode
-            policyGeneration = state.generation
+            adoptLocked(state)
             return state
+        }
+    }
+
+    /// Adopts a policy state as this session's runtime state and makes its
+    /// generation durable. The floor write is what stops a restarted helper
+    /// from rewinding the generation inside one epoch; it is a no-op once the
+    /// stored value already covers this generation.
+    ///
+    /// Callers must hold `policyQueue`.
+    private func adoptLocked(_ state: RuleStore.PolicyState) {
+        mode = state.mode
+        policyGeneration = state.generation
+        do {
+            try store.recordPolicyGeneration(atLeast: state.generation)
+        } catch {
+            PSLog.error(PSLog.helper,
+                        "policy generation \(state.generation) could not be persisted: \(error.localizedDescription)")
         }
     }
 
@@ -619,11 +649,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             // store state instead would enforce rules the active profile does
             // not select, which is the whole point of #31.
             let state = store.activePolicyState()
-            mode = state.mode
-            policyGeneration = state.generation
+            adoptLocked(state)
             return SharedRuleBridge.Snapshot(mode: state.mode,
                                              rules: state.rules,
-                                             generation: state.generation)
+                                             generation: state.generation,
+                                             epoch: state.epoch)
         }
     }
 
@@ -632,8 +662,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func mutatePolicy(_ change: (inout RuleStore.PolicyDraft) throws -> Void) throws -> SharedRuleBridge.Snapshot {
         try policyQueue.sync {
             let state = try store.mutatePolicy(change)
-            mode = state.mode
-            policyGeneration = state.generation
+            adoptLocked(state)
             // Mode and rules belong to the same committed generation, so they
             // are published together. Assigning them one after the other left a
             // window where a query was judged by the new mode against the old
@@ -641,7 +670,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             dns.applyPolicy(mode: state.mode, rules: state.rules)
             return SharedRuleBridge.Snapshot(mode: state.mode,
                                              rules: state.rules,
-                                             generation: state.generation)
+                                             generation: state.generation,
+                                             epoch: state.epoch)
         }
     }
 
@@ -654,7 +684,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             // to the caller as a corrupt payload, which sent users chasing a
             // version mismatch that did not exist. See #57.
             PSLog.error(PSLog.helper,
-                        "authoritative snapshot could not be encoded: \(error.localizedDescription)")
+                        "authoritative snapshot for session \(snapshot.epoch) generation \(snapshot.generation) "
+                        + "could not be encoded: \(error.localizedDescription)")
             reply(Data())
         }
     }

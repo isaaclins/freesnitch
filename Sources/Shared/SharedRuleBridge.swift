@@ -16,6 +16,16 @@ public enum SharedRuleBridge {
     public static let maximumBootSnapshotEncodedBytes = RuleTransportBoundary.maximumEncodedBootSnapshotBytes
     public static let maximumBootSnapshotRuleCount = RuleTransportBoundary.maximumBootSnapshotRuleCount
     public static let staleSilentDenyAge: TimeInterval = 24 * 60 * 60
+    /// Printed with every ordering rejection. The extension's in-memory policy
+    /// is the only state involved, and restarting the filter provider clears
+    /// it, so no rejection may ever be reported as "reboot to fix".
+    public static let snapshotRejectionRemediation =
+        "FreeSnitch can recover by restarting the network extension filter; restarting the Mac is not required."
+    /// Said once the automatic restarts are used up, so the user is never left
+    /// with a firewall that is off and no next step.
+    public static let snapshotRecoveryExhaustedRemediation =
+        "FreeSnitch restarted the network extension filter and the extension still rejected the helper policy. "
+        + "Turn the per-process firewall off and on again in FreeSnitch settings; restarting the Mac is not required."
 
     /// Pure state for the asynchronous provider-preference writer. A caller
     /// may take only the newest pending payload after a load completes; any
@@ -67,22 +77,30 @@ public enum SharedRuleBridge {
         /// field decodes as zero so snapshots written by older builds remain
         /// readable, but clients never use their own clock as this value.
         public var generation: UInt64
+        /// The helper session that produced this snapshot, from
+        /// `PolicyEpoch`. A missing field decodes as `PolicyEpoch.unknown`,
+        /// which is what every pre-epoch build effectively published, so the
+        /// first epoch-aware helper outranks them without a reboot (#70).
+        public var epoch: UInt64
 
         private enum CodingKeys: String, CodingKey {
             case mode
             case rules
             case updatedAt
             case generation
+            case epoch
         }
 
         public init(mode: AppMode,
                     rules: [Rule],
                     updatedAt: Date = Date(),
-                    generation: UInt64 = 0) {
+                    generation: UInt64 = 0,
+                    epoch: UInt64 = PolicyEpoch.unknown) {
             self.mode = mode
             self.rules = rules
             self.updatedAt = updatedAt
             self.generation = generation
+            self.epoch = epoch
         }
 
         public init(from decoder: Decoder) throws {
@@ -91,6 +109,7 @@ public enum SharedRuleBridge {
             rules = try container.decode([Rule].self, forKey: .rules)
             updatedAt = try container.decode(Date.self, forKey: .updatedAt)
             generation = try container.decodeIfPresent(UInt64.self, forKey: .generation) ?? 0
+            epoch = try container.decodeIfPresent(UInt64.self, forKey: .epoch) ?? PolicyEpoch.unknown
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -99,6 +118,30 @@ public enum SharedRuleBridge {
             try container.encode(rules, forKey: .rules)
             try container.encode(updatedAt, forKey: .updatedAt)
             try container.encode(generation, forKey: .generation)
+            try container.encode(epoch, forKey: .epoch)
+        }
+    }
+
+    /// Which helper session a received snapshot belongs to, relative to the
+    /// policy the extension already holds.
+    ///
+    /// The helper owns policy, so a helper that has restarted is not a stale
+    /// client: it is the owner speaking again, and its generation may legally
+    /// be lower than the one the extension learned from the previous session.
+    /// Ordering is therefore lexicographic on `(epoch, generation)`, and the
+    /// generation comparison only means anything inside one session.
+    public enum SnapshotAuthority: Equatable, Sendable {
+        /// A newer helper session. Authoritative regardless of generation.
+        case newerSession
+        /// The same helper session, where the generation ordering applies.
+        case sameSession
+        /// An older helper session: a stale client from a previous session.
+        case olderSession
+
+        public static func compare(received: Snapshot, against current: Snapshot) -> SnapshotAuthority {
+            if received.epoch > current.epoch { return .newerSession }
+            if received.epoch < current.epoch { return .olderSession }
+            return .sameSession
         }
     }
 
@@ -111,6 +154,7 @@ public enum SharedRuleBridge {
         case idempotent
         case rejectedOlder(currentGeneration: UInt64)
         case rejectedConflict(currentGeneration: UInt64)
+        case rejectedOlderSession(currentEpoch: UInt64)
     }
 
     public struct LiveSnapshotGate: Sendable {
@@ -123,15 +167,26 @@ public enum SharedRuleBridge {
         @discardableResult
         public mutating func apply(_ received: Snapshot) -> LiveSnapshotDecision {
             if let current {
-                if received.generation < current.generation {
-                    return .rejectedOlder(currentGeneration: current.generation)
-                }
-                if received.generation == current.generation {
-                    guard current.mode == received.mode, current.rules == received.rules else {
-                        return .rejectedConflict(currentGeneration: current.generation)
+                switch SnapshotAuthority.compare(received: received, against: current) {
+                case .olderSession:
+                    return .rejectedOlderSession(currentEpoch: current.epoch)
+                case .newerSession:
+                    // The helper restarted. Its persisted generation may be
+                    // lower, or absent and therefore zero, and it is still the
+                    // authority on policy. Rejecting it here is what left #70's
+                    // machine unfiltered until a reboot.
+                    break
+                case .sameSession:
+                    if received.generation < current.generation {
+                        return .rejectedOlder(currentGeneration: current.generation)
                     }
-                    self.current = received
-                    return .idempotent
+                    if received.generation == current.generation {
+                        guard current.mode == received.mode, current.rules == received.rules else {
+                            return .rejectedConflict(currentGeneration: current.generation)
+                        }
+                        self.current = received
+                        return .idempotent
+                    }
                 }
             }
             current = received
@@ -156,11 +211,29 @@ public enum SharedRuleBridge {
             case ready
         }
 
+        /// Why a snapshot was refused, in a form the app can act on without
+        /// parsing an English sentence.
+        public enum RejectionReason: String, Codable, Sendable {
+            /// The sender belongs to an older helper session.
+            case olderSession
+            /// A lower generation inside the current helper session.
+            case olderGeneration
+            /// The same generation carrying different policy content.
+            case conflictingContent
+
+            /// True when the extension's retained policy, not the payload, is
+            /// what refused the snapshot. Only these are cleared by restarting
+            /// the filter provider; a malformed payload would come back.
+            public var isClearedByRestartingFilter: Bool { true }
+        }
+
         public var state: State
         public var mode: AppMode?
         public var ruleCount: Int
         public var updatedAt: Date?
         public var generation: UInt64?
+        public var epoch: UInt64?
+        public var rejection: RejectionReason?
         public var message: String?
 
         public init(state: State,
@@ -168,12 +241,16 @@ public enum SharedRuleBridge {
                     ruleCount: Int = 0,
                     updatedAt: Date? = nil,
                     generation: UInt64? = nil,
+                    epoch: UInt64? = nil,
+                    rejection: RejectionReason? = nil,
                     message: String? = nil) {
             self.state = state
             self.mode = mode
             self.ruleCount = ruleCount
             self.updatedAt = updatedAt
             self.generation = generation
+            self.epoch = epoch
+            self.rejection = rejection
             self.message = message
         }
 
@@ -182,18 +259,32 @@ public enum SharedRuleBridge {
                  mode: snapshot.mode,
                  ruleCount: snapshot.rules.count,
                  updatedAt: snapshot.updatedAt,
-                 generation: snapshot.generation)
+                 generation: snapshot.generation,
+                 epoch: snapshot.epoch)
         }
 
         public static func unavailable(_ message: String) -> Self {
             Self(state: .unavailable, message: message)
         }
 
-        public static func invalid(_ message: String, generation: UInt64? = nil) -> Self {
-            Self(state: .invalid, generation: generation, message: message)
+        public static func invalid(_ message: String,
+                                   generation: UInt64? = nil,
+                                   epoch: UInt64? = nil,
+                                   rejection: RejectionReason? = nil) -> Self {
+            Self(state: .invalid,
+                 generation: generation,
+                 epoch: epoch,
+                 rejection: rejection,
+                 message: message)
         }
 
         public var isReady: Bool { state == .ready }
+
+        /// True when the extension refused the helper because of policy it is
+        /// still holding in memory. That state must never need a reboot.
+        public var needsFilterRestart: Bool {
+            state == .invalid && rejection?.isClearedByRestartingFilter == true
+        }
     }
 
     public static func encode(_ snapshot: Snapshot) throws -> Data {

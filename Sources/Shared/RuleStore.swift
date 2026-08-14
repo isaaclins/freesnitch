@@ -8,11 +8,34 @@ public final class RuleStore: @unchecked Sendable {
         public let mode: AppMode
         public let rules: [Rule]
         public let generation: UInt64
+        /// The session that is publishing this state. `PolicyEpoch.unknown`
+        /// until `beginPolicySession()` has been called, so a store that never
+        /// opened a session can never claim authority over a running one.
+        public let epoch: UInt64
 
-        public init(mode: AppMode, rules: [Rule], generation: UInt64) {
+        public init(mode: AppMode,
+                    rules: [Rule],
+                    generation: UInt64,
+                    epoch: UInt64 = PolicyEpoch.unknown) {
             self.mode = mode
             self.rules = rules
             self.generation = generation
+            self.epoch = epoch
+        }
+    }
+
+    /// The outcome of opening a helper session, including whether the new
+    /// epoch reached disk. The caller must be able to say so out loud rather
+    /// than assume durability it does not have.
+    public struct PolicySession: Sendable {
+        public let epoch: UInt64
+        public let generation: UInt64
+        public let persisted: Bool
+
+        public init(epoch: UInt64, generation: UInt64, persisted: Bool) {
+            self.epoch = epoch
+            self.generation = generation
+            self.persisted = persisted
         }
     }
 
@@ -55,7 +78,13 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     public static let policyGenerationSettingKey = "policy_generation"
+    public static let policyEpochSettingKey = "policy_epoch"
     private static let modeSettingKey = "mode"
+
+    /// Assigned once per process by `beginPolicySession()`. Held in memory so
+    /// every snapshot this session publishes carries the same epoch even if a
+    /// later write to the settings table fails.
+    private var sessionEpoch: UInt64 = PolicyEpoch.unknown
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.rulestore")
@@ -322,6 +351,59 @@ public final class RuleStore: @unchecked Sendable {
         return nil
     }
 
+    /// Opens a new helper session: advances the persisted epoch, and makes the
+    /// policy generation durable even when nothing has ever mutated policy.
+    ///
+    /// The machine in #70 had no `policy_generation` row at all, so a restarted
+    /// helper published generation zero against an extension still holding
+    /// eight. Writing the floor here means a restart can never rewind the
+    /// generation inside one epoch, and advancing the epoch means a restart is
+    /// recognised as the owner returning rather than as a stale client.
+    ///
+    /// The epoch advances in memory whether or not the write succeeds. An
+    /// unwritable database therefore degrades to two sessions sharing an epoch,
+    /// which is exactly the generation-only comparison older builds performed,
+    /// and never to a session that is silently outranked by its predecessor.
+    @discardableResult
+    public func beginPolicySession() -> PolicySession {
+        queue.sync {
+            let storedEpoch = UInt64(getSettingLocked(Self.policyEpochSettingKey) ?? "") ?? PolicyEpoch.unknown
+            let epoch = PolicyEpoch.next(after: storedEpoch)
+            sessionEpoch = epoch
+            var persisted = true
+            do {
+                try setSettingLocked(Self.policyEpochSettingKey, String(epoch))
+            } catch {
+                persisted = false
+            }
+            let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
+            do {
+                try persistPolicyGenerationLocked(atLeast: generation)
+            } catch {
+                persisted = false
+            }
+            return PolicySession(epoch: epoch, generation: generation, persisted: persisted)
+        }
+    }
+
+    /// Makes a generation durable outside `mutatePolicy`, so every value the
+    /// helper has already published survives a restart of that helper.
+    public func recordPolicyGeneration(atLeast generation: UInt64) throws {
+        try queue.sync { try persistPolicyGenerationLocked(atLeast: generation) }
+    }
+
+    /// Writes the generation row when it is missing or lower than `generation`.
+    /// Never lowers a stored value: this is a floor, not an assignment.
+    private func persistPolicyGenerationLocked(atLeast generation: UInt64) throws {
+        let stored = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "")
+        guard let stored else {
+            try setSettingLocked(Self.policyGenerationSettingKey, String(generation))
+            return
+        }
+        guard stored < generation else { return }
+        try setSettingLocked(Self.policyGenerationSettingKey, String(generation))
+    }
+
     public func policyState() -> PolicyState {
         queue.sync { policyStateLocked() }
     }
@@ -338,7 +420,8 @@ public final class RuleStore: @unchecked Sendable {
             }
             return PolicyState(mode: profile.mode,
                                rules: layeredRulesLocked(profileName: profile.name),
-                               generation: generation)
+                               generation: generation,
+                               epoch: sessionEpoch)
         }
     }
 
@@ -404,7 +487,10 @@ public final class RuleStore: @unchecked Sendable {
         // Allow and can move to Alert once Insights has a real picture.
         let mode = AppMode(rawValue: getSettingLocked(Self.modeSettingKey) ?? "") ?? .silentAllow
         let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
-        return PolicyState(mode: mode, rules: allRulesLocked(profile: nil), generation: generation)
+        return PolicyState(mode: mode,
+                           rules: allRulesLocked(profile: nil),
+                           generation: generation,
+                           epoch: sessionEpoch)
     }
 
     private func replaceRulesLocked(_ rules: [Rule]) throws {

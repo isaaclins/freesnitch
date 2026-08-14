@@ -56,6 +56,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var persistenceInFlight = false
     private var persistenceWorkItem: DispatchWorkItem?
     private var enableFilterRequested = false
+    /// Bounded, spaced automatic recovery from an extension that is holding a
+    /// policy it will not let the helper replace (#70).
+    private var snapshotRecovery = FilterRestartRecovery()
+    private var filterRestartInFlight = false
 
     init(state: AppState) {
         self.state = state
@@ -355,8 +359,88 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// Clears an extension that refused the helper's authoritative policy.
+    ///
+    /// The refusal lives entirely in the provider's memory, so restarting the
+    /// provider is the whole remedy and a reboot is never the answer. This
+    /// deliberately does not deactivate the system extension, does not remove
+    /// the filter configuration, and never touches the privileged helper.
+    private func recoverFromSnapshotRejection(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
+        switch snapshotRecovery.decide(for: snapshotStatus) {
+        case .notNeeded, .waitForCooldown:
+            return
+        case .exhausted:
+            state?.recordFilterRecovery(SharedRuleBridge.snapshotRecoveryExhaustedRemediation)
+        case .restartFilter:
+            state?.recordFilterRecovery(
+                "The network extension refused the current rules. Restarting the extension's filter to recover; "
+                + "restarting the Mac is not required."
+            )
+            restartFilterProvider()
+        }
+    }
+
+    /// Stops and restarts the content filter, which is what ends the provider
+    /// process and with it the policy it was holding. The configuration stays
+    /// installed throughout, so no approval is needed again.
+    private func restartFilterProvider() {
+        guard !filterRestartInFlight else { return }
+        filterRestartInFlight = true
+        let mgr = NEFilterManager.shared()
+        mgr.loadFromPreferences { [weak self] loadError in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let loadError {
+                    self.finishFilterRestart(failure: "read", error: loadError)
+                    return
+                }
+                mgr.isEnabled = false
+                mgr.saveToPreferences { stopError in
+                    DispatchQueue.main.async {
+                        if let stopError {
+                            self.finishFilterRestart(failure: "stop", error: stopError)
+                            return
+                        }
+                        mgr.localizedDescription = "FreeSnitch"
+                        mgr.isEnabled = true
+                        mgr.saveToPreferences { startError in
+                            DispatchQueue.main.async {
+                                if let startError {
+                                    self.finishFilterRestart(failure: "start", error: startError)
+                                    return
+                                }
+                                self.filterRestartInFlight = false
+                                self.recordFilterDiagnostic(state: "installed-enabled",
+                                                            detail: "The content filter was restarted to clear a rejected policy snapshot.")
+                                // The restarted provider holds no policy, so
+                                // the helper's snapshot is delivered again
+                                // through the ordinary authoritative path.
+                                self.state?.syncSharedRules()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishFilterRestart(failure operation: String, error: Error) {
+        filterRestartInFlight = false
+        let detail = "The network extension filter could not be restarted (\(operation): \(error.localizedDescription)). "
+            + SharedRuleBridge.snapshotRecoveryExhaustedRemediation
+        recordFilterDiagnostic(state: "degraded", detail: detail)
+        state?.recordFilterRecovery(detail)
+        os_log("%{public}@", log: log, type: .error, detail)
+    }
+
     private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
         self.snapshotStatus = snapshotStatus
+        if snapshotStatus.isReady {
+            snapshotRecovery.noteHealthy()
+            state?.recordFilterRecovery(nil)
+        } else {
+            recoverFromSnapshotRejection(snapshotStatus)
+        }
         if !snapshotStatus.isReady,
            enableFilterRequested,
            !persistenceQueue.hasPending,

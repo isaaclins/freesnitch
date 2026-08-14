@@ -732,29 +732,59 @@ final class FilterDataProvider: NEFilterDataProvider {
             let received = try SharedRuleBridge.decode(data)
             snapshotLock.lock()
             let current = snapshot
+            // Ordering is (epoch, generation), never the generation alone.
+            // This policy outlives every helper process, so a helper that has
+            // restarted arrives with a fresh session and a generation that may
+            // legitimately be lower, or zero because nothing had ever written
+            // it. Treating that owner as a stale client left the machine in #70
+            // unfiltered until a reboot.
+            let authority = current.map { SharedRuleBridge.SnapshotAuthority.compare(received: received, against: $0) }
 
-            // Generation is checked while the policy lock is held and before
+            // Both comparisons run while the policy lock is held and before
             // setSnapshotLocked can assign the candidate. Boot policy is also
             // compared here so a stale live client cannot replace a newer
             // persisted policy during extension startup.
-            if let current, received.generation < current.generation {
+            if let current, authority == .olderSession {
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
-                    "Network extension rejected an older live rule snapshot (generation \(received.generation); current generation \(current.generation)).",
-                    generation: current.generation
+                    "Network extension rejected a live rule snapshot from an older helper session "
+                    + "(session \(received.epoch); current session \(current.epoch)). \(SharedRuleBridge.snapshotRejectionRemediation)",
+                    generation: current.generation,
+                    epoch: current.epoch,
+                    rejection: .olderSession
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older live rule snapshot.")
+                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older helper session's snapshot.")
                 return status
+            }
+            if let current, received.generation < current.generation {
+                // Only inside one helper session is a lower generation a
+                // rollback. Across sessions it is the owner restarting, and
+                // the epoch above has already ranked it.
+                if authority == .sameSession {
+                    let status = SharedRuleBridge.SnapshotStatus.invalid(
+                        "Network extension rejected an older live rule snapshot (generation \(received.generation); current generation \(current.generation)). \(SharedRuleBridge.snapshotRejectionRemediation)",
+                        generation: current.generation,
+                        epoch: current.epoch,
+                        rejection: .olderGeneration
+                    )
+                    snapshotStatus = status
+                    snapshotLock.unlock()
+                    PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older live rule snapshot.")
+                    return status
+                }
             }
             let legacyBootGeneration = snapshotOrigin == .boot && current?.generation == 0 && received.generation == 0
             if let current,
+               authority == .sameSession,
                received.generation == current.generation,
                (received.mode != current.mode || received.rules != current.rules),
                !legacyBootGeneration {
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
-                    "Network extension rejected an invalid split-brain snapshot: generation \(received.generation) has different policy content.",
-                    generation: current.generation
+                    "Network extension rejected an invalid split-brain snapshot: generation \(received.generation) has different policy content. \(SharedRuleBridge.snapshotRejectionRemediation)",
+                    generation: current.generation,
+                    epoch: current.epoch,
+                    rejection: .conflictingContent
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
@@ -782,7 +812,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 let askCount = accepted.rules.filter { $0.action == .ask }.count
                 let idempotentNote = decision == .idempotent ? " (idempotent)" : ""
                 PSLog.info(PSLog.netext,
-                           "filter snapshot received over XPC: generation \(accepted.generation), mode \(accepted.mode.rawValue), "
+                           "filter snapshot received over XPC: session \(accepted.epoch), generation \(accepted.generation), mode \(accepted.mode.rawValue), "
                            + "\(accepted.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))\(idempotentNote)")
                 // Persistence is owned by the GUI through NEFilterManager. A
                 // live XPC update changes only this in-memory policy and never
@@ -790,12 +820,26 @@ final class FilterDataProvider: NEFilterDataProvider {
                 return status
             case .rejectedOlder(let currentGeneration), .rejectedConflict(let currentGeneration):
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
-                    "Network extension rejected an invalid live snapshot at generation \(received.generation); current generation is \(currentGeneration).",
-                    generation: currentGeneration
+                    "Network extension rejected an invalid live snapshot at generation \(received.generation); current generation is \(currentGeneration). \(SharedRuleBridge.snapshotRejectionRemediation)",
+                    generation: currentGeneration,
+                    epoch: current?.epoch,
+                    rejection: .olderGeneration
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
                 PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an invalid live snapshot.")
+                return status
+            case .rejectedOlderSession(let currentEpoch):
+                let status = SharedRuleBridge.SnapshotStatus.invalid(
+                    "Network extension rejected a live snapshot from helper session \(received.epoch); "
+                    + "current session is \(currentEpoch). \(SharedRuleBridge.snapshotRejectionRemediation)",
+                    generation: current?.generation,
+                    epoch: currentEpoch,
+                    rejection: .olderSession
+                )
+                snapshotStatus = status
+                snapshotLock.unlock()
+                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older helper session's snapshot.")
                 return status
             }
         } catch {

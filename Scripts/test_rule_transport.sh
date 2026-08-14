@@ -145,6 +145,7 @@ SWIFT
   swiftc \
     "$ROOT/Sources/Shared/Models.swift" \
     "$ROOT/Sources/Shared/WireCodec.swift" \
+    "$ROOT/Sources/Shared/PolicyEpoch.swift" \
     "$ROOT/Sources/Shared/PFHostValidator.swift" \
     "$ROOT/Sources/Shared/RuleMatcher.swift" \
     "$ROOT/Sources/Shared/RuleTransport.swift" \

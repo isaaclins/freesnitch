@@ -32,6 +32,8 @@ OBSERVATION_QUEUE="$ROOT/Sources/NetExt/ObservationQueue.swift"
 UNINSTALL="$ROOT/Scripts/uninstall_freesnitch.sh"
 RULE_MATCHER="$ROOT/Sources/Shared/RuleMatcher.swift"
 CLI_PARSER="$ROOT/Sources/CLI/CLIParser.swift"
+POLICY_EPOCH="$ROOT/Sources/Shared/PolicyEpoch.swift"
+SNAPSHOT_RECOVERY="$ROOT/Sources/Shared/SnapshotRecovery.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -71,6 +73,8 @@ require_text() {
 [[ -f "$RULE_MATCHER" ]] || fail "missing $RULE_MATCHER"
 [[ -f "$CLI_PARSER" ]] || fail "missing $CLI_PARSER"
 [[ -f "$DNS_PROXY" ]] || fail "missing $DNS_PROXY"
+[[ -f "$POLICY_EPOCH" ]] || fail "missing $POLICY_EPOCH"
+[[ -f "$SNAPSHOT_RECOVERY" ]] || fail "missing $SNAPSHOT_RECOVERY"
 
 # A CIDR prefix outside 0...32 used to produce mask 0 through Swift's
 # non-trapping smart shift, and mask 0 matches every IPv4 address. The matcher
@@ -982,6 +986,91 @@ generation_check_line="$(grep -nF 'received.generation < current.generation' "$F
 generation_assignment_line="$(grep -nF 'setSnapshotLocked(accepted)' "$FILTER" | head -1 | cut -d: -f1 || true)"
 [[ -n "$generation_check_line" && -n "$generation_assignment_line" && "$generation_check_line" -lt "$generation_assignment_line" ]] \
   || fail "the extension assigns a live snapshot before comparing its generation"
+
+# The generation alone is not durable and does not identify who produced it, so
+# comparing it alone locked a restarted helper out of its own extension until a
+# reboot (#70). Ordering must be (epoch, generation), the generation comparison
+# must be scoped to one helper session, and a restart must never rewind either
+# value inside a session.
+require_text "$BRIDGE" "public var epoch: UInt64" \
+  "snapshots carry no helper session epoch, so a restarted helper is indistinguishable from a stale client"
+require_text "$BRIDGE" "decodeIfPresent(UInt64.self, forKey: .epoch) ?? PolicyEpoch.unknown" \
+  "snapshot epoch decoding is not backward compatible with pre-epoch builds"
+require_text "$BRIDGE" "public enum SnapshotAuthority" \
+  "there is no single owner of the (epoch, generation) ordering"
+require_text "$BRIDGE" "case newerSession" \
+  "snapshot ordering cannot express a newer helper session"
+require_text "$BRIDGE" "case rejectedOlderSession(currentEpoch: UInt64)" \
+  "the shared ordering gate cannot report an older-session rejection"
+if ! text_within_block "$BRIDGE" 'public mutating func apply[(]_ received: Snapshot[)]' 'SnapshotAuthority.compare(received: received, against: current)'; then
+  fail "the shared live snapshot gate orders by generation alone, so a restarted helper is rejected forever"
+fi
+require_text "$POLICY_EPOCH" "public static func next(after stored: UInt64)" \
+  "the helper session epoch has no monotonic successor rule"
+require_text "$POLICY_EPOCH" "public static let unknown: UInt64 = 0" \
+  "a pre-epoch snapshot does not decode to a non-authoritative epoch"
+if grep -Eq 'Date\(\)|timeIntervalSince|bootTime|kern.boottime|UUID\(\)' "$POLICY_EPOCH"; then
+  fail "the helper session epoch is derived from the clock or a random value instead of a persisted counter"
+fi
+require_text "$RULE_STORE" "policyEpochSettingKey" \
+  "RuleStore does not persist the helper session epoch"
+require_text "$RULE_STORE" "func beginPolicySession()" \
+  "RuleStore has no helper session that advances the epoch on start"
+require_text "$RULE_STORE" "func recordPolicyGeneration(atLeast generation: UInt64)" \
+  "the policy generation is durable only inside mutatePolicy, so a restart can rewind it"
+if ! text_within_block "$RULE_STORE" 'func beginPolicySession[(][)]' 'persistPolicyGenerationLocked(atLeast: generation)'; then
+  fail "opening a helper session does not make the current policy generation durable"
+fi
+if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'store.beginPolicySession()'; then
+  fail "the helper does not open a new policy session on start, so a restarted helper reuses the previous epoch"
+fi
+require_text "$HELPER" "epoch: state.epoch" \
+  "helper snapshots do not carry the session epoch"
+require_text "$HELPER" "store.recordPolicyGeneration(atLeast: state.generation)" \
+  "the helper does not persist the generation it publishes"
+filter_body="$(swift_function_body "$FILTER" 'private func receiveSnapshot(')"
+[[ -n "$filter_body" ]] || fail "the extension has no receiveSnapshot function to audit"
+printf '%s\n' "$filter_body" | grep -Fq 'SharedRuleBridge.SnapshotAuthority.compare(received: received, against: $0)' \
+  || fail "the extension does not rank a received snapshot by helper session before generation"
+printf '%s\n' "$filter_body" | grep -Fq 'authority == .olderSession' \
+  || fail "the extension does not reject a snapshot from an older helper session"
+lower_generation_block="$(swift_function_body "$FILTER" 'if let current, received.generation < current.generation {')"
+[[ -n "$lower_generation_block" ]] || fail "the extension has no lower-generation rejection block to audit"
+printf '%s\n' "$lower_generation_block" | grep -Fq 'authority == .sameSession' \
+  || fail "the extension's lower-generation rejection is not scoped to one helper session, so a restarted helper is locked out until a reboot"
+printf '%s\n' "$filter_body" | grep -Fq 'rejection: .conflictingContent' \
+  || fail "the extension no longer reports the equal-generation split-brain rejection"
+
+# No rejection may be a state that only a reboot clears. Every ordering refusal
+# carries the remediation, and the app acts on it by restarting the filter
+# provider, never by deactivating the extension or touching the helper.
+require_text "$BRIDGE" "snapshotRejectionRemediation" \
+  "an ordering rejection does not tell the user how to recover"
+require_text "$BRIDGE" "public var needsFilterRestart" \
+  "the app cannot tell an ordering rejection from a malformed payload without parsing a sentence"
+require_text "$SNAPSHOT_RECOVERY" "static let maximumAttempts" \
+  "automatic filter restarts have no attempt bound"
+require_text "$SNAPSHOT_RECOVERY" "static let cooldown" \
+  "automatic filter restarts have no cooldown"
+if ! text_within_block "$SNAPSHOT_RECOVERY" 'public mutating func decide[(]' 'attempts < Self.maximumAttempts'; then
+  fail "automatic filter restarts are unbounded, so a rejected snapshot can restart the provider forever"
+fi
+if ! text_within_block "$SNAPSHOT_RECOVERY" 'public mutating func decide[(]' 'now.timeIntervalSince(lastAttempt) < Self.cooldown'; then
+  fail "automatic filter restarts are not spaced by the cooldown"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" "private func restartFilterProvider()" \
+  "the app cannot restart the filter provider, so a rejected snapshot needs a reboot"
+if ! text_within_block "$SYSTEM_EXTENSION_MANAGER" 'private func recordSnapshotStatus[(]' 'recoverFromSnapshotRejection(snapshotStatus)'; then
+  fail "the app does not act on an extension that refused the helper policy"
+fi
+restart_body="$(swift_function_body "$SYSTEM_EXTENSION_MANAGER" 'private func restartFilterProvider()')"
+[[ -n "$restart_body" ]] || fail "the filter provider restart has no body to audit"
+if printf '%s\n' "$restart_body" | grep -Eq 'removeFromPreferences|deactivationRequest|kickstart|bootout|unregister'; then
+  fail "recovering from a rejected snapshot removes the filter configuration, deactivates the extension, or touches the helper"
+fi
+if grep -Fq 'restart your Mac' "$FILTER" "$BRIDGE" "$SYSTEM_EXTENSION_MANAGER" "$APP_STATE"; then
+  fail "a snapshot rejection still tells the user to restart the Mac"
+fi
 
 # DNS policy must be one immutable value published under one lock, and a query
 # must decide from a single snapshot. Stored mutable policy fields raced across
