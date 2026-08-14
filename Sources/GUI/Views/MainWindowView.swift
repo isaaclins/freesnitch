@@ -55,38 +55,106 @@ final class MainWindowModel: ObservableObject {
 struct MainWindowView: View {
     @ObservedObject var model: MainWindowModel
     let systemExtension: SystemExtensionManager
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var isSidebarVisible = true
     @ObservedObject private var profileClient = ProfileClient.shared
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-        } detail: {
+        // A plain HStack, deliberately, not NavigationSplitView.
+        //
+        // NavigationSplitView does not lay out correctly inside this app's
+        // AppKit-owned NSWindow: it proposes no usable height to its children,
+        // so the sidebar rows and the monitor tree rows both rendered at zero
+        // height while every element still existed, correctly labelled, in the
+        // accessibility tree. Only views that demanded space for themselves,
+        // like the map, survived. That is issue #65, and it passed the entire
+        // test suite and a Release build while the window was visibly blank.
+        //
+        // The app draws a fixed dark interface of its own anyway, so a system
+        // sidebar bought us nothing here, and this also restores the collapse
+        // affordance that NavigationSplitView could not give us without an
+        // NSToolbar.
+        HStack(spacing: 0) {
+            if isSidebarVisible {
+                sidebar
+                    .frame(width: 200)
+                    .background(PSTheme.bgSidebar)
+                Divider().background(PSTheme.stroke)
+            }
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .navigationTitle(model.page.title)
+                .overlay(alignment: .topLeading) {
+                    // Without the sidebar there would be no way back to it, so
+                    // the reveal control only exists while it is hidden.
+                    if !isSidebarVisible {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) { isSidebarVisible = true }
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                                .foregroundColor(PSTheme.textMuted)
+                                .padding(6)
+                                .background(PSTheme.bgTertiary, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Show the sidebar")
+                        .padding(8)
+                    }
+                }
         }
-        .navigationSplitViewStyle(.balanced)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PSTheme.bgPrimary)
         .preferredColorScheme(.dark)
     }
 
     private var sidebar: some View {
-        List(selection: selection) {
-            ForEach(MainPage.allCases) { page in
-                Label(page.title, systemImage: page.symbol)
-                    .tag(page)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("FreeSnitch")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(PSTheme.textMuted)
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { isSidebarVisible = false }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .foregroundColor(PSTheme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .help("Hide the sidebar")
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            ForEach(MainPage.allCases) { page in
+                sidebarRow(page)
+            }
+            Spacer(minLength: 0)
         }
-        .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// The list selection is optional because AppKit can clear it, but a
-    /// window with no page is not a state this app has: an empty selection is
-    /// ignored rather than blanking the window.
-    private var selection: Binding<MainPage?> {
-        Binding(get: { model.page },
-                set: { newValue in if let newValue { model.page = newValue } })
+    private func sidebarRow(_ page: MainPage) -> some View {
+        let isSelected = model.page == page
+        return Button {
+            model.page = page
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: page.symbol)
+                    .frame(width: 16)
+                    .foregroundColor(isSelected ? PSTheme.accentBlue : PSTheme.textSecondary)
+                Text(page.title)
+                    .font(.system(size: 13))
+                    .foregroundColor(isSelected ? PSTheme.textPrimary : PSTheme.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isSelected ? PSTheme.accentBlue.opacity(0.16) : .clear,
+                        in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
     }
 
     @ViewBuilder

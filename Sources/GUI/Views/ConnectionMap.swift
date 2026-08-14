@@ -35,7 +35,10 @@ struct ConnectionMapPane: View {
             }
             .overlay(alignment: .topTrailing) { controls }
             .overlay(alignment: .top) { placementBanner }
-            .overlay(alignment: .bottomLeading) { legend }
+            // Top leading, not bottom leading: MapKit draws the Apple Maps
+            // wordmark in the bottom-left corner, and the legend sat on top of
+            // it, so both were unreadable.
+            .overlay(alignment: .topLeading) { legend }
             .onAppear {
                 viewWidth = geometry.size.width
                 refresh()
