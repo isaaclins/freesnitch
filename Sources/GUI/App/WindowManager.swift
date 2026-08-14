@@ -117,7 +117,10 @@ final class WindowManager {
         // it. The app draws a fixed dark interface, so the frame is told to be
         // dark too instead of leaving a light title bar over dark content.
         window.title = title
-        window.appearance = NSAppearance(named: .darkAqua)
+        // No forced appearance. The app follows the system, like every
+        // Apple app: choosing Light in System Settings must make FreeSnitch
+        // light. Forcing dark was only tenable while every colour in the app
+        // was a hardcoded dark value.
         window.isReleasedWhenClosed = false
         window.minSize = minSize
         // Use `contentView` (NSHostingView) instead of `contentViewController`.

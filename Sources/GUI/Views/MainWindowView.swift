@@ -102,7 +102,6 @@ struct MainWindowView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PSTheme.bgPrimary)
-        .preferredColorScheme(.dark)
     }
 
     private var sidebar: some View {

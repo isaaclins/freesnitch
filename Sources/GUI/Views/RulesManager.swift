@@ -44,7 +44,6 @@ struct RulesManagerView: View {
             }
         }
         .background(PSTheme.bgPrimary)
-        .preferredColorScheme(.dark)
         .sheet(isPresented: $showingRuleEditor) {
             RuleEditorView(activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
         }
@@ -144,11 +143,21 @@ struct RulesManagerView: View {
                 Text(label).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
                 Spacer()
                 if count > 0 {
-                    Text("\(count)").font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .foregroundColor(.white)
-                        .background(badge ? PSTheme.accentBlue : PSTheme.bgTertiary)
-                        .clipShape(Capsule())
+                    // Finder and Mail draw sidebar counts as plain secondary
+                    // text, and reserve a filled capsule for something that
+                    // actually demands attention. The old code drew every count
+                    // as white text on a neutral fill, which was invisible the
+                    // moment the app stopped forcing dark mode.
+                    if badge {
+                        Text("\(count)").font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .foregroundStyle(.white)
+                            .background(Color.accentColor, in: Capsule())
+                    } else {
+                        Text("\(count)").font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 4)
@@ -785,7 +794,6 @@ private struct RuleEditorView: View {
         .padding(20)
         .frame(width: 470, height: 520)
         .background(PSTheme.bgPrimary)
-        .preferredColorScheme(.dark)
     }
 
     private var canSave: Bool {

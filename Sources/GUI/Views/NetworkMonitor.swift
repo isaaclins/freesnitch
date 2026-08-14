@@ -27,7 +27,6 @@ struct NetworkMonitorView: View {
             }
         }
         .background(PSTheme.bgPrimary)
-        .preferredColorScheme(.dark)
         // Grouping happens on a background task inside the controller. The
         // view hands it data and never groups anything itself.
         .onAppear {

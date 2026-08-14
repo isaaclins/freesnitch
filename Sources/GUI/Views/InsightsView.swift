@@ -23,7 +23,6 @@ struct InsightsView: View {
             footer
         }
         .background(PSTheme.bgPrimary)
-        .preferredColorScheme(.dark)
         .onAppear { model.attach(state) }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
             Button("Cancel", role: .cancel) {}

@@ -82,7 +82,6 @@ struct ConnectionAlertView: View {
         .padding(18)
         .frame(width: 440)
         .background(PSTheme.bgPrimary)
-        .preferredColorScheme(.dark)
     }
 }
 

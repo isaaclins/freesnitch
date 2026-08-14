@@ -1,24 +1,43 @@
 import SwiftUI
 import AppKit
 
+/// Semantic system colors, not a palette.
+///
+/// Every one of these used to be a fixed dark RGB value, which is why the app
+/// looked like a dark app that happens to run on a Mac while Settings, the one
+/// screen built from system controls, looked like it belonged. Fixed colors
+/// also cannot follow the system appearance, honour the user's accent colour,
+/// or respond to Increase Contrast.
+///
+/// The names are kept so the 272 call sites do not all have to change at once;
+/// what changes is that each one now resolves through AppKit. New code should
+/// prefer the system colors directly, or better, use a native container that
+/// needs no colour at all.
 enum PSTheme {
-    static let bgPrimary = Color(NSColor(red: 0.075, green: 0.075, blue: 0.085, alpha: 1))
-    static let bgSecondary = Color(NSColor(red: 0.105, green: 0.105, blue: 0.115, alpha: 1))
-    static let bgTertiary = Color(NSColor(red: 0.135, green: 0.135, blue: 0.145, alpha: 1))
-    static let bgSidebar = Color(NSColor(red: 0.085, green: 0.085, blue: 0.095, alpha: 1))
-    static let bgRow = Color(NSColor(red: 0.115, green: 0.115, blue: 0.13, alpha: 1))
-    static let bgRowAlt = Color(NSColor(red: 0.13, green: 0.13, blue: 0.145, alpha: 1))
-    static let stroke = Color(NSColor(red: 0.22, green: 0.22, blue: 0.24, alpha: 1))
-    static let accent = Color(NSColor(srgbRed: 0.231, green: 0.435, blue: 0.961, alpha: 1))
-    static let accentGreen = Color(NSColor(red: 0.28, green: 0.78, blue: 0.45, alpha: 1))
-    static let accentRed = Color(NSColor(red: 0.95, green: 0.30, blue: 0.30, alpha: 1))
-    static let accentYellow = Color(NSColor(red: 1.0, green: 0.78, blue: 0.20, alpha: 1))
-    static let accentBlue = Color(NSColor(red: 0.30, green: 0.55, blue: 1.0, alpha: 1))
-    static let trafficIn = Color(NSColor(red: 0.95, green: 0.45, blue: 0.95, alpha: 1)) // pink/magenta
-    static let trafficOut = Color(NSColor(red: 0.40, green: 0.60, blue: 1.0, alpha: 1)) // blue
-    static let textPrimary = Color(NSColor(white: 0.95, alpha: 1))
-    static let textSecondary = Color(NSColor(white: 0.65, alpha: 1))
-    static let textMuted = Color(NSColor(white: 0.45, alpha: 1))
+    /// Window and content backgrounds. `bgSidebar` is deliberately clear so the
+    /// sidebar's own material shows through instead of being painted over,
+    /// which is the top source of wrong-looking Mac UI.
+    static let bgPrimary = Color(nsColor: .windowBackgroundColor)
+    static let bgSecondary = Color(nsColor: .controlBackgroundColor)
+    static let bgTertiary = Color(nsColor: .underPageBackgroundColor)
+    static let bgSidebar = Color.clear
+    static let bgRow = Color(nsColor: .alternatingContentBackgroundColors.first ?? .controlBackgroundColor)
+    static let bgRowAlt = Color(nsColor: .alternatingContentBackgroundColors.last ?? .windowBackgroundColor)
+    static let stroke = Color(nsColor: .separatorColor)
+    /// Follows the accent colour the user picked in System Settings.
+    static let accent = Color.accentColor
+    static let accentGreen = Color(nsColor: .systemGreen)
+    static let accentRed = Color(nsColor: .systemRed)
+    static let accentYellow = Color(nsColor: .systemYellow)
+    static let accentBlue = Color(nsColor: .systemBlue)
+    /// Traffic direction stays deliberately distinct from the accent colour,
+    /// because these two encode meaning (in versus out) rather than emphasis,
+    /// and must not change when the user changes their accent.
+    static let trafficIn = Color(nsColor: .systemPink)
+    static let trafficOut = Color(nsColor: .systemBlue)
+    static let textPrimary = Color(nsColor: .labelColor)
+    static let textSecondary = Color(nsColor: .secondaryLabelColor)
+    static let textMuted = Color(nsColor: .tertiaryLabelColor)
 }
 
 enum AppIcon {
@@ -104,7 +123,8 @@ struct PSPanel<Content: View>: View {
     var body: some View {
         content()
             .background(PSTheme.bgSecondary)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PSTheme.stroke, lineWidth: 0.5))
+            // 8 was a guess. Apple's grouped containers use 10 at this size,
+            // and the separator carries the edge, so the stroke is gone.
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
