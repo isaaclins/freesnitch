@@ -90,6 +90,13 @@ final class AppState: ObservableObject {
             helper.setEnforcementEnabled(enforcementEnabled)
         }
     }
+    /// True from the moment the helper is asked to change enforcement until it
+    /// answers. The toggle is disabled for that window, so the UI never shows a
+    /// state no daemon has agreed to yet (#80).
+    @Published var enforcementChangePending = false
+    /// Why the last enforcement change did not take. Shown next to the toggle,
+    /// not just written to the log where nobody looks.
+    @Published var enforcementFailure: String?
     private var suppressEnforcementSideEffect = false
     private var applyingExternalPreferences = false
     private var preferencesObserver: NSObjectProtocol?
@@ -108,6 +115,32 @@ final class AppState: ObservableObject {
         enforcementEnabled = value
         suppressEnforcementSideEffect = false
         AppPreferences.set(value, forKey: AppPreferences.Key.enforcement)
+    }
+
+    /// The helper carried the change out.
+    func enforcementChangeSucceeded() {
+        enforcementChangePending = false
+        enforcementFailure = nil
+    }
+
+    /// The helper refused, or never heard the request. The toggle goes back to
+    /// the state the system is really in, carrying the reason.
+    func enforcementChangeFailed(revertingTo value: Bool, message: String) {
+        setEnforcementFlagWithoutApplying(value)
+        enforcementChangePending = false
+        enforcementFailure = message
+    }
+
+    /// Enforcement as the helper reports it: the pf anchor is loaded and the
+    /// DNS proxy is listening. This is what the toggle shows, so a helper that
+    /// was restarted, or that stood enforcement down on its own, corrects the
+    /// GUI instead of being contradicted by it. Answers that arrive while a
+    /// change is in flight are stale by definition and are dropped.
+    func adoptHelperEnforcement(_ status: HelperStatus?) {
+        guard let status, !enforcementChangePending else { return }
+        let live = status.pfctlActive && status.dnsProxyActive
+        guard live != enforcementEnabled else { return }
+        setEnforcementFlagWithoutApplying(live)
     }
 
     enum Prefs {

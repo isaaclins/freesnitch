@@ -26,6 +26,9 @@ struct RulesManagerView: View {
     @State private var showingRemoveConfirmation = false
     @State private var errorMessage: String?
     @State private var showingError = false
+    /// Which pane owns the keyboard. Tab moves it, and the focused list shows
+    /// the focused selection colour instead of the unfocused grey (#85).
+    @FocusState private var focusedPane: RulesPane?
     @ObservedObject private var profileClient = ProfileClient.shared
 
     enum Category: Hashable {
@@ -44,17 +47,28 @@ struct RulesManagerView: View {
         VStack(spacing: 0) {
             HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
-                sidebar.frame(width: 204)
+                sidebar
+                    .frame(width: 204)
+                    .focused($focusedPane, equals: .categories)
+                    .accessibilityLabel(RulesPane.categories.accessibilityLabel)
                 Divider()
                 mainPane
+                    .focused($focusedPane, equals: .table)
+                    .accessibilityLabel(RulesPane.table.accessibilityLabel)
                 // The inspector is only on screen while something is selected,
                 // rather than permanently spending a third of the window to say
                 // that nothing is (#81).
                 if !selectedRules.isEmpty {
                     Divider()
-                    infoPane.frame(width: 240)
+                    infoPane
+                        .frame(width: 240)
+                        .focusable()
+                        .focused($focusedPane, equals: .inspector)
+                        .paneFocusRing(focusedPane == .inspector)
+                        .accessibilityLabel(RulesPane.inspector.accessibilityLabel)
                 }
             }
+            .paneTabTraversal { backwards in advanceFocus(backwards: backwards) }
         }
         // Escape clears the selection, which also dismisses the inspector.
         .onExitCommand { clearSelection() }
@@ -122,11 +136,7 @@ struct RulesManagerView: View {
             }
 
             Section {
-                if !state.enforcementEnabled && state.blocklists.contains(where: { $0.enabled }) {
-                    Label("Enforcement is off", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .help(Self.enforcementOffExplanation)
-                }
+                enforcementRow
                 ForEach(state.blocklists) { b in
                     blocklistRow(b)
                 }
@@ -147,6 +157,83 @@ struct RulesManagerView: View {
 
     static let blocklistExplanation = "Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH."
     static let enforcementOffExplanation = "Enforcement is off, so enabled blocklists are currently blocking nothing."
+
+    /// The one thing a reader wants when they learn enforcement is off is to
+    /// turn it on, so this is a real toggle rather than a warning label (#80).
+    ///
+    /// It shows what the helper reports, not what the GUI last asked for: the
+    /// switch is disabled and reads as pending while a change is in flight, and
+    /// a refusal puts it back and says why, right here where it was flipped.
+    private var enforcementRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle(isOn: enforcementBinding) {
+                Label {
+                    // "Enforcement is off" does not fit beside a switch in a
+                    // 204pt sidebar and truncated to "Enforcement is…", which
+                    // is worse than saying it once. The switch carries the
+                    // state; the line below says what it means.
+                    Text("Enforcement")
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: state.enforcementEnabled ? "shield.lefthalf.filled" : "shield.slash")
+                        .foregroundStyle(enforcementTint)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .disabled(state.enforcementChangePending || !state.helperConnected)
+            .help(state.enforcementEnabled
+                  ? "Enforcement is on: the pf anchor is loaded and the DNS proxy is running."
+                  : "Enforcement is off: FreeSnitch is watching and blocking nothing.")
+            enforcementCaption
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var enforcementCaption: some View {
+        if let failure = state.enforcementFailure {
+            enforcementCaptionText(failure, tint: .orange)
+        } else if state.enforcementChangePending {
+            enforcementCaptionText(state.enforcementEnabled
+                                   ? "Turning enforcement on…"
+                                   : "Turning enforcement off…",
+                                   tint: .secondary)
+        } else if !state.helperConnected {
+            enforcementCaptionText("Approve the FreeSnitch helper to change this.", tint: .secondary)
+        } else if state.enforcementEnabled {
+            enforcementCaptionText("On: rules and blocklists are in force.", tint: .secondary)
+        } else if state.blocklists.contains(where: { $0.enabled }) {
+            enforcementCaptionText(Self.enforcementOffExplanation, tint: .secondary)
+        } else {
+            enforcementCaptionText("Off: FreeSnitch is only watching.", tint: .secondary)
+        }
+    }
+
+    private func enforcementCaptionText(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var enforcementTint: Color {
+        if state.enforcementChangePending { return .secondary }
+        return state.enforcementEnabled ? .accentColor : .orange
+    }
+
+    /// Writes go through `AppState`, which is the single place that talks to
+    /// the helper about enforcement, so this toggle uses exactly the path the
+    /// Settings toggle does.
+    private var enforcementBinding: Binding<Bool> {
+        Binding(
+            get: { state.enforcementEnabled },
+            set: { newValue in
+                guard !state.enforcementChangePending else { return }
+                state.enforcementEnabled = newValue
+            }
+        )
+    }
 
     /// Six lines of explanation used to sit permanently in the sidebar, which
     /// is not what a Mac app does with reference text. It lives behind the info
@@ -661,6 +748,27 @@ struct RulesManagerView: View {
 
     private func clearSelection() {
         selectedRuleIDs.removeAll()
+        // The inspector leaves the Tab loop with the selection, so focus cannot
+        // stay parked on a pane that no longer exists.
+        if focusedPane == .inspector { focusedPane = .table }
+    }
+
+    /// Tab order is categories, rules, inspector. The first Tab press on a page
+    /// nobody has touched puts focus on the category list rather than doing
+    /// nothing (#85).
+    private func advanceFocus(backwards: Bool) {
+        let panes = availablePanes
+        guard let current = focusedPane, let index = panes.firstIndex(of: current) else {
+            focusedPane = panes.first
+            return
+        }
+        let step = backwards ? panes.count - 1 : 1
+        focusedPane = panes[(index + step) % panes.count]
+    }
+
+    /// The inspector is only in the loop while it is on screen (#81).
+    private var availablePanes: [RulesPane] {
+        selectedRules.isEmpty ? [.categories, .table] : RulesPane.allCases
     }
 
     private var allSelectedRulesDisabled: Bool {

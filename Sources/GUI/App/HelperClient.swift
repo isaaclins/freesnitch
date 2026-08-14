@@ -101,6 +101,9 @@ enum HelperLifecyclePolicy {
 final class HelperClient: NSObject, ObservableObject {
     @Published var connected: Bool = false
     @Published var status: HelperStatus?
+    /// Identifies the enforcement request currently in flight, so a late reply,
+    /// a transport error and the timeout cannot each roll the toggle back once.
+    private var enforcementRequestID = UUID()
     @Published var installState: HelperInstallState = .unknown {
         didSet { state?.helperInstallState = installState }
     }
@@ -585,6 +588,13 @@ final class HelperClient: NSObject, ObservableObject {
                 self.setConnected(true)
             }
         }
+        refreshStatus()
+    }
+
+    /// One status round trip. Called on every ping and after an enforcement
+    /// change, because the enforcement toggle shows what the helper reports,
+    /// not what the GUI last asked for (#80).
+    func refreshStatus() {
         remote?.getStatus { [weak self] data in
             let status = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: data)
             Task { @MainActor in
@@ -593,6 +603,7 @@ final class HelperClient: NSObject, ObservableObject {
                 // pre-connection default, which would then be pushed to the
                 // extension and silently undo the user's choice.
                 if let mode = status?.mode { self?.state?.adoptPersistedMode(mode) }
+                self?.state?.adoptHelperEnforcement(status)
             }
         }
     }
@@ -929,28 +940,63 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
+    /// Enforcement only counts once the helper says it took. The UI stays in a
+    /// pending state until then, and a refusal, a transport failure or a helper
+    /// that never answers puts the toggle back where reality is, with the
+    /// reason attached (#80).
     func setEnforcementEnabled(_ enabled: Bool) {
+        let request = UUID()
+        enforcementRequestID = request
+        state?.enforcementChangePending = true
+        state?.enforcementFailure = nil
+        // A privileged pf install plus a DNS proxy start is not instant, but it
+        // is not minutes either. Without this, a helper that dies mid-request
+        // leaves the toggle disabled and pending forever.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.enforcementTimeout) { [weak self] in
+            guard let self, self.enforcementRequestID == request else { return }
+            self.failEnforcement(request: request,
+                                 enabled: enabled,
+                                 message: "The helper did not answer within \(Int(Self.enforcementTimeout)) seconds.")
+        }
         // A transport failure has to roll the UI back too, otherwise the toggle
         // claims enforcement that no daemon ever heard about.
-        let proxy = connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ [weak self] error in
             Task { @MainActor in
-                guard let self else { return }
-                self.state?.appendLog(level: "error",
-                                      message: "Enforcement change never reached the helper: \(error.localizedDescription)")
-                self.state?.setEnforcementFlagWithoutApplying(!enabled)
+                self?.failEnforcement(request: request,
+                                      enabled: enabled,
+                                      message: "The change never reached the helper: \(error.localizedDescription)")
             }
-        } as? HelperProtocol
-        proxy?.setEnforcementEnabled(enabled) { [weak self] ok, message in
-            guard !ok else { return }
+        }) as? HelperProtocol else {
+            failEnforcement(request: request,
+                            enabled: enabled,
+                            message: "The FreeSnitch helper is not connected.")
+            return
+        }
+        proxy.setEnforcementEnabled(enabled) { [weak self] ok, message in
             Task { @MainActor in
-                guard let self else { return }
-                self.state?.appendLog(level: "error",
-                                      message: "Enforcement change failed: \(message ?? "unknown error")")
-                // The helper rolled back, so the UI must not keep claiming
-                // enforcement is on.
-                self.state?.setEnforcementFlagWithoutApplying(!enabled)
+                guard let self, self.enforcementRequestID == request else { return }
+                guard ok else {
+                    self.failEnforcement(request: request,
+                                         enabled: enabled,
+                                         message: message ?? "The helper refused the change.")
+                    return
+                }
+                self.enforcementRequestID = UUID()
+                self.state?.enforcementChangeSucceeded()
+                // Ask what actually happened rather than trusting the reply.
+                self.refreshStatus()
             }
         }
+    }
+
+    private static let enforcementTimeout: TimeInterval = 12
+
+    /// The helper rolled back, so the UI must not keep claiming enforcement.
+    private func failEnforcement(request: UUID, enabled: Bool, message: String) {
+        guard enforcementRequestID == request else { return }
+        enforcementRequestID = UUID()
+        state?.appendLog(level: "error", message: "Enforcement change failed: \(message)")
+        state?.enforcementChangeFailed(revertingTo: !enabled, message: message)
     }
 
     func installPF() {
