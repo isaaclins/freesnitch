@@ -217,8 +217,8 @@
           <dd class="mt-2 leading-7 text-muted">Apply kernel-level IP, CIDR, and port blocking through a pfctl anchor.</dd>
         </div>
         <div class="border-line py-7 md:border-l md:pl-8">
-          <dt class="font-display text-xl font-semibold text-primary">Offline geolocation</dt>
-          <dd class="mt-2 leading-7 text-muted">Place active connections on the map without sending location lookups to a third party.</dd>
+          <dt class="font-display text-xl font-semibold text-primary">Offline city-level geolocation</dt>
+          <dd class="mt-2 leading-7 text-muted">Place active IPv4 and IPv6 connections on the map, down to the city, without sending location lookups to a third party. The database is downloaded once in bulk and refreshed monthly; individual addresses are never sent anywhere. Where only the country is known, the endpoint is shown at the country centroid and labelled as country level. <a href="https://db-ip.com/" class="underline decoration-line underline-offset-4 transition-colors hover:text-primary">IP Geolocation by DB-IP</a>.</dd>
         </div>
       </dl>
     </div>
@@ -443,7 +443,8 @@ open build/Build/Products/Release/FreeSnitch.app</code></pre>
       <a href="README.zh-Hant.md" class="transition-colors hover:text-primary">繁體中文</a>
     </nav>
   </div>
-  <p class="mx-auto mt-8 max-w-7xl px-6 text-xs leading-5 text-subtle lg:px-8">"Little Snitch" is a registered trademark of Objective Development Software GmbH. FreeSnitch is an independent open-source project, not affiliated with or endorsed by Objective Development.</p>
+  <p class="mx-auto mt-8 max-w-7xl px-6 text-xs leading-5 text-subtle lg:px-8">Geolocation data is DB-IP City Lite, used under <a href="https://creativecommons.org/licenses/by/4.0/" class="underline decoration-line underline-offset-4 transition-colors hover:text-primary">CC BY 4.0</a>: <a href="https://db-ip.com/" class="underline decoration-line underline-offset-4 transition-colors hover:text-primary">IP Geolocation by DB-IP</a>. Country names and centroids come from the Google DSPL canonical country table.</p>
+  <p class="mx-auto mt-3 max-w-7xl px-6 text-xs leading-5 text-subtle lg:px-8">"Little Snitch" is a registered trademark of Objective Development Software GmbH. FreeSnitch is an independent open-source project, not affiliated with or endorsed by Objective Development.</p>
 </footer>
 
 </body>

@@ -118,6 +118,10 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     public var bytesOut: Int64
     public var country: String?
     public var countryCode: String?
+    /// The city the coordinates belong to. Nil means the geolocation database
+    /// knew only the country, and `latitude`/`longitude` are then the country
+    /// centroid rather than a place anyone connected to.
+    public var city: String?
     public var latitude: Double?
     public var longitude: Double?
     public var firstSeen: Date
@@ -140,6 +144,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         bytesOut: Int64 = 0,
         country: String? = nil,
         countryCode: String? = nil,
+        city: String? = nil,
         latitude: Double? = nil,
         longitude: Double? = nil,
         firstSeen: Date = Date(),
@@ -161,6 +166,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         self.bytesOut = bytesOut
         self.country = country
         self.countryCode = countryCode
+        self.city = city
         self.latitude = latitude
         self.longitude = longitude
         self.firstSeen = firstSeen

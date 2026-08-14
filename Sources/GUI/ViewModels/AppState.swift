@@ -36,6 +36,14 @@ final class AppState: ObservableObject {
     @Published var topProcesses: [ProcessStats] = []
     @Published var topDomains: [DomainStats] = []
     @Published var topCountries: [CountryStats] = []
+    /// Credit for the offline geolocation database. DB-IP City Lite is CC BY
+    /// 4.0 and requires this to be visible wherever its results are shown, so
+    /// any view that draws geolocated endpoints must render it.
+    let geoAttribution = IPGeoCache.attribution
+    /// What the offline geolocation database currently knows. A view can use
+    /// this to say "still downloading" or "unavailable" instead of drawing an
+    /// empty map as though there were no traffic.
+    @Published private(set) var geoStatus: IPGeoCache.Status = IPGeoCache.shared.status
     @Published var searchQuery: String = ""
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
@@ -163,6 +171,7 @@ final class AppState: ObservableObject {
         IPGeoCache.shared.onReady { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.geoStatus = IPGeoCache.shared.status
                 self.updateConnections(self.connections)
             }
         }
@@ -293,6 +302,9 @@ final class AppState: ObservableObject {
             if let geo = IPGeoCache.shared.lookup(connection.remoteIP) {
                 connection.country = geo.country
                 connection.countryCode = geo.countryCode
+                // Nil city means the answer is the country centroid. The map
+                // must present that as country level, not as a place.
+                connection.city = geo.city
                 connection.latitude = geo.lat
                 connection.longitude = geo.lon
             }
