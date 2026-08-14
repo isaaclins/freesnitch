@@ -949,8 +949,14 @@ struct RulesManagerView: View {
 
     /// Every field copies on click (#94), so the pane behaves the way the Get
     /// Info panes it is modelled on do.
+    ///
+    /// A plain row rather than `LabeledContent`: a control placed in the value
+    /// slot of a `LabeledContent` never receives the click, so the field looked
+    /// copyable and did nothing.
     private func infoField(_ label: String, _ value: String) -> some View {
-        LabeledContent(label) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+            Spacer(minLength: 8)
             CopyableValue(value: value)
         }
     }
