@@ -198,6 +198,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppState.CountryStats(id: c, country: n, countryCode: c, bytesIn: t * 6 / 10, bytesOut: t * 4 / 10)
         }
 
+        // Synthetic live connections. The map and the monitor tree are both
+        // built from `connections`, so without these the demo shows an empty
+        // world and an empty tree, which is exactly what needs reviewing.
+        // Cities are spread across continents, and two are IPv6, so clustering
+        // and the antimeridian arc both have something to do.
+        let endpoints: [(String, String, String?, String, String, String, String, Double, Double, Int, Int64, Int64)] = [
+            ("Spotify", "/Applications/Spotify.app", "com.spotify.client", "audio-fa.scdn.co", "104.199.65.9", "Stockholm", "SE", 59.33, 18.06, 443, 3_580_000_000, 42_000_000),
+            ("Spotify", "/Applications/Spotify.app", "com.spotify.client", "apresolve.spotify.com", "35.186.224.25", "Ashburn", "US", 39.04, -77.49, 443, 12_400_000, 2_100_000),
+            ("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome", "www.googleapis.com", "142.250.74.234", "Zurich", "CH", 47.37, 8.54, 443, 148_000_000, 18_600_000),
+            ("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome", "fonts.gstatic.com", "2a00:1450:4001:82f::2003", "Frankfurt", "DE", 50.11, 8.68, 443, 22_800_000, 1_900_000),
+            ("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome", "", "203.0.113.42", "Singapore", "SG", 1.35, 103.82, 443, 5_400_000, 900_000),
+            ("Discord", "/Applications/Discord.app", "com.hnc.Discord", "gateway.discord.gg", "162.159.128.233", "Amsterdam", "NL", 52.37, 4.90, 443, 768_000_000, 95_000_000),
+            ("Discord", "/Applications/Discord.app", "com.hnc.Discord", "cdn.discordapp.com", "162.159.130.234", "Paris", "FR", 48.86, 2.35, 443, 96_000_000, 7_300_000),
+            ("Telegram", "/Applications/Telegram.app", "ru.keepcoder.Telegram", "", "149.154.167.51", "Amsterdam", "NL", 52.37, 4.90, 443, 78_000_000, 14_000_000),
+            ("Visual Studio Code", "/Applications/Visual Studio Code.app", "com.microsoft.VSCode", "update.code.visualstudio.com", "13.107.42.16", "Dublin", "IE", 53.35, -6.26, 443, 51_500_000, 6_700_000),
+            ("Visual Studio Code", "/Applications/Visual Studio Code.app", "com.microsoft.VSCode", "marketplace.visualstudio.com", "13.107.6.175", "Sydney", "AU", -33.87, 151.21, 443, 9_200_000, 3_100_000),
+            ("claude", "/usr/local/bin/claude", nil, "api.anthropic.com", "160.79.104.10", "San Francisco", "US", 37.77, -122.42, 443, 322_000_000, 18_000_000),
+            ("iTerm", "/Applications/iTerm.app", "com.googlecode.iterm2", "github.com", "140.82.121.4", "Seattle", "US", 47.61, -122.33, 443, 482_000_000, 41_000_000),
+            ("iTerm", "/Applications/iTerm.app", "com.googlecode.iterm2", "registry.npmjs.org", "2606:4700::6810:1b23", "Tokyo", "JP", 35.68, 139.69, 443, 74_000_000, 5_200_000),
+            ("Slack", "/Applications/Slack.app", "com.tinyspeck.slackmacgap", "wss-primary.slack.com", "99.86.90.51", "São Paulo", "BR", -23.55, -46.63, 443, 285_000_000, 26_000_000),
+            ("MacUpdater", "/Applications/MacUpdater.app", "co.corecode.MacUpdater", "", "198.51.100.77", "Toronto", "CA", 43.65, -79.38, 443, 8_300_000, 920_000)
+        ]
+        state.connections = endpoints.enumerated().map { index, e in
+            let (name, path, bundle, host, ip, city, code, lat, lon, port, inB, outB) = e
+            return Connection(pid: Int32(600 + index),
+                              processName: name,
+                              processPath: path,
+                              processBundleId: bundle,
+                              remoteHost: host,
+                              remoteIP: ip,
+                              remotePort: port,
+                              direction: .outgoing,
+                              status: .allowed,
+                              bytesIn: inB,
+                              bytesOut: outB,
+                              countryCode: code,
+                              city: city,
+                              latitude: lat,
+                              longitude: lon,
+                              firstSeen: now.addingTimeInterval(-Double(index) * 90),
+                              lastSeen: now.addingTimeInterval(-Double(index) * 3))
+        }
+
         // Synthetic rules so the demo showcases the populated Rules manager
         state.rules = [
             Rule(processBundleId: "com.spotify.client", processPath: "/Applications/Spotify.app", processName: "Spotify", remoteHost: "*.scdn.co", direction: .outgoing, action: .allow, scope: .domain, priority: 100, profile: "default", notes: "Allow audio streaming", lastUsedAt: now.addingTimeInterval(-120), hitCount: 482),
