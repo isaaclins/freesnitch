@@ -109,11 +109,60 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
             // answer to wait for. Still drop the filter configuration.
-            disableFilter()
+            removeFilterConfiguration { }
             uninstallState = .notInstalled
             return
         }
-        deactivate()
+        // Remove the filter configuration and WAIT for it, then deactivate.
+        //
+        // Both halves of that sentence were wrong before. The configuration was
+        // only disabled, not removed, so network preferences still held a
+        // NEFilterProviderConfiguration pointing at this extension, and macOS
+        // keeps an extension record alive while something still references it,
+        // which is a large part of why uninstalling always ended in "waiting to
+        // uninstall on reboot". And the deactivation request was submitted
+        // without waiting for the asynchronous save, so the two raced.
+        removeFilterConfiguration { [weak self] in
+            guard let self else { return }
+            self.requestKind = .deactivation
+            let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: self.extensionIdentifier,
+                                                                       queue: .main)
+            request.delegate = self
+            OSSystemExtensionManager.shared.submitRequest(request)
+        }
+    }
+
+    /// Removes the content filter configuration entirely, for uninstall.
+    ///
+    /// Distinct from `disableFilter`, which deliberately keeps the
+    /// configuration installed so enforcement can be switched back on without
+    /// re-approving anything. Removal is only correct when the user is taking
+    /// FreeSnitch off the machine.
+    ///
+    /// The completion runs on the main queue in every path, including the
+    /// failure paths: an uninstall that stalls because a preferences call
+    /// errored would be worse than one that continues and reports.
+    private func removeFilterConfiguration(completion: @escaping () -> Void) {
+        let mgr = NEFilterManager.shared()
+        mgr.loadFromPreferences { [weak self] error in
+            guard let self else { completion(); return }
+            if error != nil {
+                self.recordFilterDiagnostic(state: "unknown",
+                                            detail: "Could not read the content filter preferences while removing them.")
+                completion()
+                return
+            }
+            mgr.removeFromPreferences { removeError in
+                if let removeError {
+                    self.recordFilterDiagnostic(state: "unknown",
+                                                detail: "The content filter configuration could not be removed: \(removeError.localizedDescription).")
+                } else {
+                    self.recordFilterDiagnostic(state: "removed",
+                                                detail: "The content filter configuration was removed.")
+                }
+                completion()
+            }
+        }
     }
 
     /// Asks the system whether a record for the extension still exists, so the

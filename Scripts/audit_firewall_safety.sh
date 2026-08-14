@@ -920,6 +920,28 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q 'pfctl -d|rm -f /etc/
 fi
 require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
   "the privileged uninstall no longer flushes the FreeSnitch anchor"
+# Uninstall must REMOVE the content filter configuration, not merely disable
+# it. macOS keeps a system extension record alive while a
+# NEFilterProviderConfiguration still references it, which is why uninstalling
+# always ended in "waiting to uninstall on reboot".
+SYSEXT_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
+require_text "$SYSEXT_MANAGER" "removeFromPreferences" \
+  "the uninstall path does not remove the content filter configuration"
+# Look at the whole function body, and check for the WRONG call rather than
+# only for the right one: a six-line window still matched the early-return
+# branch's call and let a reverted uninstall path pass.
+UNINSTALL_BODY=$(rg -A24 'func deactivateForUninstall' "$SYSEXT_MANAGER")
+if ! rg -q 'removeFilterConfiguration' <<<"$UNINSTALL_BODY"; then
+  fail "uninstall no longer removes the filter configuration before deactivating the extension"
+fi
+if rg -q 'disableFilter\(' <<<"$UNINSTALL_BODY"; then
+  fail "uninstall only disables the filter configuration, so macOS keeps the extension record until a reboot"
+fi
+# Turning enforcement off is NOT an uninstall: that path must keep the
+# configuration installed so it can be switched back on without re-approval.
+if rg -A10 'private func disableFilter' "$SYSEXT_MANAGER" | rg -q 'removeFromPreferences'; then
+  fail "disabling enforcement removes the filter configuration, which would force the user to approve it again"
+fi
 require_text "$APP_STATE" "hasDestination" \
   "the remembered alert rule is not guarded against an empty destination"
 if rg -n "remoteHost: alert\\.connection\\.remoteHost," "$APP_STATE" >/dev/null; then
