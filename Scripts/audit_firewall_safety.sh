@@ -864,6 +864,17 @@ require_text "$APP_STATE" "snapshotRequestSequence" \
   "the GUI has no request sequencing for authoritative snapshot replies"
 require_text "$APP_STATE" "filterSnapshotPersistenceHandler?(snapshot)" \
   "the GUI does not persist the exact helper snapshot it accepted"
+# A remembered alert decision must carry its destination INTO the rule. Both
+# destination tests in PreparedRule.matches are `if let`, so a rule with an
+# empty host and no address loses both and silently becomes "this process,
+# anywhere", turning an allow into far more than the user approved (#64).
+require_text "$APP_STATE" "remoteIP: ruleIP" \
+  "the remembered alert rule does not carry the remote address, so an IP-only decision would match every destination"
+require_text "$APP_STATE" "hasDestination" \
+  "the remembered alert rule is not guarded against an empty destination"
+if rg -n "remoteHost: alert\\.connection\\.remoteHost," "$APP_STATE" >/dev/null; then
+  fail "the remembered alert rule passes the raw connection host, which is empty for an address-only destination"
+fi
 if rg -n "SharedRuleBridge\\.Snapshot\\(" "$ROOT/Sources/GUI" >/dev/null; then
   fail "the GUI constructs a sendable SharedRuleBridge.Snapshot instead of using the helper"
 fi

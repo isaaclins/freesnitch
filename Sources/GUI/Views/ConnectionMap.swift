@@ -136,10 +136,24 @@ struct ConnectionMapPane: View {
             Text(legendText)
                 .font(.system(size: 9))
                 .foregroundColor(PSTheme.textSecondary)
+            // CC BY 4.0 requires the credit to be visible where the data is
+            // shown, so it lives on the map itself rather than in an about box
+            // nobody opens.
+            Text("·")
+                .font(.system(size: 9))
+                .foregroundColor(PSTheme.textSecondary.opacity(0.6))
+            Link(IPGeoCache.attribution.text, destination: attributionURL)
+                .font(.system(size: 9))
+                .foregroundColor(PSTheme.textSecondary)
+                .help("\(IPGeoCache.attribution.text), licensed \(IPGeoCache.attribution.licenseName)")
         }
         .padding(.horizontal, 8).padding(.vertical, 3)
         .background(.black.opacity(0.4), in: Capsule())
         .padding(8)
+    }
+
+    private var attributionURL: URL {
+        URL(string: IPGeoCache.attribution.linkURL) ?? URL(string: "https://db-ip.com/")!
     }
 
     private var legendText: String {

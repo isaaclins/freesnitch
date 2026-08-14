@@ -465,16 +465,26 @@ final class AppState: ObservableObject {
         // never stop the next prompt. Answer the flow, remember nothing.
         let host = alert.connection.remoteHost.isEmpty ? alert.connection.remoteIP : alert.connection.remoteHost
         let isUnspecified = host.isEmpty || host == "0.0.0.0" || host == "::"
-        if remember && !isUnspecified {
+        // The destination has to travel INTO the rule, not merely into this
+        // check. A rule carrying an empty host and no address loses both
+        // destination tests in the matcher, because each is an `if let`, and
+        // silently becomes "this process, anywhere": an allow would grant far
+        // more than the user approved. See issue #64.
+        let usesAddress = alert.connection.remoteHost.isEmpty
+        let ruleHost: String? = usesAddress ? nil : alert.connection.remoteHost
+        let ruleIP: String? = usesAddress ? host : nil
+        let hasDestination = !(ruleHost ?? ruleIP ?? "").isEmpty
+        if remember && !isUnspecified && hasDestination {
             let rule = Rule(
                 processBundleId: alert.connection.processBundleId,
                 processPath: alert.connection.processPath,
                 processName: alert.connection.processName,
-                remoteHost: alert.connection.remoteHost,
+                remoteHost: ruleHost,
+                remoteIP: ruleIP,
                 remotePort: alert.connection.remotePort,
                 direction: alert.connection.direction,
                 action: allow ? .allow : .deny,
-                scope: alert.connection.remoteHost.isEmpty ? .ip : .domain,
+                scope: usesAddress ? .ip : .domain,
                 priority: 100,
                 profile: activeProfile,
                 groupName: nil,
