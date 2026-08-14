@@ -24,4 +24,9 @@ do {
 }
 service.start()
 
+// #71: if FreeSnitch.app is dragged to the Trash, this daemon must stop holding
+// a pf anchor and a DNS proxy for an app that no longer exists. It stands down;
+// it never unregisters itself and never deletes the policy database.
+HelperBundleWatchdog.shared.startWatching(service: service)
+
 dispatchMain()

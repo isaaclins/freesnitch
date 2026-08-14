@@ -1033,4 +1033,51 @@ if grep -Eq 'URLSession|CFHost|GetAddrInfo|gethostby' "$INSIGHTS_STORE"; then
   fail "Insights performs an online or reverse-DNS lookup instead of using local DNS answers"
 fi
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, and bounded offline Insights queries are present.\n'
+# Issue #71: a drag to the Trash leaves this root daemon enforcing for an app
+# that no longer exists, so the helper stands down when its bundle is gone. That
+# check is a loaded gun. An update can make a bundle briefly absent, and #24 is
+# the incident where unregistering an enabled helper destroyed the service. The
+# invariant that matters most is therefore: the bundle-absence path may only
+# stop enforcing, never unregister anything and never delete anything, and it
+# may never conclude a removal from a single unlucky read.
+BUNDLE_WATCHER="$ROOT/Sources/Helper/BundlePresenceWatcher.swift"
+HELPER_MAIN="$ROOT/Sources/Helper/main.swift"
+[[ -f "$BUNDLE_WATCHER" ]] || fail "missing $BUNDLE_WATCHER"
+[[ -f "$HELPER_MAIN" ]] || fail "missing $HELPER_MAIN"
+
+# Comments in that file describe what it must never do, so the forbidden-verb
+# check reads the code with comments stripped.
+bundle_watcher_code="$(sed -e 's,//.*,,' "$BUNDLE_WATCHER")"
+for forbidden in bootout unregister SMAppService launchctl removeItem trashItem 'unlink(' 'Process(' pfctl freesnitch.sqlite; do
+  if grep -Fq -- "$forbidden" <(printf '%s\n' "$bundle_watcher_code"); then
+    fail "the bundle-absence path uses \`$forbidden\`; it may only stand enforcement down"
+  fi
+done
+require_text "$BUNDLE_WATCHER" "service.setEnforcementEnabled(false, reply: completion)" \
+  "the bundle-absence path does not stand down through the enforcement toggle"
+require_text "$HELPER_MAIN" "HelperBundleWatchdog.shared.startWatching(service: service)" \
+  "the helper does not start the bundle watchdog"
+
+# One unlucky read may never be enough, and neither may a burst of reads.
+required_absences="$(sed -n 's/.*requiredConsecutiveAbsences = \([0-9][0-9]*\).*/\1/p' "$BUNDLE_WATCHER" | head -1)"
+absence_interval="$(sed -n 's/.*minimumObservationInterval: TimeInterval = \([0-9][0-9]*\).*/\1/p' "$BUNDLE_WATCHER" | head -1)"
+absence_span="$(sed -n 's/.*minimumAbsenceSpan: TimeInterval = \([0-9][0-9]*\).*/\1/p' "$BUNDLE_WATCHER" | head -1)"
+[[ -n "$required_absences" && -n "$absence_interval" && -n "$absence_span" ]] \
+  || fail "the bundle-absence thresholds are no longer stated as plain constants"
+(( required_absences >= 3 )) \
+  || fail "a stand-down needs only $required_absences absence observations; a single unlucky read must never be enough"
+(( absence_interval >= 60 )) \
+  || fail "absence observations only need to be ${absence_interval}s apart, so a burst of reads counts as evidence"
+(( absence_span >= 300 )) \
+  || fail "the absence only needs to span ${absence_span}s, which an in-place update can produce"
+
+# Anything that is not a proven absence must clear the streak, and the evidence
+# must be logged before the stand-down is acted on.
+require_text "$BUNDLE_WATCHER" "case .inconclusive" \
+  "the bundle-absence path has no inconclusive reading, so an unreadable path counts as a removal"
+absence_evidence_line="$(grep -nF 'AUDIT: the containing app bundle is gone' "$BUNDLE_WATCHER" | head -1 | cut -d: -f1 || true)"
+absence_action_line="$(grep -nF 'action { ok, message in' "$BUNDLE_WATCHER" | head -1 | cut -d: -f1 || true)"
+[[ -n "$absence_evidence_line" && -n "$absence_action_line" && "$absence_evidence_line" -lt "$absence_action_line" ]] \
+  || fail "the bundle-absence stand-down acts before it logs its evidence"
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, and a bundle-absence stand-down that can neither unregister nor delete are present.\n'
