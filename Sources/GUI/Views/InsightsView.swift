@@ -11,6 +11,9 @@ import AppKit
 struct InsightsView: View {
     @EnvironmentObject var state: AppState
     @StateObject private var model = InsightsViewModel()
+    /// Only exists so the destination list has a selection for its context
+    /// menu to key off. Nothing else reads it.
+    @State private var selectedDestinationID: InsightsDestinationSummary.ID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -148,6 +151,7 @@ struct InsightsView: View {
                     List(selection: appSelection) {
                         ForEach(model.apps) { app in
                             appRow(app)
+                                .tag(app.id)
                         }
                         if model.hasMoreApps {
                             Button("Load more apps") { model.loadMoreApps() }
@@ -155,6 +159,15 @@ struct InsightsView: View {
                         }
                     }
                     .listStyle(.inset)
+                    // The selection-aware form is the one that works on a
+                    // List: a plain per-row .contextMenu inside one of these
+                    // never sees the right click, because the NSTableView
+                    // under it takes the event first (#78).
+                    .contextMenu(forSelectionType: InsightsAppSummary.ID.self) { ids in
+                        if let id = ids.first, let app = model.apps.first(where: { $0.id == id }) {
+                            appContextMenu(app)
+                        }
+                    }
                 }
             }
             .frame(width: 280)
@@ -168,9 +181,10 @@ struct InsightsView: View {
                     if model.destinations.isEmpty && !model.isLoading {
                         emptyState("No destinations recorded for this app in this range.")
                     } else {
-                        List {
+                        List(selection: $selectedDestinationID) {
                             ForEach(model.destinations) { destination in
                                 destinationRow(destination, app: app)
+                                    .tag(destination.id)
                             }
                             if model.hasMoreDestinations {
                                 Button("Load more destinations") { model.loadMoreDestinations() }
@@ -178,6 +192,12 @@ struct InsightsView: View {
                             }
                         }
                         .listStyle(.inset)
+                        .contextMenu(forSelectionType: InsightsDestinationSummary.ID.self) { ids in
+                            if let id = ids.first,
+                               let destination = model.destinations.first(where: { $0.id == id }) {
+                                destinationContextMenu(destination, app: app)
+                            }
+                        }
                     }
                 } else {
                     emptyState("Select an app to see what it talked to.")
@@ -197,6 +217,7 @@ struct InsightsView: View {
                 })
     }
 
+    @ViewBuilder
     private func appRow(_ app: InsightsAppSummary) -> some View {
         HStack(spacing: 8) {
             if let icon = AppIcon.resolve(bundleId: app.processBundleId, path: app.processPath, name: app.displayName) {
@@ -241,6 +262,26 @@ struct InsightsView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// The same call the button on the row makes, plus the two things a reader
+    /// wants to take away from this screen (#78).
+    @ViewBuilder
+    private func destinationContextMenu(_ destination: InsightsDestinationSummary,
+                                        app: InsightsAppSummary) -> some View {
+        Button("Propose a Rule") { model.proposeRule(for: destination, app: app) }
+        Divider()
+        CopyMenuItem(title: "Copy Destination", value: destination.displayName)
+        CopyMenuItem(title: "Copy IP Address", value: destination.remoteIP)
+    }
+
+    @ViewBuilder
+    private func appContextMenu(_ app: InsightsAppSummary) -> some View {
+        CopyMenuItem(title: "Copy App Name", value: app.displayName)
+        CopyMenuItem(title: "Copy Bundle ID", value: app.processBundleId)
+        if RowActions.canReveal(path: app.processPath) {
+            Button("Reveal in Finder") { RowActions.revealInFinder(path: app.processPath) }
+        }
     }
 
     // MARK: Unresolved addresses

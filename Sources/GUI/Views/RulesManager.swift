@@ -162,6 +162,9 @@ struct RulesManagerView: View {
                 blocklistsHeader
             }
         }
+        .contextMenu(forSelectionType: Category.self) { categories in
+            sidebarContextMenu(for: categories)
+        }
         // Content, not a sidebar. A window gets exactly one translucent band,
         // the window's own sidebar; a second source list inside the content
         // paints a second material and the window ends up as a staircase of
@@ -367,6 +370,26 @@ struct RulesManagerView: View {
         .tag(Category.blocklist(b.id))
     }
 
+    /// The same calls the checkbox and the refresh button make (#78).
+    ///
+    /// This is installed on the list rather than on the row: a per-row
+    /// .contextMenu inside a List never sees the right click, because the
+    /// NSTableView underneath takes the event first.
+    @ViewBuilder
+    private func sidebarContextMenu(for categories: Set<Category>) -> some View {
+        if case .blocklist(let id) = categories.first,
+           let blocklist = state.blocklists.first(where: { $0.id == id }) {
+            Button(blocklist.enabled ? "Disable" : "Enable") {
+                setBlocklist(blocklist, enabled: !blocklist.enabled)
+            }
+            .disabled(!state.helperConnected)
+            Divider()
+            Button("Refresh Now") { state.helper.refreshBlocklists() }
+                .disabled(!state.helperConnected)
+            CopyMenuItem(title: "Copy Name", value: blocklist.name)
+        }
+    }
+
     private var mainPane: some View {
         HeaderedPane {
             toolbar
@@ -470,6 +493,50 @@ struct RulesManagerView: View {
                     .foregroundStyle(rule.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             }
             .width(min: 64, max: 104)
+        }
+        // Selection-aware, so right clicking a row that is not selected
+        // selects it first and the menu applies to what the user just pointed
+        // at, exactly like the Finder (#78).
+        .contextMenu(forSelectionType: Rule.ID.self) { ids in
+            rulesContextMenu(for: ids)
+        }
+    }
+
+    /// Every item here calls the same function the corresponding button does.
+    ///
+    /// There is no Edit item because this app has no rule editor to open: the
+    /// sheet only creates rules. Adding one from a context menu would be a new
+    /// feature hiding in a menu, not the menu offering what the UI already has.
+    @ViewBuilder
+    private func rulesContextMenu(for ids: Set<Rule.ID>) -> some View {
+        let rules = state.rules.filter { ids.contains($0.id) }
+        if rules.isEmpty {
+            Button("New Rule…") { showingRuleEditor = true }
+                .disabled(!state.helperConnected)
+        } else {
+            if rules.contains(where: { !$0.enabled }) {
+                Button("Enable") {
+                    for rule in rules where !rule.enabled { toggleRule(rule) }
+                }
+            }
+            if rules.contains(where: { $0.enabled }) {
+                Button("Disable") {
+                    for rule in rules where rule.enabled { toggleRule(rule) }
+                }
+            }
+            Divider()
+            if rules.count == 1, let rule = rules.first {
+                CopyMenuItem(title: "Copy Destination", value: rule.displayDestination)
+                CopyMenuItem(title: "Copy Process", value: rule.displayProcessName)
+                if RowActions.canReveal(path: rule.processPath) {
+                    Button("Reveal in Finder") { RowActions.revealInFinder(path: rule.processPath) }
+                }
+                Divider()
+            }
+            Button(rules.count == 1 ? "Delete Rule" : "Delete \(rules.count) Rules", role: .destructive) {
+                pendingRemovalIDs = Set(rules.map(\.id))
+                showingRemoveConfirmation = true
+            }
         }
     }
 

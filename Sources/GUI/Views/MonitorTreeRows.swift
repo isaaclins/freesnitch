@@ -35,12 +35,15 @@ struct MonitorTreeList: View {
                         // to know, or its blue bar vanishes the same way the
                         // app row's did (#76).
                         MonitorDestinationRow(destination: destination,
-                                              selected: selectedAppID == app.id,
+                                              selected: selectedAppID == app.id || selectedAppID == destination.id,
                                               peakTraffic: app.peakDestinationTraffic,
                                               decision: controller.decision(for: MonitorRuleTarget.destination(destination, in: app)),
                                               pending: controller.isPending(MonitorRuleTarget.destination(destination, in: app)),
                                               onDecide: { action in decide(action, destination: destination, app: app) },
                                               onClear: { clear(destination: destination, app: app) })
+                        // Tagged so the row can be selected and so the list's
+                        // context menu can tell which row was clicked.
+                        .tag(destination.id)
                     }
                     if let note = boundsNote(for: app) {
                         Text(note)
@@ -69,6 +72,39 @@ struct MonitorTreeList: View {
         // Content, not a sidebar: the window's own sidebar is the only place
         // that carries a translucent material.
         .listStyle(.inset)
+        // A per-row .contextMenu inside a List never sees the right click here:
+        // the NSTableView underneath takes the event first. The selection-aware
+        // form is installed on the table itself, so it works, and it selects
+        // the row that was clicked before opening (#78).
+        .contextMenu(forSelectionType: String.self) { ids in
+            rowContextMenu(for: ids, in: visible)
+        }
+    }
+
+    /// One menu for both kinds of row: the id identifies either an app or one
+    /// of its destinations.
+    @ViewBuilder
+    private func rowContextMenu(for ids: Set<String>, in visible: MonitorTreeFilter.Result) -> some View {
+        if let id = ids.first {
+            if let app = visible.apps.first(where: { $0.id == id }) {
+                decisionMenu(target: MonitorRuleTarget.app(app),
+                             onDecide: { decide($0, app: app) },
+                             onClear: { clear(app: app) })
+                Divider()
+                CopyMenuItem(title: "Copy App Name", value: app.name)
+                CopyMenuItem(title: "Copy Path", value: app.path)
+                if RowActions.canReveal(path: app.path) {
+                    Button("Reveal in Finder") { RowActions.revealInFinder(path: app.path) }
+                }
+            } else if let (app, destination) = visible.destinationRow(withID: id) {
+                decisionMenu(target: MonitorRuleTarget.destination(destination, in: app),
+                             onDecide: { decide($0, destination: destination, app: app) },
+                             onClear: { clear(destination: destination, app: app) })
+                Divider()
+                CopyMenuItem(title: "Copy Host", value: destination.remoteHost)
+                CopyMenuItem(title: "Copy IP Address", value: destination.remoteIP)
+            }
+        }
     }
 
     /// Expansion still belongs to the controller; the disclosure triangle just
@@ -97,6 +133,27 @@ struct MonitorTreeList: View {
         }
         guard !parts.isEmpty else { return nil }
         return parts.joined(separator: ", ") + "."
+    }
+
+    /// Allow, Deny and Remove for one row, driving exactly the closures the
+    /// row's own two controls drive (#78). A row that cannot be addressed by a
+    /// rule gets no decision items rather than items that quietly do nothing.
+    @ViewBuilder
+    private func decisionMenu(target: MonitorRuleTarget?,
+                              onDecide: @escaping (RuleAction) -> Void,
+                              onClear: @escaping () -> Void) -> some View {
+        if let target {
+            let decision = controller.decision(for: target)
+            let pending = controller.isPending(target)
+            Button("Allow") { onDecide(.allow) }
+                .disabled(pending || decision?.action == .allow)
+            Button("Deny") { onDecide(.deny) }
+                .disabled(pending || decision?.action == .deny)
+            if decision != nil {
+                Button("Remove This Rule", role: .destructive) { onClear() }
+                    .disabled(pending)
+            }
+        }
     }
 
     private func decide(_ action: RuleAction, app: MonitorAppNode) {
@@ -360,6 +417,17 @@ enum MonitorTreeFilter {
     struct Result {
         let apps: [MonitorAppNode]
         let hiddenAppCount: Int
+
+        /// Finds a destination row and the app it belongs to. Row ids are
+        /// unique across the tree, so one id identifies exactly one row.
+        func destinationRow(withID id: String) -> (MonitorAppNode, MonitorDestinationNode)? {
+            for app in apps {
+                if let destination = app.destinations.first(where: { $0.id == id }) {
+                    return (app, destination)
+                }
+            }
+            return nil
+        }
     }
 
     static func apply(query: String, to snapshot: MonitorTreeSnapshot) -> Result {
