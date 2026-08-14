@@ -80,10 +80,19 @@ final class MainWindowModel: ObservableObject {
     /// cannot reach into SwiftUI `@State`.
     @Published var isSidebarVisible = true
     @Published var searchText = ""
+    /// Set by a page that carries a search field of its own, so the window
+    /// does not show a second one in the toolbar searching the same thing
+    /// (#96). The blocklist entries pane is the only such page today.
+    @Published var contentOwnsSearch = false
+    /// Bumped by Find. Whichever search field is on screen takes the caret.
+    @Published var searchFocusToken = 0
 
     init(page: MainPage) {
         self.page = page
     }
+
+    /// Whether the window's toolbar is the one carrying search right now.
+    var toolbarOwnsSearch: Bool { page.supportsSearch && !contentOwnsSearch }
 }
 
 /// The single window: a sidebar of destinations plus the selected page.
@@ -163,7 +172,7 @@ struct MainWindowView: View {
         case .monitor:
             NetworkMonitorView(systemExtension: systemExtension, searchText: $model.searchText)
         case .rules:
-            RulesManagerView(systemExtension: systemExtension, searchText: $model.searchText)
+            RulesManagerView(systemExtension: systemExtension, window: model)
         case .insights:
             InsightsView()
         case .profiles:

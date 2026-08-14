@@ -64,6 +64,14 @@ final class WindowManager {
     /// and focus it. A second window is never created.
     func showPage(_ page: MainPage) { show(page) }
 
+    /// Find. Puts the caret in whichever search field the current page shows,
+    /// the toolbar's or the one inside the pane (#96).
+    func focusSearch() {
+        if mainWindow == nil { show(mainModel.page) }
+        mainWindow?.makeKeyAndOrderFront(nil)
+        mainModel.searchFocusToken += 1
+    }
+
     private func show(_ page: MainPage) {
         mainModel.page = page
         let window = mainWindow ?? makeMainWindow()

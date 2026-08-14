@@ -297,6 +297,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 await self.blocklists.refreshIPBlocklists()
             }
         }
+        // A hand edit is already stored. What it needs is the matching set
+        // rebuilt from what is on disk, not another round of downloads (#97).
+        profiles.onBlocklistEntriesChanged = { [weak self] in
+            self?.blocklists.rebuildFromStore()
+        }
         blocklists.onIPBlocklistUpdate = { [weak self] set, _ in
             guard let self else { return }
             do {

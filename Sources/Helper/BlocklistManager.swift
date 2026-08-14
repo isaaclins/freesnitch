@@ -39,11 +39,16 @@ final class BlocklistManager: @unchecked Sendable {
             for list in lists {
                 group.addTask { (list, await self.fetch(list)) }
             }
-            for await (list, set) in group {
+            for await (list, downloaded) in group {
                 // A list that failed to download must not be recorded as a
                 // successful empty one, or Settings reports "0 entries,
                 // updated just now" for a source that is simply gone.
-                guard let set else { continue }
+                guard var set = downloaded else { continue }
+                // Hand edits are reapplied after every download, which is the
+                // whole reason they are stored apart from the entries (#97).
+                let edits = store.blocklistEdits(id: list.id)
+                set.formUnion(edits.added)
+                set.subtract(edits.removed)
                 merged.formUnion(set)
                 var updated = list
                 updated.entryCount = set.count
@@ -65,9 +70,34 @@ final class BlocklistManager: @unchecked Sendable {
         onUpdate?(merged.count)
     }
 
+    /// Rebuilds the matching set from what is already stored, without touching
+    /// the network. A hand edit changes what should be blocked immediately;
+    /// waiting for the next scheduled download would leave a name the user just
+    /// removed blocked for hours (#97).
+    func rebuildFromStore() {
+        var merged: Set<String> = []
+        for list in store.allBlocklists() where list.enabled {
+            var offset = 0
+            while true {
+                let page = store.blocklistEntries(blocklistID: list.id,
+                                                  search: "",
+                                                  offset: offset,
+                                                  limit: BlocklistEntryQuery.maximumLimit)
+                merged.formUnion(page.entries)
+                offset += page.entries.count
+                if page.entries.isEmpty || offset >= page.total { break }
+            }
+        }
+        queue.sync { self.domains = merged }
+        onUpdate?(merged.count)
+    }
+
     /// `nil` means the download failed; an empty set means the source really
     /// carried no entries.
     private func fetch(_ list: BlocklistInfo) async -> Set<String>? {
+        // A hand-written list has no source. It has not failed to download;
+        // there is nothing to download, and its entries are its edits (#97).
+        if list.url.trimmingCharacters(in: .whitespaces).isEmpty { return [] }
         guard let url = URL(string: list.url) else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue("FreeSnitch/0.1", forHTTPHeaderField: "User-Agent")

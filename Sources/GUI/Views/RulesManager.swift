@@ -6,9 +6,9 @@ struct RulesManagerView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
     @State private var selectedCategory: Category = .all
-    /// The query comes from the window's toolbar search field, so this page
-    /// does not draw one of its own.
-    @Binding var searchText: String
+    /// The window's shared state: the search query, whichever field owns it,
+    /// and the Find command's focus token.
+    @ObservedObject var window: MainWindowModel
     @State private var selectedRuleIDs: Set<UUID> = []
     @State private var sortOrder: [KeyPathComparator<Rule>] = [KeyPathComparator(\Rule.displayProcessName)]
     @State private var sidebarAcceptsSelection = false
@@ -26,6 +26,9 @@ struct RulesManagerView: View {
     @State private var showingRemoveConfirmation = false
     @State private var errorMessage: String?
     @State private var showingError = false
+    /// The list being edited, if any (#97).
+    @State private var editingBlocklist: BlocklistInfo?
+    @State private var showingAddBlocklist = false
     /// Which pane owns the keyboard. Tab moves it, and the focused list shows
     /// the focused selection colour instead of the unfocused grey (#85).
     @FocusState private var focusedPane: RulesPane?
@@ -36,6 +39,20 @@ struct RulesManagerView: View {
     /// instead of accumulating every delta on top of itself.
     @State private var inspectorDragStart: Double?
     @ObservedObject private var profileClient = ProfileClient.shared
+
+    /// The query. It comes from the window's toolbar on the rules table, and
+    /// from this page's own field while a blocklist is open (#96).
+    private var searchText: String { window.searchText }
+
+    private var searchBinding: Binding<String> {
+        Binding(get: { window.searchText }, set: { window.searchText = $0 })
+    }
+
+    /// The blocklist currently open in the content pane, if any.
+    private var openBlocklist: BlocklistInfo? {
+        guard case .blocklist(let id) = selectedCategory else { return nil }
+        return state.blocklists.first(where: { $0.id == id })
+    }
 
     enum Category: Hashable {
         case all
@@ -78,8 +95,27 @@ struct RulesManagerView: View {
         }
         // Escape clears the selection, which also dismisses the inspector.
         .onExitCommand { clearSelection() }
+        // The window's toolbar drops its search field while a blocklist is
+        // open, because the pane has its own (#96). Clearing the query on the
+        // way in and out keeps a rules search from silently filtering a
+        // blocklist, and the reverse.
+        .onAppear { window.contentOwnsSearch = openBlocklist != nil }
+        .onDisappear { window.contentOwnsSearch = false }
+        .onChange(of: selectedCategory) { _ in
+            let ownsSearch = openBlocklist != nil
+            if ownsSearch != window.contentOwnsSearch {
+                window.searchText = ""
+                window.contentOwnsSearch = ownsSearch
+            }
+        }
         .sheet(isPresented: $showingRuleEditor) {
             RuleEditorView(activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
+        }
+        .sheet(item: $editingBlocklist) { blocklist in
+            BlocklistEditorView(blocklist: blocklist)
+        }
+        .sheet(isPresented: $showingAddBlocklist) {
+            BlocklistEditorView(blocklist: nil)
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
             importRules(from: result)
@@ -130,7 +166,11 @@ struct RulesManagerView: View {
         HeaderedPane {
             PaneHeader("Rules", count: state.rules.count)
         } content: {
-            sidebarList
+            VStack(spacing: 0) {
+                sidebarList
+                Divider()
+                addBlocklistFooter
+            }
         }
     }
 
@@ -268,6 +308,31 @@ struct RulesManagerView: View {
     /// with Space or Return; hovering also opens it, but only after a delay, so
     /// that passing the pointer over the header on the way somewhere else does
     /// not throw a popover in the reader's face (#84).
+    /// Adding a list of your own, under the lists (#97).
+    ///
+    /// It is a footer beneath the list rather than a last row inside it: a
+    /// button placed in a `List` row never receives the click here, because the
+    /// `NSTableView` underneath takes the event first, which is the same reason
+    /// the row context menus had to move to the list itself.
+    private var addBlocklistFooter: some View {
+        HStack(spacing: 4) {
+            Button {
+                showingAddBlocklist = true
+            } label: {
+                Label("Add custom blocklist", systemImage: "plus")
+                    .font(.callout)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!profileClient.isAvailable)
+            .help(profileClient.isAvailable
+                  ? "Add a list of your own, from a URL or by typing its entries."
+                  : "Approve the FreeSnitch helper to add a blocklist.")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
     private var blocklistHelpButton: some View {
         Button {
             cancelBlocklistHelpHover()
@@ -398,12 +463,41 @@ struct RulesManagerView: View {
         }
     }
 
-    /// The section header for the rules list: title, count, and the actions
-    /// that apply to it.
+    /// The section header for the content pane: title, count, and the actions
+    /// that apply to what is in it.
     ///
-    /// Search is not here. It is an `NSSearchToolbarItem` in the window's real
-    /// toolbar, like Finder's.
+    /// For rules, search is not here: it is an `NSSearchToolbarItem` in the
+    /// window's real toolbar, like Finder's. A blocklist is a different kind of
+    /// content with a different scope, so it carries its own field beside its
+    /// own name, and the toolbar's field steps aside while it does (#96).
+    @ViewBuilder
     private var toolbar: some View {
+        if let blocklist = openBlocklist {
+            blocklistHeader(blocklist)
+        } else {
+            rulesHeader
+        }
+    }
+
+    private func blocklistHeader(_ blocklist: BlocklistInfo) -> some View {
+        PaneHeader(blocklist.name, count: paneCount) {
+            PaneSearchField(text: searchBinding,
+                            placeholder: "Search \(blocklist.name)",
+                            focusToken: window.searchFocusToken)
+                .frame(width: 220, height: 22)
+                .accessibilityLabel("Search this blocklist")
+            Button {
+                editingBlocklist = blocklist
+            } label: {
+                Image(systemName: "square.and.pencil")
+            }
+            .buttonStyle(.borderless)
+            .help("Edit this blocklist")
+            .accessibilityLabel("Edit this blocklist")
+        }
+    }
+
+    private var rulesHeader: some View {
         PaneHeader(categoryTitle, count: paneCount) {
             Button(action: { showingImporter = true }) {
                 Image(systemName: "tray.and.arrow.down.fill")
@@ -439,7 +533,10 @@ struct RulesManagerView: View {
            let blocklist = state.blocklists.first(where: { $0.id == id }) {
             BlocklistEntriesView(blocklist: blocklist,
                                  searchText: searchText,
-                                 onAllow: { domain in allowDespiteBlocklist(domain, from: blocklist) })
+                                 onAllow: { domain in allowDespiteBlocklist(domain, from: blocklist) },
+                                 onRemoveEntry: { domain in
+                                     profileClient.removeBlocklistEntries(blocklist.id, domains: [domain])
+                                 })
         } else {
             VStack(spacing: 0) {
                 if filteredRules.isEmpty {

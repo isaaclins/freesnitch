@@ -57,6 +57,11 @@ final class ProfileClient: ObservableObject {
     }
 
     private var demoMode = false
+    /// Demo only: where blocklist changes go so the rest of the app sees them.
+    /// The helper normally publishes blocklists to `AppState`; in demo mode
+    /// there is no helper, and without this an added list existed in the
+    /// Profiles snapshot and nowhere else (#97).
+    var demoBlocklistSink: (([BlocklistInfo]) -> Void)?
 
     /// Applies a command to the seeded snapshot. Demo only: it touches nothing
     /// outside this object and never reaches the helper, pf, or the network.
@@ -102,6 +107,20 @@ final class ProfileClient: ObservableObject {
             }
         case .addCustomBlocklist(let name, let url, _):
             snapshot.blocklists.append(BlocklistInfo(name: name, url: url, enabled: true, lastUpdated: Date(), entryCount: 0))
+        case .addLocalBlocklist(let name, let domains, _):
+            snapshot.blocklists.append(BlocklistInfo(name: name, url: "", enabled: true,
+                                                     lastUpdated: Date(), entryCount: domains.count))
+        case .renameBlocklist(let id, let name):
+            guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return }
+            snapshot.blocklists[index].name = name
+        case .addBlocklistEntries(let id, let domains):
+            guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return }
+            snapshot.blocklists[index].entryCount += domains.count
+        case .removeBlocklistEntries(let id, let domains):
+            guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return }
+            snapshot.blocklists[index].entryCount = max(0, snapshot.blocklists[index].entryCount - domains.count)
+        case .resetBlocklistEntries:
+            return
         case .updateBlocklistURL(let id, let url):
             guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return }
             snapshot.blocklists[index].url = url
@@ -115,6 +134,7 @@ final class ProfileClient: ObservableObject {
             snapshot.profiles[index].isActive = snapshot.profiles[index].name == snapshot.activeProfile
         }
         self.snapshot = snapshot
+        demoBlocklistSink?(snapshot.blocklists)
     }
 
     var isAvailable: Bool { (transport != nil && helperReachable) || demoMode }
@@ -172,6 +192,31 @@ final class ProfileClient: ObservableObject {
 
     func addCustomBlocklist(name: String, url: String, profileName: String?) {
         send(.addCustomBlocklist(name: name, url: url, profileName: profileName))
+    }
+
+    /// A list with no source, whose entries the user typed (#97).
+    func addLocalBlocklist(name: String, domains: [String], profileName: String?) {
+        send(.addLocalBlocklist(name: name, domains: domains, profileName: profileName))
+    }
+
+    func renameBlocklist(_ id: UUID, name: String) {
+        send(.renameBlocklist(blocklistID: id, name: name))
+    }
+
+    func updateBlocklistURL(_ id: UUID, url: String) {
+        send(.updateBlocklistURL(blocklistID: id, url: url))
+    }
+
+    func addBlocklistEntries(_ id: UUID, domains: [String]) {
+        send(.addBlocklistEntries(blocklistID: id, domains: domains))
+    }
+
+    func removeBlocklistEntries(_ id: UUID, domains: [String]) {
+        send(.removeBlocklistEntries(blocklistID: id, domains: domains))
+    }
+
+    func resetBlocklistEntries(_ id: UUID) {
+        send(.resetBlocklistEntries(blocklistID: id))
     }
 
     func removeBlocklist(_ id: UUID) {

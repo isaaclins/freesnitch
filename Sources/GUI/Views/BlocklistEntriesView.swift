@@ -19,6 +19,9 @@ struct BlocklistEntriesView: View {
     /// Creating the override rule goes through the page's own rule path, so
     /// this view never talks to the helper about rules itself.
     let onAllow: (String) -> Void
+    /// Taking a name off the list itself, which is a different thing from
+    /// allowing it despite the list: this one changes the list (#97).
+    var onRemoveEntry: ((String) -> Void)?
 
     @State private var page: BlocklistEntryPage?
     @State private var offset = 0
@@ -39,7 +42,11 @@ struct BlocklistEntriesView: View {
         }
         .onAppear { load(resettingOffset: true) }
         .onChange(of: blocklist.id) { _ in load(resettingOffset: true) }
-        .onChange(of: searchText) { _ in load(resettingOffset: true) }
+        // The new value is passed in rather than read back off `self`: the
+        // action closure belongs to the body that ran before the change, so
+        // reading the property here queried one keystroke behind what the
+        // field showed (#96).
+        .onChange(of: searchText) { newValue in load(resettingOffset: true, query: newValue) }
     }
 
     @ViewBuilder
@@ -79,6 +86,10 @@ struct BlocklistEntriesView: View {
                     Divider()
                     Button("Allow \(entry) Anyway") { onAllow(entry) }
                         .disabled(!state.helperConnected)
+                    if let onRemoveEntry {
+                        Button("Remove from This List", role: .destructive) { onRemoveEntry(entry) }
+                            .disabled(!ProfileClient.shared.isAvailable)
+                    }
                 }
             }
         }
@@ -151,13 +162,14 @@ struct BlocklistEntriesView: View {
         return "\(first) to \(last) of \(page.total) \(scope)"
     }
 
-    private func load(resettingOffset: Bool) {
+    private func load(resettingOffset: Bool, query: String? = nil) {
+        let search = query ?? searchText
         if resettingOffset { offset = 0 }
         let token = UUID()
         requestToken = token
         isLoading = true
         if let demo = BlocklistEntriesDemo.page(for: blocklist,
-                                                search: searchText,
+                                                search: search,
                                                 offset: offset,
                                                 limit: Self.pageSize) {
             isLoading = false
@@ -165,11 +177,11 @@ struct BlocklistEntriesView: View {
             page = demo
             return
         }
-        let query = BlocklistEntryQuery(blocklistID: blocklist.id,
-                                        search: searchText,
+        let request = BlocklistEntryQuery(blocklistID: blocklist.id,
+                                        search: search,
                                         offset: offset,
                                         limit: Self.pageSize)
-        state.helper.queryBlocklistEntries(query) { result, error in
+        state.helper.queryBlocklistEntries(request) { result, error in
             guard requestToken == token else { return }
             isLoading = false
             if let error {

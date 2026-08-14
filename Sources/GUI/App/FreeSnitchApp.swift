@@ -40,6 +40,13 @@ struct FreeSnitchApp: App {
                     .keyboardShortcut(pageShortcut(index), modifiers: .command)
                 }
             }
+            // Command-F, where every Mac app keeps it. It focuses the search
+            // field the current page shows rather than opening a find bar of
+            // its own (#96).
+            CommandGroup(after: .textEditing) {
+                Button("Find") { delegate.windowManager.focusSearch() }
+                    .keyboardShortcut("f", modifiers: .command)
+            }
         }
     }
 }
@@ -346,6 +353,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentGatewayMAC: "a4:2b:8c:11:04:9f",
             notice: nil,
             canUndo: false)
+        ProfileClient.shared.demoBlocklistSink = { [weak state] lists in
+            state?.blocklists = lists
+        }
         ProfileClient.shared.adoptDemoSnapshot(snapshot)
     }
 

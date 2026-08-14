@@ -65,6 +65,23 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
             .receive(on: RunLoop.main)
             .sink { [weak self] page in self?.apply(page) }
             .store(in: &cancellables)
+        // A page that carries its own search field takes the toolbar's away,
+        // so the window never shows two fields searching different things
+        // (#96).
+        model.$contentOwnsSearch
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.apply(self.model.page)
+            }
+            .store(in: &cancellables)
+        // Find. The toolbar answers only while it is the one holding the
+        // field; otherwise the pane's own field takes the caret.
+        model.$searchFocusToken
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.focusSearchField() }
+            .store(in: &cancellables)
         // The title has to move with the sidebar, or hiding the sidebar leaves
         // it hanging in the middle of the content.
         model.$isSidebarVisible
@@ -87,18 +104,23 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
             model.searchText = ""
         }
         let index = toolbar.items.firstIndex { $0.itemIdentifier == Self.searchItemID }
-        if page.supportsSearch, index == nil {
+        if model.toolbarOwnsSearch, index == nil {
             toolbar.insertItem(withItemIdentifier: Self.searchItemID, at: toolbar.items.count)
-        } else if !page.supportsSearch, let index {
+        } else if !model.toolbarOwnsSearch, let index {
             toolbar.removeItem(at: index)
         }
+    }
+
+    private func focusSearchField() {
+        guard model.toolbarOwnsSearch, let field = searchField else { return }
+        field.window?.makeFirstResponder(field)
     }
 
     // MARK: NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         var identifiers: [NSToolbarItem.Identifier] = [Self.sidebarItemID, Self.titleItemID, .flexibleSpace]
-        if model.page.supportsSearch { identifiers.append(Self.searchItemID) }
+        if model.toolbarOwnsSearch { identifiers.append(Self.searchItemID) }
         return identifiers
     }
 

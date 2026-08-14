@@ -62,6 +62,8 @@ public final class RuleStore: @unchecked Sendable {
         case blocklistAlreadyExists(String)
         case invalidBlocklistName
         case invalidBlocklistURL(String)
+        case noValidBlocklistEntries
+        case tooManyBlocklistEntries(Int)
 
         public var errorDescription: String? {
             switch self {
@@ -73,6 +75,8 @@ public final class RuleStore: @unchecked Sendable {
             case .blocklistAlreadyExists(let name): return "Blocklist `\(name)` already exists."
             case .invalidBlocklistName: return "The blocklist name cannot be empty."
             case .invalidBlocklistURL(let reason): return "Invalid blocklist URL: \(reason)."
+            case .noValidBlocklistEntries: return "None of those lines is a domain name."
+            case .tooManyBlocklistEntries(let limit): return "A hand-edited list holds at most \(limit) entries."
             }
         }
     }
@@ -970,6 +974,185 @@ public final class RuleStore: @unchecked Sendable {
                 sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
             }
             current.url = url
+            return current
+        }
+    }
+
+    // MARK: - Hand edits to a blocklist (#97)
+
+    /// What the user changed about this list, on top of whatever its source
+    /// says. Stored beside the list, so a refresh cannot quietly discard it.
+    public func blocklistEdits(id: UUID) -> BlocklistEdits {
+        guard let raw = getSetting(Self.blocklistEditsKey(id)),
+              let data = raw.data(using: .utf8),
+              let edits = try? JSONDecoder().decode(BlocklistEdits.self, from: data) else {
+            return BlocklistEdits()
+        }
+        return edits
+    }
+
+    /// Adds names to a list. They survive every later refresh of its source.
+    @discardableResult
+    public func addBlocklistEntries(id: UUID, domains: [String]) throws -> BlocklistInfo {
+        let names = BlocklistDomain.normaliseAll(domains)
+        guard !names.isEmpty else { throw StoreError.noValidBlocklistEntries }
+        var edits = blocklistEdits(id: id)
+        let namesSet = Set(names)
+        edits.removed.removeAll { namesSet.contains($0) }
+        var addedSet = Set(edits.added)
+        for name in names where addedSet.insert(name).inserted {
+            edits.added.append(name)
+        }
+        guard edits.added.count <= BlocklistEdits.maximumEntries else {
+            throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
+        }
+        try writeBlocklistEdits(id: id, edits)
+        try insertBlocklistEntries(id: id, domains: names)
+        return try recountBlocklist(id: id)
+    }
+
+    /// Removes names from a list, including one that shipped with the app. The
+    /// name is remembered as removed, so the next refresh does not bring it
+    /// back (#97).
+    @discardableResult
+    public func removeBlocklistEntries(id: UUID, domains: [String]) throws -> BlocklistInfo {
+        let names = BlocklistDomain.normaliseAll(domains)
+        guard !names.isEmpty else { throw StoreError.noValidBlocklistEntries }
+        var edits = blocklistEdits(id: id)
+        let namesSet = Set(names)
+        edits.added.removeAll { namesSet.contains($0) }
+        var removedSet = Set(edits.removed)
+        for name in names where removedSet.insert(name).inserted {
+            edits.removed.append(name)
+        }
+        guard edits.removed.count <= BlocklistEdits.maximumEntries else {
+            throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
+        }
+        try writeBlocklistEdits(id: id, edits)
+        try deleteBlocklistEntries(id: id, domains: names)
+        return try recountBlocklist(id: id)
+    }
+
+    /// Forgets every hand edit. From the next refresh the list is whatever its
+    /// source says again.
+    public func clearBlocklistEdits(id: UUID) throws {
+        guard blocklist(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
+        try setSetting(Self.blocklistEditsKey(id), "")
+    }
+
+    public func blocklist(id: UUID) -> BlocklistInfo? {
+        queue.sync { blocklistLocked(id: id) }
+    }
+
+    @discardableResult
+    public func renameBlocklist(id: UUID, name: String) throws -> BlocklistInfo {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean.utf8.count <= 256 else { throw StoreError.invalidBlocklistName }
+        return try queue.sync {
+            guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
+            if let existing = blocklistNamedLocked(clean), existing.id != id {
+                throw StoreError.blocklistAlreadyExists(clean)
+            }
+            try executeLocked("UPDATE blocklists SET name=? WHERE id=?;") { stmt in
+                sqlite3_bind_text(stmt, 1, clean, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
+            current.name = clean
+            return current
+        }
+    }
+
+    /// A list with no source: its entries are exactly what the user typed.
+    @discardableResult
+    public func addLocalBlocklist(name: String,
+                                  domains: [String],
+                                  profileName: String? = nil) throws -> BlocklistInfo {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, cleanName.utf8.count <= 256 else { throw StoreError.invalidBlocklistName }
+        let names = BlocklistDomain.normaliseAll(domains)
+        guard !names.isEmpty else { throw StoreError.noValidBlocklistEntries }
+        guard names.count <= BlocklistEdits.maximumEntries else {
+            throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
+        }
+        let blocklist: BlocklistInfo = try queue.sync {
+            if blocklistNamedLocked(cleanName) != nil {
+                throw StoreError.blocklistAlreadyExists(cleanName)
+            }
+            if let profileName, profileLocked(named: profileName) == nil {
+                throw StoreError.profileNotFound(profileName)
+            }
+            // No URL. `BlocklistManager` reads that as nothing to download, and
+            // the entries come from the stored edits alone.
+            let created = BlocklistInfo(name: cleanName, url: "", enabled: true,
+                                        lastUpdated: Date(), entryCount: names.count)
+            try insertBlocklistLocked(created)
+            if let profileName {
+                try executeLocked("INSERT INTO profile_blocklists(profile_name,blocklist_id) VALUES(?,?);") { stmt in
+                    sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, created.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+            }
+            try syncGlobalBlocklistEnabledLocked()
+            return created
+        }
+        try writeBlocklistEdits(id: blocklist.id, BlocklistEdits(added: names))
+        try replaceBlocklistEntries(blocklistID: blocklist.id, domains: names)
+        return try recountBlocklist(id: blocklist.id)
+    }
+
+    private static func blocklistEditsKey(_ id: UUID) -> String {
+        "blocklist_edits_\(id.uuidString)"
+    }
+
+    private func writeBlocklistEdits(id: UUID, _ edits: BlocklistEdits) throws {
+        guard blocklist(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
+        let data = try JSONEncoder().encode(edits)
+        try setSetting(Self.blocklistEditsKey(id), String(decoding: data, as: UTF8.self))
+    }
+
+    private func insertBlocklistEntries(id: UUID, domains: [String]) throws {
+        try queue.sync {
+            for domain in domains {
+                try executeLocked("INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);") { stmt in
+                    sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
+                }
+            }
+        }
+    }
+
+    private func deleteBlocklistEntries(id: UUID, domains: [String]) throws {
+        try queue.sync {
+            for domain in domains {
+                try executeLocked("DELETE FROM blocklist_entries WHERE blocklist_id=? AND domain=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
+                }
+            }
+        }
+    }
+
+    /// The stored count follows the stored entries, so the sidebar and the pane
+    /// header cannot disagree with the list they describe.
+    @discardableResult
+    private func recountBlocklist(id: UUID) throws -> BlocklistInfo {
+        try queue.sync {
+            guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
+            var count = 0
+            var stmt: OpaquePointer?
+            defer { if stmt != nil { sqlite3_finalize(stmt) } }
+            if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM blocklist_entries WHERE blocklist_id=?;", -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                if sqlite3_step(stmt) == SQLITE_ROW { count = Int(sqlite3_column_int(stmt, 0)) }
+            }
+            let now = Date()
+            try executeLocked("UPDATE blocklists SET entry_count=?, last_updated=? WHERE id=?;") { stmt in
+                sqlite3_bind_int(stmt, 1, Int32(count))
+                sqlite3_bind_double(stmt, 2, now.timeIntervalSince1970)
+                sqlite3_bind_text(stmt, 3, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
+            current.entryCount = count
+            current.lastUpdated = now
             return current
         }
     }

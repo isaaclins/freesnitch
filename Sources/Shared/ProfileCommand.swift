@@ -14,6 +14,13 @@ public enum ProfileCommand: Codable, Sendable {
     case addCustomBlocklist(name: String, url: String, profileName: String?)
     case updateBlocklistURL(blocklistID: UUID, url: String)
     case removeBlocklist(blocklistID: UUID)
+    /// A list with no source, whose entries are typed rather than downloaded.
+    case addLocalBlocklist(name: String, domains: [String], profileName: String?)
+    case renameBlocklist(blocklistID: UUID, name: String)
+    /// Hand edits, which survive a refresh of the list's source (#97).
+    case addBlocklistEntries(blocklistID: UUID, domains: [String])
+    case removeBlocklistEntries(blocklistID: UUID, domains: [String])
+    case resetBlocklistEntries(blocklistID: UUID)
     case refreshBlocklists
     case bindCurrentNetwork(profileName: String)
     case unbindNetwork(gatewayMAC: String)
@@ -128,6 +135,11 @@ public final class ProfileCommandService: @unchecked Sendable {
     /// Called after a change that alters which deny lists apply. The helper
     /// wires this to its existing blocklist refresh.
     public var onBlocklistsChanged: (() -> Void)?
+    /// Called after a hand edit to a list's entries. Separate from
+    /// `onBlocklistsChanged` because it must not trigger a download: the stored
+    /// entries are already correct, and what needs rebuilding is the set the
+    /// DNS proxy matches against (#97).
+    public var onBlocklistEntriesChanged: (() -> Void)?
     /// Called after the active policy changed, so the helper can republish the
     /// authoritative snapshot. It affects new flows only; nothing here touches
     /// an established connection.
@@ -186,6 +198,20 @@ public final class ProfileCommandService: @unchecked Sendable {
             onBlocklistsChanged?()
         case .removeBlocklist(let id):
             try store.deleteBlocklist(id: id)
+            onBlocklistsChanged?()
+        case .addLocalBlocklist(let name, let domains, let profileName):
+            _ = try store.addLocalBlocklist(name: name, domains: domains, profileName: profileName)
+            onBlocklistsChanged?()
+        case .renameBlocklist(let id, let name):
+            _ = try store.renameBlocklist(id: id, name: name)
+        case .addBlocklistEntries(let id, let domains):
+            _ = try store.addBlocklistEntries(id: id, domains: domains)
+            onBlocklistEntriesChanged?()
+        case .removeBlocklistEntries(let id, let domains):
+            _ = try store.removeBlocklistEntries(id: id, domains: domains)
+            onBlocklistEntriesChanged?()
+        case .resetBlocklistEntries(let id):
+            try store.clearBlocklistEdits(id: id)
             onBlocklistsChanged?()
         case .refreshBlocklists:
             onBlocklistsChanged?()
