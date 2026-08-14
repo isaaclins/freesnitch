@@ -510,13 +510,34 @@ final class AppState: ObservableObject {
     func recomputeAggregates() async {
         let conns = self.connections
         let usages = self.processUsages
-        var byProc: [String: (Int64, Int64, NSImage?)] = [:]
+        // Helper process usage is the better number when it exists: it is the
+        // process total, not the sum of the connections we happen to be
+        // holding. But it is not always there, and summing nothing produced a
+        // Top Processes list reading 0 B for every row while Top Domains right
+        // below it showed gigabytes from the same connections (#66). So both
+        // are tracked and the connection sum is used only as the fallback.
+        struct ProcAggregate {
+            var usageIn: Int64 = 0
+            var usageOut: Int64 = 0
+            var connectionIn: Int64 = 0
+            var connectionOut: Int64 = 0
+            var hasUsage = false
+            var name = ""
+            var icon: NSImage?
+        }
+        var byProc: [String: ProcAggregate] = [:]
         var byDom: [String: (Int64, Int64)] = [:]
         var byCountry: [String: (String, Int64, Int64)] = [:]
         for c in conns {
             let pkey = c.processBundleId ?? c.processPath
-            let cur = byProc[pkey] ?? (0, 0, nil)
-            byProc[pkey] = (cur.0, cur.1, cur.2 ?? AppIcon.resolve(bundleId: c.processBundleId, path: c.processPath, name: c.processName))
+            var entry = byProc[pkey] ?? ProcAggregate()
+            entry.connectionIn += c.bytesIn
+            entry.connectionOut += c.bytesOut
+            if entry.name.isEmpty { entry.name = c.processName }
+            if entry.icon == nil {
+                entry.icon = AppIcon.resolve(bundleId: c.processBundleId, path: c.processPath, name: c.processName)
+            }
+            byProc[pkey] = entry
             let dom = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
             let cd = byDom[dom] ?? (0, 0)
             byDom[dom] = (cd.0 + c.bytesIn, cd.1 + c.bytesOut)
@@ -531,15 +552,27 @@ final class AppState: ObservableObject {
             } ?? conns.first { $0.processName == usage.processName }
             guard let connection else { continue }
             let pkey = connection.processBundleId ?? connection.processPath
-            let cur = byProc[pkey] ?? (0, 0, nil)
-            byProc[pkey] = (cur.0 + usage.bytesIn,
-                            cur.1 + usage.bytesOut,
-                            cur.2 ?? AppIcon.resolve(bundleId: connection.processBundleId,
-                                                      path: connection.processPath,
-                                                      name: connection.processName))
+            var entry = byProc[pkey] ?? ProcAggregate()
+            entry.usageIn += usage.bytesIn
+            entry.usageOut += usage.bytesOut
+            entry.hasUsage = true
+            if entry.name.isEmpty { entry.name = connection.processName }
+            if entry.icon == nil {
+                entry.icon = AppIcon.resolve(bundleId: connection.processBundleId,
+                                             path: connection.processPath,
+                                             name: connection.processName)
+            }
+            byProc[pkey] = entry
         }
         topProcesses = byProc.map { (k, v) in
-            ProcessStats(id: k, name: (k as NSString).lastPathComponent, bytesIn: v.0, bytesOut: v.1, icon: v.2)
+            // The key is a bundle id when we have one, and a bundle id is not a
+            // name: `lastPathComponent` left rows reading "com.google.Chrome".
+            let displayName = v.name.isEmpty ? (k as NSString).lastPathComponent : v.name
+            return ProcessStats(id: k,
+                                name: displayName,
+                                bytesIn: v.hasUsage ? v.usageIn : v.connectionIn,
+                                bytesOut: v.hasUsage ? v.usageOut : v.connectionOut,
+                                icon: v.icon)
         }.sorted { $0.total > $1.total }.prefix(20).map { $0 }
         topDomains = byDom.map { (k, v) in
             DomainStats(id: k, domain: k, bytesIn: v.0, bytesOut: v.1)
