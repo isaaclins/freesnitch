@@ -404,7 +404,7 @@ struct RulesManagerView: View {
     /// Search is not here. It is an `NSSearchToolbarItem` in the window's real
     /// toolbar, like Finder's.
     private var toolbar: some View {
-        PaneHeader(categoryTitle, count: filteredRules.count) {
+        PaneHeader(categoryTitle, count: paneCount) {
             Button(action: { showingImporter = true }) {
                 Image(systemName: "tray.and.arrow.down.fill")
             }
@@ -413,29 +413,59 @@ struct RulesManagerView: View {
             .help(state.helperConnected
                   ? "Import rules from a FreeSnitch export, or from a legacy plain JSON array. This replaces the current rules."
                   : "Approve the FreeSnitch helper before importing rules.")
+            .accessibilityLabel("Import rules")
             Button(action: { exportRules() }) {
                 Image(systemName: "tray.and.arrow.up.fill")
             }
             .buttonStyle(.borderless)
             .disabled(state.rules.isEmpty)
             .help(state.rules.isEmpty ? "There are no rules to export." : "Export rules as a \(RuleExportDocument.formatIdentifier) document the CLI can import.")
+            .accessibilityLabel("Export rules")
             Button(action: { showingRuleEditor = true }) {
                 Image(systemName: "plus")
             }
             .buttonStyle(.borderless)
             .disabled(!state.helperConnected)
             .help(state.helperConnected ? "Add a rule." : "Approve the FreeSnitch helper before adding rules.")
+            .accessibilityLabel("Add a rule")
         }
     }
 
+    @ViewBuilder
     private var rulesList: some View {
-        VStack(spacing: 0) {
-            if filteredRules.isEmpty {
-                emptyState
-            } else {
-                rulesTable
+        // A blocklist is not a set of rules, so this pane shows what is on it
+        // instead of an empty rules table (#79).
+        if case .blocklist(let id) = selectedCategory,
+           let blocklist = state.blocklists.first(where: { $0.id == id }) {
+            BlocklistEntriesView(blocklist: blocklist,
+                                 searchText: searchText,
+                                 onAllow: { domain in allowDespiteBlocklist(domain, from: blocklist) })
+        } else {
+            VStack(spacing: 0) {
+                if filteredRules.isEmpty {
+                    emptyState
+                } else {
+                    rulesTable
+                }
             }
         }
+    }
+
+    /// The override the report asked for: one name allowed even though a list
+    /// carries it. It is an ordinary allow rule with a high priority, created
+    /// through the same path every other rule is created through, and it says
+    /// in its notes where it came from.
+    private func allowDespiteBlocklist(_ domain: String, from blocklist: BlocklistInfo) {
+        let rule = Rule(processName: nil,
+                        remoteHost: domain,
+                        direction: .outgoing,
+                        action: .allow,
+                        scope: .domain,
+                        priority: 90,
+                        profile: Profile.alwaysName,
+                        notes: "Allowed despite \(blocklist.name).",
+                        enabled: true)
+        addRule(rule)
     }
 
     /// A real `Table`, which brings sortable and resizable column headers,
@@ -456,6 +486,16 @@ struct RulesManagerView: View {
     /// The widths are min/max, never `ideal`: an `ideal` width is taken as the
     /// layout width rather than a hint, so the columns refused to shrink and
     /// scrolled instead.
+    /// What the header counts: rules for a rule category, entries for a
+    /// blocklist, because a blocklist pane holds no rules and reporting 0 there
+    /// reads as an empty list rather than a different kind of content.
+    private var paneCount: Int {
+        if case .blocklist(let id) = selectedCategory {
+            return state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
+        }
+        return filteredRules.count
+    }
+
     private var rulesTable: some View {
         Table(sortedRules, selection: $selectedRuleIDs, sortOrder: $sortOrder) {
             TableColumn("Process", value: \.displayProcessName) { rule in

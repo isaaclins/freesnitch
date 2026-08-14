@@ -180,6 +180,18 @@ public final class RuleStore: @unchecked Sendable {
             PRIMARY KEY(profile_name, blocklist_id)
         );
 
+        -- What a blocklist actually contains, so the question "is this domain
+        -- on a list" can be answered without pulling a list into the GUI (#79).
+        -- Kept on disk rather than in the helper's memory: the bundled lists
+        -- run to hundreds of thousands of names.
+        CREATE TABLE IF NOT EXISTS blocklist_entries (
+            blocklist_id TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            PRIMARY KEY(blocklist_id, domain)
+        );
+        CREATE INDEX IF NOT EXISTS idx_blocklist_entries_domain
+            ON blocklist_entries(domain);
+
         CREATE TABLE IF NOT EXISTS profile_network_bindings (
             id TEXT PRIMARY KEY,
             profile_name TEXT NOT NULL,
@@ -761,6 +773,102 @@ public final class RuleStore: @unchecked Sendable {
                 throw StoreError.profileNotFound(profileName)
             }
             return allBlocklistsLocked(selectedIDs: profileBlocklistIDsLocked(profileName: profileName))
+        }
+    }
+
+    /// Replaces everything recorded for one list, in a single transaction, so
+    /// a refresh that fails part way through cannot leave half a list behind.
+    public func replaceBlocklistEntries(blocklistID: UUID, domains: [String]) throws {
+        try queue.sync {
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                try executeLocked("DELETE FROM blocklist_entries WHERE blocklist_id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, blocklistID.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                var stmt: OpaquePointer?
+                defer { if stmt != nil { sqlite3_finalize(stmt) } }
+                let sql = "INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);"
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                    throw NSError(domain: "RuleStore", code: 3,
+                                  userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+                }
+                let id = blocklistID.uuidString
+                for domain in domains {
+                    sqlite3_reset(stmt)
+                    sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
+                    let rc = sqlite3_step(stmt)
+                    if rc != SQLITE_DONE && rc != SQLITE_ROW {
+                        throw NSError(domain: "RuleStore", code: 4,
+                                      userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+                    }
+                }
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    /// One bounded page of a list, optionally filtered. The caller's limit is
+    /// clamped here as well as at the transport, because this is the layer that
+    /// knows the query runs against hundreds of thousands of rows.
+    public func blocklistEntries(blocklistID: UUID,
+                                 search: String,
+                                 offset: Int,
+                                 limit: Int) -> (entries: [String], total: Int) {
+        let bounded = min(max(limit, 1), BlocklistEntryQuery.maximumLimit)
+        let start = max(offset, 0)
+        let needle = String(search.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .prefix(BlocklistEntryQuery.maximumSearchLength))
+        return queue.sync {
+            let filtered = !needle.isEmpty
+            // LIKE with an escaped pattern: a name containing % or _ must not
+            // turn into a wildcard search.
+            let escaped = needle
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
+            let pattern = "%\(escaped)%"
+            var total = 0
+            var countSQL = "SELECT COUNT(*) FROM blocklist_entries WHERE blocklist_id=?"
+            if filtered { countSQL += " AND domain LIKE ? ESCAPE '\\'" }
+            countSQL += ";"
+            var countStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, countSQL, -1, &countStmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(countStmt, 1, blocklistID.uuidString, -1, SQLITE_TRANSIENT)
+                if filtered { sqlite3_bind_text(countStmt, 2, pattern, -1, SQLITE_TRANSIENT) }
+                if sqlite3_step(countStmt) == SQLITE_ROW {
+                    total = Int(sqlite3_column_int(countStmt, 0))
+                }
+            }
+            if countStmt != nil { sqlite3_finalize(countStmt) }
+
+            var out: [String] = []
+            var sql = "SELECT domain FROM blocklist_entries WHERE blocklist_id=?"
+            if filtered { sql += " AND domain LIKE ? ESCAPE '\\'" }
+            sql += " ORDER BY domain LIMIT ? OFFSET ?;"
+            var stmt: OpaquePointer?
+            defer { if stmt != nil { sqlite3_finalize(stmt) } }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                return ([], total)
+            }
+            var index: Int32 = 1
+            sqlite3_bind_text(stmt, index, blocklistID.uuidString, -1, SQLITE_TRANSIENT)
+            index += 1
+            if filtered {
+                sqlite3_bind_text(stmt, index, pattern, -1, SQLITE_TRANSIENT)
+                index += 1
+            }
+            sqlite3_bind_int(stmt, index, Int32(bounded))
+            index += 1
+            sqlite3_bind_int(stmt, index, Int32(start))
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let c = sqlite3_column_text(stmt, 0) { out.append(String(cString: c)) }
+            }
+            return (out, total)
         }
     }
 

@@ -944,6 +944,42 @@ final class HelperClient: NSObject, ObservableObject {
     /// pending state until then, and a refusal, a transport failure or a helper
     /// that never answers puts the toggle back where reality is, with the
     /// reason attached (#80).
+    /// One bounded page of a blocklist's entries. The GUI never asks for a
+    /// whole list, and a helper too old to answer says so rather than hanging
+    /// (#79).
+    func queryBlocklistEntries(_ query: BlocklistEntryQuery,
+                               completion: @MainActor @escaping (BlocklistEntryPage?, String?) -> Void) {
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            Task { @MainActor in
+                completion(nil, "Could not reach the privileged helper: \(error.localizedDescription).")
+            }
+        }) as? HelperProtocol else {
+            completion(nil, "The FreeSnitch helper is not connected.")
+            return
+        }
+        guard proxy.queryBlocklistEntries != nil else {
+            completion(nil, "The running helper is too old to list blocklist entries. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            return
+        }
+        guard let payload = try? FreeSnitchWireCodec.encode(query.bounded()) else {
+            completion(nil, "The blocklist query could not be encoded.")
+            return
+        }
+        proxy.queryBlocklistEntries?(request: payload) { data, error in
+            Task { @MainActor in
+                if let error {
+                    completion(nil, error)
+                    return
+                }
+                guard let page = try? FreeSnitchWireCodec.decode(BlocklistEntryPage.self, from: data) else {
+                    completion(nil, "The helper's answer could not be read.")
+                    return
+                }
+                completion(page, nil)
+            }
+        }
+    }
+
     func setEnforcementEnabled(_ enabled: Bool) {
         let request = UUID()
         enforcementRequestID = request

@@ -49,6 +49,16 @@ final class BlocklistManager: @unchecked Sendable {
                 updated.entryCount = set.count
                 updated.lastUpdated = Date()
                 try? self.store.updateBlocklist(updated)
+                // Kept per list, on disk, so the GUI can ask what is on a list
+                // without anyone holding one in memory (#79). A failure here
+                // costs the browsable copy, never the blocking itself, which
+                // works off the merged set below.
+                do {
+                    try self.store.replaceBlocklistEntries(blocklistID: list.id, domains: Array(set))
+                } catch {
+                    PSLog.error(PSLog.helper,
+                                "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
+                }
             }
         }
         queue.sync { self.domains = merged }

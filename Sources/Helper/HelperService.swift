@@ -952,6 +952,28 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
+    /// One page of one list. The query is re-bounded here rather than trusted:
+    /// the caller is on the other side of an XPC connection (#79).
+    func queryBlocklistEntries(request: Data, reply: @escaping (Data, String?) -> Void) {
+        guard request.count <= 4096 else {
+            reply(Data(), "The blocklist query exceeds the transport limit.")
+            return
+        }
+        do {
+            let query = try FreeSnitchWireCodec.decode(BlocklistEntryQuery.self, from: request).bounded()
+            let result = store.blocklistEntries(blocklistID: query.blocklistID,
+                                                search: query.search,
+                                                offset: query.offset,
+                                                limit: query.limit)
+            let page = BlocklistEntryPage(entries: result.entries,
+                                          total: result.total,
+                                          offset: query.offset)
+            reply(try FreeSnitchWireCodec.encode(page), nil)
+        } catch {
+            reply(Data(), "The blocklist query could not be answered: \(error.localizedDescription)")
+        }
+    }
+
     func getDoHUpstream(reply: @escaping (String) -> Void) {
         let effectiveURL = dns.dohURL
         reply(effectiveURL)

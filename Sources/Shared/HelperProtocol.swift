@@ -36,6 +36,10 @@ import Foundation
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void)
     func listBlocklists(reply: @escaping (Data) -> Void)
     func refreshBlocklists(reply: @escaping (Bool, String?) -> Void)
+    /// One bounded page of a blocklist's entries, searched in the helper.
+    /// Optional so an older helper simply does not answer it rather than
+    /// breaking the connection (#79).
+    @objc optional func queryBlocklistEntries(request: Data, reply: @escaping (Data, String?) -> Void)
     @objc optional func getDoHUpstream(reply: @escaping (String) -> Void)
     func setDoHUpstream(url: String, reply: @escaping (Bool, String?) -> Void)
 
