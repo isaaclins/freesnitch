@@ -6,13 +6,16 @@ struct NetworkMonitorView: View {
     let systemExtension: SystemExtensionManager
     @State private var selectedProcess: String? = nil
     @State private var searchText: String = ""
+    /// Owns the grouped tree, its expansion state and its decisions. A
+    /// StateObject, so expansion survives every refresh of the live data.
+    @StateObject private var tree = MonitorTreeController()
 
     var body: some View {
         VStack(spacing: 0) {
             HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
                 sidebar
-                    .frame(width: 240)
+                    .frame(width: 330)
                     .background(PSTheme.bgSidebar)
                 Divider().background(PSTheme.stroke)
                 mapPane
@@ -25,13 +28,29 @@ struct NetworkMonitorView: View {
         }
         .background(PSTheme.bgPrimary)
         .preferredColorScheme(.dark)
+        // Grouping happens on a background task inside the controller. The
+        // view hands it data and never groups anything itself.
+        .onAppear {
+            tree.ingest(connections: state.connections)
+            tree.updateDecisions(rules: state.rules, profile: state.activeProfile)
+        }
+        .onReceive(state.$connections) { tree.ingest(connections: $0) }
+        .onReceive(state.$rules) { tree.updateDecisions(rules: $0, profile: state.activeProfile) }
+        .onReceive(state.$activeProfile) { tree.updateDecisions(rules: state.rules, profile: $0) }
+        .alert("The helper did not accept that",
+               isPresented: Binding(get: { tree.errorMessage != nil },
+                                    set: { if !$0 { tree.errorMessage = nil } })) {
+            Button("OK", role: .cancel) { tree.errorMessage = nil }
+        } message: {
+            Text(tree.errorMessage ?? "")
+        }
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundColor(PSTheme.textMuted)
-                TextField("Search", text: $searchText)
+                TextField("Search apps and destinations", text: $searchText)
                     .textFieldStyle(.plain)
                     .foregroundColor(PSTheme.textPrimary)
             }
@@ -40,20 +59,22 @@ struct NetworkMonitorView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .padding(8)
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(filteredProcesses) { p in
-                        ProcessRow(stats: p, selected: selectedProcess == p.id)
-                            .onTapGesture { selectedProcess = (selectedProcess == p.id ? nil : p.id) }
-                    }
-                }
+            HStack(spacing: 6) {
+                Text("\(tree.snapshot.apps.count) apps")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(PSTheme.textMuted)
+                Spacer()
+                Button("Collapse all") { tree.collapseAll() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(PSTheme.accentBlue)
             }
-        }
-    }
+            .padding(.horizontal, 10).padding(.bottom, 4)
 
-    private var filteredProcesses: [AppState.ProcessStats] {
-        if searchText.isEmpty { return state.topProcesses }
-        return state.topProcesses.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+            MonitorTreeList(controller: tree,
+                            searchText: searchText,
+                            selectedAppID: $selectedProcess)
+        }
     }
 
     private var mapPane: some View {
@@ -178,41 +199,6 @@ struct NetworkMonitorView: View {
     /// meant the map confidently showed traffic that never happened.
     private func connectionsForMap() -> [Connection] {
         state.connections.filter { $0.latitude != nil && $0.longitude != nil }
-    }
-}
-
-struct ProcessRow: View {
-    let stats: AppState.ProcessStats
-    let selected: Bool
-    var body: some View {
-        HStack(spacing: 8) {
-            if let i = stats.icon {
-                Image(nsImage: i).resizable().frame(width: 18, height: 18)
-            } else {
-                Image(systemName: "app.dashed").foregroundColor(PSTheme.textSecondary)
-                    .frame(width: 18, height: 18)
-            }
-            Text(stats.name).lineLimit(1).font(.system(size: 12)).foregroundColor(PSTheme.textPrimary)
-            Spacer()
-            Text(PSFormat.bytes(stats.total))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(PSTheme.textSecondary)
-            statusDot
-            statusBadge
-        }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(selected ? PSTheme.accent.opacity(0.18) : Color.clear)
-        .contentShape(Rectangle())
-    }
-    private var statusDot: some View {
-        Circle().fill(PSTheme.accentBlue).frame(width: 6, height: 6)
-    }
-    private var statusBadge: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 3).fill(PSTheme.accentGreen)
-            Image(systemName: "checkmark").font(.system(size: 7, weight: .bold)).foregroundColor(.white)
-        }
-        .frame(width: 12, height: 12)
     }
 }
 
