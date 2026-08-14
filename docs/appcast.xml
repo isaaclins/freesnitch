@@ -3,6 +3,33 @@
     <channel>
         <title>FreeSnitch</title>
         <item>
+            <title>0.4.4</title>
+            <pubDate>Fri, 14 Aug 2026 11:02:05 +0200</pubDate>
+            <sparkle:version>31</sparkle:version>
+            <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[# FreeSnitch 0.4.4
+
+## Uninstalling now works the way macOS intends
+
+FreeSnitch deleted its own app bundle during uninstall. That turns out to be the one thing you must not do to an app that contains a system extension: moving the app to the Trash **through Finder** is what triggers macOS to remove the extension. Deleting the bundle any other way takes the app away and leaves the extension installed and running.
+
+So uninstall no longer deletes anything in your Applications folder. It unregisters the helper, flushes its firewall anchor and removes its data, then hands the app to Finder exactly as if you had dragged it to the Trash yourself, which is what makes macOS remove the network extension too.
+
+That also means the privileged step is smaller than before: it can no longer remove an application at all.
+
+Afterwards the app tells you how to confirm it worked, and only mentions the System Settings route as a recovery step for the case where macOS does not finish the job, rather than presenting it as a chore you always have to do.
+]]></description>
+            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch-0.4.4.zip" length="10063238" type="application/octet-stream" sparkle:edSignature="CndtV4y2JD1CbRhiMuXAuwpgiBB8xueciQ7BIG6p5feq9+bs7FSZaZwI65KS7Y0v5Sa9P3RfXwupacDsnUVFBg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch31-30.delta" sparkle:deltaFrom="30" length="417690" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="MHw1PoihAOrrgwu8aepiMtBqahgud3NQ+8RLgZak/lsEJxSFFNW76WqDB0ZPaz1rjzd++p9ahFWEgRriukIxBw=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch31-29.delta" sparkle:deltaFrom="29" length="436690" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="/vZLwa9g5XawDve3PighxGwiKxbsRkAzuWekWnJWqTNCPNktc2O4X0+VGuTgw8Fx6wAY2CX2D/ANdHU00d8kAg=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch31-28.delta" sparkle:deltaFrom="28" length="529970" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="h7Gld8P1UEJbuuUnH0wCMPGCXBAqI4/EEBzrfgozYYfui4wXsshJkycPWa+YVtcdzkAcxnrE3FdbBQhXRaqTDg=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch31-27.delta" sparkle:deltaFrom="27" length="579106" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="1lzbWENfeh/Sx/zqWY6Lhfv5hZG2S8Z23mZMCVk7nztpR8V2U5ZHs+QLB1zKS0Pc69Q+Mp9poPsFc3v/L84/Bg=="/>
+                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch31-26.delta" sparkle:deltaFrom="26" length="4798582" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="C4YNcbn/q7yrdDYJ/W9JuvuXEJrTBezGJaf5kKkgnEGLyCX2kpbIykbPbvroBsdfIMDvF5Pcd0DMoMe+kYfnDA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.4.3</title>
             <pubDate>Fri, 14 Aug 2026 10:45:29 +0200</pubDate>
             <sparkle:version>30</sparkle:version>
@@ -23,13 +50,6 @@ macOS may still want a restart to finish tearing an extension down, and if it do
 Turning enforcement off is unchanged and still keeps the configuration, so switching filtering back on does not make you approve the extension again.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.3/FreeSnitch-0.4.3.zip" length="10060313" type="application/octet-stream" sparkle:edSignature="dL+zxud5PuJ7/ixDGt1+lu1f/+7ePWG/PZzGxCNmg0K/kX9dMD3Y/OiYERKlOoDzpePzU3fX1RqTT2NjcpB6DA=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.3/FreeSnitch30-29.delta" sparkle:deltaFrom="29" length="341754" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="jQxauoNIiG1zRZwtyRwg+togit37OKF3cvEywCLteM1vAYwjRZwlAaBp8Wjt3/uw7HO0cBvtT5ajiiDtcLStDA=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.3/FreeSnitch30-28.delta" sparkle:deltaFrom="28" length="521282" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="hkAB3P8nuahBH/fFZ0tfcz5bsCguYV2c4R+es3zkETchuIpX/U9GTUwojBmsSRanLMFk0VrQXWNEMgYMkxx4AA=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.3/FreeSnitch30-27.delta" sparkle:deltaFrom="27" length="567166" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="5fPCnnknC8pldeLQB3GSwgR/sJ5pKlnEogToswhTl9PIGCipn+JsxievJ6OEz3UJ5Ga3SfxBe2GdDm9lQQcsCA=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.3/FreeSnitch30-26.delta" sparkle:deltaFrom="26" length="4796370" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="s0++efY5Fl0PdSa4PeXWH5ozxkcsolGNBJkRk8I+9ihtmFRvFFJWomlbZDQwPw/zdh94+7wWhlQPPgC1zUpSBQ=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.3/FreeSnitch30-25.delta" sparkle:deltaFrom="25" length="4805306" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="ZKgS6uNwHgijOneMEhF0uX8cy87ANekPAgytvw7j569gWl+Ho9aazp6Zi8ENs9d/lgzHayq6tZCBdOu6PbezBA=="/>
-            </sparkle:deltas>
         </item>
         <item>
             <title>0.4.2</title>
@@ -52,26 +72,6 @@ You no longer need to visit System Settings to remove the helper either; that wa
 If the removal fails, the commands are still shown, as a fallback rather than as the plan, and without the script you do not have.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.2/FreeSnitch-0.4.2.zip" length="10058962" type="application/octet-stream" sparkle:edSignature="gmjddjeOuAjk5KSJALHc/H6JjWd7uThMOYt1MzRYN4LQ8H737V1yMuAKdKsiSpEEoAHrrtmtzxQs3lTkbPXmBg=="/>
-        </item>
-        <item>
-            <title>0.4.1</title>
-            <pubDate>Fri, 14 Aug 2026 10:00:04 +0200</pubDate>
-            <sparkle:version>28</sparkle:version>
-            <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="plain-text"><![CDATA[# FreeSnitch 0.4.1
-
-## Repair Helper now repairs
-
-After an automatic update, the app would notice that the privileged helper was still running the previous build, say so clearly, and then tell you to open Terminal and run a `sudo` command. Meanwhile the network extension had no helper to talk to, so **traffic was not being filtered** until you did it by hand.
-
-A button called Repair Helper has to actually repair. It now restarts the helper for you, and macOS asks you to authorize it the normal way. If you dismiss that prompt nothing happens and the banner stays, which is how declining should work.
-
-The action is deliberately narrow: it restarts the existing service and never unregisters it. Unregistering an enabled helper can remove the service outright, which is exactly why this was left manual before. Your approval in System Settings is untouched.
-
-If the restart genuinely cannot be carried out, the command is still shown, as a fallback rather than as the plan.
-]]></description>
-            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.1/FreeSnitch-0.4.1.zip" length="10038106" type="application/octet-stream" sparkle:edSignature="xffMHEG8OaUG7djV9MTpivbN9rZHnuRp9613UIJ27Je8uMwSYpZSld2RbzTzggJev+y1z1ddcfOJb8Jzba9jDA=="/>
         </item>
     </channel>
 </rss>
