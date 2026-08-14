@@ -15,6 +15,7 @@ struct MenubarPopoverView: View {
     @EnvironmentObject var windows: WindowManager
     let close: () -> Void
     @State private var showModePicker = false
+    @State private var showProfilePicker = false
     @ObservedObject private var profileClient = ProfileClient.shared
 
     /// Control Center's panels are 320 points wide. So is this.
@@ -66,11 +67,13 @@ struct MenubarPopoverView: View {
 
     /// The active profile is always on screen. A strict profile applying
     /// silently is the same failure as #12, #13 and #17.
+    ///
+    /// It picks, rather than navigates. Sending the reader to the Profiles page
+    /// to change a profile is a window and a page change for the one thing the
+    /// chip is about, and the mode chip beside it already shows what this
+    /// should be (#99).
     private var profileChip: some View {
-        Button {
-            close()
-            windows.showProfiles()
-        } label: {
+        Button { showProfilePicker.toggle() } label: {
             HStack(spacing: 5) {
                 Image(systemName: profileClient.activeProfile?.icon ?? "person.crop.circle")
                     .font(.caption)
@@ -78,6 +81,9 @@ struct MenubarPopoverView: View {
                 Text(profileClient.menuBarLabel)
                     .font(.subheadline)
                     .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -85,7 +91,22 @@ struct MenubarPopoverView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("The active profile. Change it on the Profiles page.")
+        .help("The active profile. Click to switch.")
+        .popover(isPresented: $showProfilePicker, arrowEdge: .bottom) {
+            ProfilePicker(profiles: profileClient.profiles,
+                          activeName: profileClient.activeProfileName,
+                          isAvailable: profileClient.isAvailable,
+                          unavailableReason: profileClient.unavailableReason,
+                          onPick: { name in
+                              profileClient.activate(profileName: name)
+                              showProfilePicker = false
+                          },
+                          onManage: {
+                              showProfilePicker = false
+                              close()
+                              windows.showProfiles()
+                          })
+        }
     }
 
     // MARK: Traffic
@@ -279,6 +300,73 @@ struct ModeButton: View {
     }
 
 }
+/// Choosing the profile, the same way the mode is chosen (#99).
+struct ProfilePicker: View {
+    let profiles: [Profile]
+    let activeName: String
+    let isAvailable: Bool
+    let unavailableReason: String
+    let onPick: (String) -> Void
+    let onManage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Profile")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+            if profiles.isEmpty {
+                Text(isAvailable ? "No profiles yet." : unavailableReason)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 6)
+            } else {
+                ForEach(profiles) { profile in
+                    MenubarRow(action: { onPick(profile.name) }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.bold))
+                                .opacity(profile.name == activeName ? 1 : 0)
+                                .frame(width: 12)
+                            Image(systemName: profile.icon)
+                                .foregroundStyle(.tint)
+                                .frame(width: 18)
+                            Text(profile.name).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .disabled(!isAvailable)
+                }
+                if !isAvailable {
+                    Text(unavailableReason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14)
+                        .padding(.top, 2)
+                }
+            }
+            Divider().padding(.vertical, 4)
+            MenubarRow(action: onManage) {
+                HStack(spacing: 8) {
+                    Spacer().frame(width: 12)
+                    Image(systemName: "person.crop.circle")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18)
+                    Text("Manage Profiles\u{2026}")
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.bottom, 8)
+        .frame(width: 240)
+    }
+}
+
 /// Choosing the mode, as a menu of choices with the current one ticked, which
 /// is what a Mac shows when one of a few options is in force.
 struct ModePicker: View {
