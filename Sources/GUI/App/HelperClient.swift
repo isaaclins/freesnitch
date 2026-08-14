@@ -279,13 +279,11 @@ final class HelperClient: NSObject, ObservableObject {
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status), repairing: true) {
         case .manualKickstart:
             refreshInstallState()
-            let message: String
-            if case .mismatch(let helper, let app) = versionState {
-                message = HelperRecovery.staleHelperMessage(helper: helper, app: app)
-            } else {
-                message = "The helper is enabled but not responding. Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(HelperRecovery.kickstartCommand)` in Terminal. This works while launchd still has the helper service registered."
-            }
-            finishRepairFailure(message)
+            // Actually perform the repair, behind the standard authorization
+            // prompt, instead of printing a sudo command and calling that a
+            // fix (#69). Falling back to the written command only happens if
+            // the privileged restart genuinely could not be carried out.
+            performPrivilegedKickstart()
         case .register:
             guard Self.hasBundledHelper else {
                 refreshInstallState()
@@ -351,6 +349,45 @@ final class HelperClient: NSObject, ObservableObject {
                     self.repairState = .manualRequired("SMAppService registration did not produce a reachable helper. Recheck the registration state before using the kickstart command.")
                 }
                 self.needsRepair = true
+            }
+        }
+    }
+
+    /// Restart the helper as root, prompting for authorization.
+    ///
+    /// The prompt blocks, so it runs off the main thread; every state change
+    /// afterwards hops back. Cancelling is not treated as a failure to shout
+    /// about, because the user declining must be a normal outcome.
+    private func performPrivilegedKickstart() {
+        let previous = versionState
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = PrivilegedRepair.kickstartHelper()
+            Task { @MainActor in
+                switch outcome {
+                case .success:
+                    // launchd needs a moment to bring the replacement up before
+                    // asking it for its version is meaningful.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        self.isRepairing = false
+                        self.repairState = .idle
+                        self.needsRepair = false
+                        self.refreshInstallState()
+                        self.connect()
+                    }
+                case .failure(.cancelled):
+                    self.isRepairing = false
+                    self.repairState = .idle
+                    self.needsRepair = true
+                case .failure(.failed(let reason)):
+                    let fallback: String
+                    if case .mismatch(let helper, let app) = previous {
+                        fallback = HelperRecovery.staleHelperMessage(helper: helper, app: app)
+                    } else {
+                        fallback = "The helper is enabled but not responding. Automatic replacement is disabled because unregistering an enabled helper can remove the service, so FreeSnitch only restarts it. Run `\(HelperRecovery.kickstartCommand)` in Terminal if this keeps happening."
+                    }
+                    self.finishRepairFailure("The privileged restart did not complete: \(reason) \(fallback)")
+                }
             }
         }
     }

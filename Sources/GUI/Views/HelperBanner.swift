@@ -80,11 +80,11 @@ private struct BannerInfo {
             title = "The running helper is not the installed build"
             switch repairState {
             case .inProgress:
-                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. FreeSnitch is registering only when no service exists; it will not unregister this running helper."
+                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Waiting for you to authorize the restart. FreeSnitch only restarts the existing service; it never unregisters it."
             case .manualRequired(let reason):
                 detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. \(reason) The current pf anchor is left in place."
             case .idle:
-                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. Restart it with `\(AppConstants.helperKickstartCommand)`, or use Repair to show the safe recovery command."
+                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion), so helper-side fixes are not active and traffic may not be filtered. Repair Helper restarts it for you; macOS will ask you to authorize it."
             }
             action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
             return
@@ -97,7 +97,7 @@ private struct BannerInfo {
             icon = "wrench.and.screwdriver.fill"
             tint = PSTheme.accentYellow
             title = "The helper needs repairing"
-            detail = "It is approved but not responding. Repair is non-destructive and will not unregister the enabled service. Use it to show the privileged kickstart command; approval remains intact."
+            detail = "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact."
             action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
         case .enabled:
             icon = "hourglass"

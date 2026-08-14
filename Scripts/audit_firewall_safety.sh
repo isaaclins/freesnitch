@@ -870,6 +870,31 @@ require_text "$APP_STATE" "filterSnapshotPersistenceHandler?(snapshot)" \
 # anywhere", turning an allow into far more than the user approved (#64).
 require_text "$APP_STATE" "remoteIP: ruleIP" \
   "the remembered alert rule does not carry the remote address, so an IP-only decision would match every destination"
+# The one privileged action the GUI may take on its own behalf must stay one
+# fixed command. If a later change ever assembles this script from a variable,
+# a path, or a version string, this stops being "restart my own helper" and
+# becomes "run something as root" (#69).
+PRIVILEGED_REPAIR="$ROOT/Sources/GUI/App/PrivilegedRepair.swift"
+[[ -f "$PRIVILEGED_REPAIR" ]] || fail "missing $PRIVILEGED_REPAIR"
+require_text "$PRIVILEGED_REPAIR" "private static let script" \
+  "the privileged repair command is not a single constant"
+require_text "$PRIVILEGED_REPAIR" "/bin/launchctl kickstart -k system/io.isaaclins.freesnitch.helper" \
+  "the privileged repair no longer restarts exactly the helper service"
+# Comments are stripped BEFORE looking for destructive verbs: this file's own
+# documentation explains why bootout and unregister are not used, and an
+# earlier version of this check matched that prose and failed itself.
+if rg -v '^[[:space:]]*//' "$PRIVILEGED_REPAIR" | rg -q 'bootout|unload|unregister'; then
+  fail "the privileged repair uses a destructive launchctl verb; it must only ever kickstart"
+fi
+if rg -v '^[[:space:]]*//' "$PRIVILEGED_REPAIR" | rg -q '\\\('; then
+  fail "the privileged repair script interpolates a value; it must be a compile-time constant"
+fi
+# Check the BRANCH, not merely that the identifier exists somewhere. An
+# earlier version of this check passed while the call site had been replaced,
+# because the now-dead function definition still contained the name.
+if ! rg -A6 'case \.manualKickstart:' "$GUI_HELPER" | rg -q 'performPrivilegedKickstart\(\)'; then
+  fail "the stale-helper path no longer attempts the repair itself, so it would only print a sudo command"
+fi
 require_text "$APP_STATE" "hasDestination" \
   "the remembered alert rule is not guarded against an empty destination"
 if rg -n "remoteHost: alert\\.connection\\.remoteHost," "$APP_STATE" >/dev/null; then
