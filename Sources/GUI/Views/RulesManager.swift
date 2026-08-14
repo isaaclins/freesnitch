@@ -124,7 +124,12 @@ struct RulesManagerView: View {
                 blocklistsHeader
             }
         }
-        .listStyle(.sidebar)
+        // Content, not a sidebar. A window gets exactly one translucent band,
+        // the window's own sidebar; a second source list inside the content
+        // paints a second material and the window ends up as a staircase of
+        // three greys. This list is one surface with the table beside it,
+        // separated by a divider and nothing else.
+        .listStyle(.inset)
         .onAppear {
             DispatchQueue.main.async { sidebarAcceptsSelection = true }
         }

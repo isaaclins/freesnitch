@@ -59,7 +59,9 @@ struct MonitorTreeList: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .listStyle(.sidebar)
+        // Content, not a sidebar: the window's own sidebar is the only place
+        // that carries a translucent material.
+        .listStyle(.inset)
     }
 
     /// Expansion still belongs to the controller; the disclosure triangle just

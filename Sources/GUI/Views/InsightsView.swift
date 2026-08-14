@@ -137,9 +137,9 @@ struct InsightsView: View {
                 if model.apps.isEmpty && !model.isLoading {
                     emptyState("Nothing recorded in this range yet.")
                 } else {
-                    // A real List: system selection highlight, arrow keys, and
-                    // the sidebar look the rest of the app now uses. This was a
-                    // ScrollView of tap-gesture rows painting their own accent.
+                    // A real List: system selection highlight and arrow keys.
+                    // Styled as content, not as a sidebar: the only translucent
+                    // band in the window is the window's own sidebar.
                     List(selection: appSelection) {
                         ForEach(model.apps) { app in
                             appRow(app)
@@ -149,7 +149,7 @@ struct InsightsView: View {
                                 .buttonStyle(.link)
                         }
                     }
-                    .listStyle(.sidebar)
+                    .listStyle(.inset)
                 }
             }
             .frame(width: 280)
