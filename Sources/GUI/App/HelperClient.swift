@@ -157,6 +157,24 @@ final class HelperClient: NSObject, ObservableObject {
             && FileManager.default.fileExists(atPath: executable.path)
     }
 
+    /// Removes the helper's launchd registration, for uninstall only.
+    ///
+    /// Everywhere else in this class, unregistering an enabled service is
+    /// forbidden, because #24 showed that path can destroy a service the user
+    /// still wants. During an uninstall that is precisely the goal, and it is
+    /// what let the app stop telling people to go turn it off by hand in
+    /// System Settings.
+    @discardableResult
+    func unregisterDaemonForUninstall() -> String? {
+        guard let service else { return "SMAppService cannot manage the helper on this macOS version." }
+        do {
+            try service.unregister()
+            return nil
+        } catch {
+            return HelperRecovery.registrationErrorDetails(error)
+        }
+    }
+
     /// Registers the privileged helper as a launchd daemon via SMAppService.
     /// Without this the XPC mach service never exists, so every helper call
     /// silently no-ops (the root cause of "no rules / no traffic"). Requires a

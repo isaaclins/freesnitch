@@ -21,6 +21,17 @@ struct UninstallView: View {
     @State private var acknowledged = false
     @State private var confirming = false
     @State private var startedAt: Date?
+    @State private var finishState: FinishState = .idle
+
+    enum FinishState: Equatable {
+        case idle
+        case working
+        /// Everything the app can remove is gone; only the reboot is left.
+        case done
+        /// The automated removal did not happen, so the commands are offered
+        /// as a fallback rather than as the plan.
+        case failed(String)
+    }
 
     private var appPath: String { "/Applications/FreeSnitch.app" }
     private var supportPath: String { "/Library/Application Support/FreeSnitch" }
@@ -50,7 +61,7 @@ struct UninstallView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This turns off enforcement, disables the content filter, and asks macOS to deactivate the FreeSnitch network extension. Your Mac stops being filtered by FreeSnitch immediately. The helper and the app are removed by you afterwards, with the commands shown next.")
+            Text("This turns off enforcement, disables the content filter, and asks macOS to deactivate the FreeSnitch network extension. Your Mac stops being filtered by FreeSnitch immediately. FreeSnitch then removes the helper, its data and itself, asking you to authorize that once.")
         }
     }
 
@@ -180,12 +191,35 @@ struct UninstallView: View {
     private var remainingSteps: some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
-            Text("What is left, in order").font(.subheadline.weight(.semibold))
-            step(1, "Switch FreeSnitch off in System Settings > General > Login Items & Extensions. This removes the privileged helper's registration. FreeSnitch deliberately does not do this for you.")
-            step(2, "Restart your Mac if the status above says the deactivation finishes after a restart. Deleting the app before that leaves macOS holding an extension record whose bundle is gone.")
-            step(3, "Run these commands in Terminal. Every line needs administrator rights, which is what `sudo` asks for. They flush only the shared puresnitch anchor, they never disable pf globally.")
-            commandBlock
-            step(4, "Confirm nothing is left: `systemextensionsctl list | grep freesnitch` should print no FreeSnitch row.")
+            switch finishState {
+            case .idle:
+                Text("Finish removing FreeSnitch").font(.subheadline.weight(.semibold))
+                Text("FreeSnitch removes the helper's registration, flushes its firewall anchor, deletes its data and deletes itself. macOS asks you to authorize that once. Nothing here needs Terminal.")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Remove FreeSnitch") { finishUninstall() }
+                    .keyboardShortcut(.defaultAction)
+                Text(removeDatabase
+                     ? "Includes deleting \(databasePath). That is permanent."
+                     : "Keeps \(databasePath) so a reinstall finds your rules.")
+                    .font(.caption).foregroundColor(.secondary)
+            case .working:
+                ProgressView("Removing FreeSnitch…").controlSize(.small)
+            case .done:
+                Text("FreeSnitch has been removed").font(.subheadline.weight(.semibold))
+                step(1, "Restart your Mac. macOS finishes removing a network extension only on restart, and until then it still holds a record for it.")
+                step(2, "After the restart, `systemextensionsctl list` prints no FreeSnitch row. Nothing else is left behind.")
+            case .failed(let reason):
+                Text("FreeSnitch could not finish removing itself").font(.subheadline.weight(.semibold))
+                Text(reason)
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try Again") { finishUninstall() }
+                Text("Or remove it by hand with these commands. They flush only the shared puresnitch anchor and never disable pf globally.")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                commandBlock
+            }
         }
     }
 
@@ -212,9 +246,13 @@ struct UninstallView: View {
         }
     }
 
-    /// The same work the shipped script does, spelled out for people who
-    /// installed from the DMG and have no checkout. Order matters: the pf
-    /// anchor is flushed while the app is still on disk.
+    /// Fallback only, shown after the automated removal failed.
+    ///
+    /// This deliberately no longer mentions `Scripts/uninstall_freesnitch.sh`:
+    /// that file only exists in a source checkout, so telling someone who
+    /// installed from the DMG to run it was an instruction that could not be
+    /// followed. Order matters: the pf anchor is flushed while the app is
+    /// still on disk.
     private var commands: String {
         var lines = [
             "sudo /sbin/pfctl -a puresnitch -F all",
@@ -225,9 +263,6 @@ struct UninstallView: View {
             lines.append("sudo /bin/rm -f \"\(databasePath)\"")
         }
         lines.append("sudo /bin/rm -rf \"\(appPath)\"")
-        lines.append("")
-        lines.append("# From a source checkout, this does the same with the safety guards:")
-        lines.append("sudo bash Scripts/uninstall_freesnitch.sh --yes\(removeDatabase ? " --remove-database" : "")")
         return lines.joined(separator: "\n")
     }
 
@@ -243,6 +278,36 @@ struct UninstallView: View {
         }
         state.appendLog(level: "info", message: "User-initiated uninstall: deactivating the network extension.")
         systemExtension.deactivateForUninstall()
+    }
+
+    /// The part that used to be homework: unregister the helper, then remove
+    /// the root-owned data and the app itself behind one authorization prompt,
+    /// then the user's own files, which need no authorization at all.
+    private func finishUninstall() {
+        finishState = .working
+        if let problem = state.helper.unregisterDaemonForUninstall() {
+            // Not fatal: the removal below still takes the bundle away, and the
+            // launchd record for a missing bundle is inert. Recorded so the
+            // failure is not silent.
+            state.appendLog(level: "error",
+                            message: "Uninstall could not unregister the helper: \(problem)")
+        }
+        let alsoDatabase = removeDatabase
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = PrivilegedUninstall.run(removingDatabase: alsoDatabase)
+            Task { @MainActor in
+                switch outcome {
+                case .success:
+                    PrivilegedUninstall.removeUserData()
+                    state.appendLog(level: "info", message: "Uninstall completed; a restart finishes extension removal.")
+                    finishState = .done
+                case .failure(.cancelled):
+                    finishState = .idle
+                case .failure(.failed(let reason)):
+                    finishState = .failed(reason)
+                }
+            }
+        }
     }
 
     // MARK: - Small pieces

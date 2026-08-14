@@ -895,6 +895,31 @@ fi
 if ! rg -A6 'case \.manualKickstart:' "$GUI_HELPER" | rg -q 'performPrivilegedKickstart\(\)'; then
   fail "the stale-helper path no longer attempts the repair itself, so it would only print a sudo command"
 fi
+# The uninstaller must be able to uninstall. It previously told users to run
+# `sudo bash Scripts/uninstall_freesnitch.sh`, a file that exists only in a
+# source checkout, so anyone who installed from the DMG was given instructions
+# they could not follow.
+PRIVILEGED_UNINSTALL="$ROOT/Sources/GUI/App/PrivilegedUninstall.swift"
+UNINSTALL_VIEW="$ROOT/Sources/GUI/Views/UninstallView.swift"
+[[ -f "$PRIVILEGED_UNINSTALL" ]] || fail "missing $PRIVILEGED_UNINSTALL"
+# Comments stripped first: the view's own documentation explains why it no
+# longer names that script, and checking the raw file matched that prose.
+if rg -v '^[[:space:]]*//' "$UNINSTALL_VIEW" | rg -q 'Scripts/uninstall_freesnitch.sh'; then
+  fail "the uninstall screen points the user at a script that only exists in a source checkout"
+fi
+require_text "$UNINSTALL_VIEW" "PrivilegedUninstall.run" \
+  "the uninstall screen does not perform the removal itself"
+if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q '\\\('; then
+  fail "the privileged uninstall interpolates a value; every path it removes must be a constant"
+fi
+# Flushing the shared anchor is required; deleting it or disabling pf is not,
+# because /etc/pf.conf still references it and the user's firewall would be
+# stranded.
+if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|anchors/puresnitch'; then
+  fail "the privileged uninstall disables pf globally or removes the shared anchor file"
+fi
+require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
+  "the privileged uninstall no longer flushes the FreeSnitch anchor"
 require_text "$APP_STATE" "hasDestination" \
   "the remembered alert rule is not guarded against an empty destination"
 if rg -n "remoteHost: alert\\.connection\\.remoteHost," "$APP_STATE" >/dev/null; then
