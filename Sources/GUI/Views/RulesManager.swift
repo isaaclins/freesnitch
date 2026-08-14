@@ -6,7 +6,9 @@ struct RulesManagerView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
     @State private var selectedCategory: Category = .all
-    @State private var searchText: String = ""
+    /// The query comes from the window's toolbar search field, so this page
+    /// does not draw one of its own.
+    @Binding var searchText: String
     @State private var selectedRuleIDs: Set<UUID> = []
     @State private var sortOrder: [KeyPathComparator<Rule>] = [KeyPathComparator(\Rule.displayProcessName)]
     @State private var sidebarAcceptsSelection = false
@@ -224,13 +226,11 @@ struct RulesManagerView: View {
         }
     }
 
-    /// One content bar, carrying the section title, the count and the actions,
-    /// on the system bar material.
+    /// The section header for the rules list: title, count, and the actions
+    /// that apply to it.
     ///
-    /// It replaces a strip of borderless glyphs above a 22pt bold title that
-    /// repeated what the window title bar already says. Mail and Finder put the
-    /// section and its count in one bar and never restate the title in the
-    /// content.
+    /// Search is not here. It is an `NSSearchToolbarItem` in the window's real
+    /// toolbar, like Finder's.
     private var toolbar: some View {
         HStack(spacing: 10) {
             Text(categoryTitle)
@@ -241,8 +241,6 @@ struct RulesManagerView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Spacer(minLength: 12)
-            NativeSearchField(text: searchBinding)
-                .frame(width: 180)
             Button(action: { showingImporter = true }) {
                 Image(systemName: "tray.and.arrow.down.fill")
             }
@@ -266,7 +264,6 @@ struct RulesManagerView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.bar)
     }
 
     private var rulesList: some View {
@@ -358,6 +355,7 @@ struct RulesManagerView: View {
 
     private var emptyIcon: String {
         if case .blocklist = selectedCategory { return "shield.lefthalf.filled" }
+        if !searchText.isEmpty { return "magnifyingglass" }
         if !state.helperConnected { return "bolt.horizontal.circle" }
         return "list.bullet"
     }
@@ -366,6 +364,9 @@ struct RulesManagerView: View {
         if case .blocklist(let id) = selectedCategory {
             return state.blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
         }
+        // A search that matched nothing answers for itself. Blaming the helper
+        // here was wrong whenever both were true at once.
+        if !searchText.isEmpty { return "No Results" }
         if !state.helperConnected { return "Helper not running" }
         if state.rules.isEmpty { return "No rules yet" }
         return "Nothing in \(categoryTitle)"
@@ -375,6 +376,9 @@ struct RulesManagerView: View {
         if case .blocklist(let id) = selectedCategory {
             let count = state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
             return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings under Blocklists."
+        }
+        if !searchText.isEmpty {
+            return "No rule matches \u{201C}\(searchText)\u{201D}."
         }
         if !state.helperConnected {
             return "Rules are managed by the FreeSnitch helper. Approve it in System Settings under General > Login Items. This window fills in on its own once it connects."
@@ -406,15 +410,6 @@ struct RulesManagerView: View {
         filteredRules.filter { selectedRuleIDs.contains($0.id) }
     }
 
-    private var searchBinding: Binding<String> {
-        Binding(
-            get: { searchText },
-            set: {
-                searchText = $0
-                clearSelection()
-            }
-        )
-    }
 
     private var filteredRules: [Rule] {
         var rules = state.rules

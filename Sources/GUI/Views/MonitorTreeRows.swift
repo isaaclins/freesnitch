@@ -18,60 +18,64 @@ struct MonitorTreeList: View {
 
     var body: some View {
         let visible = MonitorTreeFilter.apply(query: searchText, to: controller.snapshot)
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                if visible.apps.isEmpty {
-                    emptyRow
-                }
-                ForEach(visible.apps) { app in
+        // A real outline: system disclosure triangles, system selection and
+        // arrow-key navigation. The hand-drawn chevron button and the painted
+        // selection tint are gone, but the controller still owns expansion, so
+        // an app stays open across every refresh of the live data.
+        List(selection: $selectedAppID) {
+            if visible.apps.isEmpty {
+                emptyRow
+            }
+            ForEach(visible.apps) { app in
+                DisclosureGroup(isExpanded: expansion(of: app)) {
+                    ForEach(app.destinations) { destination in
+                        MonitorDestinationRow(destination: destination,
+                                              peakTraffic: app.peakDestinationTraffic,
+                                              decision: controller.decision(for: MonitorRuleTarget.destination(destination, in: app)),
+                                              pending: controller.isPending(MonitorRuleTarget.destination(destination, in: app)),
+                                              onDecide: { action in decide(action, destination: destination, app: app) },
+                                              onClear: { clear(destination: destination, app: app) })
+                    }
+                    if let note = boundsNote(for: app) {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } label: {
                     MonitorAppRow(app: app,
-                                  expanded: controller.isExpanded(app),
-                                  selected: selectedAppID == app.id,
                                   peakTraffic: controller.snapshot.peakAppTraffic,
                                   decision: controller.decision(for: MonitorRuleTarget.app(app)),
                                   pending: controller.isPending(MonitorRuleTarget.app(app)),
-                                  onToggleExpand: { controller.toggleExpansion(app) },
                                   onDecide: { action in decide(action, app: app) },
                                   onClear: { clear(app: app) })
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedAppID = (selectedAppID == app.id ? nil : app.id) }
-                    if controller.isExpanded(app) {
-                        ForEach(app.destinations) { destination in
-                            MonitorDestinationRow(destination: destination,
-                                                  peakTraffic: app.peakDestinationTraffic,
-                                                  decision: controller.decision(for: MonitorRuleTarget.destination(destination, in: app)),
-                                                  pending: controller.isPending(MonitorRuleTarget.destination(destination, in: app)),
-                                                  onDecide: { action in decide(action, destination: destination, app: app) },
-                                                  onClear: { clear(destination: destination, app: app) })
-                        }
-                        if let note = boundsNote(for: app) {
-                            Text(note)
-                                .font(.system(size: 10))
-                                .foregroundColor(PSTheme.textMuted)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.leading, 34).padding(.trailing, 8).padding(.vertical, 4)
-                        }
-                    }
                 }
-                if visible.hiddenAppCount > 0 {
-                    Text("\(visible.hiddenAppCount) more apps are not shown, the list is bounded at \(MonitorTreeLimits.maxApps).")
-                        .font(.system(size: 10))
-                        .foregroundColor(PSTheme.textMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                }
+                .tag(app.id)
+            }
+            if visible.hiddenAppCount > 0 {
+                Text("\(visible.hiddenAppCount) more apps are not shown, the list is bounded at \(MonitorTreeLimits.maxApps).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .listStyle(.sidebar)
+    }
+
+    /// Expansion still belongs to the controller; the disclosure triangle just
+    /// drives it.
+    private func expansion(of app: MonitorAppNode) -> Binding<Bool> {
+        Binding(get: { controller.isExpanded(app) },
+                set: { _ in controller.toggleExpansion(app) })
     }
 
     private var emptyRow: some View {
         Text(state.helperConnected
              ? (searchText.isEmpty ? "No connections yet." : "Nothing matches this search.")
              : "Waiting for the FreeSnitch helper.")
-            .font(.system(size: 11))
-            .foregroundColor(PSTheme.textMuted)
+            .font(.callout)
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
     }
 
     private func boundsNote(for app: MonitorAppNode) -> String? {
@@ -111,43 +115,29 @@ struct MonitorTreeList: View {
 
 struct MonitorAppRow: View {
     let app: MonitorAppNode
-    let expanded: Bool
-    let selected: Bool
     let peakTraffic: Int64
     let decision: Rule?
     let pending: Bool
-    let onToggleExpand: () -> Void
     let onDecide: (RuleAction) -> Void
     let onClear: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
-            Button(action: onToggleExpand) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(app.destinations.isEmpty ? PSTheme.textMuted.opacity(0.4) : PSTheme.textSecondary)
-                    .frame(width: 12, height: 12)
-            }
-            .buttonStyle(.plain)
-            .disabled(app.destinations.isEmpty)
-            .help(expanded ? "Collapse this app" : "Show the destinations this app contacted")
-
             if let icon = MonitorAppIconCache.icon(for: app) {
                 Image(nsImage: icon).resizable().frame(width: 16, height: 16)
             } else {
                 Image(systemName: "app.dashed")
-                    .foregroundColor(PSTheme.textSecondary)
+                    .foregroundStyle(.secondary)
                     .frame(width: 16, height: 16)
             }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(app.name)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(PSTheme.textPrimary)
+                    .font(.body)
                     .lineLimit(1)
                 Text("\(app.destinationCount) destination\(app.destinationCount == 1 ? "" : "s") · \(PSFormat.bytes(app.traffic.total))")
-                    .font(.system(size: 10))
-                    .foregroundColor(PSTheme.textMuted)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -159,8 +149,7 @@ struct MonitorAppRow: View {
                                     onDecide: onDecide,
                                     onClear: onClear)
         }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(selected ? PSTheme.accent.opacity(0.18) : Color.clear)
+        .padding(.vertical, 2)
     }
 }
 
@@ -177,19 +166,17 @@ struct MonitorDestinationRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: destination.remoteHost == nil ? "number" : "globe")
-                .font(.system(size: 9))
-                .foregroundColor(PSTheme.textMuted)
-                .frame(width: 12, height: 12)
-                .padding(.leading, 18)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(destination.label)
-                    .font(.system(size: 11))
-                    .foregroundColor(PSTheme.textPrimary)
+                    .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(subtitle)
-                    .font(.system(size: 9))
-                    .foregroundColor(PSTheme.textMuted)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -201,8 +188,7 @@ struct MonitorDestinationRow: View {
                                     onDecide: onDecide,
                                     onClear: onClear)
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(PSTheme.bgRow.opacity(0.45))
+        .padding(.vertical, 1)
     }
 
     private var isAddressable: Bool {
@@ -241,7 +227,7 @@ struct MonitorTrafficBars: View {
 
     private func bar(value: Int64, color: Color) -> some View {
         ZStack(alignment: .leading) {
-            Capsule().fill(PSTheme.bgTertiary).frame(height: 3)
+            Capsule().fill(.quaternary).frame(height: 3)
             Capsule().fill(color).frame(width: filledWidth(value), height: 3)
         }
         .frame(width: Self.width, height: 3)
@@ -272,54 +258,50 @@ struct MonitorDecisionControls: View {
     let onClear: () -> Void
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             button(action: .allow,
-                   symbol: "checkmark",
-                   color: PSTheme.accentGreen,
+                   symbol: "checkmark.circle",
+                   color: .green,
                    help: "Allow \(subject). Writes a rule you can see and change in Rules.")
             button(action: .deny,
-                   symbol: "xmark",
-                   color: PSTheme.accentRed,
+                   symbol: "xmark.circle",
+                   color: .red,
                    help: "Deny \(subject). Writes a rule you can see and change in Rules.")
             if decision != nil {
                 Button(action: onClear) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(PSTheme.textSecondary)
-                        .frame(width: 16, height: 16)
-                        .background(PSTheme.bgTertiary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    Image(systemName: "arrow.uturn.backward.circle")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
                 .disabled(pending)
                 .help("Remove the rule this row created and go back to no decision.")
             }
         }
+        .imageScale(.large)
         .opacity(addressable ? 1 : 0.35)
         .allowsHitTesting(addressable && !pending)
         .help(addressable ? "" : "This row has no destination a rule can name.")
     }
 
+    /// Borderless symbol buttons, filled when the rule for this exact row is
+    /// the active choice. They used to be hand-drawn rounded chips in green and
+    /// red, which read as two tiny custom widgets on every row.
     private func button(action: RuleAction, symbol: String, color: Color, help: String) -> some View {
         let isActive = decision?.action == action
+        let isDisabledRule = isActive && decision?.enabled == false
         return Button {
             onDecide(action)
         } label: {
+            // Tinted even when inactive: the colour is what tells allow from
+            // deny at a glance, and filling it in is what says which one is in
+            // force.
             Image(systemName: symbol)
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(isActive ? .white : color)
-                .frame(width: 16, height: 16)
-                .background(isActive ? color : color.opacity(0.16))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(isActive && decision?.enabled == false ? PSTheme.accentYellow : Color.clear,
-                                lineWidth: 1)
-                )
+                .symbolVariant(isActive && !isDisabledRule ? .fill : .none)
+                .foregroundStyle(color.opacity(isActive ? 1 : 0.85))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .disabled(pending)
-        .help(isActive && decision?.enabled == false ? "\(help) A disabled rule for this row exists; pressing this enables it." : help)
+        .help(isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help)
     }
 }
 

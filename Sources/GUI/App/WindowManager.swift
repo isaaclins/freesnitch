@@ -24,6 +24,7 @@ final class WindowManager {
     private var mainWindow: NSWindow?
     private let mainModel: MainWindowModel
     private var alertWindow: NSWindow?
+    private var mainToolbarController: MainToolbarController?
     private var alertCancellable: AnyCancellable?
     private var pageCancellable: AnyCancellable?
     /// Menu items do not retain their target, so the Insights action object
@@ -75,7 +76,7 @@ final class WindowManager {
     }
 
     private func makeMainWindow() -> NSWindow {
-        makeWindow(
+        let window = makeWindow(
             title: "FreeSnitch",
             defaultSize: NSSize(width: 1200, height: 780),
             minSize: NSSize(width: 1040, height: 620),
@@ -83,6 +84,22 @@ final class WindowManager {
             content: MainWindowView(model: mainModel, systemExtension: systemExtension)
                 .environmentObject(state)
         )
+        // A real toolbar, in the title bar, laid out by AppKit. The controller
+        // has to be retained for as long as the window: it is the toolbar's
+        // delegate and its search field's delegate.
+        let controller = MainToolbarController(model: mainModel)
+        mainToolbarController = controller
+        window.toolbar = controller.makeToolbar()
+        window.toolbarStyle = .unified
+        // Finder's sidebar material runs the full height of the window, behind
+        // the title bar, and the toolbar floats on top of it. That needs the
+        // content view to own the title bar area and the title bar itself to
+        // stop painting a background. The content still lays out below the
+        // toolbar, because SwiftUI insets it by the window's safe area; only
+        // the sidebar's material opts out of that inset.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        return window
     }
 
     /// The page outlives the window, so it is persisted as it changes rather

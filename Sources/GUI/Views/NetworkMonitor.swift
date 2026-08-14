@@ -5,7 +5,8 @@ struct NetworkMonitorView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
     @State private var selectedProcess: String? = nil
-    @State private var searchText: String = ""
+    /// Supplied by the window's toolbar search field.
+    @Binding var searchText: String
     /// Owns the grouped tree, its expansion state and its decisions. A
     /// StateObject, so expansion survives every refresh of the live data.
     @StateObject private var tree = MonitorTreeController()
@@ -16,17 +17,14 @@ struct NetworkMonitorView: View {
             HStack(spacing: 0) {
                 sidebar
                     .frame(width: 330)
-                    .background(PSTheme.bgSidebar)
-                Divider().background(PSTheme.stroke)
+                Divider()
                 mapPane
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-                Divider().background(PSTheme.stroke)
+                Divider()
                 summaryPane
                     .frame(width: 280)
-                    .background(PSTheme.bgSecondary)
             }
         }
-        .background(PSTheme.bgPrimary)
         // Grouping happens on a background task inside the controller. The
         // view hands it data and never groups anything itself.
         .onAppear {
@@ -47,32 +45,26 @@ struct NetworkMonitorView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundColor(PSTheme.textMuted)
-                TextField("Search apps and destinations", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .foregroundColor(PSTheme.textPrimary)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(PSTheme.bgTertiary)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .padding(8)
-
-            HStack(spacing: 6) {
-                Text("\(tree.snapshot.apps.count) apps")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(PSTheme.textMuted)
-                Spacer()
-                Button("Collapse all") { tree.collapseAll() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(PSTheme.accentBlue)
-            }
-            .padding(.horizontal, 10).padding(.bottom, 4)
-
             MonitorTreeList(controller: tree,
                             searchText: searchText,
                             selectedAppID: $selectedProcess)
+
+            // The count and the collapse control belong in a status bar under
+            // the list, where Finder keeps "9 items", not crowding the search
+            // field out of its own row.
+            Divider()
+            HStack(spacing: 8) {
+                Text("\(tree.snapshot.apps.count) apps")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Spacer()
+                Button("Collapse all") { tree.collapseAll() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.bar)
         }
     }
 
@@ -85,10 +77,9 @@ struct NetworkMonitorView: View {
                             Text(state.helperConnected
                                  ? "No located connections yet"
                                  : "Waiting for the FreeSnitch helper")
-                                .font(.system(size: 11))
-                                .foregroundColor(PSTheme.textPrimary)
+                                .font(.callout)
                                 .padding(.horizontal, 10).padding(.vertical, 5)
-                                .background(.black.opacity(0.55), in: Capsule())
+                                .background(.regularMaterial, in: Capsule())
                                 .padding(.top, 10)
                         }
                     }
@@ -102,23 +93,20 @@ struct NetworkMonitorView: View {
     private var legacyConnectionList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
-                    Image(systemName: "map").foregroundColor(PSTheme.textMuted)
-                    Text("Map view requires macOS 14 or later")
-                        .font(.system(size: 12)).foregroundColor(PSTheme.textMuted)
-                    Spacer()
-                }
-                .padding(12)
-                Divider().background(PSTheme.stroke)
+                Label("Map view requires macOS 14 or later", systemImage: "map")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                Divider()
                 ForEach(connectionsForMap()) { c in
                     HStack(spacing: 8) {
-                        Image(systemName: "globe.americas").foregroundColor(PSTheme.accentBlue)
+                        Image(systemName: "globe.americas")
+                            .foregroundStyle(Color.accentColor)
                             .frame(width: 16)
-                        Text(legacyLabel(c))
-                            .font(.system(size: 12)).foregroundColor(PSTheme.textPrimary).lineLimit(1)
+                        Text(legacyLabel(c)).font(.body).lineLimit(1)
                         Spacer()
                         if let cc = c.countryCode, !cc.isEmpty {
-                            Text(cc).font(.system(size: 10, weight: .semibold)).foregroundColor(PSTheme.textSecondary)
+                            Text(cc).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -126,7 +114,6 @@ struct NetworkMonitorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PSTheme.bgPrimary)
     }
 
     private func legacyLabel(_ c: Connection) -> String {
@@ -135,62 +122,49 @@ struct NetworkMonitorView: View {
         return c.remoteIP
     }
 
+    /// The right-hand summary, as a grouped list of labelled values.
+    ///
+    /// It used to open with a 22pt title and two saturated gradient cards, then
+    /// list bare rows under grey captions. Sections and `LabeledContent` say
+    /// the same thing in the shape System Settings uses.
     private var summaryPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                summaryHeader
-                statsRow
-                Group {
-                    sectionHeader("Top Processes")
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text("Summary").font(.headline)
+                Text("\(state.topProcesses.count) processes, \(state.topDomains.count) domains")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.bar)
+            Divider()
+
+            List {
+                Section("Throughput") {
+                    LabeledContent("Down", value: PSFormat.bytesPerSec(state.currentIn))
+                    LabeledContent("Up", value: PSFormat.bytesPerSec(state.currentOut))
+                }
+                Section("Top Processes") {
                     ForEach(state.topProcesses.prefix(5)) { p in
-                        SmallStatRow(label: p.name, value: PSFormat.bytes(p.total))
+                        LabeledContent(p.name, value: PSFormat.bytes(p.total))
                     }
                 }
-                Group {
-                    sectionHeader("Top Domains")
+                Section("Top Domains") {
                     ForEach(state.topDomains.prefix(5)) { d in
-                        SmallStatRow(label: d.domain, value: PSFormat.bytes(d.total))
+                        LabeledContent(d.domain, value: PSFormat.bytes(d.total))
                     }
                 }
-                Group {
-                    sectionHeader("Top Countries")
+                Section("Top Countries") {
                     ForEach(state.topCountries.prefix(5)) { c in
-                        SmallStatRow(label: c.country, value: PSFormat.bytes(c.total))
+                        LabeledContent(c.country, value: PSFormat.bytes(c.total))
                     }
                 }
             }
-            .padding(14)
+            .listStyle(.inset)
+            .monospacedDigit()
         }
-    }
-
-    private var summaryHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Summary").font(.system(size: 22, weight: .bold)).foregroundColor(PSTheme.textPrimary)
-            Text("\(state.topProcesses.count) processes, \(state.topDomains.count) domains")
-                .font(.system(size: 11)).foregroundColor(PSTheme.textMuted)
-        }
-    }
-
-    private var statsRow: some View {
-        HStack(spacing: 8) {
-            statPill(value: PSFormat.bytesPerSec(state.currentIn), label: "down", color: Color.blue.opacity(0.35))
-            statPill(value: PSFormat.bytesPerSec(state.currentOut), label: "up", color: Color.purple.opacity(0.35))
-        }
-    }
-
-    private func statPill(value: String, label: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(value).font(.system(size: 18, weight: .bold)).foregroundColor(.white)
-            Text(label).font(.system(size: 10)).foregroundColor(PSTheme.textSecondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func sectionHeader(_ s: String) -> some View {
-        Text(s).font(.system(size: 11, weight: .semibold)).foregroundColor(PSTheme.textMuted)
     }
 
     /// Only connections we actually have coordinates for. The previous version
@@ -205,12 +179,7 @@ struct SmallStatRow: View {
     let label: String
     let value: String
     var body: some View {
-        HStack {
-            Text(label).font(.system(size: 11)).foregroundColor(PSTheme.textPrimary).lineLimit(1)
-            Spacer()
-            Text(value).font(.system(size: 10, weight: .semibold))
-                .foregroundColor(PSTheme.textSecondary)
-        }
-        .padding(.vertical, 2)
+        LabeledContent(label, value: value)
+            .lineLimit(1)
     }
 }

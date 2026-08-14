@@ -34,6 +34,23 @@ enum MainPage: String, CaseIterable, Identifiable {
         case .settings: return "gearshape"
         }
     }
+
+    /// Whether the window's toolbar carries a search field on this page. Only
+    /// the two pages with a long list to narrow do.
+    var supportsSearch: Bool {
+        switch self {
+        case .monitor, .rules: return true
+        case .insights, .profiles, .settings: return false
+        }
+    }
+
+    var searchPlaceholder: String {
+        switch self {
+        case .monitor: return "Search apps and destinations"
+        case .rules: return "Search rules"
+        case .insights, .profiles, .settings: return "Search"
+        }
+    }
 }
 
 /// The selected page, owned by the window manager and observed by the window's
@@ -42,6 +59,11 @@ enum MainPage: String, CaseIterable, Identifiable {
 @MainActor
 final class MainWindowModel: ObservableObject {
     @Published var page: MainPage
+    /// Sidebar visibility and the search query live here rather than in the
+    /// view, because the window's real `NSToolbar` drives both and a toolbar
+    /// cannot reach into SwiftUI `@State`.
+    @Published var isSidebarVisible = true
+    @Published var searchText = ""
 
     init(page: MainPage) {
         self.page = page
@@ -55,7 +77,6 @@ final class MainWindowModel: ObservableObject {
 struct MainWindowView: View {
     @ObservedObject var model: MainWindowModel
     let systemExtension: SystemExtensionManager
-    @State private var isSidebarVisible = true
     @State private var sidebarAcceptsSelection = false
     @ObservedObject private var profileClient = ProfileClient.shared
 
@@ -75,63 +96,34 @@ struct MainWindowView: View {
         // affordance that NavigationSplitView could not give us without an
         // NSToolbar.
         HStack(spacing: 0) {
-            if isSidebarVisible {
+            if model.isSidebarVisible {
                 sidebar.frame(width: 200)
                 Divider()
             }
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(alignment: .topLeading) {
-                    // Without the sidebar there would be no way back to it, so
-                    // the reveal control only exists while it is hidden.
-                    if !isSidebarVisible {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.15)) { isSidebarVisible = true }
-                        } label: {
-                            Image(systemName: "sidebar.left")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Show the sidebar")
-                        .padding(8)
-                    }
-                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PSTheme.bgPrimary)
     }
 
-    /// A real sidebar `List`, so the window's own navigation gets the same
-    /// Finder metrics, selection and keyboard traversal as the pages inside it.
-    /// Its material is supplied by `.listStyle(.sidebar)` and must not be
-    /// painted over.
+    /// A real sidebar `List` on a real `NSVisualEffectView`.
+    ///
+    /// The collapse control is gone from here: it is a toolbar item now, where
+    /// Finder keeps it, so the sidebar starts at its first row and there is one
+    /// control for hiding and showing rather than two that swap places.
     private var sidebar: some View {
-        VStack(spacing: 0) {
-            // No app-name caption here: the window title bar already says
-            // FreeSnitch, and Finder's sidebar starts at its first row. Only
-            // the collapse control remains, aligned like a toolbar button.
-            HStack {
-                Spacer()
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { isSidebarVisible = false }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .buttonStyle(.borderless)
-                .help("Hide the sidebar")
+        List(selection: pageSelection) {
+            ForEach(MainPage.allCases) { page in
+                Label(page.title, systemImage: page.symbol)
+                    .tag(page)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-
-            List(selection: pageSelection) {
-                ForEach(MainPage.allCases) { page in
-                    Label(page.title, systemImage: page.symbol)
-                        .tag(page)
-                }
-            }
-            .listStyle(.sidebar)
-            .onAppear {
-                DispatchQueue.main.async { sidebarAcceptsSelection = true }
-            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        // The material, and only the material, extends under the title bar.
+        .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
+        .onAppear {
+            DispatchQueue.main.async { sidebarAcceptsSelection = true }
         }
     }
 
@@ -153,9 +145,9 @@ struct MainWindowView: View {
     private var detail: some View {
         switch model.page {
         case .monitor:
-            NetworkMonitorView(systemExtension: systemExtension)
+            NetworkMonitorView(systemExtension: systemExtension, searchText: $model.searchText)
         case .rules:
-            RulesManagerView(systemExtension: systemExtension)
+            RulesManagerView(systemExtension: systemExtension, searchText: $model.searchText)
         case .insights:
             InsightsView()
         case .profiles:
