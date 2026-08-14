@@ -99,6 +99,12 @@ final class WindowManager {
         // the sidebar's material opts out of that inset.
         window.styleMask.insert(.fullSizeContentView)
         window.titlebarAppearsTransparent = true
+        // AppKit draws its title right after the leading toolbar items, which
+        // here is on top of the sidebar. The toolbar carries a title item of
+        // its own that aligns to the content pane instead (#74). The window
+        // still has a title and a subtitle: the Window menu, Mission Control
+        // and the Dock all read them.
+        window.titleVisibility = .hidden
         return window
     }
 

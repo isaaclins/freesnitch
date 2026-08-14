@@ -53,6 +53,22 @@ enum MainPage: String, CaseIterable, Identifiable {
     }
 }
 
+/// Shared geometry of the main window. The toolbar needs the same numbers the
+/// content lays itself out with, so the window title can be aligned to the
+/// content pane rather than to the window (#74).
+enum MainWindowMetrics {
+    static let sidebarWidth: CGFloat = 200
+    /// The divider between the sidebar and the content.
+    static let dividerWidth: CGFloat = 1
+    /// What the pages pad their own headers by.
+    static let contentInset: CGFloat = 12
+
+    /// Window x of the content pane's leading edge.
+    static func contentEdge(sidebarVisible: Bool) -> CGFloat {
+        sidebarVisible ? sidebarWidth + dividerWidth : 0
+    }
+}
+
 /// The selected page, owned by the window manager and observed by the window's
 /// content. Keeping it out of `@State` is what lets a menu action switch the
 /// existing window instead of opening a new one.
@@ -97,7 +113,7 @@ struct MainWindowView: View {
         // NSToolbar.
         HStack(spacing: 0) {
             if model.isSidebarVisible {
-                sidebar.frame(width: 200)
+                sidebar.frame(width: MainWindowMetrics.sidebarWidth)
                 Divider()
             }
             detail
