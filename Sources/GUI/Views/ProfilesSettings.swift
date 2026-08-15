@@ -4,6 +4,9 @@ import SwiftUI
 /// which networks select it, and the rules that only apply there.
 struct ProfilesSettingsView: View {
     @ObservedObject var profileClient: ProfileClient
+    /// Only for the rule counts in the summary line, which come from the
+    /// helper's rule list rather than from the profile snapshot.
+    @EnvironmentObject var state: AppState
     /// Which profile the detail pane is showing. Not the same thing as the
     /// active profile: reading a profile must not switch to it.
     @State private var selectedProfileName: String?
@@ -15,6 +18,12 @@ struct ProfilesSettingsView: View {
     @State private var pendingProfileDeletion: String?
     @State private var newProfileName = ""
     @State private var newProfileMode: AppMode = .alert
+    @State private var newProfileIcon = ProfileIcons.all[0]
+    /// The profile being renamed, and the name being typed. Profiles could not
+    /// be renamed at all, and every one of them carried the same fixed pin
+    /// glyph, so the list was a column of identical rows (#137).
+    @State private var renamingProfile: Profile?
+    @State private var renameText = ""
 
     /// Text fields stop at a readable measure instead of spanning the window
     /// (#88). A name is a few words; a URL is longer but still not a window.
@@ -32,6 +41,7 @@ struct ProfilesSettingsView: View {
             }
         }
         .sheet(isPresented: $showingCreateSheet) { createSheet }
+        .sheet(item: $renamingProfile) { profile in renameSheet(profile) }
         // A profile carries its own rules and its own networks, so deleting it
         // says what goes with it (#115).
         .confirmationDialog("Delete the profile \(pendingProfileDeletion ?? "")?",
@@ -136,6 +146,25 @@ struct ProfilesSettingsView: View {
                     if let name = names.first, let profile = profile(named: name) {
                         Button("Activate") { profileClient.activate(profileName: name) }
                             .disabled(!profileClient.isAvailable || profile.isActive)
+                        if name != Profile.defaultName {
+                            Button("Rename…") {
+                                renameText = profile.name
+                                renamingProfile = profile
+                            }
+                            .disabled(!profileClient.isAvailable)
+                        }
+                        Menu("Symbol") {
+                            ForEach(ProfileIcons.all, id: \.self) { symbol in
+                                Button {
+                                    var updated = profile
+                                    updated.icon = symbol
+                                    profileClient.updateProfile(updated)
+                                } label: {
+                                    Label(ProfileIcons.title(symbol), systemImage: symbol)
+                                }
+                            }
+                        }
+                        .disabled(!profileClient.isAvailable)
                         if name != Profile.defaultName {
                             Divider()
                             Button("Delete Profile\u{2026}", role: .destructive) {
@@ -276,9 +305,15 @@ struct ProfilesSettingsView: View {
             .padding(.bottom, 10)
     }
 
+    /// Both counts, for this profile, rather than the same sentence under every
+    /// profile with only the shared number in it (#137).
     private func summary(_ profile: Profile) -> String {
         let always = profileClient.snapshot?.alwaysRuleCount ?? 0
-        return "Applies the \(always) Always rules plus this profile's own rules."
+        let own = state.rules.filter { $0.profile == profile.name && $0.enabled }.count
+        let ownPart = own == 0
+            ? "no rules of its own yet"
+            : "\(own) rule\(own == 1 ? "" : "s") of its own"
+        return "Applies the \(always) Always rule\(always == 1 ? "" : "s") and \(ownPart)."
     }
 
     private func blocklistSection(_ profile: Profile) -> some View {
@@ -440,6 +475,12 @@ struct ProfilesSettingsView: View {
                     }
                 }
                 .frame(maxWidth: 280)
+                Picker("Symbol", selection: $newProfileIcon) {
+                    ForEach(ProfileIcons.all, id: \.self) { symbol in
+                        Label(ProfileIcons.title(symbol), systemImage: symbol).tag(symbol)
+                    }
+                }
+                .frame(maxWidth: 280)
             }
             HStack {
                 Spacer()
@@ -447,7 +488,7 @@ struct ProfilesSettingsView: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Create") {
                     let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    profileClient.createProfile(name: name, mode: newProfileMode, icon: "mappin.and.ellipse")
+                    profileClient.createProfile(name: name, mode: newProfileMode, icon: newProfileIcon)
                     selectedProfileName = name
                     newProfileName = ""
                     showingCreateSheet = false
@@ -459,6 +500,40 @@ struct ProfilesSettingsView: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    /// Renaming carries the profile's rules, its blocklist choices and its
+    /// network bindings with it: the store does that in one transaction. The
+    /// default profile cannot be renamed, which is why the menu item is not
+    /// offered for it.
+    private func renameSheet(_ profile: Profile) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Rename \(profile.name)").font(.title3.weight(.semibold))
+            Text("Its rules, blocklist choices and network bindings move with the name.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Name", text: $renameText)
+                .frame(maxWidth: Self.nameFieldWidth)
+            HStack {
+                Spacer()
+                Button("Cancel") { renamingProfile = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename") {
+                    var updated = profile
+                    updated.name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    profileClient.updateProfile(updated)
+                    if selectedProfileName == profile.name { selectedProfileName = updated.name }
+                    renamingProfile = nil
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!profileClient.isAvailable
+                          || renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || renameText.trimmingCharacters(in: .whitespacesAndNewlines) == profile.name)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
     }
 
     private func blocklistNamed(_ id: UUID) -> BlocklistInfo? {
@@ -542,6 +617,34 @@ struct RuleAppliesToPicker: View {
                  : "Applies only while \(activeProfileName) is the active profile.")
                 .font(.caption).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// The symbols a profile can wear.
+///
+/// Every profile was created with the same fixed pin, so the sidebar was a
+/// column of identical rows and the menu bar showed the same glyph whichever
+/// profile was active (#137). A short, named list beats a full symbol browser
+/// here: these are places and situations, not arbitrary art.
+enum ProfileIcons {
+    static let all = [
+        "house", "building.2", "airplane", "cup.and.saucer", "wifi",
+        "lock.shield", "person.2", "gamecontroller", "briefcase", "mappin.and.ellipse"
+    ]
+
+    static func title(_ symbol: String) -> String {
+        switch symbol {
+        case "house": return "Home"
+        case "building.2": return "Work"
+        case "airplane": return "Travel"
+        case "cup.and.saucer": return "Cafe"
+        case "wifi": return "Public network"
+        case "lock.shield": return "Locked down"
+        case "person.2": return "Shared"
+        case "gamecontroller": return "Play"
+        case "briefcase": return "Client site"
+        default: return "Place"
         }
     }
 }
