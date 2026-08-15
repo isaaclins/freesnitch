@@ -343,6 +343,7 @@ struct MonitorTrafficBars: View {
 /// shown as the active choice and can be taken back with the clear control,
 /// which removes that rule.
 struct MonitorDecisionControls: View {
+    @EnvironmentObject var state: AppState
     let decision: Rule?
     let pending: Bool
     let addressable: Bool
@@ -350,6 +351,11 @@ struct MonitorDecisionControls: View {
     var onSelection: Bool = false
     let onDecide: (RuleAction) -> Void
     let onClear: () -> Void
+
+    /// Rules live in the helper, so a decision cannot be made without it.
+    /// Saying so on the control beats letting the click through and answering
+    /// with an alert afterwards (#98).
+    private var canDecide: Bool { state.helperConnected }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -367,14 +373,20 @@ struct MonitorDecisionControls: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(onSelection ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary))
-                .disabled(pending)
-                .help("Remove the rule this row created and go back to no decision.")
+                .disabled(pending || !canDecide)
+                .help(unavailableReason ?? "Remove the rule this row created and go back to no decision.")
             }
         }
         .imageScale(.large)
-        .opacity(addressable ? 1 : 0.35)
-        .allowsHitTesting(addressable && !pending)
-        .help(addressable ? "" : "This row has no destination a rule can name.")
+        .opacity(addressable && canDecide ? 1 : 0.35)
+        .allowsHitTesting(addressable && !pending && canDecide)
+        .help(unavailableReason ?? "")
+    }
+
+    private var unavailableReason: String? {
+        if !addressable { return "This row has no destination a rule can name." }
+        if !canDecide { return "Approve the FreeSnitch helper before deciding anything here." }
+        return nil
     }
 
     /// Filled symbol buttons, drawn in two layers.
@@ -394,8 +406,9 @@ struct MonitorDecisionControls: View {
                 .foregroundStyle(glyphColor(isActive: isActive), discColor(color, isActive: isActive))
         }
         .buttonStyle(.borderless)
-        .disabled(pending)
-        .help(isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help)
+        .disabled(pending || !canDecide)
+        .help(unavailableReason
+              ?? (isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help))
     }
 
     private func glyphColor(isActive: Bool) -> Color {
