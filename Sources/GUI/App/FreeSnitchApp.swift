@@ -359,6 +359,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProfileClient.shared.adoptDemoSnapshot(snapshot)
     }
 
+    /// The status item is the last visible trace of the app, so it goes before
+    /// the process does rather than at whatever moment AppKit gets around to it.
+    func applicationWillTerminate(_ notification: Notification) {
+        menubar?.removeStatusItem()
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         windowManager.showMainWindow()
         return true

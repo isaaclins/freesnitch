@@ -4,6 +4,7 @@ import ServiceManagement
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
+    @ObservedObject var uninstall: UninstallFlowModel
     @State private var doh = ""
     @State private var dohError: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -277,7 +278,7 @@ struct SettingsView: View {
     /// the helper's Repair action in General: repair and uninstall are
     /// different actions and #24 is what happens when they blur.
     private var uninstallTab: some View {
-        UninstallView(systemExtension: systemExtension)
+        UninstallView(flow: uninstall)
     }
 
     private var aboutTab: some View {
