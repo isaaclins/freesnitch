@@ -1,43 +1,16 @@
 import SwiftUI
 import AppKit
 
-/// Semantic system colors, not a palette.
+/// The two colours that carry meaning rather than emphasis.
 ///
-/// Every one of these used to be a fixed dark RGB value, which is why the app
-/// looked like a dark app that happens to run on a Mac while Settings, the one
-/// screen built from system controls, looked like it belonged. Fixed colors
-/// also cannot follow the system appearance, honour the user's accent colour,
-/// or respond to Increase Contrast.
-///
-/// The names are kept so the 272 call sites do not all have to change at once;
-/// what changes is that each one now resolves through AppKit. New code should
-/// prefer the system colors directly, or better, use a native container that
-/// needs no colour at all.
-enum PSTheme {
-    /// Window and content backgrounds. `bgSidebar` is deliberately clear so the
-    /// sidebar's own material shows through instead of being painted over,
-    /// which is the top source of wrong-looking Mac UI.
-    static let bgPrimary = Color(nsColor: .windowBackgroundColor)
-    static let bgSecondary = Color(nsColor: .controlBackgroundColor)
-    static let bgTertiary = Color(nsColor: .underPageBackgroundColor)
-    static let bgSidebar = Color.clear
-    static let bgRow = Color(nsColor: .alternatingContentBackgroundColors.first ?? .controlBackgroundColor)
-    static let bgRowAlt = Color(nsColor: .alternatingContentBackgroundColors.last ?? .windowBackgroundColor)
-    static let stroke = Color(nsColor: .separatorColor)
-    /// Follows the accent colour the user picked in System Settings.
-    static let accent = Color.accentColor
-    static let accentGreen = Color(nsColor: .systemGreen)
-    static let accentRed = Color(nsColor: .systemRed)
-    static let accentYellow = Color(nsColor: .systemYellow)
-    static let accentBlue = Color(nsColor: .systemBlue)
-    /// Traffic direction stays deliberately distinct from the accent colour,
-    /// because these two encode meaning (in versus out) rather than emphasis,
-    /// and must not change when the user changes their accent.
-    static let trafficIn = Color(nsColor: .systemPink)
-    static let trafficOut = Color(nsColor: .systemBlue)
-    static let textPrimary = Color(nsColor: .labelColor)
-    static let textSecondary = Color(nsColor: .secondaryLabelColor)
-    static let textMuted = Color(nsColor: .tertiaryLabelColor)
+/// Everything else the app draws now uses a system colour, a semantic label
+/// colour, or a native container that needs no colour at all, which is what
+/// let the app-wide `PSTheme` palette go. These two stay named because in and
+/// out are the one distinction the app makes with colour, and they must not
+/// move when the user changes their accent colour (#68).
+enum TrafficColor {
+    static let sent = Color(nsColor: .systemBlue)
+    static let received = Color(nsColor: .systemPink)
 }
 
 enum AppIcon {
@@ -109,7 +82,7 @@ struct PSChip: View {
     let text: String
     let color: Color
     let icon: String?
-    init(_ text: String, color: Color = PSTheme.accent, icon: String? = nil) {
+    init(_ text: String, color: Color = .accentColor, icon: String? = nil) {
         self.text = text; self.color = color; self.icon = icon
     }
     /// A quiet annotation, not a button.
@@ -139,7 +112,7 @@ struct PSPanel<Content: View>: View {
     init(@ViewBuilder content: @escaping () -> Content) { self.content = content }
     var body: some View {
         content()
-            .background(PSTheme.bgSecondary)
+            .background(Color(nsColor: .controlBackgroundColor))
             // 8 was a guess. Apple's grouped containers use 10 at this size,
             // and the separator carries the edge, so the stroke is gone.
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

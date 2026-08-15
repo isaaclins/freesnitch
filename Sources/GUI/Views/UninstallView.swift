@@ -321,9 +321,9 @@ struct UninstallFlowSheet: View {
 
     private var statusTint: Color {
         switch systemExtension.uninstallState {
-        case .removed: return PSTheme.accentGreen
-        case .failed: return PSTheme.accentRed
-        default: return PSTheme.accentYellow
+        case .removed: return Color(nsColor: .systemGreen)
+        case .failed: return Color(nsColor: .systemRed)
+        default: return Color(nsColor: .systemYellow)
         }
     }
 
@@ -412,7 +412,7 @@ struct UninstallFlowSheet: View {
                 .textSelection(.enabled)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PSTheme.accent.opacity(0.08))
+                .background(Color.accentColor.opacity(0.08))
                 .cornerRadius(6)
             HStack {
                 Button("Copy commands") {

@@ -119,8 +119,8 @@ struct MenubarPopoverView: View {
     private var trafficSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                legend(color: PSTheme.trafficOut, label: "Sent", value: PSFormat.bytes(state.totalOut))
-                legend(color: PSTheme.trafficIn, label: "Received", value: PSFormat.bytes(state.totalIn))
+                legend(color: TrafficColor.sent, label: "Sent", value: PSFormat.bytes(state.totalOut))
+                legend(color: TrafficColor.received, label: "Received", value: PSFormat.bytes(state.totalIn))
                 Spacer(minLength: 0)
             }
             ZStack(alignment: .bottom) {
@@ -431,10 +431,10 @@ struct TrafficBarsChart: View {
                         // one glance means the same thing in both places.
                         VStack(spacing: 0) {
                             Rectangle()
-                                .fill(PSTheme.trafficOut)
+                                .fill(TrafficColor.sent)
                                 .frame(width: barW, height: max(2, CGFloat(s.bytesOut)/peak * midY * 0.95))
                             Rectangle()
-                                .fill(PSTheme.trafficIn)
+                                .fill(TrafficColor.received)
                                 .frame(width: barW, height: max(2, CGFloat(s.bytesIn)/peak * midY * 0.95))
                         }
                     }

@@ -366,8 +366,8 @@ struct MonitorTrafficBars: View {
     var onSelection: Bool = false
     static let width: CGFloat = 42
 
-    static let sentColor = PSTheme.trafficOut
-    static let receivedColor = PSTheme.trafficIn
+    static let sentColor = TrafficColor.sent
+    static let receivedColor = TrafficColor.received
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {

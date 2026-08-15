@@ -224,7 +224,7 @@ struct ProfilesSettingsView: View {
             HeaderedPane {
                 PaneHeader(profile.name) {
                     if profile.isActive {
-                        PSChip("Active", color: PSTheme.accentGreen)
+                        PSChip("Active", color: Color(nsColor: .systemGreen))
                     } else {
                         Button("Activate") { profileClient.activate(profileName: profile.name) }
                             .disabled(!profileClient.isAvailable)
@@ -584,7 +584,7 @@ struct ProfileSwitchBanner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundColor(PSTheme.accentBlue)
+                .foregroundColor(Color(nsColor: .systemBlue))
             VStack(alignment: .leading, spacing: 2) {
                 Text(notice.activeProfile).font(.body.weight(.semibold))
                 Text(notice.message).font(.caption).foregroundColor(.secondary)
@@ -602,7 +602,7 @@ struct ProfileSwitchBanner: View {
             .buttonStyle(.borderless)
         }
         .padding(8)
-        .background(PSTheme.bgTertiary)
+        .background(Color(nsColor: .underPageBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

@@ -57,7 +57,7 @@ struct ConnectionMapPane: View {
         Map(position: $cameraPosition) {
             ForEach(model.result.arcs) { arc in
                 MapPolyline(coordinates: arc.points.map(\.coordinate))
-                    .stroke(PSTheme.accentBlue.opacity(0.16 + 0.52 * arc.intensity),
+                    .stroke(Color(nsColor: .systemBlue).opacity(0.16 + 0.52 * arc.intensity),
                             style: StrokeStyle(lineWidth: 0.7 + 2.0 * arc.intensity,
                                                lineCap: .round,
                                                lineJoin: .round))
@@ -352,7 +352,7 @@ struct NodePin: View {
                 .frame(width: dotSize, height: dotSize)
                 .overlay(Circle().stroke(isSelected
                                          ? Color.accentColor
-                                         : PSTheme.accentBlue.opacity(0.35 + 0.5 * node.intensity),
+                                         : Color(nsColor: .systemBlue).opacity(0.35 + 0.5 * node.intensity),
                                          lineWidth: isSelected ? 3 : 1.5))
         }
     }
@@ -369,7 +369,7 @@ private struct HomePin: View {
 
     var body: some View {
         Circle()
-            .fill(PSTheme.accent)
+            .fill(Color.accentColor)
             .frame(width: 24, height: 24)
             // The glyph inside the marker keeps its white on the accent fill:
             // that pair is the marker's own colour scheme, the way Maps draws
