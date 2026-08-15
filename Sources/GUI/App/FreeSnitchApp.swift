@@ -305,18 +305,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Synthetic blocklists
         state.blocklists = [
-            BlocklistInfo(name: "FireHOL", url: "", enabled: true, entryCount: 3768),
-            BlocklistInfo(name: "NoCoin", url: "", enabled: true, entryCount: 313),
-            BlocklistInfo(name: "URLhaus", url: "", enabled: true, entryCount: 513),
-            BlocklistInfo(name: "Anti PopAds", url: "", enabled: true, entryCount: 755),
-            BlocklistInfo(name: "Peter Lowe", url: "", enabled: true, entryCount: 3509),
-            BlocklistInfo(name: "Ad Way", url: "", enabled: true, entryCount: 6540),
-            BlocklistInfo(name: "Anudeep", url: "", enabled: true, entryCount: 42258),
-            BlocklistInfo(name: "KADhosts", url: "", enabled: true, entryCount: 48346),
-            BlocklistInfo(name: "OISD", url: "", enabled: true, entryCount: 57167),
-            BlocklistInfo(name: "HaGeZi Multi Light", url: "", enabled: true, entryCount: 60913),
-            BlocklistInfo(name: "1Host Lite", url: "", enabled: true, entryCount: 94647),
-            BlocklistInfo(name: "HaGeZi Threat", url: "", enabled: true, entryCount: 301675)
+            BlocklistInfo(name: "FireHOL", url: "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset", enabled: true, entryCount: 3768),
+            BlocklistInfo(name: "NoCoin", url: "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt", enabled: true, entryCount: 313),
+            BlocklistInfo(name: "URLhaus", url: "https://urlhaus.abuse.ch/downloads/hostfile/", enabled: true, entryCount: 513),
+            BlocklistInfo(name: "Anti PopAds", url: "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.2o7Net/hosts", enabled: true, entryCount: 755),
+            BlocklistInfo(name: "Peter Lowe", url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts", enabled: true, entryCount: 3509),
+            BlocklistInfo(name: "Ad Way", url: "https://adaway.org/hosts.txt", enabled: true, entryCount: 6540),
+            BlocklistInfo(name: "Anudeep", url: "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt", enabled: true, entryCount: 42258),
+            BlocklistInfo(name: "KADhosts", url: "https://raw.githubusercontent.com/PolishFiltersTeam/KADhosts/master/KADhosts.txt", enabled: true, entryCount: 48346),
+            BlocklistInfo(name: "OISD", url: "https://big.oisd.nl/hosts", enabled: true, entryCount: 57167),
+            BlocklistInfo(name: "HaGeZi Multi Light", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/light.txt", enabled: true, entryCount: 60913),
+            BlocklistInfo(name: "1Host Lite", url: "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/hosts.txt", enabled: true, entryCount: 94647),
+            BlocklistInfo(name: "HaGeZi Threat", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.txt", enabled: true, entryCount: 301675)
         ]
 
         seedDemoProfiles()

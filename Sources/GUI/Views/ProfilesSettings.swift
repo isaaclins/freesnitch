@@ -8,16 +8,16 @@ struct ProfilesSettingsView: View {
     /// active profile: reading a profile must not switch to it.
     @State private var selectedProfileName: String?
     @State private var showingCreateSheet = false
+    @State private var selectedBlocklistID: UUID?
+    @State private var editingBlocklist: BlocklistInfo?
+    @State private var showingAddBlocklist = false
+    @State private var pendingBlocklistRemoval: BlocklistInfo?
     @State private var newProfileName = ""
     @State private var newProfileMode: AppMode = .alert
-    @State private var newBlocklistName = ""
-    @State private var newBlocklistURL = ""
-    @State private var blocklistError: String?
 
     /// Text fields stop at a readable measure instead of spanning the window
     /// (#88). A name is a few words; a URL is longer but still not a window.
     private static let nameFieldWidth: CGFloat = 200
-    private static let urlFieldWidth: CGFloat = 340
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,6 +31,28 @@ struct ProfilesSettingsView: View {
             }
         }
         .sheet(isPresented: $showingCreateSheet) { createSheet }
+        .sheet(item: $editingBlocklist) { blocklist in
+            BlocklistEditorView(blocklist: blocklist)
+        }
+        .sheet(isPresented: $showingAddBlocklist) {
+            BlocklistEditorView(blocklist: nil)
+        }
+        // Removing a list takes it away from every profile at once, so it says
+        // so before it happens (#101).
+        .confirmationDialog("Remove \(pendingBlocklistRemoval?.name ?? "this blocklist")?",
+                            isPresented: Binding(get: { pendingBlocklistRemoval != nil },
+                                                 set: { if !$0 { pendingBlocklistRemoval = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove Blocklist", role: .destructive) {
+                if let blocklist = pendingBlocklistRemoval {
+                    profileClient.removeBlocklist(blocklist.id)
+                }
+                pendingBlocklistRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingBlocklistRemoval = nil }
+        } message: {
+            Text("The list is removed from every profile, not just this one. Its entries stop being blocked as soon as enforcement next applies.")
+        }
     }
 
     // MARK: Notices
@@ -237,7 +259,10 @@ struct ProfilesSettingsView: View {
                     .buttonStyle(.borderless)
                     .disabled(!profileClient.isAvailable)
             }
-            List {
+            // Selection, so the list can carry a context menu at all: a button
+            // placed in a row never receives the click here, which is what the
+            // per-row trash was (#101).
+            List(selection: $selectedBlocklistID) {
                 ForEach(profileClient.snapshot?.blocklists ?? []) { blocklist in
                     HStack(spacing: 8) {
                         Toggle("", isOn: Binding(
@@ -249,7 +274,7 @@ struct ProfilesSettingsView: View {
                         .disabled(!profileClient.isAvailable)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(blocklist.name).lineLimit(1)
-                            Text(blocklist.url)
+                            Text(blocklist.url.isEmpty ? "Typed by you" : blocklist.url)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -258,34 +283,42 @@ struct ProfilesSettingsView: View {
                         Text("\(blocklist.entryCount)")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
-                        Button(role: .destructive) {
-                            profileClient.removeBlocklist(blocklist.id)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(!profileClient.isAvailable)
                     }
+                    .tag(blocklist.id)
                 }
             }
             .listStyle(.inset)
             .frame(maxHeight: .infinity)
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let id = ids.first, let blocklist = blocklistNamed(id) {
+                    Button("Edit\u{2026}") { editingBlocklist = blocklist }
+                        .disabled(!profileClient.isAvailable)
+                    Button("Refresh Lists") { profileClient.refreshBlocklists() }
+                        .disabled(!profileClient.isAvailable)
+                    Divider()
+                    Button("Remove\u{2026}", role: .destructive) { pendingBlocklistRemoval = blocklist }
+                        .disabled(!profileClient.isAvailable)
+                }
+            }
             HStack(spacing: 8) {
-                TextField("List name", text: $newBlocklistName)
-                    .frame(maxWidth: Self.nameFieldWidth)
-                TextField("https://example.org/hosts.txt", text: $newBlocklistURL)
-                    .frame(maxWidth: Self.urlFieldWidth)
-                Button("Add") { addCustomBlocklist(to: profile) }
-                    .disabled(!profileClient.isAvailable)
+                // One way to add a list, shared with the Rules sidebar. Two
+                // different forms for the same thing, one of them a bare pair
+                // of text fields, was two answers to one question (#101).
+                Button {
+                    editingBlocklist = nil
+                    showingAddBlocklist = true
+                } label: {
+                    Label("Add custom blocklist", systemImage: "plus")
+                        .font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!profileClient.isAvailable)
+                .help("Add a list of your own, from a URL or by typing its entries.")
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
-            if let blocklistError {
-                captionText(blocklistError, tint: .red)
-            } else {
-                captionText("Deny lists stack and filter DNS names only. Custom lists must use HTTPS.", tint: .secondary)
-            }
+            captionText("Deny lists stack and filter DNS names only.", tint: .secondary)
         }
     }
 
@@ -387,19 +420,8 @@ struct ProfilesSettingsView: View {
         .frame(width: 420)
     }
 
-    private func addCustomBlocklist(to profile: Profile) {
-        do {
-            _ = try BlocklistURLValidator.validate(newBlocklistURL)
-            blocklistError = nil
-        } catch {
-            blocklistError = error.localizedDescription
-            return
-        }
-        profileClient.addCustomBlocklist(name: newBlocklistName,
-                                         url: newBlocklistURL,
-                                         profileName: profile.name)
-        newBlocklistName = ""
-        newBlocklistURL = ""
+    private func blocklistNamed(_ id: UUID) -> BlocklistInfo? {
+        profileClient.snapshot?.blocklists.first { $0.id == id }
     }
 
     // MARK: Lookups
