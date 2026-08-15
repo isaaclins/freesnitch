@@ -14,8 +14,6 @@ struct InsightsView: View {
     /// Only exists so the destination list has a selection for its context
     /// menu to key off. Nothing else reads it.
     @State private var selectedDestinationID: InsightsDestinationSummary.ID?
-    /// The row the pointer is on, so its action can appear only there (#102).
-    @State private var hoveredDestinationID: InsightsDestinationSummary.ID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -164,10 +162,6 @@ struct InsightsView: View {
                             appRow(app)
                                 .tag(app.id)
                         }
-                        if model.hasMoreApps {
-                            Button("Load more apps") { model.loadMoreApps() }
-                                .buttonStyle(.link)
-                        }
                     }
                     .listStyle(.inset)
                     // The selection-aware form is the one that works on a
@@ -179,6 +173,9 @@ struct InsightsView: View {
                             appContextMenu(app)
                         }
                     }
+                    listFooter(hasMore: model.hasMoreApps,
+                               title: "Load more apps",
+                               action: { model.loadMoreApps() })
                 }
             }
             .frame(width: 280)
@@ -197,10 +194,6 @@ struct InsightsView: View {
                                 destinationRow(destination, app: app)
                                     .tag(destination.id)
                             }
-                            if model.hasMoreDestinations {
-                                Button("Load more destinations") { model.loadMoreDestinations() }
-                                    .buttonStyle(.link)
-                            }
                         }
                         .listStyle(.inset)
                         .contextMenu(forSelectionType: InsightsDestinationSummary.ID.self) { ids in
@@ -209,6 +202,7 @@ struct InsightsView: View {
                                 destinationContextMenu(destination, app: app)
                             }
                         }
+                        destinationFooter(app: app)
                     }
                 } else {
                     emptyState("Select an app to see what it talked to.")
@@ -251,11 +245,9 @@ struct InsightsView: View {
         }
     }
 
-    /// The action appears for the row the pointer is on, the way Mail and
-    /// Photos reveal a row action. A bordered button on every row turned a
-    /// list of destinations into a column of identical buttons, and the eye
-    /// read the buttons instead of the data (#102). It stays in the context
-    /// menu, which is where it can always be found.
+    /// Data only. The action lives under the list, where it works: a button
+    /// placed in a `List` row never receives the click in this app, so the one
+    /// that used to sit on every row was both noise and inert (#102, #106).
     private func destinationRow(_ destination: InsightsDestinationSummary, app: InsightsAppSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -277,16 +269,50 @@ struct InsightsView: View {
                     Text(ip).font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Propose a rule") { model.proposeRule(for: destination, app: app) }
-                    .controlSize(.small)
-                    .opacity(hoveredDestinationID == destination.id ? 1 : 0)
-                    .accessibilityHidden(hoveredDestinationID != destination.id)
             }
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            hoveredDestinationID = hovering ? destination.id : nil
+    }
+
+    /// Acts on the selected row, the way Mail's toolbar acts on the selected
+    /// message. Says what it needs when nothing is selected instead of being
+    /// silently inert (#106).
+    private func destinationFooter(app: InsightsAppSummary) -> some View {
+        HStack(spacing: 8) {
+            Button("Propose a rule") {
+                guard let id = selectedDestinationID,
+                      let destination = model.destinations.first(where: { $0.id == id }) else { return }
+                model.proposeRule(for: destination, app: app)
+            }
+            .controlSize(.small)
+            .disabled(selectedDestinationID == nil)
+            .help(selectedDestinationID == nil
+                  ? "Select a destination first."
+                  : "Draft a rule for the selected destination. Nothing is enforced until you accept it.")
+            Spacer(minLength: 8)
+            if model.hasMoreDestinations {
+                Button("Load more destinations") { model.loadMoreDestinations() }
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+    }
+
+    /// One shape for "there is more where that came from", under the list
+    /// rather than as its last row (#106).
+    @ViewBuilder
+    private func listFooter(hasMore: Bool, title: String, action: @escaping () -> Void) -> some View {
+        if hasMore {
+            HStack {
+                Button(title, action: action)
+                    .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
         }
     }
 
@@ -338,12 +364,11 @@ struct InsightsView: View {
                         }
                         .padding(.vertical, 2)
                     }
-                    if model.hasMoreUnresolved {
-                        Button("Load more addresses") { model.loadMoreUnresolved() }
-                            .buttonStyle(.link)
-                    }
                 }
                 .listStyle(.inset)
+                listFooter(hasMore: model.hasMoreUnresolved,
+                           title: "Load more addresses",
+                           action: { model.loadMoreUnresolved() })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -359,7 +384,11 @@ struct InsightsView: View {
             if model.findings.isEmpty && !model.isLoading {
                 emptyState("No changed destinations in this range.")
             } else {
-                List {
+                // A scroll view of cards, not a table: each finding carries its
+                // own action, and a button inside a `List` row never receives
+                // the click here (#106).
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
                     ForEach(model.findings) { finding in
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
@@ -382,10 +411,12 @@ struct InsightsView: View {
                                     .controlSize(.small)
                             }
                         }
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        Divider()
+                    }
                     }
                 }
-                .listStyle(.inset)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -407,16 +438,22 @@ struct InsightsView: View {
             if model.proposals.isEmpty && !model.isLoading {
                 emptyState("No proposals in this range.")
             } else {
-                List {
-                    ForEach(model.proposals) { proposal in
-                        proposalRow(proposal)
-                    }
-                    if model.hasMoreProposals {
-                        Button("Load more proposals") { model.loadMoreProposals() }
-                            .buttonStyle(.link)
+                // Each proposal is a card with its own decision to make, and a
+                // decision has to be clickable: inside a `List` row it was not
+                // (#106).
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(model.proposals) { proposal in
+                            proposalRow(proposal)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                            Divider()
+                        }
                     }
                 }
-                .listStyle(.inset)
+                listFooter(hasMore: model.hasMoreProposals,
+                           title: "Load more proposals",
+                           action: { model.loadMoreProposals() })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -451,16 +488,26 @@ struct InsightsView: View {
                     Label("Added to your rules", systemImage: "checkmark.circle")
                         .font(.callout).foregroundStyle(.green)
                 } else {
+                    // Accepting writes a rule through the helper, so it is
+                    // disabled while nothing can answer, and says why (#98).
                     Button(proposal.requiresExplicitIPChoice
                            ? "Block this address for \(proposal.appDisplayName) anyway"
                            : "Block for \(proposal.appDisplayName)") {
                         model.accept(proposal, widened: false)
                     }
                     .controlSize(.small)
+                    .disabled(!state.helperConnected)
+                    .help(state.helperConnected
+                          ? "Adds this rule to \(state.activeProfile)."
+                          : "Approve the FreeSnitch helper to add rules.")
 
                     if proposal.isDomainScoped {
                         Button("Block for every app") { model.accept(proposal, widened: true) }
                             .controlSize(.small)
+                            .disabled(!state.helperConnected)
+                            .help(state.helperConnected
+                                  ? "Adds this rule for every app."
+                                  : "Approve the FreeSnitch helper to add rules.")
                     }
                 }
                 Spacer()
