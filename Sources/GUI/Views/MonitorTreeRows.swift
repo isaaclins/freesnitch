@@ -14,6 +14,8 @@ struct MonitorTreeList: View {
     @EnvironmentObject var state: AppState
     @ObservedObject var controller: MonitorTreeController
     let searchText: String
+    /// Narrows the tree to the rows behind the menu bar's denied badge (#138).
+    var deniedOnly: Bool = false
     @Binding var selectedAppID: String?
     /// Removing a rule is removing stored policy, so it is confirmed and the
     /// confirmation names what goes (#115).
@@ -26,7 +28,9 @@ struct MonitorTreeList: View {
     }
 
     var body: some View {
-        let visible = MonitorTreeFilter.apply(query: searchText, to: controller.snapshot)
+        let visible = MonitorTreeFilter.apply(query: searchText,
+                                              deniedOnly: deniedOnly,
+                                              to: controller.snapshot)
         // A real outline: system disclosure triangles, system selection and
         // arrow-key navigation. The hand-drawn chevron button and the painted
         // selection tint are gone, but the controller still owns expansion, so
@@ -267,6 +271,15 @@ struct MonitorAppRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            if app.deniedCount > 0 {
+                // The verdict, on the row, in the app's own words. The Monitor
+                // never showed one anywhere (#138).
+                Text("\(app.deniedCount) denied")
+                    .font(.caption)
+                    .foregroundStyle(Color(nsColor: .systemRed))
+                    .monospacedDigit()
+                    .help("\(app.deniedCount) of this app's connections were denied.")
+            }
             Spacer(minLength: 4)
             MonitorTrafficBars(traffic: app.traffic, peak: peakTraffic, onSelection: selected)
             MonitorDecisionControls(decision: decision,
@@ -331,6 +344,7 @@ struct MonitorDestinationRow: View {
 
     private var subtitle: String {
         var parts = ["\(destination.connectionCount) connection\(destination.connectionCount == 1 ? "" : "s")"]
+        if destination.deniedCount > 0 { parts.append("\(destination.deniedCount) denied") }
         parts.append(PSFormat.bytes(destination.traffic.total))
         if let code = destination.countryCode, !code.isEmpty { parts.append(code) }
         return parts.joined(separator: " · ")
@@ -507,21 +521,34 @@ enum MonitorTreeFilter {
         }
     }
 
-    static func apply(query: String, to snapshot: MonitorTreeSnapshot) -> Result {
+    static func apply(query: String,
+                      deniedOnly: Bool = false,
+                      to snapshot: MonitorTreeSnapshot) -> Result {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        guard !trimmed.isEmpty || deniedOnly else {
             return Result(apps: snapshot.apps, hiddenAppCount: snapshot.hiddenAppCount)
         }
         let needle = trimmed.lowercased()
         let apps: [MonitorAppNode] = snapshot.apps.compactMap { app in
-            if app.name.lowercased().contains(needle) { return app }
-            let matches = app.destinations.filter { $0.label.lowercased().contains(needle) }
+            // "Denied" narrows to the rows the menu bar badge counted, so the
+            // badge lands on the list it promised (#138).
+            if deniedOnly && app.deniedCount == 0 { return nil }
+            let nameMatches = needle.isEmpty || app.name.lowercased().contains(needle)
+            if nameMatches && !deniedOnly { return app }
+            let matches = app.destinations.filter { destination in
+                let textMatches = needle.isEmpty
+                    || nameMatches
+                    || destination.label.lowercased().contains(needle)
+                let verdictMatches = !deniedOnly || destination.deniedCount > 0
+                return textMatches && verdictMatches
+            }
             guard !matches.isEmpty else { return nil }
             return MonitorAppNode(id: app.id,
                                   name: app.name,
                                   bundleID: app.bundleID,
                                   path: app.path,
                                   connectionCount: app.connectionCount,
+                                  deniedCount: app.deniedCount,
                                   destinationCount: app.destinationCount,
                                   traffic: app.traffic,
                                   destinations: matches,

@@ -4,6 +4,9 @@ import AppKit
 struct NetworkMonitorView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
+    /// Owns the denied filter, so the menu bar can set it before this view
+    /// exists (#138).
+    @ObservedObject var model: MainWindowModel
     @State private var selectedProcess: String? = nil
     /// Supplied by the window's toolbar search field.
     @Binding var searchText: String
@@ -52,6 +55,16 @@ struct NetworkMonitorView: View {
     private var sidebar: some View {
         HeaderedPane {
             PaneHeader("Apps", count: tree.snapshot.apps.count) {
+                // The menu bar counts denied connections and offers to show
+                // them, so there has to be a list of them to show (#138).
+                Picker("Show", selection: $model.monitorDeniedOnly) {
+                    Text("All").tag(false)
+                    Text("Denied").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Show every app, or only the ones with denied connections.")
                 Button("Collapse all") { tree.collapseAll() }
                     .buttonStyle(.borderless)
                     .font(.callout)
@@ -66,6 +79,7 @@ struct NetworkMonitorView: View {
         VStack(alignment: .leading, spacing: 0) {
             MonitorTreeList(controller: tree,
                             searchText: searchText,
+                            deniedOnly: model.monitorDeniedOnly,
                             selectedAppID: $selectedProcess)
 
             // The count and the collapse control belong in a status bar under

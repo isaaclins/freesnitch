@@ -188,7 +188,7 @@ struct MenubarPopoverView: View {
                     }
                 }
             }
-            MenubarRow(action: { close(); windows.showNetworkMonitor() }) {
+            MenubarRow(action: { close(); windows.showDeniedConnections() }) {
                 HStack(spacing: 8) {
                     ZStack {
                         Circle().fill(state.deniedCount > 0 ? Color(nsColor: .systemRed) : Color.secondary)
@@ -197,7 +197,7 @@ struct MenubarPopoverView: View {
                             .foregroundStyle(.white)
                     }
                     .frame(width: 18, height: 18)
-                    Text("Recently Denied")
+                    Text("Recently denied")
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
                         .font(.caption)

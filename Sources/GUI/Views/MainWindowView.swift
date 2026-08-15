@@ -85,6 +85,8 @@ final class MainWindowModel: ObservableObject {
     /// view, because the window's real `NSToolbar` drives both and a toolbar
     /// cannot reach into SwiftUI `@State`.
     @Published var isSidebarVisible = true
+    /// Whether the Monitor is narrowed to apps with denied connections.
+    @Published var monitorDeniedOnly = false
     /// The sidebar's current width. Published because the window's real
     /// NSToolbar aligns the title to the content edge, so the title has to move
     /// when the sidebar is dragged (#123).
@@ -216,7 +218,9 @@ struct MainWindowView: View {
     private var detail: some View {
         switch model.page {
         case .monitor:
-            NetworkMonitorView(systemExtension: systemExtension, searchText: $model.searchText)
+            NetworkMonitorView(systemExtension: systemExtension,
+                               model: model,
+                               searchText: $model.searchText)
         case .rules:
             RulesManagerView(systemExtension: systemExtension, window: model)
         case .insights:

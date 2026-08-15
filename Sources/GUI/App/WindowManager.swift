@@ -56,6 +56,13 @@ final class WindowManager {
 
     func showNetworkMonitor() { show(.monitor) }
 
+    /// Lands on the Monitor already narrowed to the rows the caller counted,
+    /// rather than on a list where the count cannot be found (#138).
+    func showDeniedConnections() {
+        mainModel.monitorDeniedOnly = true
+        show(.monitor)
+    }
+
     func showRulesManager() { show(.rules) }
 
     func showInsights() { show(.insights) }

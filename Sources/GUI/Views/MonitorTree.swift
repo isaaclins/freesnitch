@@ -61,6 +61,10 @@ struct MonitorDestinationNode: Identifiable, Hashable, Sendable {
     let remoteIP: String?
     let countryCode: String?
     let connectionCount: Int
+    /// How many of those connections the filter denied. The Monitor never
+    /// showed a connection's verdict anywhere, so the menu bar's "Recently
+    /// denied" badge pointed at a list that did not exist (#138).
+    let deniedCount: Int
     let traffic: MonitorTrafficTotals
     /// Arrival rank. Ordering only; never derived from traffic.
     let order: UInt64
@@ -72,6 +76,8 @@ struct MonitorAppNode: Identifiable, Hashable, Sendable {
     let bundleID: String?
     let path: String?
     let connectionCount: Int
+    /// Denied connections, rolled up over every destination of this app.
+    let deniedCount: Int
     /// Distinct destinations this app contacted, including the ones with no
     /// row of their own.
     let destinationCount: Int
@@ -206,6 +212,7 @@ enum MonitorTreeBuilder {
         var remoteIP: String?
         var countryCode: String?
         var connectionCount: Int = 0
+        var deniedCount: Int = 0
         var traffic = MonitorTrafficTotals()
     }
 
@@ -214,6 +221,7 @@ enum MonitorTreeBuilder {
         var bundleID: String?
         var path: String?
         var connectionCount: Int = 0
+        var deniedCount: Int = 0
         var traffic = MonitorTrafficTotals()
         var destinations: [String: DestinationAccumulator] = [:]
         var ungroupedConnectionCount: Int = 0
@@ -236,12 +244,14 @@ enum MonitorTreeBuilder {
                 path: MonitorTreeKey.normalized(connection.processPath)
             )
             app.connectionCount += 1
+            if connection.status == .denied { app.deniedCount += 1 }
             app.traffic.add(bytesIn: connection.bytesIn, bytesOut: connection.bytesOut)
             if app.bundleID == nil { app.bundleID = MonitorTreeKey.normalized(connection.processBundleId) }
             if app.path == nil { app.path = MonitorTreeKey.normalized(connection.processPath) }
 
             if var destination = app.destinations[destinationKey] {
                 destination.connectionCount += 1
+                if connection.status == .denied { destination.deniedCount += 1 }
                 destination.traffic.add(bytesIn: connection.bytesIn, bytesOut: connection.bytesOut)
                 if destination.countryCode == nil {
                     destination.countryCode = MonitorTreeKey.normalized(connection.countryCode)
@@ -250,6 +260,7 @@ enum MonitorTreeBuilder {
             } else if app.destinations.count < MonitorTreeLimits.trackedDestinationsPerApp {
                 var destination = newDestination(for: connection, hostKey: hostKey)
                 destination.connectionCount = 1
+                destination.deniedCount = connection.status == .denied ? 1 : 0
                 destination.traffic.add(bytesIn: connection.bytesIn, bytesOut: connection.bytesOut)
                 app.destinations[destinationKey] = destination
             } else {
@@ -295,6 +306,7 @@ enum MonitorTreeBuilder {
                                        remoteIP: entry.value.remoteIP,
                                        countryCode: entry.value.countryCode,
                                        connectionCount: entry.value.connectionCount,
+                                       deniedCount: entry.value.deniedCount,
                                        traffic: entry.value.traffic,
                                        order: entry.rank)
             }
@@ -303,6 +315,7 @@ enum MonitorTreeBuilder {
                                            bundleID: app.bundleID,
                                            path: app.path,
                                            connectionCount: app.connectionCount,
+                                           deniedCount: app.deniedCount,
                                            destinationCount: app.destinations.count,
                                            traffic: app.traffic,
                                            destinations: destinations,
