@@ -18,12 +18,15 @@ struct ConnectionMapPane: View {
     var onSummaryChange: ((String) -> Void)? = nil
 
     @StateObject private var model = ConnectionMapModel()
-    @StateObject private var home = MapHomeAnchor()
+    @ObservedObject private var home = MapHomeAnchor.shared
     @State private var cameraPosition: MapCameraPosition = .region(Self.worldRegion)
     @State private var tier: MapDetailTier = .widest
     @State private var viewWidth: Double = 640
     @State private var isPlacingHome = false
     @State private var cameraCenter = CameraCenterBox()
+    /// The pin whose callout is open. Pins were decoration before: nothing on
+    /// the map answered a click (#138).
+    @State private var selectedNode: MapNode?
 
     private static let worldRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 20, longitude: 0),
@@ -38,6 +41,7 @@ struct ConnectionMapPane: View {
             }
             .overlay(alignment: .topTrailing) { controls }
             .overlay(alignment: .top) { placementBanner }
+            .overlay(alignment: .bottomLeading) { calloutOverlay }
             .onAppear {
                 viewWidth = geometry.size.width
                 refresh()
@@ -65,9 +69,12 @@ struct ConnectionMapPane: View {
 
             ForEach(model.result.nodes) { node in
                 // A named annotation: an empty title left the map with no
-                // content at all to VoiceOver (#120).
+                // content at all to VoiceOver (#120). The pin is a button
+                // because a place on the map is worth asking about, and it used
+                // to answer nothing at all (#138).
                 Annotation(node.title, coordinate: node.point.coordinate) {
-                    NodePin(node: node)
+                    NodePin(node: node, isSelected: selectedNode?.id == node.id)
+                        .help("\(node.title): \(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s")")
                 }
             }
         }
@@ -86,8 +93,65 @@ struct ConnectionMapPane: View {
         }
     }
 
+    /// What a pin knows, in the shape Maps uses: the place, then who went
+    /// there, then how much.
+    private func nodeCallout(_ node: MapNode) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(node.title).font(.headline)
+                Spacer(minLength: 8)
+                Button {
+                    selectedNode = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+            }
+            if let detail = node.detail {
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            }
+            Divider()
+            if node.appNames.isEmpty {
+                Text("No app could be identified for this location.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                Text("Reached by").font(.caption).foregroundStyle(.secondary)
+                ForEach(node.appNames, id: \.self) { name in
+                    Text(name).font(.callout)
+                }
+                if node.appCount > node.appNames.count {
+                    Text("and \(node.appCount - node.appNames.count) more")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Divider()
+            Text("\(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s") · \(PSFormat.bytes(node.bytes))")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(width: 240, alignment: .leading)
+    }
+
     private var controls: some View {
         Menu {
+            // A place on the map has to be askable about. MapKit consumes the
+            // click before SwiftUI sees it, so a pin cannot open its own
+            // callout here; the same answer is one menu away instead, and
+            // choosing a place rings its pin and opens its card (#138).
+            if !model.result.nodes.isEmpty {
+                Menu("Locations") {
+                    ForEach(model.result.nodes.prefix(15)) { node in
+                        Button {
+                            selectedNode = node
+                        } label: {
+                            Text("\(node.title) · \(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s")")
+                        }
+                    }
+                }
+                Divider()
+            }
             Button(isPlacingHome ? "Stop placing your Mac" : "Place your Mac on the map…") {
                 isPlacingHome.toggle()
             }
@@ -101,20 +165,23 @@ struct ConnectionMapPane: View {
                 isPlacingHome = false
             }
             Divider()
-            Toggle("Use Location Services (optional)", isOn: Binding(
-                get: { home.usesLocationServices },
-                set: { home.setUsesLocationServices($0) }))
+            // The privacy decision itself lives in Settings, where a Mac user
+            // looks for one, rather than inside a glyph floating on the map
+            // (#138). This says where it is and what it currently says.
             Text(home.source.summary)
+            Text(home.usesLocationServices
+                 ? "Location Services is on, in Settings under Map."
+                 : "Location Services is off. Turn it on in Settings under Map.")
         } label: {
             Image(systemName: "house.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(PSTheme.textPrimary)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .padding(6)
-        .background(.black.opacity(0.45), in: Circle())
+        .background(.regularMaterial, in: Circle())
         .padding(10)
         .help("Where this Mac sits on the map: \(home.source.summary.lowercased())")
     }
@@ -124,15 +191,15 @@ struct ConnectionMapPane: View {
         if isPlacingHome {
             HStack(spacing: 8) {
                 Text("Click the map to place your Mac")
-                    .font(.system(size: 11))
-                    .foregroundColor(PSTheme.textPrimary)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
                 Button("Cancel") { isPlacingHome = false }
                     .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(PSTheme.accentBlue)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(.black.opacity(0.65), in: Capsule())
+            .background(.regularMaterial, in: Capsule())
             .padding(.top, 10)
         }
     }
@@ -154,6 +221,20 @@ struct ConnectionMapPane: View {
             home.setManualPoint(MapPoint(latitude: coordinate.latitude,
                                          longitude: MapGeometry.wrapLongitude(coordinate.longitude)))
             isPlacingHome = false
+        }
+    }
+
+    /// The callout is a card in the pane rather than a popover on the pin:
+    /// a popover attached to an annotation is never presented.
+    @ViewBuilder
+    private var calloutOverlay: some View {
+        if let node = selectedNode {
+            nodeCallout(node)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(.separator))
+                .padding(10)
+                .transition(.opacity)
         }
     }
 
@@ -239,30 +320,35 @@ final class ConnectionMapModel: ObservableObject {
 
 struct NodePin: View {
     let node: MapNode
+    /// The selected pin is drawn larger and ringed, so the callout below and
+    /// the place on the map are visibly the same thing.
+    var isSelected: Bool = false
 
     var body: some View {
         VStack(spacing: 3) {
             if node.showsLabel {
                 VStack(spacing: 0) {
                     Text(labelText)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.primary)
                     if let detail = node.detail {
                         Text(detail)
-                            .font(.system(size: 8))
-                            .foregroundColor(PSTheme.textSecondary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Color.black.opacity(0.55))
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(.regularMaterial,
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .fixedSize()
             }
             Circle()
                 .fill(Color.white.opacity(0.55 + 0.45 * node.intensity))
                 .frame(width: dotSize, height: dotSize)
-                .overlay(Circle().stroke(PSTheme.accentBlue.opacity(0.35 + 0.5 * node.intensity),
-                                         lineWidth: 1.5))
+                .overlay(Circle().stroke(isSelected
+                                         ? Color.accentColor
+                                         : PSTheme.accentBlue.opacity(0.35 + 0.5 * node.intensity),
+                                         lineWidth: isSelected ? 3 : 1.5))
         }
     }
 
@@ -270,7 +356,7 @@ struct NodePin: View {
         node.connectionCount > 1 ? "\(node.title) (\(node.connectionCount))" : node.title
     }
 
-    private var dotSize: Double { 7 + 5 * node.intensity }
+    private var dotSize: Double { (7 + 5 * node.intensity) * (isSelected ? 1.6 : 1) }
 }
 
 private struct HomePin: View {
@@ -280,17 +366,20 @@ private struct HomePin: View {
         Circle()
             .fill(PSTheme.accent)
             .frame(width: 24, height: 24)
+            // The glyph inside the marker keeps its white on the accent fill:
+            // that pair is the marker's own colour scheme, the way Maps draws
+            // its pins, and it is legible in both appearances.
             .overlay(Image(systemName: "house.fill")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(.white))
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white))
             .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5))
             .overlay(alignment: .bottom) {
                 if isEstimate {
-                    Text("approx.")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(PSTheme.textSecondary)
+                    Text("Approximate")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Color.black.opacity(0.55), in: Capsule())
+                        .background(.regularMaterial, in: Capsule())
                         .fixedSize()
                         .offset(y: 13)
                 }

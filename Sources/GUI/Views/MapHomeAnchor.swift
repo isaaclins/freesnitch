@@ -12,6 +12,11 @@ import CoreLocation
 /// touched unless the user turns it on.
 @MainActor
 final class MapHomeAnchor: ObservableObject {
+    /// One anchor for the app. The map pane and the Settings toggle have to be
+    /// looking at the same object, or turning Location Services on in Settings
+    /// would not move the marker until the next launch (#138).
+    static let shared = MapHomeAnchor()
+
     enum Source: String {
         case timeZone
         case manual

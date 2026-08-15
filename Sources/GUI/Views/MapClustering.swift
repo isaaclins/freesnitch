@@ -75,6 +75,11 @@ struct MapNode: Identifiable, Hashable, Sendable {
     /// 0...1 activity weight, used for pin and arc emphasis.
     let intensity: Double
     let showsLabel: Bool
+    /// A bounded sample of the apps that reached this place, so a pin can say
+    /// who went there. A dot in Singapore with no way to learn which app made
+    /// it is a picture, not an interface (#138).
+    let appNames: [String]
+    let appCount: Int
 }
 
 struct MapArc: Identifiable, Sendable {
@@ -228,6 +233,7 @@ enum MapClusterEngine {
         var connectionCount = 0
         var lastSeen = Date.distantPast
         var locations: Set<Int> = []
+        private var apps: [String: Int64] = [:]
         private var representative: Connection?
         private var representativeBytes: Int64 = -1
         var representativePoint = MapPoint(latitude: 0, longitude: 0)
@@ -243,6 +249,8 @@ enum MapClusterEngine {
             hasher.combine(Int((latitude * 1000).rounded()))
             hasher.combine(Int((longitude * 1000).rounded()))
             locations.insert(hasher.finalize())
+            let app = connection.processName.isEmpty ? "Unknown app" : connection.processName
+            apps[app, default: 0] &+= traffic
 
             // The node sits on a real endpoint estimate, not on a moving
             // centroid, so adding a connection cannot shift a pin the user is
@@ -269,7 +277,10 @@ enum MapClusterEngine {
                     locationCount: locations.count,
                     bytes: bytes,
                     intensity: intensity,
-                    showsLabel: showsLabel)
+                    showsLabel: showsLabel,
+                    appNames: apps.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+                        .prefix(5).map(\.key),
+                    appCount: apps.count)
         }
 
         private var title: String {

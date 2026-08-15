@@ -4,6 +4,7 @@ import ServiceManagement
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     let systemExtension: SystemExtensionManager
+    @ObservedObject private var mapHome = MapHomeAnchor.shared
     @State private var doh = ""
     @State private var dohError: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -131,6 +132,18 @@ struct SettingsView: View {
                     Toggle("Launch FreeSnitch at login", isOn: $launchAtLogin)
                         .onChange(of: launchAtLogin) { newValue in setLaunchAtLogin(newValue) }
                     Toggle("Show alerts on all Spaces", isOn: $state.showAlertsOnAllSpaces)
+                }
+                // A privacy choice belongs in Settings with its explanation,
+                // not inside an unlabelled glyph menu floating on the map
+                // (#138).
+                Section("Map") {
+                    Toggle("Use Location Services to place this Mac", isOn: Binding(
+                        get: { mapHome.usesLocationServices },
+                        set: { mapHome.setUsesLocationServices($0) }))
+                    Text("Off by default. FreeSnitch estimates where this Mac is from its time zone, which needs no permission and never leaves the Mac. Turning this on asks macOS for your location once, only to place the marker the connection arcs start from.")
+                        .font(.caption).foregroundColor(.secondary)
+                    Text(mapHome.source.summary)
+                        .font(.caption).foregroundColor(.secondary)
                 }
                 Section("Enforcement") {
                     // The same switch, the same name and the same states as the
