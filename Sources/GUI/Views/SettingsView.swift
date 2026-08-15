@@ -7,22 +7,63 @@ struct SettingsView: View {
     @State private var doh = ""
     @State private var dohError: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var pane: Pane = .general
 
-    var body: some View {
-        TabView {
-            generalTab.tabItem { Label("General", systemImage: "gear") }
-            dnsTab.tabItem { Label("DNS", systemImage: "globe") }
-            blocklistsTab.tabItem { Label("Blocklists", systemImage: "shield.lefthalf.filled") }
-            uninstallTab.tabItem { Label("Uninstall", systemImage: "trash") }
-            aboutTab.tabItem { Label("About", systemImage: "info.circle") }
+    /// The parts of Settings. A page, not a window, so these are chosen in the
+    /// content rather than by a `TabView` (#100).
+    enum Pane: String, CaseIterable, Identifiable {
+        case general, dns, blocklists, uninstall, about
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .general: return "General"
+            case .dns: return "DNS"
+            case .blocklists: return "Blocklists"
+            case .uninstall: return "Uninstall"
+            case .about: return "About"
+            }
         }
-        .padding(16)
-        // Settings is a page of the main window now, so it fills the page
-        // instead of being pinned to its old window size.
+    }
+
+    /// Deliberately not a `TabView`.
+    ///
+    /// A `TabView` on macOS installs its own `NSToolbar` on the window to draw
+    /// its tab bar, and never gives the window's own toolbar back: one visit to
+    /// Settings left every other page without a title, a sidebar control or a
+    /// search field until the app was relaunched (#100). A window also gets one
+    /// navigation system, and this window's is the sidebar.
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Section", selection: $pane) {
+                ForEach(Pane.allCases) { pane in
+                    Text(pane.title).tag(pane)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+            Divider()
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
         .frame(minWidth: 520, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
         .onAppear { loadDoHUpstream() }
         .onChange(of: state.helperConnected) { connected in
             if connected { loadDoHUpstream() }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch pane {
+        case .general: generalTab
+        case .dns: dnsTab
+        case .blocklists: blocklistsTab
+        case .uninstall: uninstallTab
+        case .about: aboutTab
         }
     }
 
