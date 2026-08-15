@@ -650,6 +650,10 @@ struct RulesManagerView: View {
         .contextMenu(forSelectionType: Rule.ID.self) { ids in
             rulesContextMenu(for: ids)
         }
+        // A Mac table answers the Delete key and Command-C. Without these the
+        // only way to remove a rule was the mouse (#116).
+        .onDeleteCommand { removeSelectedRules() }
+        .onCopyCommand { selectedRules.map { NSItemProvider(object: Self.describe($0) as NSString) } }
     }
 
     /// Every item here calls the same function the corresponding button does.
@@ -1300,9 +1304,13 @@ private struct RuleEditorView: View {
             .formStyle(.grouped)
             HStack {
                 Spacer()
+                // Escape cancels and Return adds, the way every Mac sheet
+                // behaves (#116).
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Add") { save() }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
             }
         }

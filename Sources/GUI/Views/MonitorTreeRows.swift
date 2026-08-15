@@ -88,6 +88,9 @@ struct MonitorTreeList: View {
         .contextMenu(forSelectionType: String.self) { ids in
             rowContextMenu(for: ids, in: visible)
         }
+        // The keyboard reaches the same two actions the pointer does (#116).
+        .onDeleteCommand { clearSelectedRow(in: visible) }
+        .onCopyCommand { copySelectedRow(in: visible) }
         .confirmationDialog("Remove the rule for \(pendingClear?.subject ?? "this row")?",
                             isPresented: Binding(get: { pendingClear != nil },
                                                  set: { if !$0 { pendingClear = nil } }),
@@ -187,6 +190,37 @@ struct MonitorTreeList: View {
     private func decide(_ action: RuleAction, destination: MonitorDestinationNode, app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.destination(destination, in: app) else { return }
         controller.apply(action, to: target, processName: app.name, state: state)
+    }
+
+    /// Delete on a selected row removes the rule behind it, through the same
+    /// confirmation the menu item uses.
+    private func clearSelectedRow(in visible: MonitorTreeFilter.Result) {
+        guard let id = selectedAppID else { return }
+        if let app = visible.apps.first(where: { $0.id == id }) {
+            guard controller.decision(for: MonitorRuleTarget.app(app)) != nil else { return }
+            clear(app: app)
+            return
+        }
+        for app in visible.apps {
+            if let destination = app.destinations.first(where: { $0.id == id }) {
+                guard controller.decision(for: MonitorRuleTarget.destination(destination, in: app)) != nil else { return }
+                clear(destination: destination, app: app)
+                return
+            }
+        }
+    }
+
+    private func copySelectedRow(in visible: MonitorTreeFilter.Result) -> [NSItemProvider] {
+        guard let id = selectedAppID else { return [] }
+        if let app = visible.apps.first(where: { $0.id == id }) {
+            return [NSItemProvider(object: app.name as NSString)]
+        }
+        for app in visible.apps {
+            if let destination = app.destinations.first(where: { $0.id == id }) {
+                return [NSItemProvider(object: destination.label as NSString)]
+            }
+        }
+        return []
     }
 
     private func clear(app: MonitorAppNode) {

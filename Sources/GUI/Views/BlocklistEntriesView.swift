@@ -82,6 +82,14 @@ struct BlocklistEntriesView: View {
             }
             .listStyle(.inset)
             .accessibilityLabel("Entries in \(blocklist.name)")
+            .onDeleteCommand {
+                guard onRemoveEntry != nil, let entry = selection else { return }
+                pendingEntryRemoval = entry
+            }
+            .onCopyCommand {
+                guard let entry = selection else { return [] }
+                return [NSItemProvider(object: entry as NSString)]
+            }
             .confirmationDialog("Remove \(pendingEntryRemoval ?? "this name") from \(blocklist.name)?",
                                 isPresented: Binding(get: { pendingEntryRemoval != nil },
                                                      set: { if !$0 { pendingEntryRemoval = nil } }),
