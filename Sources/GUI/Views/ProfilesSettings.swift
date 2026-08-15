@@ -265,8 +265,9 @@ struct ProfilesSettingsView: View {
     private func blocklistSection(_ profile: Profile) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeader("Blocklists") {
+                // Bordered, like the Networks header, so the two section
+                // headers on this page do not use two different button styles.
                 Button("Refresh Lists") { profileClient.refreshBlocklists() }
-                    .buttonStyle(.borderless)
                     .disabled(!profileClient.isAvailable)
             }
             // Selection, so the list can carry a context menu at all: a button
@@ -310,6 +311,9 @@ struct ProfilesSettingsView: View {
                         .disabled(!profileClient.isAvailable)
                 }
             }
+            // The list scrolls under this row, so it needs its own edge and
+            // its own background or a half scrolled row bleeds through it.
+            Divider()
             HStack(spacing: 8) {
                 // One way to add a list, shared with the Rules sidebar. Two
                 // different forms for the same thing, one of them a bare pair
@@ -327,7 +331,9 @@ struct ProfilesSettingsView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
+            .padding(.top, 6)
             .padding(.bottom, 6)
+            .background(.background)
             captionText("Deny lists stack and filter DNS names only.", tint: .secondary)
         }
     }

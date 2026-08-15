@@ -70,7 +70,9 @@ struct ConnectionMapPane: View {
             }
         }
         .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
-        .colorScheme(.dark)
+        // No compass and no scale: this is a small inspector view, not a map
+        // you navigate, and Apple leaves that furniture off at this size.
+        .mapControls { }
         .onMapCameraChange(frequency: .continuous) { context in
             cameraCenter.center = context.region.center
             let next = MapDetailTier.tier(longitudeDelta: context.region.span.longitudeDelta,
