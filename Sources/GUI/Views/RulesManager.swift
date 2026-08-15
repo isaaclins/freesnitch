@@ -81,7 +81,7 @@ struct RulesManagerView: View {
             HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
                 sidebar
-                    .frame(width: 204)
+                    .frame(width: MainWindowMetrics.categoryPaneWidth)
                     .focused($focusedPane, equals: .categories)
                     .accessibilityLabel(RulesPane.categories.accessibilityLabel)
                 Divider()
@@ -274,8 +274,13 @@ struct RulesManagerView: View {
             Toggle(isOn: enforcementBinding) {
                 Label {
                     HStack(spacing: 4) {
+                        // The pane is 220 points wide with a switch and a help
+                        // button on the same line, so one line truncated this
+                        // to "Enforce rules...", which reads as an unfinished
+                        // sentence rather than a label (#122).
                         Text(EnforcementControl.title)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                         blocklistHelpButton
                     }
                 } icon: {
@@ -1190,12 +1195,12 @@ struct RulesManagerView: View {
         .accessibilityLabel("Resize the Information pane")
     }
 
-    private static let inspectorHandleWidth: CGFloat = 6
+    private static let inspectorHandleWidth = MainWindowMetrics.inspectorHandleWidth
 
     /// Below this the fields in the inspector cannot lay out; above it the pane
     /// starts eating the table it is describing.
-    static let inspectorMinWidth: Double = 220
-    static let inspectorMaxWidth: Double = 460
+    static let inspectorMinWidth = MainWindowMetrics.inspectorMinWidth
+    static let inspectorMaxWidth = MainWindowMetrics.inspectorMaxWidth
 
     /// Tab order is categories, rules, inspector. The first Tab press on a page
     /// nobody has touched puts focus on the category list rather than doing
