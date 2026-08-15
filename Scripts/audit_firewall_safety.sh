@@ -872,8 +872,16 @@ require_text "$APP_STATE" "filterSnapshotPersistenceHandler?(snapshot)" \
 # destination tests in PreparedRule.matches are `if let`, so a rule with an
 # empty host and no address loses both and silently becomes "this process,
 # anywhere", turning an allow into far more than the user approved (#64).
-require_text "$APP_STATE" "remoteIP: ruleIP" \
-  "the remembered alert rule does not carry the remote address, so an IP-only decision would match every destination"
+# The alert grew a scope control, so the address now reaches the rule through
+# the scoped value rather than directly, and the old single check no longer
+# described the code. Both halves are asserted instead: the destination is put
+# into the scoped value, and the scoped value is what the rule is built with.
+require_text "$APP_STATE" "scopedIP = ruleIP" \
+  "the remembered alert rule does not carry the remote address into its scope, so an IP-only decision would match every destination"
+require_text "$APP_STATE" "remoteIP: scopedIP" \
+  "the remembered alert rule is not built with the scoped remote address, so an IP-only decision would match every destination"
+require_text "$APP_STATE" "remoteHost: scopedHost" \
+  "the remembered alert rule is not built with the scoped remote host, so a domain decision would match every destination"
 # The one privileged action the GUI may take on its own behalf must stay one
 # fixed command. If a later change ever assembles this script from a variable,
 # a path, or a version string, this stops being "restart my own helper" and
