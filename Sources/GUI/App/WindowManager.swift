@@ -258,7 +258,12 @@ final class WindowManager {
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
         window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // The preference is the only thing that decides this. Hardcoding
+        // canJoinAllSpaces made the switch in Settings do nothing (#119).
+        let allSpaces = AppPreferences.defaults.object(forKey: AppPreferences.Key.alertsAllSpaces) as? Bool ?? true
+        window.collectionBehavior = allSpaces
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary]
+            : [.moveToActiveSpace, .fullScreenAuxiliary]
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

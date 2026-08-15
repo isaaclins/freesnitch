@@ -415,8 +415,11 @@ struct TrafficBarsChart: View {
             let availW = geo.size.width
             let barW = max(2, (availW - CGFloat(count - 1) * 1.5) / CGFloat(count))
             let midY = geo.size.height / 2
-            let maxIn = max(1, CGFloat(samples.map { $0.bytesIn }.max() ?? 1))
-            let maxOut = max(1, CGFloat(samples.map { $0.bytesOut }.max() ?? 1))
+            // One scale for both directions. Scaling each half against its own
+            // maximum made the two sides of the chart incomparable, which is
+            // the only thing a paired chart is for (#119).
+            let peak = max(1, CGFloat(max(samples.map { $0.bytesIn }.max() ?? 1,
+                                          samples.map { $0.bytesOut }.max() ?? 1)))
             ZStack(alignment: .center) {
                 HStack(alignment: .center, spacing: 1.5) {
                     ForEach(0..<samples.count, id: \.self) { i in
@@ -427,10 +430,10 @@ struct TrafficBarsChart: View {
                         VStack(spacing: 0) {
                             Rectangle()
                                 .fill(PSTheme.trafficOut)
-                                .frame(width: barW, height: max(2, CGFloat(s.bytesOut)/maxOut * midY * 0.95))
+                                .frame(width: barW, height: max(2, CGFloat(s.bytesOut)/peak * midY * 0.95))
                             Rectangle()
                                 .fill(PSTheme.trafficIn)
-                                .frame(width: barW, height: max(2, CGFloat(s.bytesIn)/maxIn * midY * 0.95))
+                                .frame(width: barW, height: max(2, CGFloat(s.bytesIn)/peak * midY * 0.95))
                         }
                     }
                 }
