@@ -13,6 +13,9 @@ import AppKit
 @available(macOS 14.0, *)
 struct ConnectionMapPane: View {
     let connections: [Connection]
+    /// Reports the caveat and credit line so the pane header can show it above
+    /// the map rather than on top of it (#103).
+    var onSummaryChange: ((String) -> Void)? = nil
 
     @StateObject private var model = ConnectionMapModel()
     @StateObject private var home = MapHomeAnchor()
@@ -35,10 +38,6 @@ struct ConnectionMapPane: View {
             }
             .overlay(alignment: .topTrailing) { controls }
             .overlay(alignment: .top) { placementBanner }
-            // Top leading, not bottom leading: MapKit draws the Apple Maps
-            // wordmark in the bottom-left corner, and the legend sat on top of
-            // it, so both were unreadable.
-            .overlay(alignment: .topLeading) { legend }
             .onAppear {
                 viewWidth = geometry.size.width
                 refresh()
@@ -134,40 +133,15 @@ struct ConnectionMapPane: View {
         }
     }
 
-    private var legend: some View {
-        HStack(spacing: 6) {
-            Text(legendText)
-                .font(.system(size: 9))
-                .foregroundColor(PSTheme.textSecondary)
-            // CC BY 4.0 requires the credit to be visible where the data is
-            // shown, so it lives on the map itself rather than in an about box
-            // nobody opens.
-            Text("·")
-                .font(.system(size: 9))
-                .foregroundColor(PSTheme.textSecondary.opacity(0.6))
-            Link(IPGeoCache.attribution.text, destination: attributionURL)
-                .font(.system(size: 9))
-                .foregroundColor(PSTheme.textSecondary)
-                .help("\(IPGeoCache.attribution.text), licensed \(IPGeoCache.attribution.licenseName)")
-        }
-        .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(.black.opacity(0.4), in: Capsule())
-        .padding(8)
-    }
-
-    private var attributionURL: URL {
-        URL(string: IPGeoCache.attribution.linkURL) ?? URL(string: "https://db-ip.com/")!
-    }
-
-    private var legendText: String {
+    /// The caveat and the data credit, for the pane header above the map.
+    /// They used to be a capsule lying on the tiles, which covered the very
+    /// thing they describe (#103). CC BY only asks that the credit be visible
+    /// where the data is shown, and a header directly above the map is.
+    static func attributionText(hiddenCount: Int, aggregated: Bool) -> String {
         var parts = ["Locations are estimates"]
-        if model.result.isAggregated {
-            parts.append("grouped to keep the map readable")
-        }
-        if model.result.hiddenNodeCount > 0 {
-            parts.append("\(model.result.hiddenNodeCount) quieter locations not shown")
-        }
-        return parts.joined(separator: " · ")
+        if aggregated { parts.append("grouped to keep the map readable") }
+        if hiddenCount > 0 { parts.append("\(hiddenCount) quieter locations not shown") }
+        return parts.joined(separator: " \u{00b7} ")
     }
 
     private func placementGesture(proxy: MapProxy) -> some Gesture {
@@ -193,6 +167,8 @@ struct ConnectionMapPane: View {
     private func refresh() {
         model.submit(connections: connections,
                      request: MapClusterRequest(tier: tier, home: home.point))
+        onSummaryChange?(Self.attributionText(hiddenCount: model.result.hiddenNodeCount,
+                                              aggregated: model.result.isAggregated))
     }
 }
 

@@ -10,6 +10,8 @@ struct NetworkMonitorView: View {
     /// Owns the grouped tree, its expansion state and its decisions. A
     /// StateObject, so expansion survives every refresh of the live data.
     @StateObject private var tree = MonitorTreeController()
+    /// What the map says about itself, shown in its header (#103).
+    @State private var mapSummary = "Locations are estimates"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,7 +45,22 @@ struct NetworkMonitorView: View {
         }
     }
 
+    /// Every pane on every other page has a header band. This one started
+    /// with content, so the divider under the toolbar met nothing (#103).
     private var sidebar: some View {
+        HeaderedPane {
+            PaneHeader("Apps", count: tree.snapshot.apps.count) {
+                Button("Collapse all") { tree.collapseAll() }
+                    .buttonStyle(.borderless)
+                    .font(.callout)
+                    .help("Collapse every app in the list.")
+            }
+        } content: {
+            sidebarContent
+        }
+    }
+
+    private var sidebarContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             MonitorTreeList(controller: tree,
                             searchText: searchText,
@@ -54,18 +71,11 @@ struct NetworkMonitorView: View {
             // field out of its own row.
             Divider()
             HStack(spacing: 8) {
-                Text("\(tree.snapshot.apps.count) apps")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
                 // The two bars on every row encode sent and received, and
                 // nothing said so anywhere (#76). The status bar is where
                 // Finder keeps this kind of standing information.
                 trafficLegend
                 Spacer()
-                Button("Collapse all") { tree.collapseAll() }
-                    .buttonStyle(.link)
-                    .font(.caption)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.bar)
@@ -89,9 +99,30 @@ struct NetworkMonitorView: View {
     }
 
     private var mapPane: some View {
+        HeaderedPane {
+            PaneHeader("Map") {
+                Text(mapSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                // CC BY asks that the credit be visible where the data is
+                // shown. Directly above the map is, and it stops the credit
+                // covering the very thing it describes (#103).
+                Link(IPGeoCache.attribution.text,
+                     destination: URL(string: IPGeoCache.attribution.linkURL) ?? URL(string: "https://db-ip.com/")!)
+                    .font(.caption)
+                    .help("\(IPGeoCache.attribution.text), licensed \(IPGeoCache.attribution.licenseName)")
+            }
+        } content: {
+            mapContent
+        }
+    }
+
+    private var mapContent: some View {
         Group {
             if #available(macOS 14.0, *) {
-                ConnectionMapPane(connections: connectionsForMap())
+                ConnectionMapPane(connections: connectionsForMap(),
+                                  onSummaryChange: { mapSummary = $0 })
                     .overlay(alignment: .top) {
                         if connectionsForMap().isEmpty {
                             Text(state.helperConnected
@@ -149,16 +180,12 @@ struct NetworkMonitorView: View {
     /// the same thing in the shape System Settings uses.
     private var summaryPane: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Summary").font(.headline)
-                Text("\(state.topProcesses.count) processes, \(state.topDomains.count) domains")
-                    .font(.subheadline)
+            PaneHeader("Summary") {
+                Text("\(InsightsView.plural(state.topProcesses.count, "process")), \(InsightsView.plural(state.topDomains.count, "domain"))")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Spacer()
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.bar)
             Divider()
 
             List {

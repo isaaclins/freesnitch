@@ -114,7 +114,9 @@ struct InsightsView: View {
     /// "1 destination", not "1 destinations". A count that disagrees with its
     /// noun is the sort of thing no Apple app ships (#102).
     static func plural(_ count: Int, _ noun: String) -> String {
-        "\(count) \(noun)\(count == 1 ? "" : "s")"
+        guard count != 1 else { return "1 \(noun)" }
+        let needsES = noun.hasSuffix("s") || noun.hasSuffix("x") || noun.hasSuffix("ch") || noun.hasSuffix("sh")
+        return "\(count) \(noun)\(needsES ? "es" : "s")"
     }
 
     private func segmentLabel(_ section: InsightsSection) -> String {
