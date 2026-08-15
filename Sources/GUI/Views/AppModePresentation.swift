@@ -41,3 +41,17 @@ extension AppMode {
         }
     }
 }
+
+/// The words for the enforcement switch, in one place.
+///
+/// The same switch was called "Block traffic" in Settings and "Blocklists" in
+/// the Rules sidebar, and the Settings caption claimed that off meant "purely a
+/// traffic monitor" while rules in the extension went on blocking. One switch
+/// gets one name and one sentence (#139).
+enum EnforcementControl {
+    static let title = "Enforce rules and blocklists"
+
+    static let help = "Loads the pf firewall anchor and runs the local DNS proxy, so rules and blocklists take effect."
+
+    static let explanation = "Off by default. Turning this on lets FreeSnitch load a pf firewall anchor and run a DNS proxy, which changes how this Mac resolves names and filters packets. With it off, blocklists and pf rules do nothing, though decisions you make in Alert mode still apply to new connections."
+}

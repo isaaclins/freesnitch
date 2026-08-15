@@ -80,13 +80,21 @@ enum AppIcon {
 }
 
 enum PSFormat {
+    /// The system's own byte formatter, so a number here means the same thing
+    /// as the same number in Finder and Activity Monitor. This used to divide
+    /// by 1024 and label the result KB, MB and GB, which disagrees with every
+    /// other size on the Mac (#132).
+    private static let byteFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        f.allowsNonnumericFormatting = false
+        return f
+    }()
+
     static func bytes(_ n: Int64) -> String {
-        let b = Double(n)
-        if b < 1024 { return "\(Int(b)) B" }
-        if b < 1024*1024 { return String(format: "%.1f KB", b/1024) }
-        if b < 1024*1024*1024 { return String(format: "%.1f MB", b/1024/1024) }
-        return String(format: "%.2f GB", b/1024/1024/1024)
+        byteFormatter.string(fromByteCount: max(0, n))
     }
+
     static func bytesPerSec(_ n: Int64) -> String {
         return "\(bytes(n))/s"
     }

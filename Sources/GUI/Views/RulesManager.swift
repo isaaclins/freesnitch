@@ -231,9 +231,10 @@ struct RulesManagerView: View {
     /// The one thing a reader wants when they learn enforcement is off is to
     /// turn it on, so this is a real toggle rather than a warning label (#80).
     ///
-    /// It is labelled for what it governs, "Blocklists", and carries the
-    /// information affordance itself, because the explanation is about this
-    /// switch and not about the heading above it (#95).
+    /// It carries the information affordance itself, because the explanation is
+    /// about this switch and not about the heading above it (#95), and it is
+    /// labelled from `EnforcementControl` so that this copy and the one in
+    /// Settings cannot drift apart again (#139).
     ///
     /// It shows what the helper reports, not what the GUI last asked for: the
     /// switch is disabled and reads as pending while a change is in flight, and
@@ -243,7 +244,7 @@ struct RulesManagerView: View {
             Toggle(isOn: enforcementBinding) {
                 Label {
                     HStack(spacing: 4) {
-                        Text("Blocklists")
+                        Text(EnforcementControl.title)
                             .lineLimit(1)
                         blocklistHelpButton
                     }
@@ -255,9 +256,7 @@ struct RulesManagerView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             .disabled(state.enforcementChangePending || !state.helperConnected)
-            .help(state.enforcementEnabled
-                  ? "Blocklists are in force: the pf anchor is loaded and the DNS proxy is running."
-                  : "Blocklists are off: FreeSnitch is watching and blocking nothing.")
+            .help(EnforcementControl.help)
             enforcementCaption
         }
         .padding(.vertical, 2)

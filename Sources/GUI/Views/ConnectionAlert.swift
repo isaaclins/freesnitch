@@ -4,8 +4,11 @@ struct ConnectionAlertView: View {
     @EnvironmentObject var state: AppState
     let alert: AppState.PendingAlert
     @State private var remember: Bool = true
-    @State private var scope: AlertScope = .anyConnection
-    @State private var duration: AlertDuration = .forever
+    /// The narrow answer is the default, because the wide one is the expensive
+    /// mistake. These two are read by `resolveAlert` and shape the rule; they
+    /// used to be decoration (#129).
+    @State private var scope: AppState.RememberScope = .thisHost
+    @State private var duration: AppState.RememberDuration = .forever
 
     /// What today has looked like, as a sentence rather than a colon label
     /// with two counts glued to it (#118).
@@ -18,27 +21,43 @@ struct ConnectionAlertView: View {
         return "Today FreeSnitch has \(askedPart) and silently allowed \(allowed) it already knew."
     }
 
-    /// The raw value is storage, the title is interface text. Showing the
-    /// raw value put lowercase fragments in a pop-up menu (#118).
-    enum AlertScope: String, CaseIterable, Identifiable {
-        case anyConnection = "any connection"
-        case thisHost = "this host"
-        case thisIPandPort = "this IP and port"
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .anyConnection: return "Any connection"
-            case .thisHost: return "This host"
-            case .thisIPandPort: return "This IP and port"
-            }
+    /// What is behind this dialog. A question that is one of several should say
+    /// so, and an overflow that was allowed without asking should not be
+    /// discoverable only by reading the code (#130).
+    private var queueSummary: String? {
+        var parts: [String] = []
+        let waiting = state.pendingAlerts.count - 1
+        if waiting > 0 { parts.append("\(waiting) more question\(waiting == 1 ? "" : "s") waiting") }
+        let overflow = state.overflowAllowedToday
+        if overflow > 0 {
+            parts.append("\(overflow) connection\(overflow == 1 ? " was" : "s were") allowed today because the queue was full")
         }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: ", ") + "."
     }
-    enum AlertDuration: String, CaseIterable, Identifiable {
-        case forever = "Forever"
-        case session = "Until quit"
-        case oneHour = "1 hour"
-        case oneDay = "24 hours"
-        var id: String { rawValue }
+
+    /// What the answer will actually create, in the same words the Rules table
+    /// uses, so the two can be recognised as the same thing.
+    private var ruleSummary: String {
+        let name = processName
+        let host = alert.connection.remoteHost.isEmpty
+            ? alert.connection.remoteIP
+            : alert.connection.remoteHost
+        let where_: String
+        switch scope {
+        case .anywhere: where_ = "any destination"
+        case .thisHost: where_ = host.isEmpty ? "this destination" : host
+        case .thisAddressAndPort:
+            let address = alert.connection.remoteIP.isEmpty ? host : alert.connection.remoteIP
+            where_ = "\(address) on port \(alert.connection.remotePort)"
+        }
+        let howLong: String
+        switch duration {
+        case .forever: howLong = "until you remove it"
+        case .oneDay: howLong = "for 24 hours"
+        case .oneHour: howLong = "for 1 hour"
+        }
+        return "Creates a rule for \(name) reaching \(where_), \(howLong)."
     }
 
     /// Shaped like a macOS permission dialog, because that is exactly what it
@@ -95,18 +114,32 @@ struct ConnectionAlertView: View {
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
             }
+            if let queueSummary {
+                Label(queueSummary, systemImage: "clock.badge.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             // `.columns` aligns the labels in one column and the controls in
             // another, which is what a Mac dialog does and what three
             // hand-stacked rows never quite manage.
             Form {
                 Toggle("Remember this decision", isOn: $remember)
-                Picker("Scope", selection: $scope) {
-                    ForEach(AlertScope.allCases) { s in Text(s.title).tag(s) }
+                Picker("Applies to", selection: $scope) {
+                    ForEach(AppState.RememberScope.allCases) { s in Text(s.title).tag(s) }
                 }.disabled(!remember)
-                Picker("Duration", selection: $duration) {
-                    ForEach(AlertDuration.allCases) { d in Text(d.rawValue).tag(d) }
+                Picker("Expires", selection: $duration) {
+                    ForEach(AppState.RememberDuration.allCases) { d in Text(d.title).tag(d) }
                 }.disabled(!remember)
+                // The rule in one sentence, so the answer can be checked before
+                // it is given rather than found later in the Rules table.
+                if remember {
+                    Text(ruleSummary)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .formStyle(.columns)
 
@@ -116,9 +149,9 @@ struct ConnectionAlertView: View {
                 // were the only two of their kind on the system: macOS says
                 // "which one is the default" with the accent fill, and says
                 // everything else with the words on the button.
-                Button("Deny") { state.resolveAlert(alert, allow: false, remember: remember) }
+                Button("Deny") { state.resolveAlert(alert, allow: false, remember: remember, scope: scope, duration: duration) }
                     .keyboardShortcut(.cancelAction)
-                Button("Allow") { state.resolveAlert(alert, allow: true, remember: remember) }
+                Button("Allow") { state.resolveAlert(alert, allow: true, remember: remember, scope: scope, duration: duration) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }

@@ -14,6 +14,10 @@ public enum AppPreferences {
         public static let enforcement = "PSEnforcementEnabled"
         public static let showSpeeds = "PSShowSpeedsInMenuBar"
         public static let alertsAllSpaces = "PSShowAlertsOnAllSpaces"
+        /// Whether Alert mode also asks about destinations an app already
+        /// uses. Off by default, which is the settled #26 behaviour, but it is
+        /// now a stated choice instead of a silent one (#130).
+        public static let askKnownContacts = "PSAskAboutKnownContacts"
     }
 
     public static var defaults: UserDefaults {

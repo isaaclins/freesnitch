@@ -468,7 +468,7 @@ final class HelperClient: NSObject, ObservableObject {
             return
         }
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            completion(Data(), "Could not reach the privileged helper: \(error.localizedDescription).")
+            completion(Data(), "Could not reach the privileged helper: \(error.sentence)")
         }) as? HelperProtocol else {
             completion(Data(), "The privileged helper is unavailable.")
             return
@@ -667,7 +667,7 @@ final class HelperClient: NSObject, ObservableObject {
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
 
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(nil, "Could not read the authoritative rule snapshot: \(error.localizedDescription). Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(nil, "Could not read the authoritative rule snapshot: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry.")
         }) as? HelperProtocol else {
             finish(nil, "The privileged helper is unavailable. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
             return
@@ -685,7 +685,7 @@ final class HelperClient: NSObject, ObservableObject {
                 try RuleTransportBoundary.validateSnapshotBytes(data)
                 finish(try SharedRuleBridge.decode(data), nil)
             } catch {
-                finish(nil, "The helper returned an invalid authoritative rule snapshot: \(error.localizedDescription). Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+                finish(nil, "The helper returned an invalid authoritative rule snapshot: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry.")
             }
         })
     }
@@ -713,7 +713,7 @@ final class HelperClient: NSObject, ObservableObject {
         let proxy = connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
             Task { @MainActor in
                 self?.state?.appendLog(level: "error",
-                                       message: "Insights batch transport failed: \(error.localizedDescription).")
+                                       message: "Insights batch transport failed: \(error.sentence)")
             }
         } as? HelperProtocol
         guard let proxy else {
@@ -806,7 +806,7 @@ final class HelperClient: NSObject, ObservableObject {
             return
         }
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(nil, "Could not read Insights: \(error.localizedDescription).")
+            finish(nil, "Could not read Insights: \(error.sentence)")
         }) as? HelperProtocol else {
             finish(nil, "The privileged helper is unavailable.")
             return
@@ -833,7 +833,7 @@ final class HelperClient: NSObject, ObservableObject {
                 try report.validateBounds(payloadBytes: payload.count)
                 finish(report, nil)
             } catch {
-                finish(nil, "The helper returned an unreadable Insights report: \(error.localizedDescription).")
+                finish(nil, "The helper returned an unreadable Insights report: \(error.sentence)")
             }
         })
     }
@@ -954,7 +954,7 @@ final class HelperClient: NSObject, ObservableObject {
                                completion: @MainActor @escaping (BlocklistEntryPage?, String?) -> Void) {
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
             Task { @MainActor in
-                completion(nil, "Could not reach the privileged helper: \(error.localizedDescription).")
+                completion(nil, "Could not reach the privileged helper: \(error.sentence)")
             }
         }) as? HelperProtocol else {
             completion(nil, "The FreeSnitch helper is not connected.")

@@ -101,18 +101,57 @@ struct SettingsView: View {
                     Toggle("Show download and upload speeds in the menu bar",
                            isOn: $state.showSpeedsInMenuBar)
                 }
+                // Every failure path in the app writes here: a rejected mode
+                // change, a remembered rule the helper refused, a connection
+                // allowed without asking. Nothing rendered it, so all of that
+                // was invisible (#131).
+                Section("Recent activity") {
+                    if state.logs.isEmpty {
+                        Text("Nothing to report. Rejected changes and connections allowed without asking appear here.")
+                            .font(.caption).foregroundColor(.secondary)
+                    } else {
+                        ForEach(state.logs.suffix(20).reversed()) { entry in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: entry.level == "error"
+                                      ? "xmark.octagon.fill"
+                                      : (entry.level == "warning" ? "exclamationmark.triangle.fill" : "info.circle"))
+                                    .foregroundStyle(entry.level == "error" ? Color.red : (entry.level == "warning" ? Color.orange : Color.secondary))
+                                    .accessibilityHidden(true)
+                                Text(entry.message)
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                Text(entry.timestamp, format: .dateTime.hour().minute())
+                                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            }
+                        }
+                    }
+                }
                 Section("General") {
                     Toggle("Launch FreeSnitch at login", isOn: $launchAtLogin)
                         .onChange(of: launchAtLogin) { newValue in setLaunchAtLogin(newValue) }
                     Toggle("Show alerts on all Spaces", isOn: $state.showAlertsOnAllSpaces)
                 }
                 Section("Enforcement") {
-                    Toggle("Block traffic", isOn: $state.enforcementEnabled)
-                        .disabled(!state.helperConnected)
+                    // The same switch, the same name and the same states as the
+                    // one in the Rules sidebar. It used to be called "Block
+                    // traffic" here and "Blocklists" there, and this copy
+                    // ignored both the pending and the failed state (#139).
+                    Toggle(EnforcementControl.title, isOn: $state.enforcementEnabled)
+                        .disabled(!state.helperConnected || state.enforcementChangePending)
                         .help(state.helperConnected
-                              ? "Load the pf anchor and run the DNS proxy."
+                              ? EnforcementControl.help
                               : "Approve the FreeSnitch helper to change this.")
-                    Text("Off by default. Turning this on lets FreeSnitch load a pf firewall anchor and run a DNS proxy on port \(AppConstants.dnsProxyPort), which changes how this Mac resolves names and filters packets. Leave it off to use FreeSnitch purely as a traffic monitor.")
+                    if state.enforcementChangePending {
+                        Label("Applying…", systemImage: "clock")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let failure = state.enforcementFailure {
+                        Label(failure, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(EnforcementControl.explanation)
                         .font(.caption).foregroundColor(.secondary)
                 }
                 Section("Mode") {
@@ -121,11 +160,33 @@ struct SettingsView: View {
                             Label(mode.title, systemImage: mode.symbol).tag(mode)
                         }
                     }
+                    if let scope = state.modeOwnerDescription {
+                        Text(scope).font(.caption).foregroundColor(.secondary)
+                    }
+                    if let failure = state.modeChangeFailure {
+                        Label(failure, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Toggle("Ask about destinations an app already uses", isOn: $state.askAboutKnownContacts)
+                        .disabled(state.mode != .alert)
+                    Text(state.askAboutKnownContacts
+                         ? "Alert mode asks about every new connection, including destinations this app has reached before."
+                         : "Alert mode allows a destination without asking when this app has reached it before. Each one is recorded in Recent activity.")
+                        .font(.caption).foregroundColor(.secondary)
                 }
             }
             .formStyle(.grouped)
             Spacer(minLength: 0)
         }
+    }
+
+    /// "Not running" was printed whether the helper was unreachable, the
+    /// switch was off, or the proxy had genuinely failed (#131).
+    private var dnsProxyStatus: String {
+        guard state.helperConnected else { return "Unavailable while the helper is not connected" }
+        if state.dnsProxyEnabled { return "Running on port \(state.dnsProxyPort)" }
+        return state.enforcementEnabled ? "Not running" : "Off, because enforcement is off"
     }
 
     private var helperSummary: String {
@@ -203,7 +264,7 @@ struct SettingsView: View {
             }
             Section("Local DNS proxy") {
                 LabeledContent("Status") {
-                    Text(state.dnsProxyEnabled ? "Running on port \(AppConstants.dnsProxyPort)" : "Not running")
+                    Text(dnsProxyStatus)
                 }
                 Text("The DNS proxy runs inside the privileged helper and filters domain lookups against the enabled blocklists. It reports as running only once the helper confirms it.")
                     .font(.caption).foregroundColor(.secondary)
@@ -229,6 +290,7 @@ struct SettingsView: View {
                 .accessibilityHidden(true)
             Text("FreeSnitch").font(.title.bold())
             Text("Version \(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
+            UpdaterSettingsView()
             Text("Open-source application firewall for macOS.").font(.caption).foregroundColor(.secondary)
             Link("github.com/isaaclins/freesnitch", destination: URL(string: "https://github.com/isaaclins/freesnitch")!)
                 .font(.caption)

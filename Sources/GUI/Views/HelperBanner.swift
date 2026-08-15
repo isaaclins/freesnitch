@@ -24,6 +24,14 @@ struct HelperBanner: View {
                                      snapshotStatus: state.filterSnapshotStatus) {
                 banner(info)
             }
+            // A firewall that will not come back after a restart looked exactly
+            // like a healthy one: this state was computed and rendered nowhere
+            // (#131). It stays on screen until it is resolved.
+            if let info = BannerInfo(persistenceDegraded: state.filterPersistenceDegraded,
+                                     persistenceMessage: state.filterPersistenceMessage,
+                                     recoveryMessage: state.filterRecoveryMessage) {
+                banner(info)
+            }
         }
     }
 
@@ -138,6 +146,24 @@ private struct BannerInfo {
             detail = "\(message) Move FreeSnitch into /Applications and try again."
             action = BannerAction(title: "Retry") { state, _ in state.helper.registerDaemon() }
         }
+    }
+
+    /// The extension accepted the policy but could not persist it, so the next
+    /// start will come up with no rules and fail open.
+    init?(persistenceDegraded: Bool, persistenceMessage: String?, recoveryMessage: String?) {
+        guard persistenceDegraded || recoveryMessage != nil else { return nil }
+        icon = "externaldrive.badge.exclamationmark"
+        tint = Color.orange
+        title = persistenceDegraded
+            ? "FreeSnitch could not save the current rules"
+            : "The network filter needs attention"
+        let base = persistenceDegraded
+            ? "The filter is enforcing the rules it has now, but it could not write them down, so the next time it starts it will come up with none and allow everything until this app sends them again."
+            : ""
+        detail = [base, persistenceMessage, recoveryMessage]
+            .compactMap { $0?.isEmpty == false ? $0 : nil }
+            .joined(separator: " ")
+        action = BannerAction(title: "Send Rules Again") { state, _ in state.syncSharedRules() }
     }
 
     init?(extensionStatus: SystemExtensionManager.Status,

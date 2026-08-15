@@ -4,7 +4,7 @@ import AppKit
 @main
 struct FreeSnitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    private let sparkleUpdater = SparkleUpdaterController()
+    private let sparkleUpdater = SparkleUpdaterController.shared
 
     /// Command-1 for the first sidebar row, and so on. Beyond nine there is no
     /// digit left to press, so those pages keep the menu item without a

@@ -159,7 +159,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             mgr.removeFromPreferences { removeError in
                 if let removeError {
                     self.recordFilterDiagnostic(state: "unknown",
-                                                detail: "The content filter configuration could not be removed: \(removeError.localizedDescription).")
+                                                detail: "The content filter configuration could not be removed: \(removeError.sentence)")
                 } else {
                     self.recordFilterDiagnostic(state: "removed",
                                                 detail: "The content filter configuration was removed.")
@@ -311,7 +311,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     }
 
     private func recordPersistenceFailure(_ operation: String, error: Error) {
-        let detail = "Persisted boot policy \(operation) failed: \(error.localizedDescription). Live filtering remains unchanged; a future extension start will fail open."
+        let detail = "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged; a future extension start will fail open."
         recordFilterDiagnostic(state: "degraded", detail: detail)
         state?.recordFilterPersistenceFailure(detail)
         os_log("%{public}@", log: log, type: .error, detail)
@@ -328,7 +328,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             mgr.isEnabled = false
             mgr.saveToPreferences { saveError in
                 if let saveError {
-                    self.recordFilterDiagnostic(state: "unknown", detail: "The content filter could not be disabled: \(saveError.localizedDescription).")
+                    self.recordFilterDiagnostic(state: "unknown", detail: "The content filter could not be disabled: \(saveError.sentence)")
                 } else {
                     self.recordFilterDiagnostic(state: "installed-disabled", detail: "The content filter configuration is installed but disabled.")
                 }

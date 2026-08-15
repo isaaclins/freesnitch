@@ -13,7 +13,15 @@ final class AppState: ObservableObject {
     @Published var rules: [Rule] = []
     @Published var blocklists: [BlocklistInfo] = []
     @Published var profiles: [Profile] = []
-    @Published var activeProfile: String = "default"
+    /// The profile the helper says is active, mirrored here so the views that
+    /// already observe AppState redraw when it changes.
+    ///
+    /// There is exactly one writer, `adoptActiveProfile`, driven by
+    /// ProfileClient's snapshot. It used to be a stored default that nothing
+    /// ever assigned, so every rule written from an alert, from the Monitor or
+    /// from Insights was filed under "default" while the user was in another
+    /// profile, and never applied (#127).
+    @Published private(set) var activeProfile: String = Profile.defaultName
     @Published var trafficHistory: [TrafficSample] = []
     @Published var currentIn: Int64 = 0
     @Published var currentOut: Int64 = 0
@@ -25,6 +33,22 @@ final class AppState: ObservableObject {
     @Published var pendingAlerts: [PendingAlert] = []
     @Published private(set) var firstContactAskedToday = 0
     @Published private(set) var knownContactsAllowedToday = 0
+    /// Connections allowed because the question queue was full. This used to
+    /// happen with nothing counted, logged or shown (#130).
+    @Published private(set) var overflowAllowedToday = 0
+    /// Repeats of a question already on screen, so the dialog can say how many
+    /// more of the same are waiting instead of dropping them silently.
+    @Published private(set) var coalescedAlertCount = 0
+    /// Whether Alert mode asks about destinations an app already uses.
+    @Published var askAboutKnownContacts = AppPreferences.bool(forKey: AppPreferences.Key.askKnownContacts) {
+        didSet {
+            guard !applyingExternalPreferences, oldValue != askAboutKnownContacts else { return }
+            AppPreferences.set(askAboutKnownContacts, forKey: AppPreferences.Key.askKnownContacts)
+        }
+    }
+    /// The day the counters above belong to. Without it, "today" meant "since
+    /// launch" and the sentence in the dialog was wrong after midnight (#129).
+    private var countersDay = Calendar.current.startOfDay(for: Date())
     @Published var helperConnected: Bool = false
     @Published var helperInstallState: HelperInstallState = .unknown
     @Published var helperVersionState: HelperVersionState = .unknown
@@ -32,6 +56,13 @@ final class AppState: ObservableObject {
     @Published var helperNeedsRepair: Bool = false
     @Published var pfctlEnabled: Bool = false
     @Published var dnsProxyEnabled: Bool = false
+    /// The port the helper says the proxy is on, rather than the port the GUI
+    /// assumes it should be on.
+    @Published var dnsProxyPort: Int = Int(AppConstants.dnsProxyPort)
+    /// Why pf is not loaded, when the helper knows.
+    @Published var pfctlFailure: String?
+    /// Why the last mode change did not take, shown next to the picker.
+    @Published var modeChangeFailure: String?
     @Published var logs: [LogEntry] = []
     @Published var topProcesses: [ProcessStats] = []
     @Published var topDomains: [DomainStats] = []
@@ -137,7 +168,15 @@ final class AppState: ObservableObject {
     /// GUI instead of being contradicted by it. Answers that arrive while a
     /// change is in flight are stale by definition and are dropped.
     func adoptHelperEnforcement(_ status: HelperStatus?) {
-        guard let status, !enforcementChangePending else { return }
+        guard let status else { return }
+        // The two component states are reported whatever the toggle is doing.
+        // They were published and never assigned, so the DNS proxy row read
+        // "Not running" forever, including while it was running (#131).
+        pfctlEnabled = status.pfctlActive
+        dnsProxyEnabled = status.dnsProxyActive
+        dnsProxyPort = status.dnsProxyPort
+        pfctlFailure = status.pfctlError
+        guard !enforcementChangePending else { return }
         let live = status.pfctlActive && status.dnsProxyActive
         guard live != enforcementEnabled else { return }
         setEnforcementFlagWithoutApplying(live)
@@ -215,6 +254,22 @@ final class AppState: ObservableObject {
                 self.updateConnections(self.connections)
             }
         }
+        // One writer for the active profile, fed by the helper's snapshot
+        // rather than by a hardcoded default (#127).
+        activeProfile = ProfileClient.shared.activeProfileName
+        ProfileClient.shared.$snapshot
+            .receive(on: RunLoop.main)
+            .sink { [weak self] snapshot in
+                self?.adoptActiveProfile(snapshot?.activeProfile ?? Profile.defaultName)
+            }
+            .store(in: &cancellables)
+    }
+
+    private var cancellables = Set<AnyCancellable>()
+
+    private func adoptActiveProfile(_ name: String) {
+        guard activeProfile != name else { return }
+        activeProfile = name
     }
 
     private func adoptExternalPreferences() {
@@ -222,6 +277,7 @@ final class AppState: ObservableObject {
         showSpeedsInMenuBar = AppPreferences.bool(forKey: AppPreferences.Key.showSpeeds)
         showAlertsOnAllSpaces = AppPreferences.defaults.object(forKey: AppPreferences.Key.alertsAllSpaces) as? Bool ?? true
         enforcementEnabled = AppPreferences.bool(forKey: AppPreferences.Key.enforcement)
+        askAboutKnownContacts = AppPreferences.bool(forKey: AppPreferences.Key.askKnownContacts)
         let externalMode = AppPreferences.string(forKey: AppPreferences.Key.mode).flatMap(AppMode.init(rawValue:))
         applyingExternalPreferences = false
 
@@ -329,15 +385,38 @@ final class AppState: ObservableObject {
         filterPersistenceMessage = nil
     }
 
+    /// Sets the mode the app actually enforces.
+    ///
+    /// What the extension obeys is the ACTIVE PROFILE's mode
+    /// (`RuleStore.activePolicyState`), not the global policy mode. Writing only
+    /// the global one meant the picker moved, the helper answered yes, and the
+    /// next snapshot put the old value straight back, so the app's most
+    /// consequential control looked broken (#128). Both are written, in the
+    /// order that leaves them consistent if the second call fails.
     func setMode(_ m: AppMode) {
+        if let profile = ProfileClient.shared.activeProfile, profile.mode != m {
+            var updated = profile
+            updated.mode = m
+            ProfileClient.shared.updateProfile(updated)
+        }
         helper.setMode(m) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
                 self.appendLog(level: "error", message: "The helper rejected the mode change: \(message ?? "unknown error")")
+                self.modeChangeFailure = message ?? "The helper rejected the mode change."
                 return
             }
+            self.modeChangeFailure = nil
             self.syncSharedRules()
         }
+    }
+
+    /// Which profile a mode change lands in, said out loud, because the same
+    /// picker in two windows edits whichever profile is active.
+    var modeOwnerDescription: String? {
+        let name = activeProfile
+        guard name != Profile.defaultName else { return nil }
+        return "Changing the mode here changes it for the \(name) profile, which is active."
     }
 
     /// The status response is only a reachability hint. Refreshing the
@@ -386,16 +465,45 @@ final class AppState: ObservableObject {
     /// overflow is allowed rather than piling up behind an unclickable window.
     private static let maxPendingAlerts = 12
 
+    /// Zeroes the day counters when the day turns, so "today" means today.
+    private func rollCountersIfDayChanged() {
+        let today = Calendar.current.startOfDay(for: Date())
+        guard today != countersDay else { return }
+        countersDay = today
+        firstContactAskedToday = 0
+        knownContactsAllowedToday = 0
+        overflowAllowedToday = 0
+        coalescedAlertCount = 0
+    }
+
+    /// Every connection Alert mode lets through without asking leaves a line
+    /// the user can read afterwards.
+    private func recordSilentAllow(_ c: Connection, because reason: String) {
+        let name = c.processName.isEmpty ? "An app" : c.processName
+        let host = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
+        let destination = host.isEmpty ? "a destination" : host
+        appendLog(
+            level: "warning",
+            message: "Allowed \(name) to reach \(destination) without asking, because \(reason)."
+        )
+    }
+
     func presentAlert(for c: Connection, reply: @escaping (Bool, Bool) -> Void) {
+        rollCountersIfDayChanged()
         // Alert mode's known-contact verdict is the settled #26 behavior:
         // allow silently, like the existing Silent Allow fallback, because a
         // retained observation is evidence that this app/destination pair is
         // known. Explicit rules have already been matched by the extension and
         // remain authoritative. If the cache is unavailable, stale, or
         // malformed, this switch falls through to the existing ask behavior.
+        //
+        // It is now switchable, and every silent allow leaves a line behind, so
+        // the mode can be checked rather than trusted (#130).
         if mode == .alert,
+           !askAboutKnownContacts,
            contactClassifier.decision(for: c) == .knownContact {
             knownContactsAllowedToday += 1
+            recordSilentAllow(c, because: "this app already reaches it")
             reply(true, false)
             return
         }
@@ -407,7 +515,16 @@ final class AppState: ObservableObject {
                 && $0.connection.remoteIP == c.remoteIP
                 && $0.connection.remotePort == c.remotePort
         }
-        if isDuplicate || pendingAlerts.count >= Self.maxPendingAlerts {
+        if isDuplicate {
+            // Not a new decision, so it is not a new question. It still counts,
+            // because the dialog says how many are waiting behind it.
+            coalescedAlertCount += 1
+            reply(true, false)
+            return
+        }
+        if pendingAlerts.count >= Self.maxPendingAlerts {
+            overflowAllowedToday += 1
+            recordSilentAllow(c, because: "\(Self.maxPendingAlerts) questions were already waiting")
             reply(true, false)
             return
         }
@@ -506,7 +623,55 @@ final class AppState: ObservableObject {
         return "First time this app has contacted this destination. You have allowed it to reach \(count) other place\(count == 1 ? "" : "s") in retained history."
     }
 
-    func resolveAlert(_ alert: PendingAlert, allow: Bool, remember: Bool) {
+    /// How much of the connection a remembered answer should cover. The dialog
+    /// offered these three and the rule ignored all of them, so "This address
+    /// and port" quietly granted the same permanent host-wide rule as
+    /// "Anywhere" (#129).
+    enum RememberScope: String, CaseIterable, Identifiable {
+        case anywhere
+        case thisHost
+        case thisAddressAndPort
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .anywhere: return "Anywhere"
+            case .thisHost: return "This host"
+            case .thisAddressAndPort: return "This address and port"
+            }
+        }
+    }
+
+    /// How long a remembered answer lasts. Every option here is one the helper
+    /// can actually deliver: the matcher drops a rule once `expiresAt` passes,
+    /// so these are real expiries and not labels.
+    enum RememberDuration: String, CaseIterable, Identifiable {
+        case forever
+        case oneDay
+        case oneHour
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .forever: return "Forever"
+            case .oneDay: return "24 hours"
+            case .oneHour: return "1 hour"
+            }
+        }
+        var interval: TimeInterval? {
+            switch self {
+            case .forever: return nil
+            case .oneDay: return 24 * 60 * 60
+            case .oneHour: return 60 * 60
+            }
+        }
+    }
+
+    func resolveAlert(
+        _ alert: PendingAlert,
+        allow: Bool,
+        remember: Bool,
+        scope: RememberScope = .thisHost,
+        duration: RememberDuration = .forever
+    ) {
         guard finishAlert(id: alert.id, allow: allow, remember: remember) else { return }
         // Claim the registry entry too, so a command line answer arriving after
         // this one is told the app already answered instead of appearing to
@@ -525,21 +690,53 @@ final class AppState: ObservableObject {
         let ruleHost: String? = usesAddress ? nil : alert.connection.remoteHost
         let ruleIP: String? = usesAddress ? host : nil
         let hasDestination = !(ruleHost ?? ruleIP ?? "").isEmpty
-        if remember && !isUnspecified && hasDestination {
+        // "Anywhere" is the one scope with no destination, and it is only safe
+        // because the user asked for it by name. It still needs something to
+        // key on, so without a process identity it narrows to the host rather
+        // than becoming a rule that matches every flow on the Mac.
+        let processIdentity = !(alert.connection.processBundleId ?? "").isEmpty
+            || !(alert.connection.processPath.isEmpty)
+        var effectiveScope = (scope == .anywhere && !processIdentity) ? .thisHost : scope
+        // Pinning to an address needs an address. Without one, the honest
+        // narrowing is the host, not a rule keyed on a bare port number.
+        if effectiveScope == .thisAddressAndPort && alert.connection.remoteIP.isEmpty {
+            effectiveScope = .thisHost
+        }
+        let needsDestination = effectiveScope != .anywhere
+        if remember && (!needsDestination || (!isUnspecified && hasDestination)) {
+            let expiresAt = duration.interval.map { Date().addingTimeInterval($0) }
+            var scopedHost: String?
+            var scopedIP: String?
+            var scopedPort: Int?
+            var ruleScope: RuleScope
+            switch effectiveScope {
+            case .anywhere:
+                ruleScope = .process
+            case .thisHost:
+                scopedHost = ruleHost
+                scopedIP = ruleIP
+                ruleScope = usesAddress ? .ip : .domain
+            case .thisAddressAndPort:
+                scopedIP = alert.connection.remoteIP
+                scopedPort = alert.connection.remotePort
+                ruleScope = .ip
+            }
             let rule = Rule(
                 processBundleId: alert.connection.processBundleId,
                 processPath: alert.connection.processPath,
                 processName: alert.connection.processName,
-                remoteHost: ruleHost,
-                remoteIP: ruleIP,
-                remotePort: alert.connection.remotePort,
+                remoteHost: scopedHost,
+                remoteIP: scopedIP,
+                remotePort: scopedPort,
                 direction: alert.connection.direction,
                 action: allow ? .allow : .deny,
-                scope: usesAddress ? .ip : .domain,
+                scope: ruleScope,
                 priority: 100,
                 profile: activeProfile,
                 groupName: nil,
-                notes: "Created from alert"
+                notes: "Created from alert",
+                temporary: expiresAt != nil,
+                expiresAt: expiresAt
             )
             helper.addRule(rule) { [weak self] ok, message in
                 guard let self else { return }
