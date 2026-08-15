@@ -33,7 +33,7 @@ final class MenubarController {
                                               close: { [weak self] in self?.popover.performClose(nil) })
             .environmentObject(state)
             .environmentObject(windows)
-            .frame(width: 380)
+            .frame(width: MenubarPopoverView.width)
         let hosting = NSHostingController(rootView: popoverView)
         // The popover is as tall as what it has to say. Pinned to 540 points
         // it clipped its own header and its last menu item as soon as a helper
@@ -70,6 +70,14 @@ final class MenubarController {
         trafficCancellable = nil
         NSStatusBar.system.removeStatusItem(statusItem)
         self.statusItem = nil
+    }
+
+    /// Opens the panel without a click, so the one screen that is reached only
+    /// from the menu bar can still be reviewed on screen before it ships.
+    func showPopover() {
+        guard let button = statusItem?.button, !popover.isShown else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func handleClick(_ sender: AnyObject?) {

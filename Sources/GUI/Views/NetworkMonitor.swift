@@ -21,13 +21,13 @@ struct NetworkMonitorView: View {
             HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
                 sidebar
-                    .frame(width: 330)
+                    .frame(width: MainWindowMetrics.listPaneWidth)
                 Divider()
                 mapPane
-                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: MainWindowMetrics.paneMinWidth, maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 summaryPane
-                    .frame(width: 280)
+                    .frame(width: MainWindowMetrics.detailPaneWidth)
             }
         }
         // Grouping happens on a background task inside the controller. The

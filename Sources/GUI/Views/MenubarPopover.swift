@@ -18,8 +18,10 @@ struct MenubarPopoverView: View {
     @State private var showProfilePicker = false
     @ObservedObject private var profileClient = ProfileClient.shared
 
-    /// Control Center's panels are 320 points wide. So is this.
-    private static let width: CGFloat = 320
+    /// Control Center's panels are 320 points wide. So is this. The hosting
+    /// controller reads it too, so the popover and its content cannot disagree
+    /// about how wide the panel is (#122).
+    static let width: CGFloat = 320
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

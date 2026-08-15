@@ -145,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "insights": self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
+                case "popover": self.menubar.showPopover()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
                 // without this it is the one screen nobody can review before it

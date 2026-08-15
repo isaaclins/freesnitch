@@ -68,6 +68,14 @@ enum MainWindowMetrics {
     static let dividerWidth: CGFloat = 1
     /// What the pages pad their own headers by.
     static let contentInset: CGFloat = 12
+    /// The list pane a page opens with, on the leading side of its content.
+    /// Rules and the Monitor both used to declare this themselves, in numbers
+    /// that had drifted apart (#122).
+    static let listPaneWidth: CGFloat = 330
+    /// The trailing pane: the Rules inspector, the Monitor's summary.
+    static let detailPaneWidth: CGFloat = 280
+    /// The narrowest a pane between two others may become.
+    static let paneMinWidth: CGFloat = 220
 
     /// Window x of the content pane's leading edge.
     static func contentEdge(sidebarVisible: Bool, sidebarWidth: CGFloat = sidebarWidth) -> CGFloat {
