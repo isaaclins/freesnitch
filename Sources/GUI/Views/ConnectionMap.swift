@@ -66,6 +66,7 @@ struct ConnectionMapPane: View {
             Annotation("Your Mac", coordinate: home.point.coordinate) {
                 HomePin(isEstimate: home.isEstimate)
             }
+            .annotationTitles(.hidden)
 
             ForEach(model.result.nodes) { node in
                 // A named annotation: an empty title left the map with no
@@ -76,6 +77,10 @@ struct ConnectionMapPane: View {
                     NodePin(node: node, isSelected: selectedNode?.id == node.id)
                         .help("\(node.title): \(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s")")
                 }
+                // The pin draws its own label, with the connection count and a
+                // material behind it. MapKit draws the title underneath as
+                // well, so every place read its own name twice.
+                .annotationTitles(.hidden)
             }
         }
         .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
