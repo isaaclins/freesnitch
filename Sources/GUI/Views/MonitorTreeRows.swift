@@ -428,6 +428,7 @@ struct MonitorDecisionControls: View {
                 Button(action: onClear) {
                     Image(systemName: "arrow.uturn.backward.circle.fill")
                 }
+                .accessibilityLabel("Remove the rule for \(subject)")
                 .buttonStyle(.borderless)
                 .foregroundStyle(onSelection ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                 .disabled(pending || !canDecide)
@@ -435,9 +436,14 @@ struct MonitorDecisionControls: View {
             }
         }
         .imageScale(.large)
+        // Really disabled, not painted to look it. Opacity plus
+        // allowsHitTesting left assistive technology seeing enabled controls,
+        // and an empty help string attached an empty tooltip (#120). The
+        // opacity stays as well: these glyphs carry explicit palette colours,
+        // which no button style dims on its own.
+        .disabled(!addressable || pending || !canDecide)
         .opacity(addressable && canDecide ? 1 : 0.35)
-        .allowsHitTesting(addressable && !pending && canDecide)
-        .help(unavailableReason ?? "")
+        .modifier(OptionalHelp(text: unavailableReason))
     }
 
     private var unavailableReason: String? {
@@ -463,6 +469,7 @@ struct MonitorDecisionControls: View {
                 .foregroundStyle(glyphColor(isActive: isActive), discColor(color, isActive: isActive))
         }
         .buttonStyle(.borderless)
+        .accessibilityLabel(action == .allow ? "Allow \(subject)" : "Deny \(subject)")
         .disabled(pending || !canDecide)
         .help(unavailableReason
               ?? (isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help))
@@ -542,5 +549,19 @@ enum MonitorAppIconCache {
         let resolved = AppIcon.resolve(bundleId: app.bundleID, path: app.path, name: app.name)
         cache[app.id] = resolved
         return resolved
+    }
+}
+
+/// `.help` with nothing to say attaches an empty tooltip, which AppKit shows as
+/// an empty yellow box. This attaches the tooltip only when there is a reason.
+private struct OptionalHelp: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.help(text)
+        } else {
+            content
+        }
     }
 }

@@ -64,7 +64,9 @@ struct ConnectionMapPane: View {
             }
 
             ForEach(model.result.nodes) { node in
-                Annotation("", coordinate: node.point.coordinate) {
+                // A named annotation: an empty title left the map with no
+                // content at all to VoiceOver (#120).
+                Annotation(node.title, coordinate: node.point.coordinate) {
                     NodePin(node: node)
                 }
             }

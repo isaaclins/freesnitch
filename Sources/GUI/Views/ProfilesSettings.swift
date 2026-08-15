@@ -159,6 +159,7 @@ struct ProfilesSettingsView: View {
                 showingCreateSheet = true
             } label: {
                 Image(systemName: "plus")
+                    .accessibilityLabel("Create a profile")
             }
             .buttonStyle(.borderless)
             .disabled(!profileClient.isAvailable)
@@ -513,6 +514,7 @@ struct ProfileSwitchBanner: View {
             }
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
+                    .accessibilityLabel("Dismiss")
             }
             .buttonStyle(.borderless)
         }
