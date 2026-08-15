@@ -36,12 +36,14 @@ struct NetworkMonitorView: View {
         .onReceive(state.$connections) { tree.ingest(connections: $0) }
         .onReceive(state.$rules) { tree.updateDecisions(rules: $0, profile: state.activeProfile) }
         .onReceive(state.$activeProfile) { tree.updateDecisions(rules: state.rules, profile: $0) }
-        .alert("The helper did not accept that",
+        // The title says what failed, not that something was rejected, and
+        // the body is never empty (#117).
+        .alert("Could not save that decision",
                isPresented: Binding(get: { tree.errorMessage != nil },
                                     set: { if !$0 { tree.errorMessage = nil } })) {
             Button("OK", role: .cancel) { tree.errorMessage = nil }
         } message: {
-            Text(tree.errorMessage ?? "")
+            Text(tree.errorMessage ?? "The helper did not say why. Try again in a moment.")
         }
     }
 

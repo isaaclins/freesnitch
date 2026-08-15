@@ -74,6 +74,16 @@ struct SettingsView: View {
                 // complaint, and its buttons sit in a labelled row instead of
                 // standing alone (#104).
                 Section("Privileged helper") {
+                    // A stale helper is restarted with one privileged command.
+                    // Printed inside the status line it could not be copied or
+                    // run; here it is a value the user can click to copy (#117).
+                    if case .mismatch = state.helperVersionState {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("Restart command")
+                            Spacer(minLength: 8)
+                            CopyableValue(value: AppConstants.helperKickstartCommand)
+                        }
+                    }
                     LabeledContent("Status") {
                         Text(helperSummary)
                             .multilineTextAlignment(.trailing)
@@ -120,7 +130,7 @@ struct SettingsView: View {
 
     private var helperSummary: String {
         if case .mismatch(let helperVersion, let appVersion) = state.helperVersionState {
-            return "Stale helper: running v\(helperVersion), installed v\(appVersion). Restart it with `\(AppConstants.helperKickstartCommand)`"
+            return "Running version \(helperVersion), while this app is version \(appVersion)"
         }
         switch state.helperInstallState {
         case .enabled: return state.helperConnected ? "Connected" : "Approved, connecting…"

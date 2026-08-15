@@ -24,6 +24,7 @@ struct RulesManagerView: View {
     @State private var showingImportConfirmation = false
     @State private var pendingRemovalIDs: Set<UUID> = []
     @State private var showingRemoveConfirmation = false
+    @State private var errorTitle = ""
     @State private var errorMessage: String?
     @State private var showingError = false
     /// The list being edited, if any (#97).
@@ -125,7 +126,7 @@ struct RulesManagerView: View {
                       contentType: .json,
                       defaultFilename: "freesnitch-rules") { result in
             if case .failure(let error) = result {
-                showError("Could not export rules: \(error.localizedDescription)")
+                showError("Could not export the rules", error.localizedDescription)
             }
         }
         .confirmationDialog("Replace all rules?",
@@ -148,10 +149,12 @@ struct RulesManagerView: View {
         } message: {
             Text("This permanently removes \(pendingRemovalIDs.count) rules from FreeSnitch.")
         }
-        .alert("Rules Manager", isPresented: $showingError) {
+        // The title states the problem. It used to be the name of this pane,
+        // which told the reader nothing (#117).
+        .alert(errorTitle, isPresented: $showingError) {
             Button("OK", role: .cancel) { showingError = false }
         } message: {
-            Text(errorMessage ?? "The requested operation could not be completed.")
+            if let errorMessage { Text(errorMessage) }
         }
     }
 
@@ -1041,7 +1044,7 @@ struct RulesManagerView: View {
     private func addRule(_ rule: Rule) {
         state.helper.addRule(rule) { ok, message in
             guard ok else {
-                showError("Could not add rule: \(message ?? "the helper rejected the rule")")
+                showError("Could not add the rule", message ?? "The helper rejected it and did not say why.")
                 return
             }
             state.refreshRules()
@@ -1076,7 +1079,7 @@ struct RulesManagerView: View {
             showError("\(error.errorDescription ?? "The rule file could not be imported.") \(error.remediation)")
         } catch {
             pendingImportRules.removeAll()
-            showError("Could not read the rule file: \(error.localizedDescription)")
+            showError("Could not read that file", error.localizedDescription)
         }
     }
 
@@ -1085,7 +1088,7 @@ struct RulesManagerView: View {
         let existingRules = state.rules
         state.helper.replaceRules(rules, existing: existingRules) { ok, message in
             guard ok else {
-                showError("Could not replace rules: \(message ?? "the helper rejected the import")")
+                showError("Could not import the rules", message ?? "The helper rejected the import and did not say why.")
                 return
             }
             state.refreshRules()
@@ -1101,7 +1104,7 @@ struct RulesManagerView: View {
     private func setBlocklist(_ blocklist: BlocklistInfo, enabled: Bool) {
         state.helper.setBlocklistEnabled(id: blocklist.id, enabled: enabled) { ok, message in
             guard ok else {
-                showError("Could not change \(blocklist.name): \(message ?? "the helper rejected the change")")
+                showError("Could not change \(blocklist.name)", message ?? "The helper rejected the change and did not say why.")
                 return
             }
             state.blocklists = state.blocklists.map { item in
@@ -1113,8 +1116,19 @@ struct RulesManagerView: View {
         }
     }
 
-    private func showError(_ message: String) {
-        errorMessage = message
+    /// A rule the way the user reads it in the table: the process and where it
+    /// was going, never the identifier the helper stores it under.
+    static func describe(_ rule: Rule) -> String {
+        let process = rule.processName ?? rule.processBundleId ?? "any process"
+        let destination = rule.remoteHost ?? rule.remoteIP ?? "any destination"
+        return "\(process) to \(destination)"
+    }
+
+    /// A title that names what failed, and a detail that says why. A rule is
+    /// named the way the user sees it, never by its identifier (#117).
+    private func showError(_ title: String, _ detail: String? = nil) {
+        errorTitle = title
+        errorMessage = detail
         showingError = true
     }
 
@@ -1123,7 +1137,7 @@ struct RulesManagerView: View {
         copy.enabled.toggle()
         state.helper.addRule(copy) { ok, message in
             guard ok else {
-                showError("Could not change the rule: \(message ?? "the helper rejected the update")")
+                showError("Could not change the rule", message ?? "The helper rejected the change and did not say why.")
                 return
             }
             state.refreshRules()
@@ -1143,7 +1157,8 @@ struct RulesManagerView: View {
             copy.enabled = enabled
             state.helper.addRule(copy) { ok, message in
                 if !ok {
-                    showError("Could not change rule \(copy.id): \(message ?? "the helper rejected the update")")
+                    showError("Could not change the rule for \(Self.describe(copy))",
+                              message ?? "The helper rejected the change and did not say why.")
                 }
                 updateNext(index + 1)
             }
@@ -1180,7 +1195,9 @@ struct RulesManagerView: View {
             }
             state.helper.removeRule(id: orderedIDs[index]) { ok, message in
                 if !ok {
-                    showError("Could not remove rule \(orderedIDs[index]): \(message ?? "the helper rejected the removal")")
+                    let removed = state.rules.first { $0.id == orderedIDs[index] }
+                    showError("Could not remove the rule for \(removed.map(Self.describe) ?? "that connection")",
+                              message ?? "The helper rejected the removal and did not say why.")
                 }
                 removeNext(index + 1)
             }
