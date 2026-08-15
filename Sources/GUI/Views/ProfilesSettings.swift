@@ -601,23 +601,48 @@ struct ProfileSwitchBanner: View {
 
 /// The rule editor's Applies to control. New rules default to Always, which is
 /// what keeps profiles small and comprehensible.
+///
+/// It offers every profile the helper knows, not just the one that happens to
+/// be active: with two choices, a rule for a third profile could be neither
+/// written nor moved anywhere in the app (#134).
 struct RuleAppliesToPicker: View {
     @Binding var profileName: String
+    let profiles: [Profile]
     let activeProfileName: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Picker("Applies to", selection: $profileName) {
                 Text("Always").tag(Profile.alwaysName)
-                Text("Only in \(activeProfileName)").tag(activeProfileName)
+                ForEach(options, id: \.self) { name in
+                    Text(name == activeProfileName ? "Only in \(name), which is active" : "Only in \(name)")
+                        .tag(name)
+                }
             }
             .pickerStyle(.radioGroup)
-            Text(profileName == Profile.alwaysName
-                 ? "Applies in every profile. Almost every rule belongs here."
-                 : "Applies only while \(activeProfileName) is the active profile.")
+            Text(caption)
                 .font(.caption).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The active profile is always offered, even before the helper has
+    /// answered with the profile list, so this control is never a single
+    /// choice.
+    private var options: [String] {
+        var names = profiles.map(\.name).filter { $0 != Profile.alwaysName }
+        if !names.contains(activeProfileName) { names.append(activeProfileName) }
+        return names
+    }
+
+    private var caption: String {
+        if profileName == Profile.alwaysName {
+            return "Applies in every profile. Almost every rule belongs here."
+        }
+        if profileName == activeProfileName {
+            return "Applies only while \(profileName) is the active profile, which it is now."
+        }
+        return "Applies only while \(profileName) is the active profile. \(activeProfileName) is active, so this rule stays dormant for now."
     }
 }
 
