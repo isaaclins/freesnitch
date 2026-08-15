@@ -14,15 +14,22 @@ struct InsightsView: View {
     /// Only exists so the destination list has a selection for its context
     /// menu to key off. Nothing else reads it.
     @State private var selectedDestinationID: InsightsDestinationSummary.ID?
+    /// The address rows in Unresolved, which used to be unselectable text
+    /// (#124).
+    @State private var selectedUnresolvedID: String?
+    @State private var showingSourceNote = false
+    /// Insights was the only page without the recovery banner every other page
+    /// carries, so a missing helper showed up here as a red string per query
+    /// with nothing to press (#136).
+    @ObservedObject var systemExtension: SystemExtensionManager
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider()
+            HelperBanner(systemExtension: systemExtension)
             notices
             content
-            Divider()
-            footer
         }
         .onAppear { model.attach(state) }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
@@ -63,10 +70,14 @@ struct InsightsView: View {
             .fixedSize()
             .onChange(of: model.range) { _ in model.reload() }
 
-            Toggle("Recording", isOn: Binding(get: { model.recordingEnabled },
-                                              set: { model.setRecording($0) }))
+            // A switch is named for what it does, not for the state it is in,
+            // and deleting history is called deleting history. "Recording" and
+            // "Purge…" were the developer's words for both (#136).
+            Toggle("Record history", isOn: Binding(get: { model.recordingEnabled },
+                                                   set: { model.setRecording($0) }))
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .help("Record connection history. Rules and blocking are unaffected.")
 
             Button {
                 model.reload()
@@ -76,7 +87,29 @@ struct InsightsView: View {
             .help("Reload")
             .accessibilityLabel("Reload")
 
-            Button("Purge…", role: .destructive) {
+            // The two lines of fine print that used to be pinned across the
+            // bottom of every tab live here, one click away from the controls
+            // they describe (#126).
+            Button {
+                showingSourceNote = true
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("About this data")
+            .accessibilityLabel("About this data")
+            .popover(isPresented: $showingSourceNote, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.sourceNote)
+                    Text(model.namingNote)
+                }
+                .font(.callout)
+                .frame(width: 320, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(14)
+            }
+
+            Button("Delete History…", role: .destructive) {
                 model.confirmingPurge = true
             }
         }
@@ -304,10 +337,22 @@ struct InsightsView: View {
     /// rather than as its last row (#106).
     @ViewBuilder
     private func listFooter(hasMore: Bool, title: String, action: @escaping () -> Void) -> some View {
-        if hasMore {
+        if hasMore && !model.atPageLimit {
             HStack {
                 Button(title, action: action)
                     .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
+        } else if hasMore {
+            // Past the page limit the query returns nothing, so the button
+            // stayed on screen and did nothing when pressed. A control that
+            // cannot act is replaced by the reason it cannot (#136).
+            HStack {
+                Text("This is as far as one screen goes. Choose a shorter range to see the rest.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
@@ -346,7 +391,11 @@ struct InsightsView: View {
             if model.unresolved.isEmpty && !model.isLoading {
                 emptyState("Every recorded address had a DNS answer in this range.")
             } else {
-                List {
+                // Selectable, copyable and actionable, like the Apps list. It
+                // used to be plain text: the one thing a reader could want to
+                // do with a suspicious address, turn it into a rule, was not
+                // offered anywhere on the tab (#124).
+                List(selection: $selectedUnresolvedID) {
                     ForEach(model.unresolved) { entry in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
@@ -357,21 +406,52 @@ struct InsightsView: View {
                                 Text(PSFormat.bytes(entry.bytesIn + entry.bytesOut))
                                     .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                             }
-                            Text(entry.appNames.isEmpty
-                                 ? "\(entry.appCount) app\(entry.appCount == 1 ? "" : "s")"
-                                 : "reached by \(entry.appNames.joined(separator: ", "))")
+                            Text(Self.reachedBy(entry))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 2)
+                        .tag(entry.id)
                     }
                 }
                 .listStyle(.inset)
+                .contextMenu(forSelectionType: String.self) { ids in
+                    unresolvedContextMenu(ids)
+                }
+                .onCopyCommand {
+                    guard let id = selectedUnresolvedID else { return [] }
+                    return [NSItemProvider(object: id as NSString)]
+                }
                 listFooter(hasMore: model.hasMoreUnresolved,
                            title: "Load more addresses",
                            action: { model.loadMoreUnresolved() })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// One way of naming who reached an address. Three rows said "reached by
+    /// Telegram" and the fourth said "3 apps" (#124).
+    private static func reachedBy(_ entry: InsightsUnresolvedDestination) -> String {
+        guard !entry.appNames.isEmpty else {
+            return "Reached by \(plural(entry.appCount, "app"))"
+        }
+        let named = entry.appNames.joined(separator: ", ")
+        let remaining = entry.appCount - entry.appNames.count
+        guard remaining > 0 else { return "Reached by \(named)" }
+        return "Reached by \(named) and \(remaining) more"
+    }
+
+    @ViewBuilder
+    private func unresolvedContextMenu(_ ids: Set<String>) -> some View {
+        if let id = ids.first, let entry = model.unresolved.first(where: { $0.id == id }) {
+            ForEach(model.proposableApps(for: entry), id: \.appIdentity) { app in
+                Button("Propose a Rule for \(app.displayName)…") {
+                    model.proposeRule(forUnresolved: entry, app: app)
+                }
+            }
+            if !model.proposableApps(for: entry).isEmpty { Divider() }
+            CopyMenuItem(title: "Copy Address", value: entry.remoteIP)
+        }
     }
 
     // MARK: Changed behaviour
@@ -393,15 +473,19 @@ struct InsightsView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
                                 Text(finding.displayName).font(.body.weight(.semibold))
+                                // Plain secondary text in the app's own font. An
+                                // unknown version is a missing fact, not a
+                                // warning, and orange monospace made it look
+                                // like a fault (#125).
                                 Text(finding.versionLabel)
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(finding.versionKnown ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 Spacer()
                             }
                             HStack(spacing: 8) {
                                 Text(finding.destination).font(.body)
                                 PSChip(finding.wording, color: .orange, icon: "exclamationmark.magnifyingglass")
-                                Text("\(finding.connectionCount) connection\(finding.connectionCount == 1 ? "" : "s")")
+                                Text(Self.plural(finding.connectionCount, "connection"))
                                     .font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                             }
@@ -555,16 +639,6 @@ struct InsightsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(model.sourceNote).font(.footnote).foregroundStyle(.secondary)
-            Text(model.namingNote).font(.footnote).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.bar)
-    }
 }
 
 // MARK: - Ranges and sections
@@ -749,6 +823,13 @@ final class InsightsViewModel: ObservableObject {
     func loadMoreProposals() { loadProposals(offset: proposals.count) }
     func loadMoreFindings() { loadFindings(offset: findings.count) }
 
+    /// Whether the next page would be refused. The view asks so it can say so
+    /// rather than offering a button that returns nothing (#136).
+    var atPageLimit: Bool {
+        let loaded = [apps.count, destinations.count, unresolved.count, proposals.count, findings.count]
+        return loaded.contains { $0 > Self.pageSize * Self.maximumPages }
+    }
+
     private func query(_ kind: InsightsQueryKind, offset: Int, appIdentity: String? = nil) -> InsightsQuery? {
         guard offset <= Self.pageSize * Self.maximumPages else { return nil }
         let now = Date()
@@ -900,6 +981,31 @@ final class InsightsViewModel: ObservableObject {
             proposals.insert(proposal, at: 0)
         }
         section = .proposals
+    }
+
+    /// The apps that reached an unresolved address, as far as the loaded app
+    /// list can identify them. An address whose apps are not in the current
+    /// range offers no proposal rather than a guess.
+    func proposableApps(for entry: InsightsUnresolvedDestination) -> [InsightsAppSummary] {
+        guard !entry.appNames.isEmpty else { return [] }
+        return entry.appNames.compactMap { name in
+            apps.first { $0.displayName == name }
+        }
+    }
+
+    /// A proposal built from an address with no DNS answer. It can only ever be
+    /// address-pinned, which the proposal card already says out loud.
+    func proposeRule(forUnresolved entry: InsightsUnresolvedDestination, app: InsightsAppSummary) {
+        let proposal = InsightsProposedRule(appIdentity: app.appIdentity,
+                                            appDisplayName: app.displayName,
+                                            processBundleId: app.processBundleId,
+                                            processPath: app.processPath,
+                                            domain: nil,
+                                            remoteIP: entry.remoteIP,
+                                            connectionCount: entry.connectionCount,
+                                            otherAppCount: max(0, entry.appCount - 1),
+                                            lastSeen: entry.lastSeen)
+        proposeRule(for: proposal)
     }
 
     func proposeRule(for proposal: InsightsProposedRule) {

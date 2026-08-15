@@ -174,7 +174,7 @@ struct MainWindowView: View {
         case .rules:
             RulesManagerView(systemExtension: systemExtension, window: model)
         case .insights:
-            InsightsView()
+            InsightsView(systemExtension: systemExtension)
         case .profiles:
             ProfilesSettingsView(profileClient: profileClient)
                 .padding(16)

@@ -361,17 +361,25 @@ public struct InsightsBehaviourFinding: Codable, Sendable, Hashable, Identifiabl
         self.versionKnown = versionKnown
     }
 
+    /// A sentence, not a diff. This used to print "0.0.312 -> 0.0.318" in a
+    /// monospaced font, which reads as developer output rather than as a fact
+    /// about an app (#125).
     public var versionLabel: String {
-        guard versionKnown else { return "Unknown app version" }
-        return "\(oldVersion ?? "unknown") -> \(newVersion ?? "unknown")"
+        guard versionKnown else { return "Version not known" }
+        guard let old = oldVersion, let new = newVersion else {
+            return "Version \(newVersion ?? oldVersion ?? "not known")"
+        }
+        return "Version \(old) to \(new)"
     }
 
     public var wording: String {
-        versionKnown ? "new after update" : "new destination, app version unknown"
+        versionKnown ? "New after update" : "New destination, app version not known"
     }
 
+    /// The count is already on the row as a chip, so the sentence carries only
+    /// what the chip cannot: since when.
     public var evidence: String {
-        "Observed \(connectionCount) connection\(connectionCount == 1 ? "" : "s") since \(firstSeen.formatted(date: .abbreviated, time: .shortened))."
+        "First seen \(firstSeen.formatted(date: .abbreviated, time: .shortened))."
     }
 
     public func proposedRule(processBundleId: String? = nil, processPath: String? = nil) -> InsightsProposedRule? {
