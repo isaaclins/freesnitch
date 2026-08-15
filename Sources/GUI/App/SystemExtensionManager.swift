@@ -104,10 +104,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// only component macOS allows to deactivate this extension, so this is the
     /// real removal path, not a convenience wrapper.
     ///
-    /// It touches the extension and the content filter only. It never
-    /// unregisters, boots out, or kickstarts the privileged helper: removing
-    /// that service is the user's own action in System Settings, and doing it
-    /// silently is exactly the failure #24 was filed for.
+    /// It touches the extension and the content filter only. Unregistering the
+    /// privileged helper is a later step of the same flow, and that flow is the
+    /// only place FreeSnitch is allowed to do it: unregistering the service
+    /// outside an uninstall the user confirmed is the failure #24 was filed for.
     func deactivateForUninstall() {
         uninstallState = .deactivating
         guard hasEmbeddedExtension else {

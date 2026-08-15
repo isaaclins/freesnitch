@@ -100,8 +100,12 @@ final class MainWindowModel: ObservableObject {
 /// The pages are the existing views, hosted unchanged. This view owns
 /// navigation only.
 struct MainWindowView: View {
+    @EnvironmentObject var state: AppState
     @ObservedObject var model: MainWindowModel
     let systemExtension: SystemExtensionManager
+    /// Presented from here, not from the Settings page, so switching sidebar
+    /// rows cannot tear the uninstall down halfway through it (#133).
+    @ObservedObject var uninstall: UninstallFlowModel
     @State private var sidebarAcceptsSelection = false
     @ObservedObject private var profileClient = ProfileClient.shared
 
@@ -129,6 +133,10 @@ struct MainWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $uninstall.isPresented) {
+            UninstallFlowSheet(flow: uninstall, systemExtension: systemExtension)
+                .environmentObject(state)
+        }
     }
 
     /// A real sidebar `List` on a real `NSVisualEffectView`.
@@ -179,7 +187,7 @@ struct MainWindowView: View {
             ProfilesSettingsView(profileClient: profileClient)
                 .padding(16)
         case .settings:
-            SettingsView(systemExtension: systemExtension)
+            SettingsView(systemExtension: systemExtension, uninstall: uninstall)
         }
     }
 }

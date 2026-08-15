@@ -23,6 +23,9 @@ final class WindowManager {
     /// re-opening from the menu bar returns to the page you left.
     private var mainWindow: NSWindow?
     private let mainModel: MainWindowModel
+    /// The uninstall outlives every view that shows it. Held here so a step
+    /// that is already under way survives the sheet being closed (#133).
+    private let uninstallModel: UninstallFlowModel
     private var alertWindow: NSWindow?
     /// The alert is centred once, after its first real measurement.
     private var alertHasBeenCentered = false
@@ -41,6 +44,7 @@ final class WindowManager {
         self.systemExtension = systemExtension
         let stored = UserDefaults.standard.string(forKey: Self.selectedPageKey)
         self.mainModel = MainWindowModel(page: stored.flatMap(MainPage.init(rawValue:)) ?? .monitor)
+        self.uninstallModel = UninstallFlowModel(state: state, systemExtension: systemExtension)
         observeAlerts()
         observeSelectedPage()
     }
@@ -94,7 +98,9 @@ final class WindowManager {
             minSize: NSSize(width: 1040, height: 620),
             autosaveName: Self.mainWindowAutosaveName,
             windowClass: ToolbarLockedWindow.self,
-            content: MainWindowView(model: mainModel, systemExtension: systemExtension)
+            content: MainWindowView(model: mainModel,
+                                    systemExtension: systemExtension,
+                                    uninstall: uninstallModel)
                 .environmentObject(state)
         )
         // A real toolbar, in the title bar, laid out by AppKit. The controller

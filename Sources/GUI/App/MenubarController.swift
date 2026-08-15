@@ -59,6 +59,19 @@ final class MenubarController {
         .sink { [weak self] _ in self?.render() }
     }
 
+    /// Takes the status item out of the menu bar before the process goes away.
+    ///
+    /// Quitting removes it anyway, but the uninstall ends with a bundle that is
+    /// already in the Trash, and an icon that outlives the app it belongs to is
+    /// exactly what made "FreeSnitch has been removed" read as a lie (#133).
+    func removeStatusItem() {
+        guard let statusItem else { return }
+        trafficCancellable?.cancel()
+        trafficCancellable = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
+        self.statusItem = nil
+    }
+
     @objc private func handleClick(_ sender: AnyObject?) {
         guard let button = statusItem.button else { return }
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
@@ -130,7 +143,7 @@ final class MenubarController {
     /// The previous version hand-drew pink and blue text into a non-template
     /// bitmap, which is what users saw as "the menu icon is 2 colours".
     private func render() {
-        guard let button = statusItem.button else { return }
+        guard let statusItem, let button = statusItem.button else { return }
 
         let filtering = isFilterReady
         let symbol = filtering ? "record.circle" : "shield.slash"
