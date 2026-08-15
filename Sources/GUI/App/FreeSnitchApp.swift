@@ -303,8 +303,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Rule(processBundleId: "ru.keepcoder.Telegram", processPath: "/Applications/Telegram.app", processName: "Telegram", remoteHost: "149.154.167.0/24", remoteIP: "149.154.167.0/24", direction: .outgoing, action: .ask, scope: .ip, priority: 40, profile: "default", hitCount: 0)
         ]
 
-        // Synthetic blocklists
-        state.blocklists = [
+        // Synthetic blocklists. They are seeded straight into the profile
+        // snapshot, which is where every screen reads them from (#135).
+        let blocklists = [
             BlocklistInfo(name: "FireHOL", url: "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset", enabled: true, entryCount: 3768),
             BlocklistInfo(name: "NoCoin", url: "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt", enabled: true, entryCount: 313),
             BlocklistInfo(name: "URLhaus", url: "https://urlhaus.abuse.ch/downloads/hostfile/", enabled: true, entryCount: 513),
@@ -319,13 +320,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             BlocklistInfo(name: "HaGeZi Threat", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.txt", enabled: true, entryCount: 301675)
         ]
 
-        seedDemoProfiles()
+        seedDemoProfiles(blocklists: blocklists)
     }
 
     /// Profiles live in the helper, so without this the Profiles screen is
     /// empty in demo mode and cannot be reviewed before it ships.
-    private func seedDemoProfiles() {
-        let lists = Array(state.blocklists.prefix(6))
+    private func seedDemoProfiles(blocklists: [BlocklistInfo]) {
+        let lists = Array(blocklists.prefix(6))
         let home = Profile(name: "default",
                            mode: .alert,
                            icon: "house",
@@ -344,7 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activeProfile: home.name,
             alwaysRuleCount: 9,
             activeProfileRuleCount: 3,
-            blocklists: state.blocklists,
+            blocklists: blocklists,
             selectedBlocklistIDs: home.blocklistIDs,
             bindings: [
                 ProfileNetworkBinding(profileName: "default", gatewayMAC: "a4:2b:8c:11:04:9f"),
@@ -353,9 +354,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentGatewayMAC: "a4:2b:8c:11:04:9f",
             notice: nil,
             canUndo: false)
-        ProfileClient.shared.demoBlocklistSink = { [weak state] lists in
-            state?.blocklists = lists
-        }
         ProfileClient.shared.adoptDemoSnapshot(snapshot)
     }
 

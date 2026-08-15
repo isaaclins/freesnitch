@@ -454,6 +454,15 @@ final class HelperClient: NSObject, ObservableObject {
                 self.sendProfileCommand(request, completion: completion)
             }
         }
+        // The download itself is not a profile command, but its result belongs
+        // in the same view model, so both pages read one state (#135).
+        ProfileClient.shared.setBlocklistRefreshTransport { [weak self] completion in
+            guard let self else {
+                completion(false, "The privileged helper is unavailable.")
+                return
+            }
+            self.refreshBlocklists(completion: completion)
+        }
         ping()
         startPolling()
     }
@@ -927,18 +936,21 @@ final class HelperClient: NSObject, ObservableObject {
         remote?.startMonitoring { _, _ in }
     }
 
-    func refreshBlocklists() {
-        remote?.refreshBlocklists { _, _ in }
-    }
-
-    func setBlocklistEnabled(id: UUID,
-                             enabled: Bool,
-                             completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let proxy = remote else {
+    /// The helper downloads every enabled list and answers when it is done, so
+    /// this is the call that can say a refresh finished, and why it did not
+    /// (#135). Whether a list is enabled stays a profile command: the helper
+    /// derives that flag from the active profile's selection, so a second
+    /// writer here would only be overwritten.
+    func refreshBlocklists(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            Task { @MainActor in
+                completion(false, "Could not reach the privileged helper: \(error.sentence)")
+            }
+        }) as? HelperProtocol else {
             completion(false, "The FreeSnitch helper is not connected.")
             return
         }
-        proxy.enableBlocklist(idString: id.uuidString, enabled: enabled) { ok, message in
+        proxy.refreshBlocklists { ok, message in
             Task { @MainActor in completion(ok, message) }
         }
     }

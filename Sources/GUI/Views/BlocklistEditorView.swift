@@ -26,6 +26,11 @@ struct BlocklistEditorView: View {
     @State private var newEntries = ""
     @State private var errorMessage: String?
     @State private var showingResetConfirmation = false
+    /// True from the moment the helper is asked until it answers. The sheet
+    /// used to close on the way out, so a refusal landed in a published error
+    /// only the Profiles page renders and adding a list from the Rules sidebar
+    /// failed with nothing on screen at all (#135).
+    @State private var isSaving = false
 
     enum SourceKind: String, CaseIterable, Identifiable {
         case url
@@ -98,7 +103,13 @@ struct BlocklistEditorView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                if !profileClient.isAvailable {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Waiting for the helper\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if !profileClient.isAvailable {
                     Text("Approve the FreeSnitch helper to change blocklists.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -106,9 +117,12 @@ struct BlocklistEditorView: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(isSaving)
                 Button(isCreating ? "Add" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!profileClient.isAvailable || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(isSaving
+                              || !profileClient.isAvailable
+                              || name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(20)
@@ -119,8 +133,10 @@ struct BlocklistEditorView: View {
                             titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
                 guard let blocklist else { return }
-                profileClient.resetBlocklistEntries(blocklist.id)
-                dismiss()
+                isSaving = true
+                profileClient.resetBlocklistEntries(blocklist.id) { ok, message in
+                    finish(ok, message)
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -153,34 +169,21 @@ struct BlocklistEditorView: View {
         url = blocklist.url
     }
 
+    /// One request per change, each waiting for the helper before the next one
+    /// is sent, and the sheet stays up until the last of them answers.
+    private typealias Step = (@escaping (Bool, String?) -> Void) -> Void
+
     private func save() {
         errorMessage = nil
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let blocklist {
-            if cleanName != blocklist.name {
-                profileClient.renameBlocklist(blocklist.id, name: cleanName)
-            }
-            let trimmedURL = url.trimmingCharacters(in: .whitespaces)
-            if hasSource, trimmedURL != blocklist.url {
-                do {
-                    _ = try BlocklistURLValidator.validate(trimmedURL)
-                } catch {
-                    errorMessage = error.localizedDescription
-                    return
-                }
-                profileClient.updateBlocklistURL(blocklist.id, url: trimmedURL)
-            }
-            let domains = BlocklistDomain.normaliseText(newEntries)
-            if !newEntries.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                guard !domains.isEmpty else {
-                    errorMessage = "None of those lines is a domain name."
-                    return
-                }
-                profileClient.addBlocklistEntries(blocklist.id, domains: domains)
-            }
-            dismiss()
-            return
+            saveEdits(to: blocklist, named: cleanName)
+        } else {
+            create(named: cleanName)
         }
+    }
+
+    private func create(named cleanName: String) {
         switch sourceKind {
         case .url:
             let trimmedURL = url.trimmingCharacters(in: .whitespaces)
@@ -190,14 +193,74 @@ struct BlocklistEditorView: View {
                 errorMessage = error.localizedDescription
                 return
             }
-            profileClient.addCustomBlocklist(name: cleanName, url: trimmedURL, profileName: nil)
+            isSaving = true
+            profileClient.addCustomBlocklist(name: cleanName, url: trimmedURL, profileName: nil) { ok, message in
+                finish(ok, message)
+            }
         case .typed:
             let domains = BlocklistDomain.normaliseText(entryText)
             guard !domains.isEmpty else {
                 errorMessage = "None of those lines is a domain name."
                 return
             }
-            profileClient.addLocalBlocklist(name: cleanName, domains: domains, profileName: nil)
+            isSaving = true
+            profileClient.addLocalBlocklist(name: cleanName, domains: domains, profileName: nil) { ok, message in
+                finish(ok, message)
+            }
+        }
+    }
+
+    private func saveEdits(to blocklist: BlocklistInfo, named cleanName: String) {
+        var steps: [Step] = []
+        if cleanName != blocklist.name {
+            steps.append { done in profileClient.renameBlocklist(blocklist.id, name: cleanName, completion: done) }
+        }
+        let trimmedURL = url.trimmingCharacters(in: .whitespaces)
+        if hasSource, trimmedURL != blocklist.url {
+            do {
+                _ = try BlocklistURLValidator.validate(trimmedURL)
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+            steps.append { done in profileClient.updateBlocklistURL(blocklist.id, url: trimmedURL, completion: done) }
+        }
+        if !newEntries.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let domains = BlocklistDomain.normaliseText(newEntries)
+            guard !domains.isEmpty else {
+                errorMessage = "None of those lines is a domain name."
+                return
+            }
+            steps.append { done in profileClient.addBlocklistEntries(blocklist.id, domains: domains, completion: done) }
+        }
+        guard !steps.isEmpty else {
+            dismiss()
+            return
+        }
+        isSaving = true
+        run(steps, from: 0)
+    }
+
+    private func run(_ steps: [Step], from index: Int) {
+        guard index < steps.count else {
+            finish(true, nil)
+            return
+        }
+        let step = steps[index]
+        step { ok, message in
+            guard ok else {
+                finish(false, message)
+                return
+            }
+            run(steps, from: index + 1)
+        }
+    }
+
+    private func finish(_ ok: Bool, _ message: String?) {
+        isSaving = false
+        guard ok else {
+            errorMessage = message ?? "The helper refused the change and did not say why."
+            return
         }
         dismiss()
     }

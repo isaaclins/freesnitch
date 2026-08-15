@@ -322,7 +322,8 @@ struct ProfilesSettingsView: View {
                 // Bordered, like the Networks header, so the two section
                 // headers on this page do not use two different button styles.
                 Button("Refresh Lists") { profileClient.refreshBlocklists() }
-                    .disabled(!profileClient.isAvailable)
+                    .disabled(!profileClient.isAvailable
+                              || profileClient.blocklistRefresh == .running)
             }
             // Selection, so the list can carry a context menu at all: a button
             // placed in a row never receives the click here, which is what the
@@ -345,7 +346,10 @@ struct ProfilesSettingsView: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 6)
-                        Text("\(blocklist.entryCount)")
+                        // A list added from a URL has nothing in it until the
+                        // next refresh, and a bare 0 never said whether that
+                        // was an empty list or an undownloaded one (#135).
+                        Text(blocklist.countLabel)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -359,7 +363,8 @@ struct ProfilesSettingsView: View {
                     Button("Edit\u{2026}") { editingBlocklist = blocklist }
                         .disabled(!profileClient.isAvailable)
                     Button("Refresh Lists") { profileClient.refreshBlocklists() }
-                        .disabled(!profileClient.isAvailable)
+                        .disabled(!profileClient.isAvailable
+                                  || profileClient.blocklistRefresh == .running)
                     Divider()
                     Button("Remove\u{2026}", role: .destructive) { pendingBlocklistRemoval = blocklist }
                         .disabled(!profileClient.isAvailable)
@@ -388,6 +393,9 @@ struct ProfilesSettingsView: View {
             .padding(.top, 6)
             .padding(.bottom, 6)
             .background(.background)
+            BlocklistRefreshStatus(state: profileClient.blocklistRefresh)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
             captionText("Deny lists stack and filter DNS names only.", tint: .secondary)
         }
     }
@@ -643,6 +651,51 @@ struct RuleAppliesToPicker: View {
             return "Applies only while \(profileName) is the active profile, which it is now."
         }
         return "Applies only while \(profileName) is the active profile. \(activeProfileName) is active, so this rule stays dormant for now."
+    }
+}
+
+/// What the shared "refresh every list" is doing, wherever one can be started.
+///
+/// Every control drives the same call and reads the same state, so the Rules
+/// page and the Profiles page cannot report different things about one download
+/// (#135).
+struct BlocklistRefreshStatus: View {
+    let state: ProfileClient.BlocklistRefresh
+
+    var body: some View {
+        switch state {
+        case .idle:
+            EmptyView()
+        case .running:
+            HStack(spacing: 5) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Downloading every list\u{2026}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .finished(let summary):
+            caption(summary, tint: .secondary)
+        case .failed(let message):
+            caption(message, tint: .orange)
+        }
+    }
+
+    private func caption(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// How a list's size reads before it has ever been downloaded, which is not the
+/// same thing as a list that came back empty.
+extension BlocklistInfo {
+    var countLabel: String {
+        if entryCount > 0 { return "\(entryCount)" }
+        return lastUpdated == nil && !url.isEmpty ? "Not downloaded yet" : "0"
     }
 }
 
