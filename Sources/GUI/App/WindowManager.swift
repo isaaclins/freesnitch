@@ -95,7 +95,10 @@ final class WindowManager {
         let window = makeWindow(
             title: "FreeSnitch",
             defaultSize: NSSize(width: 1200, height: 780),
-            minSize: NSSize(width: 1040, height: 620),
+            // Fits the smallest display Apple ships, a 13 inch MacBook Air at
+            // its most spacious scaled resolution, with room for the Dock and
+            // the menu bar. 1040 by 620 did not (#123).
+            minSize: NSSize(width: 900, height: 560),
             autosaveName: Self.mainWindowAutosaveName,
             windowClass: ToolbarLockedWindow.self,
             content: MainWindowView(model: mainModel,

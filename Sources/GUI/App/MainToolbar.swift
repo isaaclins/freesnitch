@@ -85,12 +85,15 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
         // The title has to move with the sidebar, or hiding the sidebar leaves
         // it hanging in the middle of the content.
         model.$isSidebarVisible
+            .combineLatest(model.$sidebarWidth)
             .receive(on: RunLoop.main)
-            .sink { [weak self] visible in
-                self?.titleView.contentEdge = MainWindowMetrics.contentEdge(sidebarVisible: visible)
+            .sink { [weak self] visible, width in
+                self?.titleView.contentEdge = MainWindowMetrics.contentEdge(sidebarVisible: visible,
+                                                                            sidebarWidth: width)
             }
             .store(in: &cancellables)
-        titleView.contentEdge = MainWindowMetrics.contentEdge(sidebarVisible: model.isSidebarVisible)
+        titleView.contentEdge = MainWindowMetrics.contentEdge(sidebarVisible: model.isSidebarVisible,
+                                                              sidebarWidth: model.sidebarWidth)
         titleView.subtitle = model.page.title
         return toolbar
     }

@@ -57,15 +57,21 @@ enum MainPage: String, CaseIterable, Identifiable {
 /// content lays itself out with, so the window title can be aligned to the
 /// content pane rather than to the window (#74).
 enum MainWindowMetrics {
+    /// The width a sidebar starts at. What it currently is lives in
+    /// `MainWindowView.sidebarWidth`, because the user can drag it.
     static let sidebarWidth: CGFloat = 200
+    static let sidebarMinWidth: CGFloat = 160
+    static let sidebarMaxWidth: CGFloat = 320
+    /// Wide enough to hit, narrow enough to read as a seam.
+    static let sidebarHandleWidth: CGFloat = 6
     /// The divider between the sidebar and the content.
     static let dividerWidth: CGFloat = 1
     /// What the pages pad their own headers by.
     static let contentInset: CGFloat = 12
 
     /// Window x of the content pane's leading edge.
-    static func contentEdge(sidebarVisible: Bool) -> CGFloat {
-        sidebarVisible ? sidebarWidth + dividerWidth : 0
+    static func contentEdge(sidebarVisible: Bool, sidebarWidth: CGFloat = sidebarWidth) -> CGFloat {
+        sidebarVisible ? sidebarWidth + sidebarHandleWidth : 0
     }
 }
 
@@ -79,6 +85,10 @@ final class MainWindowModel: ObservableObject {
     /// view, because the window's real `NSToolbar` drives both and a toolbar
     /// cannot reach into SwiftUI `@State`.
     @Published var isSidebarVisible = true
+    /// The sidebar's current width. Published because the window's real
+    /// NSToolbar aligns the title to the content edge, so the title has to move
+    /// when the sidebar is dragged (#123).
+    @Published var sidebarWidth: CGFloat = MainWindowMetrics.sidebarWidth
     @Published var searchText = ""
     /// Set by a page that carries a search field of its own, so the window
     /// does not show a second one in the toolbar searching the same thing
@@ -108,6 +118,9 @@ struct MainWindowView: View {
     @ObservedObject var uninstall: UninstallFlowModel
     @State private var sidebarAcceptsSelection = false
     @ObservedObject private var profileClient = ProfileClient.shared
+    /// Remembered across launches, like the Rules inspector next to it.
+    @AppStorage("FreeSnitch.SidebarWidth") private var sidebarWidth: Double = Double(MainWindowMetrics.sidebarWidth)
+    @State private var sidebarDragStart: Double?
 
     var body: some View {
         // A plain HStack, deliberately, not NavigationSplitView.
@@ -126,8 +139,13 @@ struct MainWindowView: View {
         // NSToolbar.
         HStack(spacing: 0) {
             if model.isSidebarVisible {
-                sidebar.frame(width: MainWindowMetrics.sidebarWidth)
-                Divider()
+                sidebar.frame(width: sidebarWidth)
+                    .onAppear { model.sidebarWidth = sidebarWidth }
+                    .onChange(of: sidebarWidth) { width in model.sidebarWidth = width }
+                // The inspector beside it has been draggable and remembered its
+                // width all along, while a long app or profile name in here was
+                // truncated with no way to widen it (#123).
+                sidebarHandle
             }
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -172,6 +190,26 @@ struct MainWindowView: View {
                 model.page = newValue
             }
         )
+    }
+
+    /// The same handle the Rules inspector uses, for the same reason: a
+    /// SwiftUI drag gesture in this seam never sees the press.
+    private var sidebarHandle: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: 1)
+            PaneResizeHandle { dx in
+                let start = sidebarDragStart ?? sidebarWidth
+                if sidebarDragStart == nil { sidebarDragStart = start }
+                sidebarWidth = min(Double(MainWindowMetrics.sidebarMaxWidth),
+                                   max(Double(MainWindowMetrics.sidebarMinWidth), start + Double(dx)))
+            } onEnd: {
+                sidebarDragStart = nil
+            }
+        }
+        .frame(width: MainWindowMetrics.sidebarHandleWidth)
+        .accessibilityLabel("Resize the sidebar")
     }
 
     @ViewBuilder
