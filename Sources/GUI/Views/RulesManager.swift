@@ -16,6 +16,9 @@ struct RulesManagerView: View {
     /// Pending hover-open for the blocklist popover, cancelled when the pointer
     /// leaves before the dwell elapses.
     @State private var blocklistHelpHover: DispatchWorkItem?
+    /// How many entries the open blocklist pane is actually showing, which is
+    /// the match count while a search is running (#135).
+    @State private var openBlocklistMatchCount: Int?
     @State private var showingRuleEditor = false
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -49,10 +52,15 @@ struct RulesManagerView: View {
         Binding(get: { window.searchText }, set: { window.searchText = $0 })
     }
 
+    /// Every list the helper knows, from the profile snapshot, which is the
+    /// only place blocklist state lives. This page used to read a second copy
+    /// that nothing kept up to date, so the two could disagree on screen (#135).
+    private var blocklists: [BlocklistInfo] { profileClient.snapshot?.blocklists ?? [] }
+
     /// The blocklist currently open in the content pane, if any.
     private var openBlocklist: BlocklistInfo? {
         guard case .blocklist(let id) = selectedCategory else { return nil }
-        return state.blocklists.first(where: { $0.id == id })
+        return blocklists.first(where: { $0.id == id })
     }
 
     enum Category: Hashable {
@@ -63,6 +71,7 @@ struct RulesManagerView: View {
         case recentlyUsed
         case temporary
         case unapproved
+        case profile(String)
         case group(String)
         case blocklist(UUID)
     }
@@ -103,14 +112,20 @@ struct RulesManagerView: View {
         .onAppear { window.contentOwnsSearch = openBlocklist != nil }
         .onDisappear { window.contentOwnsSearch = false }
         .onChange(of: selectedCategory) { _ in
+            openBlocklistMatchCount = nil
             let ownsSearch = openBlocklist != nil
             if ownsSearch != window.contentOwnsSearch {
                 window.searchText = ""
                 window.contentOwnsSearch = ownsSearch
             }
         }
+        // The header counts what the pane is showing. While a blocklist search
+        // was running it counted the whole list and the footer counted the
+        // matches, so one screen carried two numbers for one thing (#135).
+        .onChange(of: searchText) { _ in openBlocklistMatchCount = nil }
         .sheet(isPresented: $showingRuleEditor) {
-            RuleEditorView(activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
+            RuleEditorView(profiles: profileClient.profiles,
+                           activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
         }
         .sheet(item: $editingBlocklist) { blocklist in
             BlocklistEditorView(blocklist: blocklist)
@@ -194,11 +209,26 @@ struct RulesManagerView: View {
                 navRow(.unapproved, label: "Unapproved", icon: "questionmark.circle.fill", count: state.rules.filter { $0.action == .ask }.count)
             }
 
-            Section("Rule Groups") {
-                groupRow("iCloud Services", icon: "icloud.fill")
-                groupRow("macOS Services", icon: "applelogo")
-                groupRow("Apple Apps", icon: "app.gift")
-                groupRow("Third Party Apps", icon: "shippingbox")
+            // The profile a rule belongs to is what decides whether it is in
+            // force, so it is a filter here and a column in the table (#134).
+            if !profileFilters.isEmpty {
+                Section("Profiles") {
+                    ForEach(profileFilters) { filter in
+                        profileRow(filter)
+                    }
+                }
+            }
+
+            // Read off the rules rather than fixed. The four rows that used to
+            // stand here named groups nothing ever wrote, so all four were
+            // permanently empty, while the one group rules really carry,
+            // Insights, had no row at all (#134).
+            if !ruleGroups.isEmpty {
+                Section("Rule Groups") {
+                    ForEach(ruleGroups, id: \.self) { name in
+                        groupRow(name, count: state.rules.filter { $0.groupName == name }.count)
+                    }
+                }
             }
 
             // No section header: the toggle is the header. Two lines saying
@@ -206,7 +236,7 @@ struct RulesManagerView: View {
             // the reader look for the difference between them (#95).
             Section {
                 enforcementRow
-                ForEach(state.blocklists) { b in
+                ForEach(blocklists) { b in
                     blocklistRow(b)
                 }
             }
@@ -275,7 +305,7 @@ struct RulesManagerView: View {
             enforcementCaptionText("Approve the FreeSnitch helper to change this.", tint: .secondary)
         } else if state.enforcementEnabled {
             enforcementCaptionText("On: rules and blocklists are in force.", tint: .secondary)
-        } else if state.blocklists.contains(where: { $0.enabled }) {
+        } else if blocklists.contains(where: { activeProfileUses($0) }) {
             enforcementCaptionText(Self.enforcementOffExplanation, tint: .secondary)
         } else {
             enforcementCaptionText("Off: FreeSnitch is only watching.", tint: .secondary)
@@ -322,19 +352,29 @@ struct RulesManagerView: View {
     /// `NSTableView` underneath takes the event first, which is the same reason
     /// the row context menus had to move to the list itself.
     private var addBlocklistFooter: some View {
-        HStack(spacing: 4) {
-            Button {
-                showingAddBlocklist = true
-            } label: {
-                Label("Add custom blocklist", systemImage: "plus")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Button {
+                    showingAddBlocklist = true
+                } label: {
+                    Label("Add custom blocklist", systemImage: "plus")
+                        .font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!profileClient.isAvailable)
+                .help(profileClient.isAvailable
+                      ? "Add a list of your own, from a URL or by typing its entries."
+                      : "Approve the FreeSnitch helper to add a blocklist.")
+                Spacer(minLength: 0)
+                // The refresh belongs where the lists are, and it reports
+                // through the caption below rather than vanishing (#135).
+                Button("Refresh Lists") { profileClient.refreshBlocklists() }
+                    .buttonStyle(.borderless)
                     .font(.callout)
+                    .disabled(!profileClient.isAvailable || profileClient.blocklistRefresh == .running)
+                    .help("Download every list again from its source.")
             }
-            .buttonStyle(.borderless)
-            .disabled(!profileClient.isAvailable)
-            .help(profileClient.isAvailable
-                  ? "Add a list of your own, from a URL or by typing its entries."
-                  : "Approve the FreeSnitch helper to add a blocklist.")
-            Spacer(minLength: 0)
+            BlocklistRefreshStatus(state: profileClient.blocklistRefresh)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -414,25 +454,74 @@ struct RulesManagerView: View {
         .tag(cat)
     }
 
-    private func groupRow(_ label: String, icon: String) -> some View {
+    private func groupRow(_ label: String, count: Int) -> some View {
         Label {
             Text(label)
         } icon: {
-            Image(systemName: icon).foregroundStyle(Color.accentColor)
+            Image(systemName: "folder").foregroundStyle(Color.accentColor)
         }
+        .badge(count)
         .tag(Category.group(label))
         .help("Rule Groups are categories for viewing rules, not enforcement switches.")
     }
 
+    /// Always, then every profile the helper knows. A profile that is not
+    /// active is drawn in secondary, because a dormant rule set and an
+    /// enforcing one looked identical everywhere on this page (#134).
+    private func profileRow(_ filter: ProfileFilter) -> some View {
+        Label {
+            Text(filter.label)
+        } icon: {
+            Image(systemName: filter.icon)
+                .foregroundStyle(filter.inForce ? Color.accentColor : Color.secondary)
+        }
+        .badge(filter.count)
+        .tag(Category.profile(filter.name))
+        .help(filter.inForce
+              ? "These rules are in force now."
+              : "These rules are dormant until \(filter.label) is the active profile.")
+    }
+
+    private var profileFilters: [ProfileFilter] {
+        let profiles = profileClient.profiles
+        guard !profiles.isEmpty else { return [] }
+        var filters = [ProfileFilter(name: Profile.alwaysName,
+                                     label: "Always",
+                                     icon: "infinity",
+                                     count: state.rules.filter { $0.profile == Profile.alwaysName }.count,
+                                     inForce: true)]
+        filters.append(contentsOf: profiles.map { profile in
+            ProfileFilter(name: profile.name,
+                          label: profile.name,
+                          icon: profile.icon,
+                          count: state.rules.filter { $0.profile == profile.name }.count,
+                          inForce: profile.name == activeProfileName)
+        })
+        return filters
+    }
+
+    private var ruleGroups: [String] {
+        let names = state.rules.compactMap { $0.groupName }.filter { !$0.isEmpty }
+        return Array(Set(names)).sorted()
+    }
+
+    private var activeProfileName: String { profileClient.activeProfileName }
+
+    /// The checkbox means one thing, the same thing it means in Profiles: this
+    /// list applies while that profile is active. It used to write the helper's
+    /// global enabled flag instead, which the store recomputes from the active
+    /// profile's selection, so the two checkboxes contradicted each other
+    /// (#135).
     private func blocklistRow(_ b: BlocklistInfo) -> some View {
         HStack(spacing: 8) {
             Toggle("", isOn: Binding(
-                get: { b.enabled },
-                set: { setBlocklist(b, enabled: $0) }
+                get: { activeProfileUses(b) },
+                set: { setBlocklist(b, usedInActiveProfile: $0) }
             ))
             .toggleStyle(.checkbox)
             .labelsHidden()
-            .help("Enable or disable this blocklist.")
+            .disabled(!profileClient.isAvailable)
+            .help("Use \(b.name) while \(activeProfileName) is the active profile.")
             Label {
                 Text(b.name).lineLimit(1)
             } icon: {
@@ -440,6 +529,10 @@ struct RulesManagerView: View {
             }
         }
         .tag(Category.blocklist(b.id))
+    }
+
+    private func activeProfileUses(_ b: BlocklistInfo) -> Bool {
+        profileClient.snapshot?.selectedBlocklistIDs.contains(b.id) ?? false
     }
 
     /// The same calls the checkbox and the refresh button make (#78).
@@ -450,14 +543,15 @@ struct RulesManagerView: View {
     @ViewBuilder
     private func sidebarContextMenu(for categories: Set<Category>) -> some View {
         if case .blocklist(let id) = categories.first,
-           let blocklist = state.blocklists.first(where: { $0.id == id }) {
-            Button(blocklist.enabled ? "Disable" : "Enable") {
-                setBlocklist(blocklist, enabled: !blocklist.enabled)
+           let blocklist = blocklists.first(where: { $0.id == id }) {
+            let inUse = activeProfileUses(blocklist)
+            Button(inUse ? "Stop Using in \(activeProfileName)" : "Use in \(activeProfileName)") {
+                setBlocklist(blocklist, usedInActiveProfile: !inUse)
             }
-            .disabled(!state.helperConnected)
+            .disabled(!profileClient.isAvailable)
             Divider()
-            Button("Refresh All Lists") { state.helper.refreshBlocklists() }
-                .disabled(!state.helperConnected)
+            Button("Refresh Lists") { profileClient.refreshBlocklists() }
+                .disabled(!profileClient.isAvailable || profileClient.blocklistRefresh == .running)
             CopyMenuItem(title: "Copy Name", value: blocklist.name)
         }
     }
@@ -537,13 +631,14 @@ struct RulesManagerView: View {
         // A blocklist is not a set of rules, so this pane shows what is on it
         // instead of an empty rules table (#79).
         if case .blocklist(let id) = selectedCategory,
-           let blocklist = state.blocklists.first(where: { $0.id == id }) {
+           let blocklist = blocklists.first(where: { $0.id == id }) {
             BlocklistEntriesView(blocklist: blocklist,
                                  searchText: searchText,
                                  onAllow: { domain in allowDespiteBlocklist(domain, from: blocklist) },
                                  onRemoveEntry: { domain in
                                      profileClient.removeBlocklistEntries(blocklist.id, domains: [domain])
-                                 })
+                                 },
+                                 onCountChange: { count in openBlocklistMatchCount = count })
         } else {
             VStack(spacing: 0) {
                 if filteredRules.isEmpty {
@@ -580,12 +675,13 @@ struct RulesManagerView: View {
     /// the rule, so the list could not tell you whether a rule allowed or
     /// denied anything. Those are now actual columns backed by actual fields.
     ///
-    /// Only the four columns that fit the default window are shown. Direction,
+    /// Only the columns that fit the default window are shown. Direction,
     /// Scope and Priority stay in the Information pane: this window carries two
     /// sidebars plus the info pane, which leaves the table about 443pt, and
     /// each extra column pushed the total past it. The table then scrolled
     /// sideways and hid Action, which is the one column a firewall must never
-    /// hide.
+    /// hide. Applies to earns its 78pt because a rule filed under a profile you
+    /// are not in enforces nothing, and the table said nothing about it (#134).
     ///
     /// The widths are min/max, never `ideal`: an `ideal` width is taken as the
     /// layout width rather than a hint, so the columns refused to shrink and
@@ -595,7 +691,11 @@ struct RulesManagerView: View {
     /// reads as an empty list rather than a different kind of content.
     private var paneCount: Int {
         if case .blocklist(let id) = selectedCategory {
-            return state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
+            // What the pane is showing, which is the matches while a search is
+            // running, so the header and the footer agree (#135).
+            return openBlocklistMatchCount
+                ?? blocklists.first(where: { $0.id == id })?.entryCount
+                ?? 0
         }
         return filteredRules.count
     }
@@ -631,6 +731,19 @@ struct RulesManagerView: View {
                     .foregroundStyle(rule.actionTint)
             }
             .width(min: 62, max: 96)
+
+            // Which profile the rule belongs to, in the table rather than
+            // only in the inspector. Without it a rule waiting for a place you
+            // are not in read exactly like one enforcing right now (#134).
+            TableColumn("Applies to", value: \.appliesToLabel) { rule in
+                Text(rule.appliesToLabel)
+                    .lineLimit(1)
+                    .foregroundStyle(rule.appliesNow(in: activeProfileName)
+                                     ? AnyShapeStyle(.primary)
+                                     : AnyShapeStyle(.secondary))
+                    .help(appliesToHelp(rule))
+            }
+            .width(min: 78, max: 130)
 
             TableColumn("Status", value: \.statusSortKey) { rule in
                 Text(rule.statusLabel)
@@ -677,6 +790,21 @@ struct RulesManagerView: View {
                     for rule in rules where rule.enabled { toggleRule(rule) }
                 }
             }
+            // The editor can now file a rule under any profile, so an existing
+            // rule can be moved to one as well, from the row it is on (#134).
+            if !appliesToOptions.isEmpty {
+                Menu("Applies To") {
+                    ForEach(appliesToOptions, id: \.self) { name in
+                        Toggle(isOn: Binding(
+                            get: { rules.allSatisfy { $0.profile == name } },
+                            set: { isOn in if isOn { setProfile(name, for: rules) } }
+                        )) {
+                            Text(name == Profile.alwaysName ? "Always" : name)
+                        }
+                    }
+                }
+                .disabled(!state.helperConnected)
+            }
             Divider()
             if rules.count == 1, let rule = rules.first {
                 CopyMenuItem(title: "Copy Destination", value: rule.displayDestination)
@@ -712,6 +840,15 @@ struct RulesManagerView: View {
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 4)
             }
+            // The action, next to the sentence that asks for it. It used to
+            // send the reader to a Settings section that does not exist (#135).
+            if showsBlocklistRefreshButton {
+                Button("Refresh Lists") { profileClient.refreshBlocklists() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!profileClient.isAvailable || profileClient.blocklistRefresh == .running)
+                    .padding(.top, 4)
+                BlocklistRefreshStatus(state: profileClient.blocklistRefresh)
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -725,6 +862,11 @@ struct RulesManagerView: View {
         return !state.helperConnected
     }
 
+    private var showsBlocklistRefreshButton: Bool {
+        if case .blocklist = selectedCategory { return true }
+        return false
+    }
+
     private var emptyIcon: String {
         if case .blocklist = selectedCategory { return "shield.lefthalf.filled" }
         if !searchText.isEmpty { return "magnifyingglass" }
@@ -736,7 +878,7 @@ struct RulesManagerView: View {
 
     private var emptyTitle: String {
         if case .blocklist(let id) = selectedCategory {
-            return state.blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
+            return blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
         }
         // A search that matched nothing answers for itself. Blaming the helper
         // here was wrong whenever both were true at once.
@@ -748,8 +890,10 @@ struct RulesManagerView: View {
 
     private var emptySubtitle: String {
         if case .blocklist(let id) = selectedCategory {
-            let count = state.blocklists.first(where: { $0.id == id })?.entryCount ?? 0
-            return "This blocklist contains \(count) domain entries. Enable or refresh it in Settings under Blocklists."
+            let count = blocklists.first(where: { $0.id == id })?.entryCount ?? 0
+            return count == 0
+                ? "Nothing has been downloaded for this list yet."
+                : "This blocklist contains \(count) domain entries."
         }
         if !searchText.isEmpty {
             return "No rule matches \u{201C}\(searchText)\u{201D}."
@@ -774,8 +918,9 @@ struct RulesManagerView: View {
         case .recentlyUsed: return "Recently Used"
         case .temporary: return "Temporary"
         case .unapproved: return "Unapproved"
+        case .profile(let n): return n == Profile.alwaysName ? "Always" : n
         case .group(let n): return n
-        case .blocklist(let id): return state.blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
+        case .blocklist(let id): return blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
         }
     }
 
@@ -806,6 +951,8 @@ struct RulesManagerView: View {
         case .recentlyUsed:
             rules = rules.filter { $0.lastUsedAt != nil }
                 .sorted { ($0.lastUsedAt ?? .distantPast) > ($1.lastUsedAt ?? .distantPast) }
+        case .profile(let name):
+            rules = rules.filter { $0.profile == name }
         case .group(let name):
             rules = rules.filter { $0.groupName == name }
         case .blocklist:
@@ -874,9 +1021,14 @@ struct RulesManagerView: View {
                 infoField("Action", r.actionLabel)
                 infoField("Scope", r.scopeLabel)
                 infoField("Priority", "\(r.priority)")
-                infoField("Applies to", r.profile == Profile.alwaysName ? "Always" : "Only in \(r.profile)")
+                infoField("Applies to", appliesToDetail(r))
                 infoField("Status", r.statusLabel)
                 infoField("Hits", "\(r.hitCount)")
+                // The counts alone never said whether a rule was still live,
+                // and a Temporary rule never said when it ends (#134).
+                infoField("Created", RuleDate.past(r.createdAt))
+                infoField("Last used", r.lastUsedAt.map(RuleDate.past) ?? "Never")
+                if let expiresAt = r.expiresAt { infoField("Expires", RuleDate.expiry(expiresAt)) }
                 if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
             }
             internetAccessPolicyDetails(for: r)
@@ -952,6 +1104,24 @@ struct RulesManagerView: View {
                 }
             }
         }
+    }
+
+    /// The inspector says whether that profile is applying, not only which one
+    /// it is: "Only in Cafe" reads as enforcing when Cafe is nowhere near
+    /// (#134).
+    private func appliesToDetail(_ r: Rule) -> String {
+        guard r.profile != Profile.alwaysName else { return "Always" }
+        return r.appliesNow(in: activeProfileName)
+            ? "Only in \(r.profile), which is active"
+            : "Only in \(r.profile), which is not active"
+    }
+
+    private func appliesToHelp(_ r: Rule) -> String {
+        if r.profile == Profile.alwaysName { return "Applies in every profile." }
+        if r.appliesNow(in: activeProfileName) {
+            return "\(r.profile) is the active profile, so this rule applies now."
+        }
+        return "Dormant until \(r.profile) is the active profile."
     }
 
     private func ruleHost(_ r: Rule) -> String {
@@ -1109,18 +1279,16 @@ struct RulesManagerView: View {
         showingExporter = true
     }
 
-    private func setBlocklist(_ blocklist: BlocklistInfo, enabled: Bool) {
-        state.helper.setBlocklistEnabled(id: blocklist.id, enabled: enabled) { ok, message in
-            guard ok else {
-                showError("Could not change \(blocklist.name)", message ?? "The helper rejected the change and did not say why.")
-                return
-            }
-            state.blocklists = state.blocklists.map { item in
-                guard item.id == blocklist.id else { return item }
-                var copy = item
-                copy.enabled = enabled
-                return copy
-            }
+    /// The refusal is shown here, where the checkbox is, rather than only as a
+    /// line of red text on the Profiles page nobody is looking at (#135). The
+    /// helper answers with a whole snapshot, so nothing is written back locally.
+    private func setBlocklist(_ blocklist: BlocklistInfo, usedInActiveProfile used: Bool) {
+        profileClient.setBlocklist(blocklist.id,
+                                   enabled: used,
+                                   profileName: activeProfileName) { ok, message in
+            guard !ok else { return }
+            showError("Could not change \(blocklist.name)",
+                      message ?? "The helper rejected the change and did not say why.")
         }
     }
 
@@ -1150,6 +1318,38 @@ struct RulesManagerView: View {
             }
             state.refreshRules()
         }
+    }
+
+    /// Always, then every profile, in the order the editor offers them.
+    private var appliesToOptions: [String] {
+        let profiles = profileClient.profiles.map(\.name).filter { $0 != Profile.alwaysName }
+        guard !profiles.isEmpty else { return [] }
+        return [Profile.alwaysName] + profiles
+    }
+
+    /// Moving a rule to another profile is the same write as any other change
+    /// to it: the helper stores it under the id it already has.
+    private func setProfile(_ name: String, for rules: [Rule]) {
+        let targets = rules.filter { $0.profile != name }
+        guard !targets.isEmpty else { return }
+
+        func updateNext(_ index: Int) {
+            guard index < targets.count else {
+                state.refreshRules()
+                return
+            }
+            var copy = targets[index]
+            copy.profile = name
+            state.helper.addRule(copy) { ok, message in
+                if !ok {
+                    showError("Could not move the rule for \(Self.describe(copy))",
+                              message ?? "The helper rejected the change and did not say why.")
+                }
+                updateNext(index + 1)
+            }
+        }
+
+        updateNext(0)
     }
 
     private func setRulesEnabled(_ enabled: Bool) {
@@ -1246,6 +1446,7 @@ private struct RuleJSONDocument: FileDocument {
 
 private struct RuleEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    let profiles: [Profile]
     let activeProfileName: String
     let onSave: (Rule) -> Void
     /// New rules default to Always. Roughly all rules are location
@@ -1297,7 +1498,9 @@ private struct RuleEditorView: View {
                     TextField("Notes", text: $notes)
                 }
                 Section("Applies to") {
-                    RuleAppliesToPicker(profileName: $appliesTo, activeProfileName: activeProfileName)
+                    RuleAppliesToPicker(profileName: $appliesTo,
+                                        profiles: profiles,
+                                        activeProfileName: activeProfileName)
                 }
             }
             .formStyle(.grouped)
@@ -1353,6 +1556,36 @@ private struct RuleSummaryItem: Identifiable {
     var id: String { label }
 }
 
+/// One row of the Profiles section in the sidebar.
+private struct ProfileFilter: Identifiable {
+    let name: String
+    let label: String
+    let icon: String
+    let count: Int
+    /// Whether rules filed under this profile are applying right now.
+    let inForce: Bool
+    var id: String { name }
+}
+
+/// Rule dates are relative, because what a reader wants from them is whether
+/// the rule is still live, not a wall clock reading from March (#134).
+private enum RuleDate {
+    private static let formatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    static func past(_ date: Date) -> String {
+        formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    static func expiry(_ date: Date) -> String {
+        let phrase = formatter.localizedString(for: date, relativeTo: Date())
+        return date > Date() ? phrase : "Expired \(phrase)"
+    }
+}
+
 /// Display and sort keys for the rules `Table`.
 ///
 /// These live next to the table rather than on the shared `Rule` model,
@@ -1371,6 +1604,14 @@ extension Rule {
 
     var directionLabel: String { direction.rawValue.capitalized }
     var scopeLabel: String { scope.rawValue.capitalized }
+
+    var appliesToLabel: String { profile == Profile.alwaysName ? "Always" : profile }
+
+    /// Whether this rule's profile is applying. It says nothing about the
+    /// rule's own switch, which the Status column carries.
+    func appliesNow(in activeProfile: String) -> Bool {
+        profile == Profile.alwaysName || profile == activeProfile
+    }
 
     var actionLabel: String {
         switch action {

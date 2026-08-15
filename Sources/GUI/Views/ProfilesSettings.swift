@@ -322,7 +322,8 @@ struct ProfilesSettingsView: View {
                 // Bordered, like the Networks header, so the two section
                 // headers on this page do not use two different button styles.
                 Button("Refresh Lists") { profileClient.refreshBlocklists() }
-                    .disabled(!profileClient.isAvailable)
+                    .disabled(!profileClient.isAvailable
+                              || profileClient.blocklistRefresh == .running)
             }
             // Selection, so the list can carry a context menu at all: a button
             // placed in a row never receives the click here, which is what the
@@ -345,7 +346,10 @@ struct ProfilesSettingsView: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 6)
-                        Text("\(blocklist.entryCount)")
+                        // A list added from a URL has nothing in it until the
+                        // next refresh, and a bare 0 never said whether that
+                        // was an empty list or an undownloaded one (#135).
+                        Text(blocklist.countLabel)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -359,7 +363,8 @@ struct ProfilesSettingsView: View {
                     Button("Edit\u{2026}") { editingBlocklist = blocklist }
                         .disabled(!profileClient.isAvailable)
                     Button("Refresh Lists") { profileClient.refreshBlocklists() }
-                        .disabled(!profileClient.isAvailable)
+                        .disabled(!profileClient.isAvailable
+                                  || profileClient.blocklistRefresh == .running)
                     Divider()
                     Button("Remove\u{2026}", role: .destructive) { pendingBlocklistRemoval = blocklist }
                         .disabled(!profileClient.isAvailable)
@@ -388,6 +393,9 @@ struct ProfilesSettingsView: View {
             .padding(.top, 6)
             .padding(.bottom, 6)
             .background(.background)
+            BlocklistRefreshStatus(state: profileClient.blocklistRefresh)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
             captionText("Deny lists stack and filter DNS names only.", tint: .secondary)
         }
     }
@@ -601,23 +609,93 @@ struct ProfileSwitchBanner: View {
 
 /// The rule editor's Applies to control. New rules default to Always, which is
 /// what keeps profiles small and comprehensible.
+///
+/// It offers every profile the helper knows, not just the one that happens to
+/// be active: with two choices, a rule for a third profile could be neither
+/// written nor moved anywhere in the app (#134).
 struct RuleAppliesToPicker: View {
     @Binding var profileName: String
+    let profiles: [Profile]
     let activeProfileName: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Picker("Applies to", selection: $profileName) {
                 Text("Always").tag(Profile.alwaysName)
-                Text("Only in \(activeProfileName)").tag(activeProfileName)
+                ForEach(options, id: \.self) { name in
+                    Text(name == activeProfileName ? "Only in \(name), which is active" : "Only in \(name)")
+                        .tag(name)
+                }
             }
             .pickerStyle(.radioGroup)
-            Text(profileName == Profile.alwaysName
-                 ? "Applies in every profile. Almost every rule belongs here."
-                 : "Applies only while \(activeProfileName) is the active profile.")
+            Text(caption)
                 .font(.caption).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The active profile is always offered, even before the helper has
+    /// answered with the profile list, so this control is never a single
+    /// choice.
+    private var options: [String] {
+        var names = profiles.map(\.name).filter { $0 != Profile.alwaysName }
+        if !names.contains(activeProfileName) { names.append(activeProfileName) }
+        return names
+    }
+
+    private var caption: String {
+        if profileName == Profile.alwaysName {
+            return "Applies in every profile. Almost every rule belongs here."
+        }
+        if profileName == activeProfileName {
+            return "Applies only while \(profileName) is the active profile, which it is now."
+        }
+        return "Applies only while \(profileName) is the active profile. \(activeProfileName) is active, so this rule stays dormant for now."
+    }
+}
+
+/// What the shared "refresh every list" is doing, wherever one can be started.
+///
+/// Every control drives the same call and reads the same state, so the Rules
+/// page and the Profiles page cannot report different things about one download
+/// (#135).
+struct BlocklistRefreshStatus: View {
+    let state: ProfileClient.BlocklistRefresh
+
+    var body: some View {
+        switch state {
+        case .idle:
+            EmptyView()
+        case .running:
+            HStack(spacing: 5) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Downloading every list\u{2026}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .finished(let summary):
+            caption(summary, tint: .secondary)
+        case .failed(let message):
+            caption(message, tint: .orange)
+        }
+    }
+
+    private func caption(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// How a list's size reads before it has ever been downloaded, which is not the
+/// same thing as a list that came back empty.
+extension BlocklistInfo {
+    var countLabel: String {
+        if entryCount > 0 { return "\(entryCount)" }
+        return lastUpdated == nil && !url.isEmpty ? "Not downloaded yet" : "0"
     }
 }
 

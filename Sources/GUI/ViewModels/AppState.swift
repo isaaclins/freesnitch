@@ -11,7 +11,6 @@ final class AppState: ObservableObject {
     @Published var mode: AppMode = .silentAllow
     @Published var connections: [Connection] = []
     @Published var rules: [Rule] = []
-    @Published var blocklists: [BlocklistInfo] = []
     @Published var profiles: [Profile] = []
     /// The profile the helper says is active, mirrored here so the views that
     /// already observe AppState redraw when it changes.

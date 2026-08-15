@@ -13,6 +13,7 @@ import SwiftUI
 /// once.
 struct BlocklistEntriesView: View {
     @EnvironmentObject var state: AppState
+    @ObservedObject private var profileClient = ProfileClient.shared
     let blocklist: BlocklistInfo
     /// The window's toolbar search field, shared with the rest of the page.
     let searchText: String
@@ -22,6 +23,9 @@ struct BlocklistEntriesView: View {
     /// Taking a name off the list itself, which is a different thing from
     /// allowing it despite the list: this one changes the list (#97).
     var onRemoveEntry: ((String) -> Void)?
+    /// How many entries this pane is showing, so the header above it counts the
+    /// same thing the footer does while a search is running (#135).
+    var onCountChange: ((Int) -> Void)?
 
     @State private var page: BlocklistEntryPage?
     @State private var offset = 0
@@ -54,7 +58,7 @@ struct BlocklistEntriesView: View {
     @ViewBuilder
     private var content: some View {
         if let errorMessage {
-            message(errorMessage, symbol: "exclamationmark.triangle.fill", tint: .orange)
+            message(errorMessage, symbol: "exclamationmark.triangle.fill", tint: .orange) { EmptyView() }
         } else if isLoading && page == nil {
             VStack(spacing: 8) {
                 Spacer()
@@ -67,10 +71,20 @@ struct BlocklistEntriesView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let page, page.entries.isEmpty {
             message(searchText.isEmpty
-                    ? "This list has no entries yet. Refresh it to download them."
+                    ? "Nothing has been downloaded for this list yet."
                     : "Nothing in \(blocklist.name) matches \u{201C}\(searchText)\u{201D}.",
                     symbol: searchText.isEmpty ? "shield.lefthalf.filled" : "magnifyingglass",
-                    tint: .secondary)
+                    tint: .secondary) {
+                // The download is the answer to this sentence, so it is offered
+                // here instead of described somewhere else (#135).
+                if searchText.isEmpty {
+                    Button("Refresh Lists") { profileClient.refreshBlocklists() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!profileClient.isAvailable
+                                  || profileClient.blocklistRefresh == .running)
+                    BlocklistRefreshStatus(state: profileClient.blocklistRefresh)
+                }
+            }
         } else {
             List(selection: $selection) {
                 ForEach(page?.entries ?? [], id: \.self) { entry in
@@ -112,14 +126,17 @@ struct BlocklistEntriesView: View {
                         Button("Remove from This List\u{2026}", role: .destructive) {
                             pendingEntryRemoval = entry
                         }
-                        .disabled(!ProfileClient.shared.isAvailable)
+                        .disabled(!profileClient.isAvailable)
                     }
                 }
             }
         }
     }
 
-    private func message(_ text: String, symbol: String, tint: Color) -> some View {
+    private func message<Action: View>(_ text: String,
+                                       symbol: String,
+                                       tint: Color,
+                                       @ViewBuilder action: () -> Action) -> some View {
         VStack(spacing: 8) {
             Spacer()
             Image(systemName: symbol)
@@ -130,6 +147,7 @@ struct BlocklistEntriesView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
+            action()
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -199,6 +217,7 @@ struct BlocklistEntriesView: View {
             isLoading = false
             errorMessage = nil
             page = demo
+            onCountChange?(demo.total)
             return
         }
         let request = BlocklistEntryQuery(blocklistID: blocklist.id,
@@ -215,6 +234,7 @@ struct BlocklistEntriesView: View {
             }
             errorMessage = nil
             page = result
+            onCountChange?(result?.total ?? 0)
         }
     }
 }
