@@ -7,11 +7,31 @@ struct ConnectionAlertView: View {
     @State private var scope: AlertScope = .anyConnection
     @State private var duration: AlertDuration = .forever
 
+    /// What today has looked like, as a sentence rather than a colon label
+    /// with two counts glued to it (#118).
+    private var todaySummary: String? {
+        let asked = state.firstContactAskedToday
+        let allowed = state.knownContactsAllowedToday
+        guard asked > 0 || allowed > 0 else { return nil }
+        let askedPart = "asked about \(asked) new connection\(asked == 1 ? "" : "s")"
+        guard allowed > 0 else { return "Today FreeSnitch has \(askedPart)." }
+        return "Today FreeSnitch has \(askedPart) and silently allowed \(allowed) it already knew."
+    }
+
+    /// The raw value is storage, the title is interface text. Showing the
+    /// raw value put lowercase fragments in a pop-up menu (#118).
     enum AlertScope: String, CaseIterable, Identifiable {
         case anyConnection = "any connection"
         case thisHost = "this host"
         case thisIPandPort = "this IP and port"
         var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .anyConnection: return "Any connection"
+            case .thisHost: return "This host"
+            case .thisIPandPort: return "This IP and port"
+            }
+        }
     }
     enum AlertDuration: String, CaseIterable, Identifiable {
         case forever = "Forever"
@@ -69,9 +89,12 @@ struct ConnectionAlertView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Today: \(state.firstContactAskedToday) asked, \(state.knownContactsAllowedToday) silently allowed (already known)")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
+            // Nothing to report is reported as nothing, not as two zeroes.
+            if let todaySummary {
+                Text(todaySummary)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+            }
 
             // `.columns` aligns the labels in one column and the controls in
             // another, which is what a Mac dialog does and what three
@@ -79,7 +102,7 @@ struct ConnectionAlertView: View {
             Form {
                 Toggle("Remember this decision", isOn: $remember)
                 Picker("Scope", selection: $scope) {
-                    ForEach(AlertScope.allCases) { s in Text(s.rawValue).tag(s) }
+                    ForEach(AlertScope.allCases) { s in Text(s.title).tag(s) }
                 }.disabled(!remember)
                 Picker("Duration", selection: $duration) {
                     ForEach(AlertDuration.allCases) { d in Text(d.rawValue).tag(d) }

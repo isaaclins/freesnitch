@@ -221,13 +221,13 @@ struct MenubarPopoverView: View {
     private var actions: some View {
         VStack(alignment: .leading, spacing: 0) {
             MenubarRow(action: { close(); windows.showRulesManager() }) {
-                menuLabel("Manage Rules\u{2026}", symbol: "list.bullet.rectangle")
+                menuLabel("Rules", symbol: "list.bullet.rectangle")
             }
             MenubarRow(action: { close(); windows.showNetworkMonitor() }) {
-                menuLabel("Network Monitor\u{2026}", symbol: "globe")
+                menuLabel("Network Monitor", symbol: "globe")
             }
             MenubarRow(action: { close(); windows.showSettings() }) {
-                menuLabel("FreeSnitch Settings\u{2026}", symbol: "gearshape")
+                menuLabel("Settings", symbol: "gearshape")
             }
         }
         .padding(.top, 4)

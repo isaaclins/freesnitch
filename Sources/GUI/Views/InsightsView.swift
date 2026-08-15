@@ -27,7 +27,7 @@ struct InsightsView: View {
         .onAppear { model.attach(state) }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete everything", role: .destructive) { model.purge() }
+            Button("Delete History", role: .destructive) { model.purge() }
         } message: {
             Text("This removes every recorded connection, every DNS answer and every daily rollup, including the database write-ahead log. It cannot be undone.")
         }
@@ -235,7 +235,7 @@ struct InsightsView: View {
                 // Short enough to survive the list's width. The long form
                 // truncated inside a word ("4.8k connecti..."), which reads as
                 // a layout bug rather than as an abbreviation (#102).
-                Text("\(Self.plural(app.destinationCount, "destination")), \(PSFormat.compactCount(app.connectionCount)) conns")
+                Text("\(Self.plural(app.destinationCount, "destination")), \(PSFormat.compactCount(app.connectionCount)) connections")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .help("\(Self.plural(app.destinationCount, "destination")), \(Self.plural(app.connectionCount, "connection"))")
             }
@@ -253,7 +253,7 @@ struct InsightsView: View {
             HStack(spacing: 8) {
                 Text(destination.displayName).font(.body)
                 if !destination.isNameKnown {
-                    PSChip("no DNS name seen", color: .orange, icon: "questionmark.circle")
+                    PSChip("No DNS name seen", color: .orange, icon: "questionmark.circle")
                 }
                 Spacer()
                 Text("\(PSFormat.compactCount(destination.connectionCount)) connections")
@@ -279,7 +279,7 @@ struct InsightsView: View {
     /// silently inert (#106).
     private func destinationFooter(app: InsightsAppSummary) -> some View {
         HStack(spacing: 8) {
-            Button("Propose a rule") {
+            Button("Propose a Rule\u{2026}") {
                 guard let id = selectedDestinationID,
                       let destination = model.destinations.first(where: { $0.id == id }) else { return }
                 model.proposeRule(for: destination, app: app)
@@ -321,7 +321,7 @@ struct InsightsView: View {
     @ViewBuilder
     private func destinationContextMenu(_ destination: InsightsDestinationSummary,
                                         app: InsightsAppSummary) -> some View {
-        Button("Propose a Rule") { model.proposeRule(for: destination, app: app) }
+        Button("Propose a Rule\u{2026}") { model.proposeRule(for: destination, app: app) }
         Divider()
         CopyMenuItem(title: "Copy Destination", value: destination.displayName)
         CopyMenuItem(title: "Copy IP Address", value: destination.remoteIP)
@@ -407,7 +407,7 @@ struct InsightsView: View {
                             }
                             Text(finding.evidence).font(.caption).foregroundStyle(.secondary)
                             if let proposal = finding.proposedRule() {
-                                Button("Propose a rule") { model.proposeRule(for: proposal) }
+                                Button("Propose a Rule\u{2026}") { model.proposeRule(for: proposal) }
                                     .controlSize(.small)
                             }
                         }
@@ -464,9 +464,9 @@ struct InsightsView: View {
             HStack(spacing: 8) {
                 Text("\(proposal.appDisplayName) may not reach \(proposal.destinationLabel)").font(.body)
                 if proposal.isDomainScoped {
-                    PSChip("domain rule", color: .green, icon: "globe")
+                    PSChip("Domain rule", color: .green, icon: "globe")
                 } else {
-                    PSChip("address-pinned", color: .orange, icon: "number")
+                    PSChip("Pinned to an address", color: .orange, icon: "number")
                 }
                 if proposal.otherAppCount > 0 {
                     PSChip("also contacted by \(proposal.otherAppCount) other app\(proposal.otherAppCount == 1 ? "" : "s")",

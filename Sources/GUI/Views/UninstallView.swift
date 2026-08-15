@@ -118,7 +118,7 @@ struct UninstallView: View {
             HStack {
                 Button("Uninstall FreeSnitch…", role: .destructive) { confirming = true }
                     .disabled(!acknowledged)
-                Text(acknowledged ? "You will be asked to confirm once more." : "Tick the box above first.")
+                Text(acknowledged ? "You will be asked to confirm once more." : "Select the checkbox above first.")
                     .font(.caption).foregroundColor(.secondary)
             }
         }

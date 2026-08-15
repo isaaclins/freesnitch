@@ -79,13 +79,13 @@ final class MenubarController {
         // the binding instead of contradicting it. All five pages are listed:
         // leaving two of them out was how Profiles ended up unreachable from
         // the keyboard.
-        menu.addItem(makeItem("Network Monitor…", #selector(openMonitor), keyEq: "1", modifiers: [.command]))
-        menu.addItem(makeItem("Rules…", #selector(openRules), keyEq: "2", modifiers: [.command]))
-        menu.addItem(makeItem("Insights…", #selector(openInsights), keyEq: "3", modifiers: [.command]))
-        menu.addItem(makeItem("Profiles…", #selector(openProfiles), keyEq: "4", modifiers: [.command]))
+        menu.addItem(makeItem("Network Monitor", #selector(openMonitor), keyEq: "1", modifiers: [.command]))
+        menu.addItem(makeItem("Rules", #selector(openRules), keyEq: "2", modifiers: [.command]))
+        menu.addItem(makeItem("Insights", #selector(openInsights), keyEq: "3", modifiers: [.command]))
+        menu.addItem(makeItem("Profiles", #selector(openProfiles), keyEq: "4", modifiers: [.command]))
         // Settings keeps Command-comma as well: that one is a system-wide
         // convention and people press it wherever Settings happens to sit.
-        menu.addItem(makeItem("Settings…", #selector(openSettings), keyEq: ",", modifiers: [.command]))
+        menu.addItem(makeItem("Settings", #selector(openSettings), keyEq: ",", modifiers: [.command]))
         menu.addItem(.separator())
         let modeMenu = NSMenu(title: "Mode")
         modeMenu.addItem(makeItem("Alert", #selector(modeAlert), keyEq: "", state: state.mode == .alert ? .on : .off))

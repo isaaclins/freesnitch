@@ -329,7 +329,7 @@ enum MonitorTreeBuilder {
         let name = connection.remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
         let ip = connection.remoteIP.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty {
-            return DestinationAccumulator(label: ip.isEmpty ? "unknown destination" : ip,
+            return DestinationAccumulator(label: ip.isEmpty ? "Unknown destination" : ip,
                                           remoteHost: nil,
                                           remoteIP: ip.isEmpty ? nil : ip,
                                           countryCode: MonitorTreeKey.normalized(connection.countryCode))
@@ -343,7 +343,7 @@ enum MonitorTreeBuilder {
     private static func displayName(for connection: Connection) -> String {
         if !connection.processName.isEmpty { return connection.processName }
         if !connection.processPath.isEmpty { return (connection.processPath as NSString).lastPathComponent }
-        return connection.processBundleId ?? "unknown process"
+        return connection.processBundleId ?? "Unknown process"
     }
 }
 
