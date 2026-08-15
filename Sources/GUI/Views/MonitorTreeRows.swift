@@ -15,6 +15,15 @@ struct MonitorTreeList: View {
     @ObservedObject var controller: MonitorTreeController
     let searchText: String
     @Binding var selectedAppID: String?
+    /// Removing a rule is removing stored policy, so it is confirmed and the
+    /// confirmation names what goes (#115).
+    @State private var pendingClear: PendingClear?
+
+    private struct PendingClear: Identifiable {
+        let id = UUID()
+        let subject: String
+        let target: MonitorRuleTarget
+    }
 
     var body: some View {
         let visible = MonitorTreeFilter.apply(query: searchText, to: controller.snapshot)
@@ -78,6 +87,20 @@ struct MonitorTreeList: View {
         // the row that was clicked before opening (#78).
         .contextMenu(forSelectionType: String.self) { ids in
             rowContextMenu(for: ids, in: visible)
+        }
+        .confirmationDialog("Remove the rule for \(pendingClear?.subject ?? "this row")?",
+                            isPresented: Binding(get: { pendingClear != nil },
+                                                 set: { if !$0 { pendingClear = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove Rule", role: .destructive) {
+                if let target = pendingClear?.target {
+                    controller.clearDecision(for: target, state: state)
+                }
+                pendingClear = nil
+            }
+            Button("Cancel", role: .cancel) { pendingClear = nil }
+        } message: {
+            Text("The rule is deleted from FreeSnitch. This row goes back to no decision, and the next connection follows the current mode.")
         }
     }
 
@@ -168,12 +191,12 @@ struct MonitorTreeList: View {
 
     private func clear(app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.app(app) else { return }
-        controller.clearDecision(for: target, state: state)
+        pendingClear = PendingClear(subject: "every connection from \(app.name)", target: target)
     }
 
     private func clear(destination: MonitorDestinationNode, app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.destination(destination, in: app) else { return }
-        controller.clearDecision(for: target, state: state)
+        pendingClear = PendingClear(subject: "\(app.name) to \(destination.label)", target: target)
     }
 }
 

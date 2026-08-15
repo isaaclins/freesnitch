@@ -28,6 +28,8 @@ struct BlocklistEntriesView: View {
     @State private var errorMessage: String?
     @State private var isLoading = false
     @State private var selection: String?
+    /// Editing a list is permanent and has no undo, so it is confirmed (#115).
+    @State private var pendingEntryRemoval: String?
     /// Identifies the newest request, so a slow answer for an old search or an
     /// old page cannot overwrite a newer one.
     @State private var requestToken = UUID()
@@ -80,15 +82,29 @@ struct BlocklistEntriesView: View {
             }
             .listStyle(.inset)
             .accessibilityLabel("Entries in \(blocklist.name)")
+            .confirmationDialog("Remove \(pendingEntryRemoval ?? "this name") from \(blocklist.name)?",
+                                isPresented: Binding(get: { pendingEntryRemoval != nil },
+                                                     set: { if !$0 { pendingEntryRemoval = nil } }),
+                                titleVisibility: .visible) {
+                Button("Remove Name", role: .destructive) {
+                    if let entry = pendingEntryRemoval { onRemoveEntry?(entry) }
+                    pendingEntryRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingEntryRemoval = nil }
+            } message: {
+                Text("The name is taken off this list for every profile that uses it. Refreshing the list from its source puts it back.")
+            }
             .contextMenu(forSelectionType: String.self) { ids in
                 if let entry = ids.first {
                     Button("Copy Domain") { RowActions.copy(entry) }
                     Divider()
                     Button("Allow \(entry) Anyway") { onAllow(entry) }
                         .disabled(!state.helperConnected)
-                    if let onRemoveEntry {
-                        Button("Remove from This List", role: .destructive) { onRemoveEntry(entry) }
-                            .disabled(!ProfileClient.shared.isAvailable)
+                    if onRemoveEntry != nil {
+                        Button("Remove from This List\u{2026}", role: .destructive) {
+                            pendingEntryRemoval = entry
+                        }
+                        .disabled(!ProfileClient.shared.isAvailable)
                     }
                 }
             }

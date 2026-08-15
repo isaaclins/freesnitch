@@ -139,15 +139,20 @@ struct RulesManagerView: View {
         } message: {
             Text("Importing \(pendingImportRules.count) rules will replace the \(state.rules.count) rules currently in FreeSnitch.")
         }
-        .confirmationDialog("Remove selected rules?",
+        // Every removal comes through here, from the table, the context menu
+        // and the inspector alike. A single rule used to go straight through
+        // without asking, and the inspector's Remove never asked at all (#115).
+        .confirmationDialog(removalTitle,
                             isPresented: $showingRemoveConfirmation,
                             titleVisibility: .visible) {
-            Button("Remove Rules", role: .destructive) {
+            Button(pendingRemovalIDs.count == 1 ? "Remove Rule" : "Remove Rules", role: .destructive) {
                 removeRules(withIDs: pendingRemovalIDs)
             }
             Button("Cancel", role: .cancel) { pendingRemovalIDs.removeAll() }
         } message: {
-            Text("This permanently removes \(pendingRemovalIDs.count) rules from FreeSnitch.")
+            Text(pendingRemovalIDs.count == 1
+                 ? "The rule is deleted from FreeSnitch. The connection it covered follows the current mode again."
+                 : "This permanently removes \(pendingRemovalIDs.count) rules from FreeSnitch.")
         }
         // The title states the problem. It used to be the name of this pane,
         // which told the reader nothing (#117).
@@ -879,7 +884,7 @@ struct RulesManagerView: View {
                 HStack {
                     Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
                     Spacer()
-                    Button("Remove", role: .destructive) { removeRule(r) }
+                    Button("Remove\u{2026}", role: .destructive) { confirmRemoval(of: [r.id]) }
                 }
             }
         }
@@ -1167,19 +1172,24 @@ struct RulesManagerView: View {
         updateNext(0)
     }
 
-    private func removeRule(_ r: Rule) {
-        removeRules(withIDs: [r.id])
+    private var removalTitle: String {
+        guard pendingRemovalIDs.count == 1,
+              let id = pendingRemovalIDs.first,
+              let rule = state.rules.first(where: { $0.id == id }) else {
+            return "Remove selected rules?"
+        }
+        return "Remove the rule for \(Self.describe(rule))?"
     }
 
     private func removeSelectedRules() {
-        let ids = Set(selectedRules.map(\.id))
+        confirmRemoval(of: Set(selectedRules.map(\.id)))
+    }
+
+    /// One door for every removal, so the question is always asked.
+    private func confirmRemoval(of ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
-        if ids.count > 1 {
-            pendingRemovalIDs = ids
-            showingRemoveConfirmation = true
-        } else {
-            removeRules(withIDs: ids)
-        }
+        pendingRemovalIDs = ids
+        showingRemoveConfirmation = true
     }
 
     private func removeRules(withIDs ids: Set<UUID>) {

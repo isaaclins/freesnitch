@@ -12,6 +12,7 @@ struct ProfilesSettingsView: View {
     @State private var editingBlocklist: BlocklistInfo?
     @State private var showingAddBlocklist = false
     @State private var pendingBlocklistRemoval: BlocklistInfo?
+    @State private var pendingProfileDeletion: String?
     @State private var newProfileName = ""
     @State private var newProfileMode: AppMode = .alert
 
@@ -31,6 +32,23 @@ struct ProfilesSettingsView: View {
             }
         }
         .sheet(isPresented: $showingCreateSheet) { createSheet }
+        // A profile carries its own rules and its own networks, so deleting it
+        // says what goes with it (#115).
+        .confirmationDialog("Delete the profile \(pendingProfileDeletion ?? "")?",
+                            isPresented: Binding(get: { pendingProfileDeletion != nil },
+                                                 set: { if !$0 { pendingProfileDeletion = nil } }),
+                            titleVisibility: .visible) {
+            Button("Delete Profile", role: .destructive) {
+                if let name = pendingProfileDeletion {
+                    profileClient.deleteProfile(name: name)
+                    if selectedProfileName == name { selectedProfileName = Profile.defaultName }
+                }
+                pendingProfileDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingProfileDeletion = nil }
+        } message: {
+            Text("Its rules, its blocklist choices and the networks that switch to it are deleted with it. The Always rules and the other profiles are untouched.")
+        }
         .sheet(item: $editingBlocklist) { blocklist in
             BlocklistEditorView(blocklist: blocklist)
         }
@@ -120,8 +138,8 @@ struct ProfilesSettingsView: View {
                             .disabled(!profileClient.isAvailable || profile.isActive)
                         if name != Profile.defaultName {
                             Divider()
-                            Button("Delete Profile", role: .destructive) {
-                                profileClient.deleteProfile(name: name)
+                            Button("Delete Profile\u{2026}", role: .destructive) {
+                                pendingProfileDeletion = name
                             }
                             .disabled(!profileClient.isAvailable)
                         }
@@ -147,11 +165,11 @@ struct ProfilesSettingsView: View {
             .help("Create a profile")
             Button {
                 guard let name = selectedProfileName, name != Profile.defaultName else { return }
-                profileClient.deleteProfile(name: name)
-                selectedProfileName = Profile.defaultName
+                pendingProfileDeletion = name
             } label: {
                 Image(systemName: "minus")
             }
+            .accessibilityLabel("Delete the selected profile")
             .buttonStyle(.borderless)
             .disabled(!profileClient.isAvailable
                       || selectedProfileName == nil
