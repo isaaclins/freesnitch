@@ -12,13 +12,12 @@ struct SettingsView: View {
     /// The parts of Settings. A page, not a window, so these are chosen in the
     /// content rather than by a `TabView` (#100).
     enum Pane: String, CaseIterable, Identifiable {
-        case general, dns, blocklists, uninstall, about
+        case general, dns, uninstall, about
         var id: String { rawValue }
         var title: String {
             switch self {
             case .general: return "General"
             case .dns: return "DNS"
-            case .blocklists: return "Blocklists"
             case .uninstall: return "Uninstall"
             case .about: return "About"
             }
@@ -61,7 +60,6 @@ struct SettingsView: View {
         switch pane {
         case .general: generalTab
         case .dns: dnsTab
-        case .blocklists: blocklistsTab
         case .uninstall: uninstallTab
         case .about: aboutTab
         }
@@ -173,80 +171,35 @@ struct SettingsView: View {
         }
     }
 
+    /// Grouped, like General: a plain form put the label outside the content
+    /// column and pinned the status to the far edge of the pane (#112).
     private var dnsTab: some View {
         Form {
             Section("DNS over HTTPS upstream") {
-                TextField("DoH URL", text: $doh)
+                // The prompt is deliberately not a URL: macOS styles a URL in
+                // a field as a blue link, and an empty field then reads as if
+                // it already held that value.
+                TextField("Upstream", text: $doh,
+                          prompt: Text("Leave empty to use the system resolver"))
                     .onSubmit { saveDoHUpstream() }
-                if let dohError {
+                    .disabled(!state.helperConnected)
+                if let dohError, state.helperConnected {
                     Text(dohError).font(.caption).foregroundColor(.red)
                 }
-                Text("Examples:").font(.caption).foregroundColor(.secondary)
-                Text("https://cloudflare-dns.com/dns-query").font(.caption.monospaced())
-                Text("https://dns.quad9.net/dns-query").font(.caption.monospaced())
-                Text("https://dns.google/dns-query").font(.caption.monospaced())
+                Text(state.helperConnected
+                     ? "Cloudflare, Quad9 and Google answer at /dns-query on cloudflare-dns.com, dns.quad9.net and dns.google."
+                     : "The upstream lives in the privileged helper, so it can be changed once the helper is connected.")
+                    .font(.caption).foregroundColor(.secondary)
             }
             Section("Local DNS proxy") {
-                HStack {
-                    Text("Status")
-                    Spacer()
+                LabeledContent("Status") {
                     Text(state.dnsProxyEnabled ? "Running on port \(AppConstants.dnsProxyPort)" : "Not running")
-                        .foregroundColor(.secondary)
                 }
                 Text("The DNS proxy runs inside the privileged helper and filters domain lookups against the enabled blocklists. It reports as running only once the helper confirms it.")
                     .font(.caption).foregroundColor(.secondary)
             }
         }
-    }
-
-    private var blocklistsTab: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                Text("Blocklists").font(.headline)
-                Spacer()
-                Button("Refresh All") { state.helper.refreshBlocklists() }
-            }
-            Text("Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !state.enforcementEnabled && state.blocklists.contains(where: { $0.enabled }) {
-                Text("Enforcement is off, so enabled blocklists are currently blocking nothing.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if state.blocklists.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("No blocklists loaded")
-                        .font(.body).foregroundColor(.secondary)
-                    Text(state.helperConnected
-                         ? "Press Refresh All to download the default blocklists."
-                         : "Blocklists live in the privileged helper. Approve the helper first. See the General tab.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.top, 8)
-            }
-            List(state.blocklists) { b in
-                HStack {
-                    Toggle("", isOn: Binding(
-                        get: { b.enabled },
-                        set: { newValue in
-                            state.helper.remote?.enableBlocklist(idString: b.id.uuidString, enabled: newValue) { _, _ in }
-                        }
-                    ))
-                    .labelsHidden()
-                    VStack(alignment: .leading) {
-                        Text(b.name).font(.body)
-                        Text(b.url).font(.caption2).foregroundColor(.secondary).lineLimit(1)
-                    }
-                    Spacer()
-                    Text("\(b.entryCount)").font(.caption.monospacedDigit())
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
+        .formStyle(.grouped)
     }
 
     /// Deliberate removal, deliberately its own tab. It must not sit next to
@@ -258,10 +211,14 @@ struct SettingsView: View {
 
     private var aboutTab: some View {
         VStack(spacing: 12) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: 64)).foregroundColor(PSTheme.accent)
+            // The real application icon, the way Apple's About panel shows it,
+            // not a stand-in symbol (#114).
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
+                .accessibilityHidden(true)
             Text("FreeSnitch").font(.title.bold())
-            Text("v\(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
+            Text("Version \(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
             Text("Open-source application firewall for macOS.").font(.caption).foregroundColor(.secondary)
             Link("github.com/isaaclins/freesnitch", destination: URL(string: "https://github.com/isaaclins/freesnitch")!)
                 .font(.caption)

@@ -449,7 +449,7 @@ struct RulesManagerView: View {
             }
             .disabled(!state.helperConnected)
             Divider()
-            Button("Refresh Now") { state.helper.refreshBlocklists() }
+            Button("Refresh All Lists") { state.helper.refreshBlocklists() }
                 .disabled(!state.helperConnected)
             CopyMenuItem(title: "Copy Name", value: blocklist.name)
         }
