@@ -14,6 +14,8 @@ struct InsightsView: View {
     /// Only exists so the destination list has a selection for its context
     /// menu to key off. Nothing else reads it.
     @State private var selectedDestinationID: InsightsDestinationSummary.ID?
+    /// The row the pointer is on, so its action can appear only there (#102).
+    @State private var hoveredDestinationID: InsightsDestinationSummary.ID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,6 +76,7 @@ struct InsightsView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Reload")
+            .accessibilityLabel("Reload")
 
             Button("Purge…", role: .destructive) {
                 model.confirmingPurge = true
@@ -108,6 +111,12 @@ struct InsightsView: View {
     /// number without offering a way to go and look (#89). It is not a real
     /// badge because `NSSegmentedControl` has no badge, so it is the count in
     /// the label, which costs no extra row and still disappears at zero.
+    /// "1 destination", not "1 destinations". A count that disagrees with its
+    /// noun is the sort of thing no Apple app ships (#102).
+    static func plural(_ count: Int, _ noun: String) -> String {
+        "\(count) \(noun)\(count == 1 ? "" : "s")"
+    }
+
     private func segmentLabel(_ section: InsightsSection) -> String {
         guard section == .findings, model.changedAppCount > 0 else { return section.shortLabel }
         return "\(section.shortLabel) (\(model.changedAppCount))"
@@ -177,7 +186,7 @@ struct InsightsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let app = model.selectedApp {
                     sectionTitle(app.displayName,
-                                 subtitle: "\(app.destinationCount) destinations, \(app.connectionCount) connections")
+                                 subtitle: "\(Self.plural(app.destinationCount, "destination")), \(Self.plural(app.connectionCount, "connection"))")
                     if model.destinations.isEmpty && !model.isLoading {
                         emptyState("No destinations recorded for this app in this range.")
                     } else {
@@ -227,8 +236,12 @@ struct InsightsView: View {
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(app.displayName).font(.body).lineLimit(1)
-                Text("\(app.destinationCount) destinations · \(PSFormat.compactCount(app.connectionCount)) connections")
+                // Short enough to survive the list's width. The long form
+                // truncated inside a word ("4.8k connecti..."), which reads as
+                // a layout bug rather than as an abbreviation (#102).
+                Text("\(Self.plural(app.destinationCount, "destination")), \(PSFormat.compactCount(app.connectionCount)) conns")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .help("\(Self.plural(app.destinationCount, "destination")), \(Self.plural(app.connectionCount, "connection"))")
             }
             Spacer()
             Text(PSFormat.bytes(app.bytesIn + app.bytesOut))
@@ -236,6 +249,11 @@ struct InsightsView: View {
         }
     }
 
+    /// The action appears for the row the pointer is on, the way Mail and
+    /// Photos reveal a row action. A bordered button on every row turned a
+    /// list of destinations into a column of identical buttons, and the eye
+    /// read the buttons instead of the data (#102). It stays in the context
+    /// menu, which is where it can always be found.
     private func destinationRow(_ destination: InsightsDestinationSummary, app: InsightsAppSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -259,9 +277,15 @@ struct InsightsView: View {
                 Spacer()
                 Button("Propose a rule") { model.proposeRule(for: destination, app: app) }
                     .controlSize(.small)
+                    .opacity(hoveredDestinationID == destination.id ? 1 : 0)
+                    .accessibilityHidden(hoveredDestinationID != destination.id)
             }
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            hoveredDestinationID = hovering ? destination.id : nil
+        }
     }
 
     /// The same call the button on the row makes, plus the two things a reader

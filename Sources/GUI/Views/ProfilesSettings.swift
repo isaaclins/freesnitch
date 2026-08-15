@@ -209,6 +209,7 @@ struct ProfilesSettingsView: View {
     private func profileDetail(_ profile: Profile) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             modeRow(profile)
+            summaryCaption(profile)
             Divider()
             blocklistSection(profile)
             Divider()
@@ -238,13 +239,22 @@ struct ProfilesSettingsView: View {
             .frame(maxWidth: 280)
             .disabled(!profileClient.isAvailable)
             Spacer(minLength: 8)
-            Text(summary(profile))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+    }
+
+    /// Under the control it describes, aligned with everything else on the
+    /// page. Right-aligned in the same row as the picker, it was the only
+    /// right-aligned thing on the page (#104).
+    private func summaryCaption(_ profile: Profile) -> some View {
+        Text(summary(profile))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
     }
 
     private func summary(_ profile: Profile) -> String {
@@ -325,11 +335,16 @@ struct ProfilesSettingsView: View {
     private func networkSection(_ profile: Profile) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeader("Networks") {
+                // Bordered, not borderless: these do something, and borderless
+                // text in a header reads as a link (#104).
                 Button("Use \(profile.name) here") {
                     profileClient.bindCurrentNetwork(toProfile: profile.name)
                 }
-                .buttonStyle(.borderless)
+                .controlSize(.small)
                 .disabled(!profileClient.isAvailable || profileClient.snapshot?.currentGatewayMAC == nil)
+                .help(profileClient.snapshot?.currentGatewayMAC == nil
+                      ? "FreeSnitch cannot see this network's gateway yet."
+                      : "Switch to \(profile.name) automatically on this network.")
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(gatewayLabel).font(.caption.monospaced()).foregroundStyle(.secondary)
@@ -340,8 +355,9 @@ struct ProfilesSettingsView: View {
                         Text(binding.gatewayMAC).font(.caption.monospaced())
                         Spacer(minLength: 6)
                         Button("Remove") { profileClient.unbindNetwork(gatewayMAC: binding.gatewayMAC) }
-                            .buttonStyle(.borderless)
+                            .controlSize(.small)
                             .disabled(!profileClient.isAvailable)
+                            .help("Stop selecting this profile on that network.")
                     }
                 }
                 if bindings(for: profile).isEmpty {

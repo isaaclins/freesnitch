@@ -71,14 +71,22 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HelperBanner(systemExtension: systemExtension)
             Form {
+                // The banner above already states any helper problem in full,
+                // so this row reports status rather than repeating the
+                // complaint, and its buttons sit in a labelled row instead of
+                // standing alone (#104).
                 Section("Privileged helper") {
-                    HStack {
+                    LabeledContent("Status") {
                         Text(helperSummary)
-                        Spacer()
-                        Button("Check Again") { state.helper.refreshInstallState(); state.helper.ping() }
+                            .multilineTextAlignment(.trailing)
                     }
-                    if state.helperInstallState != .enabled {
-                        Button("Open Login Items…") { state.helper.openLoginItemsSettings() }
+                    LabeledContent("Actions") {
+                        HStack(spacing: 8) {
+                            if state.helperInstallState != .enabled {
+                                Button("Open Login Items…") { state.helper.openLoginItemsSettings() }
+                            }
+                            Button("Check Again") { state.helper.refreshInstallState(); state.helper.ping() }
+                        }
                     }
                 }
                 Section("Menu bar") {
@@ -91,8 +99,11 @@ struct SettingsView: View {
                     Toggle("Show alerts on all Spaces", isOn: $state.showAlertsOnAllSpaces)
                 }
                 Section("Enforcement") {
-                    Toggle("Block traffic, don't just watch it", isOn: $state.enforcementEnabled)
+                    Toggle("Block traffic", isOn: $state.enforcementEnabled)
                         .disabled(!state.helperConnected)
+                        .help(state.helperConnected
+                              ? "Load the pf anchor and run the DNS proxy."
+                              : "Approve the FreeSnitch helper to change this.")
                     Text("Off by default. Turning this on lets FreeSnitch load a pf firewall anchor and run a DNS proxy on port \(AppConstants.dnsProxyPort), which changes how this Mac resolves names and filters packets. Leave it off to use FreeSnitch purely as a traffic monitor.")
                         .font(.caption).foregroundColor(.secondary)
                 }

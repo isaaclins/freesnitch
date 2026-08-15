@@ -629,7 +629,9 @@ struct RulesManagerView: View {
                 Text(rule.statusLabel)
                     .foregroundStyle(rule.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             }
-            .width(min: 64, max: 104)
+            // Wide enough for the longest value it can hold. At 64 it
+            // truncated "Temporary" to "Tempora..." (#105).
+            .width(min: 88, max: 120)
         }
         // A dragged column divider redistributes width instead of pushing the
         // columns behind it off the edge of the pane (#92).
