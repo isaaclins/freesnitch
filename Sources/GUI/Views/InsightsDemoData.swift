@@ -15,30 +15,31 @@ enum InsightsDemoData {
     private static let now = Date()
 
     static let apps: [InsightsAppSummary] = [
-        app("com.spotify.client", "Spotify", "/Applications/Spotify.app", 6, 4_820, 3_580_000_000, 42_000_000),
-        app("com.google.Chrome", "Google Chrome", "/Applications/Google Chrome.app", 24, 18_400, 1_240_000_000, 96_000_000),
-        app("com.hnc.Discord", "Discord", "/Applications/Discord.app", 4, 9_120, 768_000_000, 95_000_000),
-        app("com.googlecode.iterm2", "iTerm", "/Applications/iTerm.app", 9, 1_340, 482_000_000, 41_000_000),
-        app("com.microsoft.VSCode", "Visual Studio Code", "/Applications/Visual Studio Code.app", 7, 880, 51_500_000, 6_700_000),
-        app("com.tinyspeck.slackmacgap", "Slack", "/Applications/Slack.app", 3, 6_210, 285_000_000, 26_000_000),
-        app("claude", "claude", "/usr/local/bin/claude", 1, 412, 322_000_000, 18_000_000),
-        app("co.corecode.MacUpdater", "MacUpdater", "/Applications/MacUpdater.app", 2, 96, 8_300_000, 920_000)
+        app("company.thebrowser.Browser", "Arc", "/Applications/Arc.app", 24, 18_400, 2_968_000_000, 50_800_000),
+        app("com.apple.dt.Xcode", "Xcode", "/Applications/Xcode.app", 6, 1_340, 2_272_000_000, 12_900_000),
+        app("com.apple.Music", "Music", "/System/Applications/Music.app", 4, 4_820, 1_240_000_000, 6_200_000),
+        app("com.hnc.Discord", "Discord", "/Applications/Discord.app", 4, 9_120, 864_000_000, 102_300_000),
+        app("com.apple.Safari", "Safari", "/Applications/Safari.app", 31, 12_600, 762_000_000, 51_800_000),
+        app("com.anthropic.claudefordesktop", "Claude", "/Applications/Claude.app", 3, 2_210, 322_000_000, 58_000_000),
+        app("com.apple.mail", "Mail", "/System/Applications/Mail.app", 5, 3_480, 278_000_000, 36_000_000),
+        app("net.whatsapp.WhatsApp", "WhatsApp", "/Applications/WhatsApp.app", 3, 6_100, 80_000_000, 30_000_000),
+        app("dev.zed.Zed", "Zed", "/Applications/Zed.app", 2, 412, 51_500_000, 6_700_000)
     ]
 
     static func destinations(for appIdentity: String) -> [InsightsDestinationSummary] {
         switch appIdentity {
-        case "com.spotify.client":
+        case "company.thebrowser.Browser":
             return [
-                destination(appIdentity, domain: "audio-fa.scdn.co", ip: "104.199.65.9", count: 3_910, bytesIn: 3_370_000_000, bytesOut: 28_000_000, otherApps: 0),
-                destination(appIdentity, domain: "apresolve.spotify.com", ip: "35.186.224.25", count: 640, bytesIn: 12_400_000, bytesOut: 2_100_000, otherApps: 0),
-                destination(appIdentity, domain: "spclient.wg.spotify.com", ip: "35.186.224.47", count: 210, bytesIn: 9_800_000, bytesOut: 4_300_000, otherApps: 0),
-                destination(appIdentity, domain: nil, ip: "192.0.2.51", count: 60, bytesIn: 1_200_000, bytesOut: 240_000, otherApps: 2)
-            ]
-        case "com.google.Chrome":
-            return [
-                destination(appIdentity, domain: "www.googleapis.com", ip: "142.250.74.234", count: 8_400, bytesIn: 148_000_000, bytesOut: 18_600_000, otherApps: 3),
-                destination(appIdentity, domain: "fonts.gstatic.com", ip: "2a00:1450:4001:82f::2003", count: 2_100, bytesIn: 22_800_000, bytesOut: 1_900_000, otherApps: 1),
+                destination(appIdentity, domain: "www.youtube.com", ip: "142.250.203.110", count: 9_400, bytesIn: 2_940_000_000, bytesOut: 48_000_000, otherApps: 1),
+                destination(appIdentity, domain: "fonts.gstatic.com", ip: "2a00:1450:4001:82f::2003", count: 2_100, bytesIn: 22_800_000, bytesOut: 1_900_000, otherApps: 2),
+                destination(appIdentity, domain: "stats.g.doubleclick.net", ip: "142.250.27.154", count: 610, bytesIn: 0, bytesOut: 1_200, otherApps: 3),
                 destination(appIdentity, domain: nil, ip: "203.0.113.42", count: 340, bytesIn: 5_400_000, bytesOut: 900_000, otherApps: 0)
+            ]
+        case "com.apple.Music":
+            return [
+                destination(appIdentity, domain: "aod.itunes.apple.com", ip: "17.253.53.207", count: 3_910, bytesIn: 1_210_000_000, bytesOut: 4_000_000, otherApps: 0),
+                destination(appIdentity, domain: "play.itunes.apple.com", ip: "17.253.53.208", count: 640, bytesIn: 21_400_000, bytesOut: 1_400_000, otherApps: 0),
+                destination(appIdentity, domain: "is1-ssl.mzstatic.com", ip: "17.253.53.210", count: 210, bytesIn: 8_600_000, bytesOut: 800_000, otherApps: 2)
             ]
         case "com.hnc.Discord":
             return [
@@ -47,35 +48,33 @@ enum InsightsDemoData {
             ]
         default:
             return [
-                destination(appIdentity, domain: "github.com", ip: "140.82.121.4", count: 980, bytesIn: 482_000_000, bytesOut: 41_000_000, otherApps: 4),
-                destination(appIdentity, domain: "registry.npmjs.org", ip: "2606:4700::6810:1b23", count: 360, bytesIn: 74_000_000, bytesOut: 5_200_000, otherApps: 2)
+                destination(appIdentity, domain: "github.com", ip: "140.82.121.4", count: 980, bytesIn: 286_000_000, bytesOut: 31_000_000, otherApps: 4),
+                destination(appIdentity, domain: "developer.apple.com", ip: "17.253.27.204", count: 360, bytesIn: 74_000_000, bytesOut: 5_200_000, otherApps: 2)
             ]
         }
     }
 
     static let unresolved: [InsightsUnresolvedDestination] = [
+        InsightsUnresolvedDestination(remoteIP: "203.0.113.42", connectionCount: 340, appCount: 1,
+                                      appNames: ["Arc"], bytesIn: 5_400_000, bytesOut: 900_000, lastSeen: now),
         InsightsUnresolvedDestination(remoteIP: "198.51.100.77", connectionCount: 96, appCount: 1,
-                                      appNames: ["MacUpdater"], bytesIn: 8_300_000, bytesOut: 920_000, lastSeen: now),
-        InsightsUnresolvedDestination(remoteIP: "149.154.167.51", connectionCount: 64, appCount: 1,
-                                      appNames: ["Telegram"], bytesIn: 78_000_000, bytesOut: 14_000_000, lastSeen: now),
-        InsightsUnresolvedDestination(remoteIP: "203.0.113.42", connectionCount: 340, appCount: 2,
-                                      appNames: ["Google Chrome", "Setapp"], bytesIn: 5_400_000, bytesOut: 900_000, lastSeen: now),
+                                      appNames: ["Zed"], bytesIn: 8_300_000, bytesOut: 920_000, lastSeen: now),
         InsightsUnresolvedDestination(remoteIP: "192.0.2.51", connectionCount: 60, appCount: 3,
                                       appNames: [], bytesIn: 1_200_000, bytesOut: 240_000, lastSeen: now)
     ]
 
     static let proposals: [InsightsProposedRule] = [
-        InsightsProposedRule(appIdentity: "com.adobe.acc.AdobeCreativeCloud", appDisplayName: "Adobe CC",
-                             processBundleId: "com.adobe.acc.AdobeCreativeCloud",
-                             processPath: "/Applications/Adobe Creative Cloud.app",
-                             domain: "cc-api-data.adobe.io", remoteIP: nil,
-                             connectionCount: 412, otherAppCount: 2, lastSeen: now),
-        InsightsProposedRule(appIdentity: "com.google.Chrome", appDisplayName: "Google Chrome",
-                             processBundleId: "com.google.Chrome", processPath: "/Applications/Google Chrome.app",
-                             domain: "update.googleapis.com", remoteIP: nil,
-                             connectionCount: 88, otherAppCount: 0, lastSeen: now),
-        InsightsProposedRule(appIdentity: "co.corecode.MacUpdater", appDisplayName: "MacUpdater",
-                             processBundleId: "co.corecode.MacUpdater", processPath: "/Applications/MacUpdater.app",
+        InsightsProposedRule(appIdentity: "com.hnc.Discord", appDisplayName: "Discord",
+                             processBundleId: "com.hnc.Discord",
+                             processPath: "/Applications/Discord.app",
+                             domain: "science.discord.com", remoteIP: nil,
+                             connectionCount: 412, otherAppCount: 0, lastSeen: now),
+        InsightsProposedRule(appIdentity: "company.thebrowser.Browser", appDisplayName: "Arc",
+                             processBundleId: "company.thebrowser.Browser", processPath: "/Applications/Arc.app",
+                             domain: "stats.g.doubleclick.net", remoteIP: nil,
+                             connectionCount: 610, otherAppCount: 3, lastSeen: now),
+        InsightsProposedRule(appIdentity: "dev.zed.Zed", appDisplayName: "Zed",
+                             processBundleId: "dev.zed.Zed", processPath: "/Applications/Zed.app",
                              domain: nil, remoteIP: "198.51.100.77",
                              connectionCount: 96, otherAppCount: 0, lastSeen: now)
     ]
@@ -85,9 +84,9 @@ enum InsightsDemoData {
                                  oldVersion: "0.0.312", newVersion: "0.0.318",
                                  destination: "science.discord.com", firstSeen: now,
                                  connectionCount: 128, versionKnown: true),
-        InsightsBehaviourFinding(appIdentity: "com.tinyspeck.slackmacgap", displayName: "Slack",
+        InsightsBehaviourFinding(appIdentity: "net.whatsapp.WhatsApp", displayName: "WhatsApp",
                                  oldVersion: nil, newVersion: nil,
-                                 destination: "telemetry.slack.com", firstSeen: now,
+                                 destination: "crashlogs.whatsapp.net", firstSeen: now,
                                  connectionCount: 44, versionKnown: false)
     ]
 
