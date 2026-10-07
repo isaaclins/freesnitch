@@ -252,7 +252,7 @@ All screenshots are FreeSnitch 1.0 running on sample data (`Scripts/screenshots.
 
 | Network Monitor | Rules |
 |---|---|
-| ![Network Monitor: apps, their destinations and a live world map](docs/screenshot-monitor.png) | ![Rules: per-app allow, deny and ask rules, with blocklists](docs/screenshot-rules.png) |
+| ![Network Monitor: apps, their destinations (Arc expanded) and a live world map](docs/screenshot-monitor.png) | ![Rules: per-app allow, deny and ask rules, with blocklists](docs/screenshot-rules.png) |
 | **Insights** | **Profiles** |
 | ![Insights: which apps reached which destinations over the last 7 days](docs/screenshot-insights.png) | ![Profiles: strictness and blocklists per network](docs/screenshot-profiles.png) |
 | **Connection alert** | **Menu bar** |
