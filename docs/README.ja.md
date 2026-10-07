@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="../screenshot.png" alt="FreeSnitch - macOS 向けオープンソース アプリケーション ファイアウォール" width="800">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="../screenshot-light.png">
+    <img src="../screenshot.png" alt="FreeSnitch - macOS 向けオープンソース アプリケーション ファイアウォール" width="800">
+  </picture>
 </p>
 
 <p align="center">

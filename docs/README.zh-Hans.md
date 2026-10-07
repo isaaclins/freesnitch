@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="../screenshot.png" alt="FreeSnitch - 适用于 macOS 的开源应用防火墙" width="800">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="../screenshot-light.png">
+    <img src="../screenshot.png" alt="FreeSnitch - 适用于 macOS 的开源应用防火墙" width="800">
+  </picture>
 </p>
 
 <p align="center">
