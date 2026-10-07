@@ -135,9 +135,13 @@ struct ConnectionAlertView: View {
                 // The rule in one sentence, so the answer can be checked before
                 // it is given rather than found later in the Rules table.
                 if remember {
+                    // Capped so it wraps. A columns Form sizes to its widest
+                    // row's one-line width, which pushed the card past its
+                    // 440pt frame and shifted everything 16pt to the left.
                     Text(ruleSummary)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: 300, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
