@@ -27,6 +27,10 @@ npx tailwindcss@3.4.17 -c docs/_tailwind/tailwind.config.js -i docs/_tailwind/in
 The Tailwind configuration and input stylesheet in `docs/_tailwind/` are the
 sources used to produce the committed CSS.
 
+The site sits behind a cache that keeps `styles.css` for up to four hours.
+When you regenerate it, change the `?v=` value on the stylesheet link in
+`docs/index.html` so visitors do not get new markup with old CSS.
+
 ## Release command
 
 When a maintainer says **release this**, the command is:
