@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../screenshot.png" alt="PureSnitch - macOS 開源應用程式防火牆" width="800">
+  <img src="../screenshot.png" alt="FreeSnitch - macOS 開源應用程式防火牆" width="800">
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
   <b>繁體中文</b>
 </p>
 
-<h1 align="center">PureSnitch</h1>
+<h1 align="center">FreeSnitch</h1>
 
 <p align="center">
   <b>看清你的 Mac 正在與誰通訊，阻擋你不信任的連線。</b><br>
@@ -20,18 +20,13 @@
 
 ## 安裝
 
-```bash
-brew tap momenbasel/puresnitch
-brew install --cask puresnitch
-```
-
-或從 [Releases](https://github.com/momenbasel/puresnitch/releases/latest) 下載簽署並公證的 `.dmg`，然後將 PureSnitch 拖入 `/Applications`。
+從 [Releases](https://github.com/isaaclins/freesnitch/releases/latest) 下載已簽署並經過公證的 `.dmg`，然後將 FreeSnitch 拖入 `/Applications`。需要 macOS 13 或以上版本（Apple Silicon 或 Intel）。首次啟動時，請在 **系統設定 > 一般 > 登入項目與延伸功能** 中允許輔助程式，並在 macOS 提示時允許系統延伸功能。完整說明請見 [英文 README](../README.md#install)。
 
 ## 為什麼需要
 
 Little Snitch 是 macOS 應用程式防火牆的黃金標準,定價 59 美元/台。LuLu 免費且在每行程核心層級表現優秀，但規則管理器較為簡樸，沒有世界地圖、流量圖表或內建黑名單庫。macOS 內建防火牆僅阻擋入站連線 - 對出站流量毫無作用。
 
-PureSnitch 提供第四種選擇:
+FreeSnitch 提供第四種選擇:
 
 - **與 Little Snitch 6 相同的介面模式** - 選單列、世界地圖、規則管理器、連線提示。
 - **MIT 授權的開源專案** - 閱讀、分叉、稽核皆可。

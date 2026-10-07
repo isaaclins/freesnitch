@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../screenshot.png" alt="PureSnitch - جدار حماية للتطبيقات على macOS" width="800">
+  <img src="../screenshot.png" alt="FreeSnitch - جدار حماية للتطبيقات على macOS" width="800">
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
   <a href="README.zh-Hant.md">繁體中文</a>
 </p>
 
-<h1 align="center">PureSnitch</h1>
+<h1 align="center">FreeSnitch</h1>
 
 <p align="center">
   <b>اعرف مع من يتحدث جهازك. واحجب ما لا تثق به.</b><br>
@@ -20,18 +20,13 @@
 
 ## التثبيت
 
-```bash
-brew tap momenbasel/puresnitch
-brew install --cask puresnitch
-```
+نزّل ملف `.dmg` الموقّع والموثّق من [صفحة الإصدارات](https://github.com/isaaclins/freesnitch/releases/latest) واسحب FreeSnitch إلى مجلد `/Applications`. يتطلب macOS 13 أو أحدث (Apple Silicon أو Intel). عند التشغيل الأول، اسمح للمساعد في **إعدادات النظام > عام > عناصر تسجيل الدخول والامتدادات**، ثم اسمح بامتداد النظام عندما يطلب macOS ذلك. التعليمات الكاملة في [README الإنجليزي](../README.md#install).
 
-أو نزّل ملف الـ `.dmg` الموقّع والموثّق من [صفحة الإصدارات](https://github.com/momenbasel/puresnitch/releases/latest) واسحب PureSnitch إلى مجلد `/Applications`.
-
-## لماذا PureSnitch
+## لماذا FreeSnitch
 
 Little Snitch هو المعيار الذهبي لجدار الحماية على نظام macOS، لكنه يكلّف 59 دولارًا لكل جهاز. LuLu مجاني لكنه يفتقر إلى الخريطة العالمية ومدير القواعد المتقدم. جدار الحماية المدمج في macOS يحجب الاتصالات الواردة فقط ولا يفعل شيئًا للاتصالات الصادرة.
 
-PureSnitch يقدّم الخيار الرابع:
+FreeSnitch يقدّم الخيار الرابع:
 
 - **نفس واجهة Little Snitch 6** - عنصر شريط القوائم، خريطة العالم، مدير القواعد، تنبيهات الاتصالات.
 - **مفتوح المصدر بترخيص MIT** - اقرأ الكود، عدّله، شاركه.

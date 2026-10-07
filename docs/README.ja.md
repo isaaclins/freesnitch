@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../screenshot.png" alt="PureSnitch - macOS 向けオープンソース アプリケーション ファイアウォール" width="800">
+  <img src="../screenshot.png" alt="FreeSnitch - macOS 向けオープンソース アプリケーション ファイアウォール" width="800">
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
   <a href="README.zh-Hant.md">繁體中文</a>
 </p>
 
-<h1 align="center">PureSnitch</h1>
+<h1 align="center">FreeSnitch</h1>
 
 <p align="center">
   <b>Mac が何と通信しているかを確認し、信頼できないものをブロックします。</b><br>
@@ -20,18 +20,13 @@
 
 ## インストール
 
-```bash
-brew tap momenbasel/puresnitch
-brew install --cask puresnitch
-```
-
-または [Releases](https://github.com/momenbasel/puresnitch/releases/latest) から署名・公証済みの `.dmg` をダウンロードし、PureSnitch を `/Applications` にドラッグします。
+署名・公証済みの `.dmg` を [Releases](https://github.com/isaaclins/freesnitch/releases/latest) からダウンロードし、FreeSnitch を `/Applications` にドラッグします。macOS 13 以降（Apple Silicon / Intel）が必要です。初回起動時に **システム設定 > 一般 > ログイン項目と機能拡張** でヘルパーを許可し、macOS に求められたらシステム拡張も許可してください。詳しくは [英語版 README](../README.md#install) を参照してください。
 
 ## なぜ作ったか
 
 Little Snitch は macOS アプリケーション ファイアウォールのゴールド スタンダードですが、1 台あたり 59 ドルかかります。LuLu は無料でプロセス単位のカーネル レベルでは優秀ですが、ルール マネージャーが簡素で、世界地図もトラフィック グラフもブロックリスト ライブラリもありません。macOS 標準のファイアウォールは受信のみブロックします - 送信トラフィックには何もしません。
 
-PureSnitch は 4 番目の選択肢です:
+FreeSnitch は 4 番目の選択肢です:
 
 - **Little Snitch 6 と同じ UI パターン** - メニューバー、世界地図、ルール マネージャー、接続アラート
 - **MIT ライセンスのオープンソース** - コードを読み、フォークし、監査できます

@@ -19,14 +19,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/isaaclins/freesnitch/releases/latest"><img src="https://img.shields.io/github/v/release/isaaclins/freesnitch?style=flat-square&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-13.0+-blue?style=flat-square" alt="macOS 13.0+">
   <img src="https://img.shields.io/badge/Swift-5.10-orange?style=flat-square" alt="Swift 5.10">
-  <img src="https://img.shields.io/badge/Firewall_build-Notarized-success?style=flat-square" alt="Notarized firewall build">
+  <a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/Firewall_build-Notarized-success?style=flat-square" alt="Notarized firewall build"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/isaaclins/freesnitch?style=flat-square" alt="MIT License"></a>
   <a href="https://github.com/isaaclins/freesnitch/stargazers"><img src="https://img.shields.io/github/stars/isaaclins/freesnitch?style=flat-square" alt="Stars"></a>
 </p>
 
 <p align="center">
+  <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg"><b>Download FreeSnitch 1.0.0</b></a> -
   <a href="#install">Install</a> -
   <a href="#why-this-exists">Why this exists</a> -
   <a href="#what-it-does">What it does</a> -
@@ -40,11 +42,34 @@
 
 ## Install
 
-No public release or Homebrew cask is available yet. Build from source for now.
+**[Download FreeSnitch 1.0.0](https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg)** (`FreeSnitch-1.0.0.dmg`, 13.7 MB) or pick a file from the [release page](https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0).
 
-Two builds exist. The difference is about who can build them, not about which one is the real product. Every release built by `Scripts/release.sh` is the firewall build, so that is what a user installs. The monitor build exists so contributors can work on the app without holding this team's Developer ID provisioning profiles.
+- macOS 13 or later, one universal build for Apple Silicon and Intel.
+- Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
+- Later versions arrive through the built-in Sparkle updater.
 
-### Firewall build, the one that ships
+1. Open the disk image and drag FreeSnitch to **Applications**. It has to live there, see below.
+2. Open FreeSnitch and allow its helper in **System Settings > General > Login Items & Extensions > Allow in the Background**.
+3. When macOS asks, allow the FreeSnitch system extension in System Settings. That is the part that filters per process.
+
+To check the download before you open it:
+
+```console
+$ shasum -a 256 ~/Downloads/FreeSnitch-1.0.0.dmg
+610ef02c2201dba159172f774fd22fa88f6cbc3b79449bef9dacaab5ce361044
+```
+
+Coming from PureSnitch? Run `Scripts/uninstall_puresnitch.sh` first. The old and new content filters must not run together.
+
+**FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from a mounted disk image or from Downloads, so drag it across before opening it. FreeSnitch will tell you if you forget.
+
+On first launch the app registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings > General > Login Items & Extensions > Allow in the Background**. Until that switch is on, macOS blocks the helper and the app cannot see traffic. The window updates on its own once you approve it, with no relaunch needed.
+
+### Build from source
+
+Two builds exist. The difference is about who can build them, not about which one is the real product. Every release built by `Scripts/release.sh` is the firewall build, so that is what the download above is. The monitor build exists so contributors can work on the app without holding this team's Developer ID provisioning profiles.
+
+#### Firewall build, the one that ships
 
 Generated from `project-netext.yml`. It embeds `io.isaaclins.freesnitch.netext.systemextension` and provides per-process filtering. It requires the Developer ID provisioning profiles for the app and extension in `Profiles/`, plus Developer ID signing.
 
@@ -54,9 +79,9 @@ xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Relea
   -derivedDataPath build build
 ```
 
-Install the signed firewall build in `/Applications`. On first launch, approve the system extension in **System Settings > Privacy & Security**.
+Install the signed firewall build in `/Applications`. On first launch, approve the system extension in System Settings.
 
-### Monitor build, for contributors without the profiles
+#### Monitor build, for contributors without the profiles
 
 Generated from `project.yml`. It includes the app, helper, monitoring, rules UI, DNS proxy, and `pfctl` integration, and omits the Network System Extension so it builds without provisioning profiles. Use it to work on everything except per-process filtering. It is not what users receive.
 
@@ -70,11 +95,7 @@ xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Relea
 open build/Build/Products/Release/FreeSnitch.app
 ```
 
-This build needs no system extension approval, because it has no extension to approve.
-
-**FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from a mounted disk image or from Downloads, so drag it across before opening it. FreeSnitch will tell you if you forget.
-
-On first launch the app registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings > General > Login Items & Extensions > Allow in the Background**. Until that switch is on, macOS blocks the helper and the app cannot see traffic. The window updates on its own once you approve it, with no relaunch needed.
+This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release.
 
 ## Uninstall
 
@@ -110,9 +131,9 @@ FreeSnitch is the fourth choice:
 - **Free under MIT.** Read the code, fork it, audit it. The matcher, DNS proxy, pf integration, and UI are all open.
 - **No telemetry.** No analytics SDKs. No crash reporters phoning home. No "anonymous usage" pings. Network requests are limited to enabled blocklists, the DoH resolver you choose, offline geolocation data sources, and Sparkle update checks.
 - **Built like a Mac app, not a port.** Native SwiftUI for the windows, real `NSStatusItem` for the menubar, `SMAppService` for the privileged helper, and XPC over a Mach service for the GUI to daemon bridge.
-- **A signed firewall build has passed Apple notarization.** The public repository has no published release yet.
+- **Signed and notarized.** [Version 1.0.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0) is the firewall build, signed with a Developer ID and notarized by Apple.
 
-What FreeSnitch is **honest** about: released builds ship the per-process firewall, and `Sources/NetExt/FilterDataProvider.swift` is a real `NEFilterDataProvider` that evaluates every new socket flow and returns an allow or drop verdict, or pauses the flow for a decision from the GUI. The monitor build omits that extension so contributors can build without this team's provisioning profiles; it is a development convenience, not the shipped product. No public release has been published yet.
+What FreeSnitch is **honest** about: released builds ship the per-process firewall, and `Sources/NetExt/FilterDataProvider.swift` is a real `NEFilterDataProvider` that evaluates every new socket flow and returns an allow or drop verdict, or pauses the flow for a decision from the GUI. The monitor build omits that extension so contributors can build without this team's provisioning profiles; it is a development convenience, not the shipped product.
 
 ## What it does
 
@@ -251,7 +272,7 @@ FreeSnitch's firewall flavour provides per-process kernel filtering alongside it
 
 Per-process outbound filtering works today, through a signed Network System Extension that evaluates every new socket flow. Alongside it: DNS-level filtering with blocklists and DNS over HTTPS, `pfctl` enforcement, a rules manager, a live traffic monitor, a command line interface that mirrors the GUI, and Sparkle update support.
 
-No public release has been published. The version values in the project files identify the current build, not a downloadable release. Build it from source, see [Install](#install).
+The current release is [FreeSnitch 1.0.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0), published on 15 August 2026. Every release is listed on the [releases page](https://github.com/isaaclins/freesnitch/releases).
 
 There is no fixed roadmap here, and pretending otherwise ages badly. Direction is decided in the open on the [issue tracker](https://github.com/isaaclins/freesnitch/issues), where proposed work carries the reasoning behind it and the constraints it has to respect.
 
@@ -263,7 +284,7 @@ There is no fixed roadmap here, and pretending otherwise ages badly. Direction i
 
 **How does per-process filtering work?** The shipping build embeds a Network System Extension built from `Sources/NetExt/FilterDataProvider.swift`. It evaluates each new socket flow against the shared rules and can allow, drop, or pause it for a GUI decision. It needs user approval of the system extension on first launch. The contributor build, generated from `project.yml`, leaves that extension out so it can be built without provisioning profiles, and falls back to observation plus DNS and pfctl enforcement.
 
-**Will this run on Intel Macs?** The project settings build universal `arm64` and `x86_64` binaries and set macOS 13 as the deployment target. No public release DMG is available yet.
+**Will this run on Intel Macs?** Yes. The release is a universal binary with `arm64` and `x86_64` slices, and macOS 13 is the minimum.
 
 **Does it show an app's declared Internet Access Policy?** It can, and in practice it almost never will. FreeSnitch parses Little Snitch's `.lsiap` format and displays it when an app ships one, but adoption never happened: scanning a working Mac found the file in 0 of 64 installed apps. The parser is kept because the data would be genuinely useful if it existed, showing what an app says a connection is for before you deny it. Treat it as latent support rather than a feature you will see.
 

@@ -59,6 +59,22 @@ requires a clean, pushed `main` synchronized with its upstream and validates a
 notes file only when one is supplied or the versioned notes file already exists.
 Neither mode changes tracked files, tags, remotes, or GitHub Releases.
 
+## After a release
+
+`Scripts/release.sh` does not touch the website or the README. Both name the
+current version, its download link, and its SHA-256, so update them by hand
+once the GitHub Release is live:
+
+- `docs/index.html`: the download links, the version line in the hero, the
+  install section, and `softwareVersion` and `downloadUrl` in the JSON-LD.
+- `README.md`: the Install section and the Status paragraph.
+
+Get the checksum from the published asset, not from the local build folder:
+
+```sh
+curl -sL https://github.com/isaaclins/freesnitch/releases/download/vVERSION/FreeSnitch-VERSION.dmg | shasum -a 256
+```
+
 ## Prerequisites
 
 Run the real release on macOS with Xcode, XcodeGen, the Apple command-line

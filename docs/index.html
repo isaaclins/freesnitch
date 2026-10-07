@@ -28,8 +28,9 @@
   "@type": "SoftwareApplication",
   "name": "FreeSnitch",
   "applicationCategory": "SecurityApplication",
-  "operatingSystem": "macOS 14+",
-  "softwareRequirements": "Apple Silicon",
+  "operatingSystem": "macOS 13+",
+  "softwareVersion": "1.0.0",
+  "downloadUrl": "https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg",
   "isAccessibleForFree": true,
   "codeRepository": "https://github.com/isaaclins/freesnitch",
   "license": "https://opensource.org/licenses/MIT",
@@ -58,10 +59,11 @@
       <a href="#control" class="transition-colors hover:text-primary">Control</a>
       <a href="#trust" class="transition-colors hover:text-primary">Trust</a>
       <a href="#compare" class="transition-colors hover:text-primary">Compare</a>
-      <a href="#build" class="transition-colors hover:text-primary">Build</a>
-      <a href="https://github.com/isaaclins/freesnitch" class="border-l border-line pl-6 font-medium text-accent transition-colors hover:text-beam-400">Read the source</a>
+      <a href="#install" class="transition-colors hover:text-primary">Install</a>
+      <a href="https://github.com/isaaclins/freesnitch" class="border-l border-line pl-6 transition-colors hover:text-primary">Source</a>
+      <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg" class="rounded-lg bg-beam-600 px-3.5 py-2 font-semibold text-beam-50 transition-colors hover:bg-beam-700">Download</a>
     </nav>
-    <a href="https://github.com/isaaclins/freesnitch" class="text-sm font-medium text-accent transition-colors hover:text-beam-400 lg:hidden">Read the source</a>
+    <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg" class="rounded-lg bg-beam-600 px-3.5 py-2 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700 lg:hidden">Download</a>
   </div>
 </header>
 
@@ -73,9 +75,10 @@
         <h1 id="hero-title" class="hero-title font-display font-semibold leading-[0.98] tracking-[-0.055em] text-primary">See every connection.</h1>
         <p class="mt-7 max-w-lg text-lg leading-8 text-secondary">FreeSnitch is an open-source macOS firewall that shows where processes connect and lets you decide what happens next.</p>
         <div class="mt-9 flex flex-wrap items-center gap-4">
-          <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center justify-center rounded-xl bg-beam-600 px-5 py-3.5 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700">Read the source</a>
-          <a href="#observe" class="inline-flex items-center justify-center rounded-xl border border-line px-5 py-3.5 text-sm font-semibold text-primary transition-colors hover:border-accent hover:text-accent">See the monitor</a>
+          <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg" class="inline-flex items-center justify-center gap-2 rounded-xl bg-beam-600 px-5 py-3.5 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700"><svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download for Mac</a>
+          <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center justify-center rounded-xl border border-line px-5 py-3.5 text-sm font-semibold text-primary transition-colors hover:border-accent hover:text-accent">Read the source</a>
         </div>
+        <p class="mt-5 font-mono text-xs leading-6 text-muted"><a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0" class="text-accent underline decoration-beam-500/50 underline-offset-4 transition-colors hover:text-beam-400">Version 1.0.0</a> <span aria-hidden="true">&middot;</span> macOS 13+ <span aria-hidden="true">&middot;</span> Apple Silicon and Intel <span aria-hidden="true">&middot;</span> Notarized</p>
       </div>
       <figure class="lg:justify-self-end lg:max-w-[47rem]">
         <div class="overflow-hidden rounded-xl border border-line bg-surface-raised p-2">
@@ -104,7 +107,7 @@
         </div>
         <div class="border-line py-5 md:border-l md:pl-8">
           <dt class="text-sm text-muted">Platform</dt>
-          <dd class="mt-2 font-display text-xl font-semibold text-primary">macOS 14+ on Apple Silicon</dd>
+          <dd class="mt-2 font-display text-xl font-semibold text-primary">macOS 13+, Apple Silicon and Intel</dd>
         </div>
       </dl>
 
@@ -251,7 +254,7 @@
           </div>
           <div class="grid gap-2 py-6 sm:grid-cols-[12rem_1fr] sm:gap-8">
             <dt class="font-medium text-primary">Distribution</dt>
-            <dd class="leading-7 text-muted">Distribution is signed and notarized with a Developer ID. No release has been published yet.</dd>
+            <dd class="leading-7 text-muted">The release is signed with a Developer ID, notarized and stapled by Apple. Updates arrive through Sparkle and are checked against an EdDSA signature before they install.</dd>
           </div>
         </dl>
       </div>
@@ -337,68 +340,78 @@
           </tbody>
         </table>
       </div>
-      <p class="mt-6 max-w-3xl text-sm leading-6 text-muted">FreeSnitch has no release yet, so the repository and current build are the reference. If per-process enforcement is a hard requirement, verify the Network Extension entitlement before relying on any tool.</p>
+      <p class="mt-6 max-w-3xl text-sm leading-6 text-muted">FreeSnitch column as of version 1.0.0. Per-process filtering runs in a Network System Extension that macOS asks you to approve on first launch.</p>
     </div>
   </section>
 
   <section id="boundaries" class="border-b border-line py-24 lg:py-32" aria-labelledby="boundaries-title">
     <div class="mx-auto max-w-7xl px-6 lg:px-8">
       <div class="max-w-3xl">
-        <h2 id="boundaries-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Know what you can use today.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">The source is ready to inspect. Distribution is not published yet, and one platform approval still matters to the full enforcement story.</p>
+        <h2 id="boundaries-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Know where it stops.</h2>
+        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">Version 1.0.0 is signed, notarized, and ready to install. Here is what it does not cover, said up front.</p>
       </div>
 
       <div class="mt-14 grid border-y border-line md:grid-cols-[1.15fr_0.85fr_1fr]">
         <div class="py-7 md:pr-10">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Source is available</h3>
-          <p class="mt-3 leading-7 text-secondary">Read the SwiftUI app, helper, Network Extension target, rules, DNS proxy, and pfctl integration in the repository.</p>
+          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Blocklists are DNS only</h3>
+          <p class="mt-3 leading-7 text-secondary">Lists filter domain names through the local DNS proxy. They do not stop connections to hardcoded IP addresses, or names an app resolves with its own encrypted DNS, such as Chrome and Firefox with DoH on.</p>
         </div>
         <div class="border-line border-t py-7 md:border-l md:border-t-0 md:px-10">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">No release yet</h3>
-          <p class="mt-3 leading-7 text-secondary">There is no signed download or Homebrew cask to install. Build from source for now.</p>
+          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">The map is an estimate</h3>
+          <p class="mt-3 leading-7 text-secondary">Locations come from offline IP geolocation, not measurement.</p>
         </div>
         <div class="border-line border-t py-7 md:border-l md:border-t-0 md:pl-10">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Entitlement still matters</h3>
-          <p class="mt-3 leading-7 text-secondary">Apple gates the Network Extension entitlement. The current source is the reference until a signed release is published.</p>
+          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Enforcement is opt-in</h3>
+          <p class="mt-3 leading-7 text-secondary">Out of the box FreeSnitch watches. The DNS proxy and pf rules start only when you turn on Enforcement in Settings.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <section id="build" class="border-b border-line py-24 lg:py-32" aria-labelledby="build-title">
+  <section id="install" class="border-b border-line py-24 lg:py-32" aria-labelledby="install-title">
     <div class="mx-auto grid max-w-7xl gap-14 px-6 lg:grid-cols-[0.7fr_1.3fr] lg:gap-24 lg:px-8">
-      <div>
-        <h2 id="build-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Build from source. Approve only what you understand.</h2>
-        <p class="mt-5 text-lg leading-8 text-secondary">Until a release exists, XcodeGen and Xcode are the installation path. The project requires macOS 14+ and Apple Silicon.</p>
+      <div class="min-w-0">
+        <h2 id="install-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Install it. Approve only what you understand.</h2>
+        <p class="mt-5 text-lg leading-8 text-secondary">One universal disk image for macOS 13 or later, on Apple Silicon and Intel. Signed with a Developer ID and notarized by Apple.</p>
+        <div class="mt-8 flex flex-wrap items-center gap-4">
+          <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg" class="inline-flex items-center justify-center gap-2 rounded-xl bg-beam-600 px-5 py-3.5 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700"><svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download 1.0.0</a>
+          <a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0" class="text-sm font-semibold text-accent transition-colors hover:text-beam-400">Release notes</a>
+        </div>
+        <p class="mt-4 text-sm leading-6 text-muted">FreeSnitch-1.0.0.dmg, 13.7 MB. Free, no account.</p>
       </div>
 
-      <div>
-        <div class="grid gap-0 border-y border-line sm:grid-cols-3">
-          <div class="py-6 sm:pr-6">
-            <h3 class="font-display text-xl font-semibold text-primary">Install XcodeGen</h3>
-            <p class="mt-2 text-sm leading-6 text-muted">Use Homebrew to create the Xcode project.</p>
-          </div>
-          <div class="border-line border-t py-6 sm:border-l sm:border-t-0 sm:px-6">
-            <h3 class="font-display text-xl font-semibold text-primary">Generate and build</h3>
-            <p class="mt-2 text-sm leading-6 text-muted">Run the project commands from the repository root.</p>
-          </div>
-          <div class="border-line border-t py-6 sm:border-l sm:border-t-0 sm:pl-6">
-            <h3 class="font-display text-xl font-semibold text-primary">Approve the helper</h3>
-            <p class="mt-2 text-sm leading-6 text-muted">macOS asks for the system extension approval after first launch.</p>
-          </div>
-        </div>
+      <div class="min-w-0">
+        <ol class="grid gap-0 border-y border-line sm:grid-cols-3">
+          <li class="py-6 sm:pr-6">
+            <p class="font-mono text-xs text-accent">01</p>
+            <h3 class="mt-2 font-display text-xl font-semibold text-primary">Drag to Applications</h3>
+            <p class="mt-2 text-sm leading-6 text-muted">Open the disk image and drag FreeSnitch into Applications. macOS only installs its helper from there.</p>
+          </li>
+          <li class="border-line border-t py-6 sm:border-l sm:border-t-0 sm:px-6">
+            <p class="font-mono text-xs text-accent">02</p>
+            <h3 class="mt-2 font-display text-xl font-semibold text-primary">Allow the helper</h3>
+            <p class="mt-2 text-sm leading-6 text-muted">System Settings / General / Login Items &amp; Extensions. Turn on Allow in the Background for FreeSnitch.</p>
+          </li>
+          <li class="border-line border-t py-6 sm:border-l sm:border-t-0 sm:pl-6">
+            <p class="font-mono text-xs text-accent">03</p>
+            <h3 class="mt-2 font-display text-xl font-semibold text-primary">Approve the filter</h3>
+            <p class="mt-2 text-sm leading-6 text-muted">When macOS asks, allow the FreeSnitch system extension in System Settings. It does the per-process filtering.</p>
+          </li>
+        </ol>
 
-        <pre class="mt-10 overflow-x-auto rounded-xl border border-line bg-surface-raised p-6 font-mono text-sm leading-7 text-secondary"><code>brew install xcodegen
+        <p class="mt-10 text-sm leading-6 text-muted">Check the download before you open it:</p>
+        <pre class="mt-3 overflow-x-auto rounded-xl border border-line bg-surface-raised p-6 font-mono text-sm leading-7 text-secondary"><code>shasum -a 256 ~/Downloads/FreeSnitch-1.0.0.dmg
+610ef02c2201dba159172f774fd22fa88f6cbc3b79449bef9dacaab5ce361044</code></pre>
+
+        <aside class="mt-8 border-l-4 border-beam-500 pl-6" aria-labelledby="source-build-title">
+          <h3 id="source-build-title" class="font-display text-xl font-semibold text-primary">Rather build it yourself?</h3>
+          <p class="mt-2 leading-7 text-secondary">XcodeGen and Xcode build the contributor flavour, which has everything except the Network Extension, so it needs no provisioning profiles. The <a href="https://github.com/isaaclins/freesnitch#build-from-source" class="text-accent underline decoration-beam-500/50 underline-offset-4 hover:text-beam-400">README</a> has both build flavours.</p>
+          <pre class="mt-4 overflow-x-auto rounded-xl border border-line bg-surface-raised p-6 font-mono text-sm leading-7 text-secondary"><code>brew install xcodegen
 git clone https://github.com/isaaclins/freesnitch.git
 cd freesnitch
-xcodegen generate
+xcodegen generate --spec project.yml
 xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch \
-  -configuration Release -derivedDataPath build build
-open build/Build/Products/Release/FreeSnitch.app</code></pre>
-
-        <aside class="mt-8 border-l-4 border-beam-500 pl-6" aria-labelledby="first-launch-title">
-          <h3 id="first-launch-title" class="font-display text-xl font-semibold text-primary">First launch</h3>
-          <p class="mt-2 leading-7 text-secondary">macOS will surface the privileged helper in System Settings / General / Login Items &amp; Extensions. Toggle FreeSnitchHelper on. FreeSnitch does not ask for your password during normal operation.</p>
+  -configuration Release -derivedDataPath build build</code></pre>
         </aside>
       </div>
     </div>
@@ -433,6 +446,7 @@ open build/Build/Products/Release/FreeSnitch.app</code></pre>
       </div>
     </div>
     <nav class="flex flex-wrap gap-x-6 gap-y-2" aria-label="Footer navigation">
+      <a href="https://github.com/isaaclins/freesnitch/releases" class="transition-colors hover:text-primary">Releases</a>
       <a href="https://github.com/isaaclins/freesnitch" class="transition-colors hover:text-primary">Read the source</a>
       <a href="https://github.com/isaaclins/freesnitch/issues" class="transition-colors hover:text-primary">Issues</a>
       <a href="https://github.com/isaaclins/freesnitch/blob/main/LICENSE" class="transition-colors hover:text-primary">License</a>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../screenshot.png" alt="PureSnitch - firewall de aplicaciones para macOS de código abierto" width="800">
+  <img src="../screenshot.png" alt="FreeSnitch - firewall de aplicaciones para macOS de código abierto" width="800">
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
   <a href="README.zh-Hant.md">繁體中文</a>
 </p>
 
-<h1 align="center">PureSnitch</h1>
+<h1 align="center">FreeSnitch</h1>
 
 <p align="center">
   <b>Mira con quién habla tu Mac. Bloquea lo que no te gusta.</b><br>
@@ -20,18 +20,13 @@
 
 ## Instalar
 
-```bash
-brew tap momenbasel/puresnitch
-brew install --cask puresnitch
-```
-
-O descarga el `.dmg` firmado y notarizado desde [Releases](https://github.com/momenbasel/puresnitch/releases/latest) y arrastra PureSnitch a `/Applications`.
+Descarga el `.dmg` firmado y notarizado de la [página de releases](https://github.com/isaaclins/freesnitch/releases/latest) y arrastra FreeSnitch a `/Applications`. Requiere macOS 13 o posterior (Apple Silicon o Intel). En el primer inicio, permite el ayudante en **Ajustes del Sistema > General > Ítems de inicio y extensiones** y, cuando macOS lo pida, la extensión del sistema. Instrucciones completas en el [README en inglés](../README.md#install).
 
 ## Por qué existe
 
 Little Snitch es el estándar de oro para firewalls de aplicaciones en macOS y cuesta 59 USD por Mac. LuLu es gratis y excelente a nivel de proceso, pero el administrador de reglas es austero y no tiene mapa mundial ni gráfico de tráfico ni biblioteca de blocklists. El firewall integrado de macOS solo bloquea entrada - no hace nada con el tráfico saliente.
 
-PureSnitch es la cuarta opción:
+FreeSnitch es la cuarta opción:
 
 - **Misma interfaz que Little Snitch 6** - barra de menú, mapa mundial, gestor de reglas, alertas de conexión.
 - **Código abierto bajo MIT** - léelo, fórkalo, audítalo.
