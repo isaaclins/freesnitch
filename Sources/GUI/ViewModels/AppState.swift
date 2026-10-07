@@ -147,6 +147,14 @@ final class AppState: ObservableObject {
         AppPreferences.set(value, forKey: AppPreferences.Key.enforcement)
     }
 
+    /// Demo only: shows enforcement as on without asking a helper and
+    /// without saving the preference, so a demo run leaves nothing behind.
+    func showDemoEnforcement() {
+        suppressEnforcementSideEffect = true
+        enforcementEnabled = true
+        suppressEnforcementSideEffect = false
+    }
+
     /// The helper carried the change out.
     func enforcementChangeSucceeded() {
         enforcementChangePending = false

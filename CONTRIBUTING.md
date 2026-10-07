@@ -31,7 +31,7 @@ Build target: FreeSnitch. Hit ⌘R. A local contributor build may fail to instal
 2. **macOS compatibility**. Test on every macOS version you have, report breakage with a paste of the build error.
 3. **Localization**. The strings are not yet `.strings`-extracted. Help wanted.
 4. **Blocklist curation**. Add high-quality, low-false-positive sources; remove anything stale.
-5. **UI polish**. Pixel-level fidelity to Little Snitch is the bar. Submit screenshots in the PR.
+5. **UI polish**. Pixel-level fidelity to Little Snitch is the bar. Submit screenshots in the PR: `Scripts/screenshots.sh` captures every screen from sample data (`FREESNITCH_DEMO=1`), in dark and light mode.
 
 ## Pull request checklist
 

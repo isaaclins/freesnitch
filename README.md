@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="screenshot.png" alt="FreeSnitch: open-source macOS application firewall" width="800">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="screenshot-light.png">
+    <img src="screenshot.png" alt="FreeSnitch: open-source macOS application firewall" width="800">
+  </picture>
 </p>
 
 <p align="center">
@@ -245,9 +248,15 @@ What FreeSnitch does **not** do:
 
 ## Screenshots
 
-| Network Monitor | Rules Manager |
+All screenshots are FreeSnitch 1.0 running on sample data (`Scripts/screenshots.sh`), in light and dark mode.
+
+| Network Monitor | Rules |
 |---|---|
-| ![Network Monitor](docs/screenshot-monitor.png) | ![Rules Manager](docs/screenshot-rules.png) |
+| ![Network Monitor: apps, their destinations and a live world map](docs/screenshot-monitor.png) | ![Rules: per-app allow, deny and ask rules, with blocklists](docs/screenshot-rules.png) |
+| **Insights** | **Profiles** |
+| ![Insights: which apps reached which destinations over the last 7 days](docs/screenshot-insights.png) | ![Profiles: strictness and blocklists per network](docs/screenshot-profiles.png) |
+| **Connection alert** | **Menu bar** |
+| ![Connection alert: Discord wants to connect to gateway.discord.gg](docs/screenshot-alert.png) | ![Menu bar: mode, profile, live traffic and recent activity](docs/screenshot-menubar.png) |
 
 ## Comparison
 
@@ -311,6 +320,7 @@ freesnitch/
 │   ├── make_icon.sh
 │   ├── release.sh
 │   ├── render_icon.swift
+│   ├── screenshots.sh      # README and website screenshots from demo data
 │   ├── test_uninstall_safety.sh
 │   ├── uninstall_freesnitch.sh
 │   └── uninstall_puresnitch.sh
@@ -322,7 +332,8 @@ freesnitch/
 ├── CONTRIBUTING.md
 ├── README.md
 ├── LICENSE                 # MIT
-└── screenshot.png          # Repository hero screenshot
+├── screenshot.png          # Repository hero screenshot (dark)
+└── screenshot-light.png    # Same, light mode
 ```
 
 ## Security

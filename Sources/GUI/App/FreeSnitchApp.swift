@@ -110,10 +110,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager = WindowManager(state: state, systemExtension: systemExtension)
         menubar = MenubarController(state: state, systemExtension: systemExtension, windows: windowManager)
         menubar.install()
-        state.helper.registerDaemon()
-        // bootstrap() (rule load + monitoring) is driven by HelperClient once
-        // the helper is actually reachable. See HelperClient.setConnected.
-        state.helper.connect()
+        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" {
+            // The demo shows sample data only. It never registers the helper
+            // and never talks to one, so on a Mac where FreeSnitch is installed
+            // the owner's real traffic cannot end up in a screenshot, and the
+            // "approve the helper" banner does not cover the screen under review.
+            state.helperInstallState = .enabled
+            state.helperConnected = true
+        } else {
+            state.helper.registerDaemon()
+            // bootstrap() (rule load + monitoring) is driven by HelperClient once
+            // the helper is actually reachable. See HelperClient.setConnected.
+            state.helper.connect()
+        }
         // Seed the initial rule snapshot so the network extension receives the
         // current mode and rules as soon as its XPC listener is available.
         state.syncSharedRules()
@@ -193,115 +202,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             samples.append(TrafficSample(timestamp: t, bytesIn: inB, bytesOut: outB))
         }
         state.trafficHistory = samples
+        // What a running firewall looks like: asking about new connections,
+        // with rules and blocklists in force.
+        state.mode = .alert
+        state.showDemoEnforcement()
         state.currentIn = 332_000
         state.currentOut = 2_180_000
-        state.totalIn = 952_000_000
-        state.totalOut = 288_000_000
         state.deniedCount = 3
         state.incomingCount = 19
         state.unconfirmedCount = 283
 
-        // Synthetic process list
-        let procs: [(String, Int64, Int64, String)] = [
-            ("Dia", 3_580_000_000, 480_000_000, "compass"),
-            ("iTerm", 5_200_000_000, 410_000_000, "terminal"),
-            ("Discord", 768_000_000, 95_000_000, "message"),
-            ("claude", 322_000_000, 18_000_000, "sparkles"),
-            ("Slack", 285_000_000, 26_000_000, "bubble.left.and.bubble.right"),
-            ("WhatsApp", 80_000_000, 30_000_000, "bubble.left"),
-            ("Telegram", 78_000_000, 14_000_000, "paperplane"),
-            ("Spotify", 58_000_000, 4_500_000, "music.note"),
-            ("Visual Studio Code", 51_500_000, 6_700_000, "chevron.left.forwardslash.chevron.right"),
-            ("Cursor", 28_300_000, 1_500_000, "command"),
-            ("Arc", 22_400_000, 5_800_000, "globe"),
-            ("Microsoft Edge", 17_200_000, 3_400_000, "globe.americas"),
-            ("Google Chrome", 14_900_000, 2_800_000, "globe.europe.africa"),
-            ("MacUpdater", 8_300_000, 920_000, "arrow.clockwise"),
-            ("Setapp", 6_500_000, 870_000, "rectangle.grid.2x2"),
-            ("bun", 5_200_000, 1_400_000, "hare.fill"),
-            ("Microsoft Teams", 4_100_000, 1_200_000, "person.3"),
-            ("ChatGPT", 2_100_000, 400_000, "brain")
-        ]
-        state.topProcesses = procs.map { (n, i, o, _) in
-            AppState.ProcessStats(id: n, name: n, bytesIn: i, bytesOut: o, icon: AppIcon.resolve(name: n))
-        }
-
-        let domains: [(String, Int64)] = [
-            ("fbcdn.net", 12_300_000_000),
-            ("googlevideo.com", 7_080_000_000),
-            ("scdn.co", 7_080_000_000),
-            ("apple.com", 1_240_000_000),
-            ("github.com", 482_000_000)
-        ]
-        state.topDomains = domains.map { (d, t) in
-            AppState.DomainStats(id: d, domain: d, bytesIn: t * 7 / 10, bytesOut: t * 3 / 10)
-        }
-
-        let countries: [(String, String, Int64)] = [
-            ("Canada", "CA", 28_300_000_000),
-            ("United States", "US", 23_200_000_000),
-            ("Germany", "DE", 14_200_000_000),
-            ("United Kingdom", "GB", 4_100_000_000),
-            ("Japan", "JP", 1_900_000_000)
-        ]
-        state.topCountries = countries.map { (n, c, t) in
-            AppState.CountryStats(id: c, country: n, countryCode: c, bytesIn: t * 6 / 10, bytesOut: t * 4 / 10)
-        }
-
-        // Synthetic live connections. The map and the monitor tree are both
-        // built from `connections`, so without these the demo shows an empty
-        // world and an empty tree, which is exactly what needs reviewing.
-        // Cities are spread across continents, and two are IPv6, so clustering
-        // and the antimeridian arc both have something to do.
-        let endpoints: [(String, String, String?, String, String, String, String, Double, Double, Int, Int64, Int64)] = [
-            ("Spotify", "/Applications/Spotify.app", "com.spotify.client", "audio-fa.scdn.co", "104.199.65.9", "Stockholm", "SE", 59.33, 18.06, 443, 3_580_000_000, 42_000_000),
-            ("Spotify", "/Applications/Spotify.app", "com.spotify.client", "apresolve.spotify.com", "35.186.224.25", "Ashburn", "US", 39.04, -77.49, 443, 12_400_000, 2_100_000),
-            ("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome", "www.googleapis.com", "142.250.74.234", "Zurich", "CH", 47.37, 8.54, 443, 148_000_000, 18_600_000),
-            ("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome", "fonts.gstatic.com", "2a00:1450:4001:82f::2003", "Frankfurt", "DE", 50.11, 8.68, 443, 22_800_000, 1_900_000),
-            ("Google Chrome", "/Applications/Google Chrome.app", "com.google.Chrome", "", "203.0.113.42", "Singapore", "SG", 1.35, 103.82, 443, 5_400_000, 900_000),
-            ("Discord", "/Applications/Discord.app", "com.hnc.Discord", "gateway.discord.gg", "162.159.128.233", "Amsterdam", "NL", 52.37, 4.90, 443, 768_000_000, 95_000_000),
-            ("Discord", "/Applications/Discord.app", "com.hnc.Discord", "cdn.discordapp.com", "162.159.130.234", "Paris", "FR", 48.86, 2.35, 443, 96_000_000, 7_300_000),
-            ("Telegram", "/Applications/Telegram.app", "ru.keepcoder.Telegram", "", "149.154.167.51", "Amsterdam", "NL", 52.37, 4.90, 443, 78_000_000, 14_000_000),
-            ("Visual Studio Code", "/Applications/Visual Studio Code.app", "com.microsoft.VSCode", "update.code.visualstudio.com", "13.107.42.16", "Dublin", "IE", 53.35, -6.26, 443, 51_500_000, 6_700_000),
-            ("Visual Studio Code", "/Applications/Visual Studio Code.app", "com.microsoft.VSCode", "marketplace.visualstudio.com", "13.107.6.175", "Sydney", "AU", -33.87, 151.21, 443, 9_200_000, 3_100_000),
-            ("claude", "/usr/local/bin/claude", nil, "api.anthropic.com", "160.79.104.10", "San Francisco", "US", 37.77, -122.42, 443, 322_000_000, 18_000_000),
-            ("iTerm", "/Applications/iTerm.app", "com.googlecode.iterm2", "github.com", "140.82.121.4", "Seattle", "US", 47.61, -122.33, 443, 482_000_000, 41_000_000),
-            ("iTerm", "/Applications/iTerm.app", "com.googlecode.iterm2", "registry.npmjs.org", "2606:4700::6810:1b23", "Tokyo", "JP", 35.68, 139.69, 443, 74_000_000, 5_200_000),
-            ("Slack", "/Applications/Slack.app", "com.tinyspeck.slackmacgap", "wss-primary.slack.com", "99.86.90.51", "São Paulo", "BR", -23.55, -46.63, 443, 285_000_000, 26_000_000),
-            ("MacUpdater", "/Applications/MacUpdater.app", "co.corecode.MacUpdater", "", "198.51.100.77", "Toronto", "CA", 43.65, -79.38, 443, 8_300_000, 920_000)
+        // Synthetic live connections. The map, the monitor tree and the
+        // summary are all built from this one list, so they agree with each
+        // other. Apps are ones whose icons are on most Macs (Apple's own) or on
+        // a typical developer's, and cities are spread across continents so
+        // clustering and the antimeridian arc both have something to do.
+        typealias Endpoint = (name: String, path: String, bundle: String?, host: String, ip: String,
+                              city: String, code: String, lat: Double, lon: Double,
+                              bytesIn: Int64, bytesOut: Int64, denied: Bool)
+        let endpoints: [Endpoint] = [
+            ("Safari", "/Applications/Safari.app", "com.apple.Safari", "www.apple.com", "17.253.144.10", "Cupertino", "US", 37.32, -122.03, 412_000_000, 18_400_000, false),
+            ("Safari", "/Applications/Safari.app", "com.apple.Safari", "github.com", "140.82.121.4", "Frankfurt", "DE", 50.11, 8.68, 286_000_000, 31_000_000, false),
+            ("Safari", "/Applications/Safari.app", "com.apple.Safari", "www.theverge.com", "151.101.1.52", "London", "GB", 51.51, -0.13, 64_000_000, 2_400_000, false),
+            ("Arc", "/Applications/Arc.app", "company.thebrowser.Browser", "www.youtube.com", "142.250.203.110", "Warsaw", "PL", 52.23, 21.01, 2_940_000_000, 48_000_000, false),
+            ("Arc", "/Applications/Arc.app", "company.thebrowser.Browser", "fonts.gstatic.com", "2a00:1450:4001:82f::2003", "Frankfurt", "DE", 50.11, 8.68, 22_800_000, 1_900_000, false),
+            ("Arc", "/Applications/Arc.app", "company.thebrowser.Browser", "stats.g.doubleclick.net", "142.250.27.154", "Brussels", "BE", 50.85, 4.35, 0, 1_200, true),
+            ("Arc", "/Applications/Arc.app", "company.thebrowser.Browser", "", "203.0.113.42", "Singapore", "SG", 1.35, 103.82, 5_400_000, 900_000, false),
+            ("Xcode", "/Applications/Xcode.app", "com.apple.dt.Xcode", "developer.apple.com", "17.253.27.204", "San Jose", "US", 37.34, -121.89, 1_860_000_000, 9_800_000, false),
+            ("Xcode", "/Applications/Xcode.app", "com.apple.dt.Xcode", "devimages-cdn.apple.com", "17.253.85.201", "Tokyo", "JP", 35.68, 139.69, 412_000_000, 3_100_000, false),
+            ("Discord", "/Applications/Discord.app", "com.hnc.Discord", "gateway.discord.gg", "162.159.128.233", "Amsterdam", "NL", 52.37, 4.90, 768_000_000, 95_000_000, false),
+            ("Discord", "/Applications/Discord.app", "com.hnc.Discord", "cdn.discordapp.com", "162.159.130.234", "Paris", "FR", 48.86, 2.35, 96_000_000, 7_300_000, false),
+            ("Music", "/System/Applications/Music.app", "com.apple.Music", "aod.itunes.apple.com", "17.253.53.207", "Stockholm", "SE", 59.33, 18.06, 1_240_000_000, 6_200_000, false),
+            ("Mail", "/System/Applications/Mail.app", "com.apple.mail", "imap.mail.me.com", "17.42.251.41", "Ashburn", "US", 39.04, -77.49, 182_000_000, 24_000_000, false),
+            ("Mail", "/System/Applications/Mail.app", "com.apple.mail", "outlook.office365.com", "52.97.146.162", "Dublin", "IE", 53.35, -6.26, 96_000_000, 12_000_000, false),
+            ("Claude", "/Applications/Claude.app", "com.anthropic.claudefordesktop", "api.anthropic.com", "160.79.104.10", "San Francisco", "US", 37.77, -122.42, 322_000_000, 58_000_000, false),
+            ("WhatsApp", "/Applications/WhatsApp.app", "net.whatsapp.WhatsApp", "g.whatsapp.net", "157.240.17.52", "São Paulo", "BR", -23.55, -46.63, 80_000_000, 30_000_000, false),
+            ("Zed", "/Applications/Zed.app", "dev.zed.Zed", "api.zed.dev", "104.18.22.183", "Sydney", "AU", -33.87, 151.21, 51_500_000, 6_700_000, false)
         ]
         state.connections = endpoints.enumerated().map { index, e in
-            let (name, path, bundle, host, ip, city, code, lat, lon, port, inB, outB) = e
-            return Connection(pid: Int32(600 + index),
-                              processName: name,
-                              processPath: path,
-                              processBundleId: bundle,
-                              remoteHost: host,
-                              remoteIP: ip,
-                              remotePort: port,
-                              direction: .outgoing,
-                              status: .allowed,
-                              bytesIn: inB,
-                              bytesOut: outB,
-                              countryCode: code,
-                              city: city,
-                              latitude: lat,
-                              longitude: lon,
-                              firstSeen: now.addingTimeInterval(-Double(index) * 90),
-                              lastSeen: now.addingTimeInterval(-Double(index) * 3))
+            Connection(pid: Int32(600 + index),
+                       processName: e.name,
+                       processPath: e.path,
+                       processBundleId: e.bundle,
+                       remoteHost: e.host,
+                       remoteIP: e.ip,
+                       remotePort: 443,
+                       direction: .outgoing,
+                       status: e.denied ? .denied : .allowed,
+                       bytesIn: e.bytesIn,
+                       bytesOut: e.bytesOut,
+                       countryCode: e.code,
+                       city: e.city,
+                       latitude: e.lat,
+                       longitude: e.lon,
+                       firstSeen: now.addingTimeInterval(-Double(index) * 90),
+                       lastSeen: now.addingTimeInterval(-Double(index) * 3))
+        }
+        state.totalIn = endpoints.reduce(0) { $0 + $1.bytesIn }
+        state.totalOut = endpoints.reduce(0) { $0 + $1.bytesOut }
+
+        // The summary column is the same list, totalled three ways.
+        func top<Key: Hashable>(_ key: (Endpoint) -> Key?) -> [(Key, Int64, Int64)] {
+            var sums: [Key: (Int64, Int64)] = [:]
+            for e in endpoints {
+                guard let k = key(e) else { continue }
+                let s = sums[k] ?? (0, 0)
+                sums[k] = (s.0 + e.bytesIn, s.1 + e.bytesOut)
+            }
+            return sums.map { ($0.key, $0.value.0, $0.value.1) }
+                .sorted { $0.1 + $0.2 > $1.1 + $1.2 }
+                .prefix(5).map { $0 }
+        }
+        let paths = Dictionary(endpoints.map { ($0.name, ($0.bundle, $0.path)) }, uniquingKeysWith: { a, _ in a })
+        state.topProcesses = top { $0.name }.map { name, inB, outB in
+            AppState.ProcessStats(id: name, name: name, bytesIn: inB, bytesOut: outB,
+                                  icon: AppIcon.resolve(bundleId: paths[name]?.0, path: paths[name]?.1, name: name))
+        }
+        state.topDomains = top { e -> String? in
+            let labels = e.host.split(separator: ".")
+            return labels.count >= 2 ? labels.suffix(2).joined(separator: ".") : nil
+        }.map { domain, inB, outB in
+            AppState.DomainStats(id: domain, domain: domain, bytesIn: inB, bytesOut: outB)
+        }
+        let english = Locale(identifier: "en_US")
+        state.topCountries = top { $0.code }.map { code, inB, outB in
+            AppState.CountryStats(id: code, country: english.localizedString(forRegionCode: code) ?? code,
+                                  countryCode: code, bytesIn: inB, bytesOut: outB)
         }
 
         // Synthetic rules so the demo showcases the populated Rules manager
         state.rules = [
-            Rule(processBundleId: "com.spotify.client", processPath: "/Applications/Spotify.app", processName: "Spotify", remoteHost: "*.scdn.co", direction: .outgoing, action: .allow, scope: .domain, priority: 100, profile: "default", notes: "Allow audio streaming", lastUsedAt: now.addingTimeInterval(-120), hitCount: 482),
-            Rule(processBundleId: "com.microsoft.VSCode", processPath: "/Applications/Visual Studio Code.app", processName: "Visual Studio Code", remoteHost: "update.code.visualstudio.com", direction: .outgoing, action: .allow, scope: .domain, priority: 90, profile: "default", lastUsedAt: now.addingTimeInterval(-3600), hitCount: 31),
-            Rule(processBundleId: "com.google.Chrome", processPath: "/Applications/Google Chrome.app", processName: "Google Chrome", remoteHost: "*.googleapis.com", direction: .outgoing, action: .allow, scope: .domain, priority: 80, profile: "default", hitCount: 1290),
+            Rule(processBundleId: "com.apple.Music", processPath: "/System/Applications/Music.app", processName: "Music", remoteHost: "*.itunes.apple.com", direction: .outgoing, action: .allow, scope: .domain, priority: 100, profile: "default", notes: "Allow audio streaming", lastUsedAt: now.addingTimeInterval(-120), hitCount: 482),
+            Rule(processBundleId: "com.apple.dt.Xcode", processPath: "/Applications/Xcode.app", processName: "Xcode", remoteHost: "*.apple.com", direction: .outgoing, action: .allow, scope: .domain, priority: 90, profile: "default", lastUsedAt: now.addingTimeInterval(-3600), hitCount: 31),
+            Rule(processBundleId: "company.thebrowser.Browser", processPath: "/Applications/Arc.app", processName: "Arc", remoteHost: "*.youtube.com", direction: .outgoing, action: .allow, scope: .domain, priority: 80, profile: "default", hitCount: 1290),
             Rule(processBundleId: "com.hnc.Discord", processPath: "/Applications/Discord.app", processName: "Discord", remoteHost: "*.discord.gg", direction: .outgoing, action: .allow, scope: .domain, priority: 70, profile: "default", hitCount: 96),
-            Rule(processBundleId: "com.adobe.acc", processPath: "/Applications/Adobe Creative Cloud.app", processName: "Adobe CC", remoteHost: "*.adobe.io", direction: .outgoing, action: .deny, scope: .domain, priority: 95, profile: "default", notes: "Block telemetry", hitCount: 211),
+            Rule(processBundleId: "com.hnc.Discord", processPath: "/Applications/Discord.app", processName: "Discord", remoteHost: "science.discord.com", direction: .outgoing, action: .deny, scope: .domain, priority: 95, profile: "default", notes: "Block telemetry", hitCount: 211),
             Rule(processName: "Any Process", remoteHost: "*.doubleclick.net", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Ad/tracker", hitCount: 3771),
             Rule(processName: "Any Process", remoteHost: "*.facebook.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 845),
-            Rule(processBundleId: "us.zoom.xos", processPath: "/Applications/Zoom.app", processName: "zoom.us", remoteHost: "*.zoom.us", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", temporary: true, expiresAt: now.addingTimeInterval(3600), hitCount: 12),
-            Rule(processBundleId: "ru.keepcoder.Telegram", processPath: "/Applications/Telegram.app", processName: "Telegram", remoteHost: "149.154.167.0/24", remoteIP: "149.154.167.0/24", direction: .outgoing, action: .ask, scope: .ip, priority: 40, profile: "default", hitCount: 0)
+            Rule(processBundleId: "com.anthropic.claudefordesktop", processPath: "/Applications/Claude.app", processName: "Claude", remoteHost: "api.anthropic.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", lastUsedAt: now.addingTimeInterval(-40), hitCount: 1204),
+            Rule(processBundleId: "dev.zed.Zed", processPath: "/Applications/Zed.app", processName: "Zed", remoteHost: "*.zed.dev", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", temporary: true, expiresAt: now.addingTimeInterval(3600), hitCount: 12),
+            Rule(processBundleId: "com.apple.Safari", processPath: "/Applications/Safari.app", processName: "Safari", remoteHost: "github.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", lastUsedAt: now.addingTimeInterval(-300), hitCount: 640),
+            Rule(processBundleId: "com.apple.mail", processPath: "/System/Applications/Mail.app", processName: "Mail", remoteHost: "*.mail.me.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 2210),
+            Rule(processBundleId: "com.apple.mail", processPath: "/System/Applications/Mail.app", processName: "Mail", remoteHost: "outlook.office365.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 388),
+            Rule(processBundleId: "company.thebrowser.Browser", processPath: "/Applications/Arc.app", processName: "Arc", remoteHost: "*.google-analytics.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 1532),
+            Rule(processName: "Any Process", remoteHost: "*.scorecardresearch.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 97),
+            Rule(processBundleId: "net.whatsapp.WhatsApp", processPath: "/Applications/WhatsApp.app", processName: "WhatsApp", remoteHost: "*.whatsapp.net", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 902),
+            Rule(processBundleId: "net.whatsapp.WhatsApp", processPath: "/Applications/WhatsApp.app", processName: "WhatsApp", remoteHost: "157.240.0.0/16", remoteIP: "157.240.0.0/16", direction: .outgoing, action: .ask, scope: .ip, priority: 40, profile: "default", hitCount: 0)
         ]
 
         // Synthetic blocklists. They are seeded straight into the profile
