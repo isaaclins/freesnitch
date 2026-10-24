@@ -1,8 +1,11 @@
 import Foundation
+import Darwin
 
 final class NetMonitor: @unchecked Sendable {
     private var lsofTimer: DispatchSourceTimer?
     private var nettopProc: Process?
+    private var nettopInput: Pipe?
+    private var bundleIDs: [String: String?] = [:]
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.netmon", qos: .utility)
 
     var onConnections: (([Connection]) -> Void)?
@@ -27,6 +30,7 @@ final class NetMonitor: @unchecked Sendable {
     func stop() {
         lsofTimer?.cancel(); lsofTimer = nil
         nettopProc?.terminate(); nettopProc = nil
+        nettopInput = nil
         pending = ""; frame = []; hasBaseline = false
         isRunning = false
     }
@@ -115,19 +119,25 @@ final class NetMonitor: @unchecked Sendable {
         return (host, Int(portStr) ?? 0)
     }
 
+    /// One syscall instead of spawning `ps` for every connection on every
+    /// poll, which on a busy Mac was hundreds of processes every two seconds.
     private func pidPath(_ pid: Int32) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/ps")
-        p.arguments = ["-p", String(pid), "-o", "comm="]
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
-        do { try p.run() } catch { return "" }
-        p.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard pid > 0 else { return "" }
+        var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return "" }
+        return String(cString: buf)
     }
 
     private func bundleID(forPath path: String) -> String? {
         guard !path.isEmpty else { return nil }
+        if let cached = bundleIDs[path] { return cached }
+        if bundleIDs.count > 1024 { bundleIDs.removeAll() }
+        let found = readBundleID(forPath: path)
+        bundleIDs[path] = found
+        return found
+    }
+
+    private func readBundleID(forPath path: String) -> String? {
         var p = path
         if let r = p.range(of: ".app/", options: .backwards) { p = String(p[..<r.upperBound]) }
         let plist = (p as NSString).appendingPathComponent("Contents/Info.plist")
@@ -141,8 +151,14 @@ final class NetMonitor: @unchecked Sendable {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
         p.arguments = ["-P", "-x", "-L", "0", "-J", "bytes_in,bytes_out", "-s", "1"]
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        // nettop watches its standard input, and at end of file that watch
+        // fires without pause: launchd gives the helper /dev/null, so nettop
+        // spun at over 100% CPU on an idle Mac (#142, #144). A pipe that stays
+        // open and never carries data keeps it asleep between samples.
+        let input = Pipe(); p.standardInput = input
         do { try p.run() } catch { PSLog.error(PSLog.netmon, "nettop failed: \(error)"); return }
         nettopProc = p
+        nettopInput = input
         pending = ""; frame = []; hasBaseline = false; lastIn = 0; lastOut = 0
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
