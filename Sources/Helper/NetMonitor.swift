@@ -5,6 +5,10 @@ final class NetMonitor: @unchecked Sendable {
     private var lsofTimer: DispatchSourceTimer?
     private var nettopProc: Process?
     private var nettopInput: Pipe?
+    private var nettopOutput: FileHandle?
+    /// Bumped on every start and stop, so output from a nettop that has
+    /// already been replaced is dropped instead of landing in the new frame.
+    private var nettopGeneration = 0
     private var bundleIDs: [String: String?] = [:]
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.netmon", qos: .utility)
 
@@ -20,15 +24,25 @@ final class NetMonitor: @unchecked Sendable {
     private var frame: [String] = []
     private(set) var isRunning = false
 
+    /// Start and stop arrive on XPC threads while nettop output is parsed on
+    /// `queue`; running both there keeps the frame state single-threaded.
     func start() {
-        stop()   // idempotent: tear down any existing pollers before (re)starting
-        startLsofPolling()
-        startNettop()
-        isRunning = true
+        queue.sync {
+            stopLocked()   // idempotent: tear down any existing pollers before (re)starting
+            startLsofPolling()
+            startNettop()
+            isRunning = true
+        }
     }
 
     func stop() {
+        queue.sync { stopLocked() }
+    }
+
+    private func stopLocked() {
         lsofTimer?.cancel(); lsofTimer = nil
+        nettopGeneration += 1
+        nettopOutput?.readabilityHandler = nil; nettopOutput = nil
         nettopProc?.terminate(); nettopProc = nil
         nettopInput = nil
         pending = ""; frame = []; hasBaseline = false
@@ -159,14 +173,21 @@ final class NetMonitor: @unchecked Sendable {
         do { try p.run() } catch { PSLog.error(PSLog.netmon, "nettop failed: \(error)"); return }
         nettopProc = p
         nettopInput = input
+        nettopOutput = pipe.fileHandleForReading
         pending = ""; frame = []; hasBaseline = false; lastIn = 0; lastOut = 0
+        let generation = nettopGeneration
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            guard let self else { return }
             let data = handle.availableData
-            if data.isEmpty { return }
+            // At end of file the handler keeps firing with empty reads,
+            // millions of times a second, until it is removed. Every nettop
+            // that stopped or was replaced left the helper spinning (#144).
+            if data.isEmpty { handle.readabilityHandler = nil; return }
             guard let s = String(data: data, encoding: .utf8) else { return }
-            self.ingestNettop(s)
+            self?.queue.async { [weak self] in
+                guard let self, self.nettopGeneration == generation else { return }
+                self.ingestNettop(s)
+            }
         }
     }
 
