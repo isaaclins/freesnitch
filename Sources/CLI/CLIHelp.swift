@@ -109,7 +109,7 @@ enum CLIHelp {
       freesnitch status --json | jq .data
       freesnitch doctor
       freesnitch rules list --category deny --search telemetry
-      freesnitch rules add --process-name Safari --host example.com --action allow
+      freesnitch rules add --process-path /Applications/Firefox.app/ --host example.com --action allow
       freesnitch rules disable 01234567-89AB-CDEF-0123-456789ABCDEF
       freesnitch rules export --output /tmp/freesnitch-rules.json
       freesnitch enforcement off --yes
@@ -353,7 +353,8 @@ enum CLIHelp {
     Options:
       --process-bundle-id ID       Match an application bundle ID.
       --process-path PATH          Match a process path or path prefix.
-      --process-name NAME          Store a process display name.
+      --process-name NAME          Display name only. Needs --process-path or
+                                   --process-bundle-id, which do the matching.
       --host HOST                  Match a domain, including *.example.com.
       --ip ADDRESS_OR_CIDR         Match an IP or IPv4 CIDR.
       --port PORT                  Match a remote port from 1 through 65535.
@@ -370,7 +371,7 @@ enum CLIHelp {
       --id UUID                    Preserve a known ID when importing manually.
 
     Example:
-      freesnitch rules add --process-name Safari --host api.example.com --action allow
+      freesnitch rules add --process-path /Applications/Firefox.app/ --host api.example.com --action allow
     """
 
     private static let rulesMutate = """

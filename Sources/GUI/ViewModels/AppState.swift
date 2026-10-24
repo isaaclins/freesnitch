@@ -112,6 +112,27 @@ final class AppState: ObservableObject {
         }
     }
 
+    @Published var showDockIcon: Bool = AppPreferences.defaults.object(forKey: AppPreferences.Key.showDockIcon) as? Bool ?? true {
+        didSet {
+            applyDockIconPolicy()
+            guard !applyingExternalPreferences else { return }
+            AppPreferences.set(showDockIcon, forKey: AppPreferences.Key.showDockIcon)
+        }
+    }
+
+    /// Info.plist declares LSUIElement, so the app starts without a Dock icon
+    /// and this is what puts one there. Leaving accessory mode deactivates
+    /// the app, which would drop the Settings window the switch was flipped
+    /// in behind every other app, so it is brought back to the front.
+    func applyDockIconPolicy() {
+        let policy: NSApplication.ActivationPolicy = showDockIcon ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+        if NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
     /// pf anchor + DNS proxy. Off until the user asks for it.
     @Published var enforcementEnabled: Bool = AppPreferences.bool(forKey: AppPreferences.Key.enforcement) {
         didSet {
@@ -283,6 +304,7 @@ final class AppState: ObservableObject {
         applyingExternalPreferences = true
         showSpeedsInMenuBar = AppPreferences.bool(forKey: AppPreferences.Key.showSpeeds)
         showAlertsOnAllSpaces = AppPreferences.defaults.object(forKey: AppPreferences.Key.alertsAllSpaces) as? Bool ?? true
+        showDockIcon = AppPreferences.defaults.object(forKey: AppPreferences.Key.showDockIcon) as? Bool ?? true
         enforcementEnabled = AppPreferences.bool(forKey: AppPreferences.Key.enforcement)
         askAboutKnownContacts = AppPreferences.bool(forKey: AppPreferences.Key.askKnownContacts)
         let externalMode = AppPreferences.string(forKey: AppPreferences.Key.mode).flatMap(AppMode.init(rawValue:))

@@ -432,6 +432,18 @@ enum CLIParser {
             }
         }
 
+        // The matcher never reads the name. A name on its own would read as
+        // "this app" and match every app, so `--process Discord --action deny`
+        // blocked the whole Mac.
+        // An empty identity is no identity: the matcher skips empty fields,
+        // so `--process-path ""` would also match every app.
+        if processBundleId?.isEmpty == true { processBundleId = nil }
+        if processPath?.isEmpty == true { processPath = nil }
+        if processName != nil, processBundleId == nil, processPath == nil {
+            throw CLIError(.invalidArgument,
+                           message: "--process-name only labels a rule; on its own the rule would match every app.",
+                           remediation: "Add --process-path /Applications/App.app/ (the app and its helpers) or --process-bundle-id.")
+        }
         if !scopeExplicit {
             if remoteIP != nil { scope = .ip }
             else if remotePort != nil { scope = .port }
