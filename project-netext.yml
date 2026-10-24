@@ -15,7 +15,7 @@ targets:
   FreeSnitchNetExt:
     settings:
       base:
-        PROVISIONING_PROFILE_SPECIFIER: "FreeSnitch NetExt DeveloperID"
+        PROVISIONING_PROFILE_SPECIFIER: "FreeSnitch NetExt DeveloperID 2026"
         CODE_SIGN_STYLE: Manual
 
   FreeSnitch:
@@ -35,7 +35,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/GUI/FreeSnitch-netext.entitlements
         # Restricted entitlements are only accepted when the matching profile is
         # named here; copying it into the bundle afterwards is not enough.
-        PROVISIONING_PROFILE_SPECIFIER: "FreeSnitch App DeveloperID"
+        PROVISIONING_PROFILE_SPECIFIER: "FreeSnitch App DeveloperID 2026"
         CODE_SIGN_STYLE: Manual
     # project.yml already declares the helper dependency, and xcodegen merges
     # the two lists, so re-declaring it here fails spec validation with
