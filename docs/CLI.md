@@ -229,7 +229,7 @@ Add and mutate rules through the helper:
 
 ```sh
 freesnitch rules add \
-  --process-path /Applications/Safari.app/ \
+  --process-path /Applications/Firefox.app/ \
   --host api.example.com \
   --action allow \
   --scope domain

@@ -19,9 +19,9 @@ struct RulesManagerView: View {
     /// How many entries the open blocklist pane is actually showing, which is
     /// the match count while a search is running (#135).
     @State private var openBlocklistMatchCount: Int?
-    @State private var showingRuleEditor = false
-    /// The app the Add Rule sheet opens with, when it was dropped on the page.
-    @State private var ruleEditorApp: RuleApplication?
+    /// The open Add Rule sheet, carrying the app it starts with. One value,
+    /// so the sheet can never open with the app from before a drop.
+    @State private var ruleEditorRequest: RuleEditorRequest?
     @State private var appDropTargeted = false
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -126,14 +126,16 @@ struct RulesManagerView: View {
         // was running it counted the whole list and the footer counted the
         // matches, so one screen carried two numbers for one thing (#135).
         .onChange(of: searchText) { _ in openBlocklistMatchCount = nil }
-        .sheet(isPresented: $showingRuleEditor) {
-            RuleEditorView(initialApp: ruleEditorApp,
+        .sheet(item: $ruleEditorRequest) { request in
+            RuleEditorView(initialApp: request.app,
                            profiles: profileClient.profiles,
                            activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
         }
         // Dropping an app anywhere on the page starts a rule for it (#143).
         .onDrop(of: [.fileURL], isTargeted: $appDropTargeted) { providers in
-            RuleApplication.load(from: providers) { app in openRuleEditor(for: app) }
+            RuleApplication.load(from: providers) { app in
+                if let app { openRuleEditor(for: app) } else { showError(RuleApplication.notAnAppTitle, RuleApplication.notAnAppDetail) }
+            }
         }
         .overlay {
             if appDropTargeted {
@@ -1246,8 +1248,7 @@ struct RulesManagerView: View {
             showError("Rules can't be added yet", "Approve the FreeSnitch helper before adding rules.")
             return
         }
-        ruleEditorApp = app
-        showingRuleEditor = true
+        ruleEditorRequest = RuleEditorRequest(app: app)
     }
 
     private func addRule(_ rule: Rule) {
@@ -1484,13 +1485,24 @@ private struct RuleJSONDocument: FileDocument {
 /// helpers inside the bundle, which is where browsers and Electron apps do
 /// their networking. Those helpers carry their own bundle ids, so the bundle
 /// id is deliberately left out.
+struct RuleEditorRequest: Identifiable {
+    let id = UUID()
+    let app: RuleApplication?
+}
+
 struct RuleApplication: Equatable {
     let name: String
     let processPath: String
     let fileURL: URL
 
     init?(url: URL) {
-        let url = url.standardizedFileURL.resolvingSymlinksInPath()
+        // realpath, not resolvingSymlinksInPath: Foundation strips /private,
+        // and the kernel reports /private/tmp/x for /tmp/x, so the rule would
+        // never match. Apps behind a link resolve too, as Safari does to its
+        // cryptex.
+        guard let resolved = realpath(url.path, nil) else { return nil }
+        let url = URL(fileURLWithPath: String(cString: resolved))
+        free(resolved)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
         if isDirectory.boolValue {
@@ -1508,14 +1520,18 @@ struct RuleApplication: Equatable {
 
     var icon: NSImage { NSWorkspace.shared.icon(forFile: fileURL.path) }
 
-    /// The first dropped item that is an app or an executable. Calls back on
-    /// the main queue, and not at all when nothing usable was dropped.
-    static func load(from providers: [NSItemProvider], then handle: @escaping (RuleApplication) -> Void) -> Bool {
+    static let notAnAppTitle = "That is not an app"
+    static let notAnAppDetail = "Drop an app or a command-line tool to make a rule for it."
+
+    /// The first dropped file, as an app or executable, or nil when it is
+    /// neither, so the caller can say so instead of accepting the drop and
+    /// doing nothing. Calls back on the main queue.
+    static func load(from providers: [NSItemProvider], then handle: @escaping (RuleApplication?) -> Void) -> Bool {
         guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
             return false
         }
         _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            guard let url, let app = RuleApplication(url: url) else { return }
+            let app = url.flatMap(RuleApplication.init(url:))
             DispatchQueue.main.async { handle(app) }
         }
         return true
@@ -1548,6 +1564,7 @@ private struct RuleEditorView: View {
     @State private var appliesTo = Profile.alwaysName
     @State private var app: RuleApplication?
     @State private var appDropTargeted = false
+    @State private var dropRejected = false
     @State private var processBundleID = ""
     @State private var remoteHost = ""
     @State private var remoteIP = ""
@@ -1568,10 +1585,16 @@ private struct RuleEditorView: View {
                 } header: {
                     Text("Application")
                 } footer: {
-                    Text(app == nil
-                         ? "Choose an app or drop one here. Without one, the rule applies to every app."
-                         : "Covers the app and the helpers inside it.")
-                        .font(.caption).foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if dropRejected {
+                            Text(RuleApplication.notAnAppDetail).font(.caption).foregroundColor(.red)
+                        }
+                        Text(app == nil
+                             ? "Choose an app or drop one here. Without one, the rule applies to every app."
+                             : "Covers the app and the helpers inside it. Web pages shown in Apple's web views, as in Safari or Mail, load through a macOS process outside the app.")
+                            .font(.caption).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Section("Match") {
                     TextField("Bundle ID", text: $processBundleID)
@@ -1623,7 +1646,9 @@ private struct RuleEditorView: View {
         .padding(20)
         .frame(width: 470, height: 580)
         .onDrop(of: [.fileURL], isTargeted: $appDropTargeted) { providers in
-            RuleApplication.load(from: providers) { pick($0) }
+            RuleApplication.load(from: providers) { dropped in
+                if let dropped { pick(dropped) } else { dropRejected = true }
+            }
         }
         .onAppear { if let initialApp { pick(initialApp) } }
     }
@@ -1660,6 +1685,7 @@ private struct RuleEditorView: View {
     /// that app's traffic, which is what the Process scope means.
     private func pick(_ chosen: RuleApplication) {
         app = chosen
+        dropRejected = false
         let noDestination = [remoteHost, remoteIP, remotePort]
             .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         if noDestination { scope = .process }

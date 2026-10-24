@@ -109,7 +109,7 @@ enum CLIHelp {
       freesnitch status --json | jq .data
       freesnitch doctor
       freesnitch rules list --category deny --search telemetry
-      freesnitch rules add --process-path /Applications/Safari.app/ --host example.com --action allow
+      freesnitch rules add --process-path /Applications/Firefox.app/ --host example.com --action allow
       freesnitch rules disable 01234567-89AB-CDEF-0123-456789ABCDEF
       freesnitch rules export --output /tmp/freesnitch-rules.json
       freesnitch enforcement off --yes
@@ -371,7 +371,7 @@ enum CLIHelp {
       --id UUID                    Preserve a known ID when importing manually.
 
     Example:
-      freesnitch rules add --process-path /Applications/Safari.app/ --host api.example.com --action allow
+      freesnitch rules add --process-path /Applications/Firefox.app/ --host api.example.com --action allow
     """
 
     private static let rulesMutate = """
