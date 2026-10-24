@@ -14,6 +14,8 @@ public enum AppPreferences {
         public static let enforcement = "PSEnforcementEnabled"
         public static let showSpeeds = "PSShowSpeedsInMenuBar"
         public static let alertsAllSpaces = "PSShowAlertsOnAllSpaces"
+        /// On by default. Off makes FreeSnitch a menu-bar-only app (#145).
+        public static let showDockIcon = "PSShowDockIcon"
         /// Whether Alert mode also asks about destinations an app already
         /// uses. Off by default, which is the settled #26 behaviour, but it is
         /// now a stated choice instead of a silent one (#130).

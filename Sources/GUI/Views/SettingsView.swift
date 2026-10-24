@@ -102,6 +102,11 @@ struct SettingsView: View {
                 Section("Menu bar") {
                     Toggle("Show download and upload speeds in the menu bar",
                            isOn: $state.showSpeedsInMenuBar)
+                    Toggle("Show FreeSnitch in the Dock", isOn: $state.showDockIcon)
+                    if !state.showDockIcon {
+                        Text("FreeSnitch keeps running in the menu bar. Open its windows from the menu bar icon.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
                 }
                 // Every failure path in the app writes here: a rejected mode
                 // change, a remembered rule the helper refused, a connection
