@@ -1049,13 +1049,13 @@ final class InsightsViewModel: ObservableObject {
             ? proposal.widenedRule(profile: state.activeProfile)
             : proposal.rule(profile: state.activeProfile)
         guard let rule else {
-            errorMessage = "That proposal cannot be widened, because no DNS name is known for the destination."
+            errorMessage = "That suggestion cannot be widened, because no DNS name is known for the destination."
             return
         }
         state.helper.addRule(rule) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.errorMessage = message ?? "The helper rejected the proposed rule."
+                self.errorMessage = message ?? "The helper rejected the suggested rule."
                 return
             }
             self.accepted.insert(proposal.id)
