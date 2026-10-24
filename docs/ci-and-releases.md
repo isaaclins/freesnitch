@@ -86,9 +86,9 @@ tools, Sparkle's `generate_appcast`, `gh`, and these exact signing credentials:
 
 - Developer ID identity: `Developer ID Application: isaac lins (BHAF4L4726)`
 - Team: `BHAF4L4726`
-- App profile: `FreeSnitch App DeveloperID` for
+- App profile: `FreeSnitch App DeveloperID 2026` for
   `io.isaaclins.freesnitch`
-- System extension profile: `FreeSnitch NetExt DeveloperID` for
+- System extension profile: `FreeSnitch NetExt DeveloperID 2026` for
   `io.isaaclins.freesnitch.netext`
 - Helper bundle identifier: `io.isaaclins.freesnitch.helper`
 - System extension bundle filename:
