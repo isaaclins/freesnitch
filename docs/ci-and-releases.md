@@ -94,7 +94,7 @@ tools, Sparkle's `generate_appcast`, `gh`, and these exact signing credentials:
 - System extension bundle filename:
   `io.isaaclins.freesnitch.netext.systemextension`
 - Notarytool keychain profile: `puresnitch-dev`
-- Sparkle 2.7.1 account: `puresnitch`
+- Sparkle 2.10.0 account: `puresnitch` (or `SPARKLE_EDDSA_PRIVATE_KEY_FILE`)
 - Sparkle public key: `4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8=`
 - GitHub CLI authenticated with access to `isaaclins/freesnitch`
 
