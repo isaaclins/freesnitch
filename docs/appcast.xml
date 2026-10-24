@@ -3,6 +3,43 @@
     <channel>
         <title>FreeSnitch</title>
         <item>
+            <title>1.1.0</title>
+            <pubDate>Sun, 25 Oct 2026 01:53:38 +0200</pubDate>
+            <link>https://github.com/isaaclins/freesnitch/releases/latest</link>
+            <sparkle:informationalUpdate>
+                <sparkle:belowVersion>34</sparkle:belowVersion>
+            </sparkle:informationalUpdate>
+            <sparkle:version>34</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[FreeSnitch 1.1 fixes the problems people reported after 1.0: the helper eating CPU, rules that were awkward to create, and a DNS tab that promised more than it did. Thank you to everyone who opened an issue.
+
+**Coming from 1.0.0?** Install 1.1.0 by hand this one time: download the disk image from the releases page and drag FreeSnitch to Applications, replacing the old copy. Your rules and settings stay. 1.0.0's updater can only announce this version, because the key it checks updates with had to be replaced. From 1.1.0 on, updates install themselves again.
+
+## Fixes
+
+- **The helper no longer burns CPU (#142, #144).** Two loops spun at full speed: the traffic reader restarted `nettop` with nothing on its input, and every restart left an old reader spinning behind it. Together they could cost a whole core while the Mac sat idle. Both are gone.
+- **The DNS tab tells the truth (#142).** FreeSnitch does not change your Mac's DNS server, so the DNS-over-HTTPS upstream only applies when your network's DNS points at this Mac and enforcement is on. The tab now says whether that is the case right now, updates when you change DNS in System Settings, and warns when DNS points at this Mac but the proxy is not running.
+- **Insights uses plain words (#142).** The tabs are now Apps, No Name, Suggestions and New Since Update, and each one says in a sentence what it shows.
+
+## New
+
+- **Pick the app for a rule (#143).** The rule editor has an app picker, and you can drop an app or a command-line tool onto the Rules page to start a rule for it. Paths are stored exactly as macOS reports them, so the rule matches.
+- **Hide the Dock icon (#145).** Turn off "Show FreeSnitch in the Dock" in Settings > General and FreeSnitch lives in the menu bar only. It is on by default.
+
+## Rules made by process name only
+
+Earlier versions let you create a rule with only a process name, from the Add Rule sheet or `freesnitch rule add --process`. Those rules never checked the name, so they applied to every app. The name field is gone and the command line refuses such a rule. Rules you already have are unchanged: if you made one this way, open Rules and give it an app (#157).
+
+## Under the hood
+
+- The built-in updater is Sparkle 2.10.0, which includes Sparkle's security fixes since 2.7.1.
+
+Requires macOS 13 or later. One universal build for Apple Silicon and Intel, signed with a Developer ID and notarized by Apple.
+]]></description>
+            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.zip" length="11102799" type="application/octet-stream" sparkle:edSignature="ZttTqJQAa5OtxKBx5IZ8ERfdpT+DLe17hpZbLblcZ9UzOisAyAyS3ZzfU7uMF0NtNacCRZV6m/qDvkc/y1AkCQ=="/>
+        </item>
+        <item>
             <title>1.0.0</title>
             <pubDate>Sat, 15 Aug 2026 13:48:29 +0200</pubDate>
             <sparkle:version>33</sparkle:version>
@@ -103,26 +140,6 @@ If the FreeSnitch bundle is gone, the root helper now stops enforcing instead of
 Confirmed fixed since 0.4.1: repairing a stale helper happens behind a macOS authorization prompt, not by pasting a `sudo` command into Terminal. The enabled service is never unregistered, so your approval stays intact.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.5/FreeSnitch-0.4.5.zip" length="10190403" type="application/octet-stream" sparkle:edSignature="lbZr02FSKwKVVUvYE3pUrzTyhwUVKwLcu2XGzfvd/q8aB6+S8fpXcnT/ITD6xJyX6pyKgF5hNP0gcLCUif9uDA=="/>
-        </item>
-        <item>
-            <title>0.4.4</title>
-            <pubDate>Fri, 14 Aug 2026 11:02:05 +0200</pubDate>
-            <sparkle:version>31</sparkle:version>
-            <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="plain-text"><![CDATA[# FreeSnitch 0.4.4
-
-## Uninstalling now works the way macOS intends
-
-FreeSnitch deleted its own app bundle during uninstall. That turns out to be the one thing you must not do to an app that contains a system extension: moving the app to the Trash **through Finder** is what triggers macOS to remove the extension. Deleting the bundle any other way takes the app away and leaves the extension installed and running.
-
-So uninstall no longer deletes anything in your Applications folder. It unregisters the helper, flushes its firewall anchor and removes its data, then hands the app to Finder exactly as if you had dragged it to the Trash yourself, which is what makes macOS remove the network extension too.
-
-That also means the privileged step is smaller than before: it can no longer remove an application at all.
-
-Afterwards the app tells you how to confirm it worked, and only mentions the System Settings route as a recovery step for the case where macOS does not finish the job, rather than presenting it as a chore you always have to do.
-]]></description>
-            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.4/FreeSnitch-0.4.4.zip" length="10063238" type="application/octet-stream" sparkle:edSignature="CndtV4y2JD1CbRhiMuXAuwpgiBB8xueciQ7BIG6p5feq9+bs7FSZaZwI65KS7Y0v5Sa9P3RfXwupacDsnUVFBg=="/>
         </item>
     </channel>
 </rss>
