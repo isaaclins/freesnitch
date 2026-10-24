@@ -19,7 +19,10 @@ struct RulesManagerView: View {
     /// How many entries the open blocklist pane is actually showing, which is
     /// the match count while a search is running (#135).
     @State private var openBlocklistMatchCount: Int?
-    @State private var showingRuleEditor = false
+    /// The open Add Rule sheet, carrying the app it starts with. One value,
+    /// so the sheet can never open with the app from before a drop.
+    @State private var ruleEditorRequest: RuleEditorRequest?
+    @State private var appDropTargeted = false
     @State private var showingImporter = false
     @State private var showingExporter = false
     @State private var exportDocument = RuleJSONDocument(rules: [])
@@ -123,9 +126,23 @@ struct RulesManagerView: View {
         // was running it counted the whole list and the footer counted the
         // matches, so one screen carried two numbers for one thing (#135).
         .onChange(of: searchText) { _ in openBlocklistMatchCount = nil }
-        .sheet(isPresented: $showingRuleEditor) {
-            RuleEditorView(profiles: profileClient.profiles,
+        .sheet(item: $ruleEditorRequest) { request in
+            RuleEditorView(initialApp: request.app,
+                           profiles: profileClient.profiles,
                            activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
+        }
+        // Dropping an app anywhere on the page starts a rule for it (#143).
+        .onDrop(of: [.fileURL], isTargeted: $appDropTargeted) { providers in
+            RuleApplication.load(from: providers) { app in
+                if let app { openRuleEditor(for: app) } else { showError(RuleApplication.notAnAppTitle, RuleApplication.notAnAppDetail) }
+            }
+        }
+        .overlay {
+            if appDropTargeted {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                    .allowsHitTesting(false)
+            }
         }
         .sheet(item: $editingBlocklist) { blocklist in
             BlocklistEditorView(blocklist: blocklist)
@@ -621,12 +638,14 @@ struct RulesManagerView: View {
             .disabled(state.rules.isEmpty)
             .help(state.rules.isEmpty ? "There are no rules to export." : "Export rules as a \(RuleExportDocument.formatIdentifier) document the CLI can import.")
             .accessibilityLabel("Export rules")
-            Button(action: { showingRuleEditor = true }) {
+            Button(action: { openRuleEditor(for: nil) }) {
                 Image(systemName: "plus")
             }
             .buttonStyle(.borderless)
             .disabled(!state.helperConnected)
-            .help(state.helperConnected ? "Add a rule." : "Approve the FreeSnitch helper before adding rules.")
+            .help(state.helperConnected
+                  ? "Add a rule. You can also drop an app from the Finder on this page."
+                  : "Approve the FreeSnitch helper before adding rules.")
             .accessibilityLabel("Add a rule")
         }
     }
@@ -782,7 +801,7 @@ struct RulesManagerView: View {
     private func rulesContextMenu(for ids: Set<Rule.ID>) -> some View {
         let rules = state.rules.filter { ids.contains($0.id) }
         if rules.isEmpty {
-            Button("New Rule…") { showingRuleEditor = true }
+            Button("New Rule…") { openRuleEditor(for: nil) }
                 .disabled(!state.helperConnected)
         } else {
             if rules.contains(where: { !$0.enabled }) {
@@ -1224,6 +1243,14 @@ struct RulesManagerView: View {
         !selectedRules.isEmpty && selectedRules.allSatisfy { !$0.enabled }
     }
 
+    private func openRuleEditor(for app: RuleApplication?) {
+        guard state.helperConnected else {
+            showError("Rules can't be added yet", "Approve the FreeSnitch helper before adding rules.")
+            return
+        }
+        ruleEditorRequest = RuleEditorRequest(app: app)
+    }
+
     private func addRule(_ rule: Rule) {
         state.helper.addRule(rule) { ok, message in
             guard ok else {
@@ -1449,15 +1476,95 @@ private struct RuleJSONDocument: FileDocument {
     }
 }
 
+/// An app or command-line tool chosen for a rule (#143).
+///
+/// A rule names its app by path, not by name: the matcher never reads
+/// `processName`, so a rule that only carried a typed name matched every app.
+/// For an app bundle the path is the bundle folder with a trailing slash. The
+/// matcher compares it as a prefix of the executable, so it also covers the
+/// helpers inside the bundle, which is where browsers and Electron apps do
+/// their networking. Those helpers carry their own bundle ids, so the bundle
+/// id is deliberately left out.
+struct RuleEditorRequest: Identifiable {
+    let id = UUID()
+    let app: RuleApplication?
+}
+
+struct RuleApplication: Equatable {
+    let name: String
+    let processPath: String
+    let fileURL: URL
+
+    init?(url: URL) {
+        // realpath, not resolvingSymlinksInPath: Foundation strips /private,
+        // and the kernel reports /private/tmp/x for /tmp/x, so the rule would
+        // never match. Apps behind a link resolve too, as Safari does to its
+        // cryptex.
+        guard let resolved = realpath(url.path, nil) else { return nil }
+        let url = URL(fileURLWithPath: String(cString: resolved))
+        free(resolved)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+        if isDirectory.boolValue {
+            guard url.pathExtension == "app", Bundle(url: url)?.executableURL != nil else { return nil }
+            name = FileManager.default.displayName(atPath: url.path)
+                .replacingOccurrences(of: ".app", with: "", options: [.anchored, .backwards])
+            processPath = url.path + "/"
+        } else {
+            guard FileManager.default.isExecutableFile(atPath: url.path) else { return nil }
+            name = url.lastPathComponent
+            processPath = url.path
+        }
+        fileURL = url
+    }
+
+    var icon: NSImage { NSWorkspace.shared.icon(forFile: fileURL.path) }
+
+    static let notAnAppTitle = "That is not an app"
+    static let notAnAppDetail = "Drop an app or a command-line tool to make a rule for it."
+
+    /// The first dropped file, as an app or executable, or nil when it is
+    /// neither, so the caller can say so instead of accepting the drop and
+    /// doing nothing. Calls back on the main queue.
+    static func load(from providers: [NSItemProvider], then handle: @escaping (RuleApplication?) -> Void) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
+            return false
+        }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            let app = url.flatMap(RuleApplication.init(url:))
+            DispatchQueue.main.async { handle(app) }
+        }
+        return true
+    }
+
+    /// The standard Open panel, limited to apps and executables.
+    @MainActor
+    static func choose() -> RuleApplication? {
+        let panel = NSOpenPanel()
+        panel.title = "Choose an App"
+        panel.prompt = "Choose"
+        panel.allowedContentTypes = [.application, .unixExecutable]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.treatsFilePackagesAsDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return RuleApplication(url: url)
+    }
+}
+
 private struct RuleEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    let initialApp: RuleApplication?
     let profiles: [Profile]
     let activeProfileName: String
     let onSave: (Rule) -> Void
     /// New rules default to Always. Roughly all rules are location
     /// independent, and that default is what keeps profiles small.
     @State private var appliesTo = Profile.alwaysName
-    @State private var processName = ""
+    @State private var app: RuleApplication?
+    @State private var appDropTargeted = false
+    @State private var dropRejected = false
     @State private var processBundleID = ""
     @State private var remoteHost = ""
     @State private var remoteIP = ""
@@ -1473,8 +1580,23 @@ private struct RuleEditorView: View {
             Text("Add Rule")
                 .font(.title2.weight(.semibold))
             Form {
+                Section {
+                    applicationRow
+                } header: {
+                    Text("Application")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if dropRejected {
+                            Text(RuleApplication.notAnAppDetail).font(.caption).foregroundColor(.red)
+                        }
+                        Text(app == nil
+                             ? "Choose an app or drop one here. Without one, the rule applies to every app."
+                             : "Covers the app and the helpers inside it. Web pages shown in Apple's web views, as in Safari or Mail, load through a macOS process outside the app.")
+                            .font(.caption).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Section("Match") {
-                    TextField("Process name", text: $processName)
                     TextField("Bundle ID", text: $processBundleID)
                     TextField("Host or domain", text: $remoteHost)
                     TextField("IP address", text: $remoteIP)
@@ -1522,19 +1644,64 @@ private struct RuleEditorView: View {
             }
         }
         .padding(20)
-        .frame(width: 470, height: 520)
+        .frame(width: 470, height: 580)
+        .onDrop(of: [.fileURL], isTargeted: $appDropTargeted) { providers in
+            RuleApplication.load(from: providers) { dropped in
+                if let dropped { pick(dropped) } else { dropRejected = true }
+            }
+        }
+        .onAppear { if let initialApp { pick(initialApp) } }
+    }
+
+    private var applicationRow: some View {
+        HStack(spacing: 10) {
+            if let app {
+                Image(nsImage: app.icon)
+                    .resizable()
+                    .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(app.name)
+                    Text(app.fileURL.path)
+                        .font(.caption).foregroundColor(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                Button("Remove") { self.app = nil }
+            } else {
+                Text("Any app").foregroundColor(.secondary)
+                Spacer(minLength: 8)
+            }
+            Button(app == nil ? "Choose…" : "Change…") {
+                if let chosen = RuleApplication.choose() { pick(chosen) }
+            }
+        }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: 6)
+            .strokeBorder(Color.accentColor, lineWidth: appDropTargeted ? 2 : 0))
+    }
+
+    /// A rule for an app with nothing else filled in is a rule for all of
+    /// that app's traffic, which is what the Process scope means.
+    private func pick(_ chosen: RuleApplication) {
+        app = chosen
+        dropRejected = false
+        let noDestination = [remoteHost, remoteIP, remotePort]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if noDestination { scope = .process }
     }
 
     private var canSave: Bool {
-        let hasMatch = [processName, processBundleID, remoteHost, remoteIP]
+        let hasMatch = [processBundleID, remoteHost, remoteIP]
             .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        return hasMatch || !remotePort.isEmpty
+        return app != nil || hasMatch || !remotePort.isEmpty
     }
 
     private func save() {
         let rule = Rule(
             processBundleId: optionalValue(processBundleID),
-            processName: optionalValue(processName),
+            processPath: app?.processPath,
+            processName: app?.name,
             remoteHost: optionalValue(remoteHost),
             remoteIP: optionalValue(remoteIP),
             remotePort: Int(remotePort),
