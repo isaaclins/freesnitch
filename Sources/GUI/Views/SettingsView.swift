@@ -250,6 +250,12 @@ struct SettingsView: View {
         guard state.helperConnected else {
             return ("Unknown", "The helper is not connected.")
         }
+        // Pointed at this Mac with nothing listening, every lookup fails. That
+        // is the one state here that breaks the network, so it comes first.
+        if !state.dnsProxyEnabled, routesThroughProxy {
+            return ("No",
+                    "This Mac's DNS server is set to this Mac, but the FreeSnitch DNS proxy is not running. Unless another DNS app answers there, names cannot be looked up. Turn enforcement on, or set the DNS server back in System Settings > Network.")
+        }
         guard state.enforcementEnabled else {
             return ("No",
                     "The upstream applies only while enforcement is on. Turn it on in General.")
@@ -264,7 +270,7 @@ struct SettingsView: View {
             ? "the resolver your network or a DNS app provides"
             : systemResolvers.joined(separator: ", ")
         return ("No",
-                "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that.")
+                "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that. Set it back before you turn enforcement off or remove FreeSnitch, or this Mac cannot look up names.")
     }
 
     /// The resolvers macOS is using right now, as the system reports them.
@@ -367,7 +373,7 @@ struct SettingsView: View {
                 Text(dnsUsage.detail)
                     .font(.caption).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if state.dnsProxyEnabled, !routesThroughProxy {
+                if state.dnsProxyEnabled != routesThroughProxy {
                     Button("Open Network Settings…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {
                             NSWorkspace.shared.open(url)
