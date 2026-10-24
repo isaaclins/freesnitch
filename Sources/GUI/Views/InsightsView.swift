@@ -183,7 +183,8 @@ struct InsightsView: View {
     private var appsSection: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                sectionTitle("Apps", subtitle: "\(model.apps.count) recorded")
+                sectionTitle("Apps", subtitle: "\(model.apps.count) recorded",
+                             note: "Every app that went online in this range. Select one to see where it connected.")
                 if model.apps.isEmpty && !model.isLoading {
                     emptyState("Nothing recorded in this range yet.")
                 } else {
@@ -312,7 +313,7 @@ struct InsightsView: View {
     /// silently inert (#106).
     private func destinationFooter(app: InsightsAppSummary) -> some View {
         HStack(spacing: 8) {
-            Button("Propose a Rule\u{2026}") {
+            Button("Suggest a Rule\u{2026}") {
                 guard let id = selectedDestinationID,
                       let destination = model.destinations.first(where: { $0.id == id }) else { return }
                 model.proposeRule(for: destination, app: app)
@@ -366,7 +367,7 @@ struct InsightsView: View {
     @ViewBuilder
     private func destinationContextMenu(_ destination: InsightsDestinationSummary,
                                         app: InsightsAppSummary) -> some View {
-        Button("Propose a Rule\u{2026}") { model.proposeRule(for: destination, app: app) }
+        Button("Suggest a Rule\u{2026}") { model.proposeRule(for: destination, app: app) }
         Divider()
         CopyMenuItem(title: "Copy Destination", value: destination.displayName)
         CopyMenuItem(title: "Copy IP Address", value: destination.remoteIP)
@@ -385,7 +386,7 @@ struct InsightsView: View {
 
     private var unresolvedSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("Addresses with no DNS answer",
+            sectionTitle("Addresses reached without a name lookup",
                          subtitle: "\(model.unresolved.count) in this range",
                          note: InsightsUnresolvedDestination.signalWording)
             if model.unresolved.isEmpty && !model.isLoading {
@@ -445,7 +446,7 @@ struct InsightsView: View {
     private func unresolvedContextMenu(_ ids: Set<String>) -> some View {
         if let id = ids.first, let entry = model.unresolved.first(where: { $0.id == id }) {
             ForEach(model.proposableApps(for: entry), id: \.appIdentity) { app in
-                Button("Propose a Rule for \(app.displayName)…") {
+                Button("Suggest a Rule for \(app.displayName)…") {
                     model.proposeRule(forUnresolved: entry, app: app)
                 }
             }
@@ -458,9 +459,9 @@ struct InsightsView: View {
 
     private var findingsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("New after update",
-                         subtitle: "observed difference, not a verdict",
-                         note: "These findings compare destinations observed under different offline app builds. They do not establish causation or intent. Apps without a reliable containing-app version are labelled unknown and are not guessed.")
+            sectionTitle("New since an app update",
+                         subtitle: "a change, not proof of anything",
+                         note: "Places an app started connecting to after it was updated. New versions often add new servers, so this is a pointer, not an alarm. When FreeSnitch can't tell an app's version, it says so instead of guessing.")
             if model.findings.isEmpty && !model.isLoading {
                 emptyState("No changed destinations in this range.")
             } else {
@@ -491,7 +492,7 @@ struct InsightsView: View {
                             }
                             Text(finding.evidence).font(.caption).foregroundStyle(.secondary)
                             if let proposal = finding.proposedRule() {
-                                Button("Propose a Rule\u{2026}") { model.proposeRule(for: proposal) }
+                                Button("Suggest a Rule\u{2026}") { model.proposeRule(for: proposal) }
                                     .controlSize(.small)
                             }
                         }
@@ -510,9 +511,9 @@ struct InsightsView: View {
 
     private var proposalsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("Proposed rules",
-                         subtitle: "nothing here is in force",
-                         note: "Each proposal is app-specific and, wherever a name is known, scoped to that name rather than to an address. FreeSnitch never turns a proposal into a rule by itself: you accept them one at a time.")
+            sectionTitle("Suggested rules",
+                         subtitle: "none are active",
+                         note: "Rules FreeSnitch suggests from what it recorded, each for one app and one destination. Nothing changes until you accept a suggestion, one at a time.")
             if let message = model.acceptMessage {
                 Label(message, systemImage: "checkmark.circle")
                     .font(.callout)
@@ -520,7 +521,7 @@ struct InsightsView: View {
                     .padding(.horizontal, 12).padding(.bottom, 6)
             }
             if model.proposals.isEmpty && !model.isLoading {
-                emptyState("No proposals in this range.")
+                emptyState("No suggestions in this range.")
             } else {
                 // Each proposal is a card with its own decision to make, and a
                 // decision has to be clickable: inside a `List` row it was not
@@ -536,7 +537,7 @@ struct InsightsView: View {
                     }
                 }
                 listFooter(hasMore: model.hasMoreProposals,
-                           title: "Load more proposals",
+                           title: "Load more suggestions",
                            action: { model.loadMoreProposals() })
             }
         }
@@ -684,9 +685,9 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
     var label: String {
         switch self {
         case .apps: return "Apps"
-        case .unresolved: return "Addresses with no DNS answer"
-        case .proposals: return "Proposed rules"
-        case .findings: return "New after update"
+        case .unresolved: return "Addresses reached without a name lookup"
+        case .proposals: return "Suggested rules"
+        case .findings: return "New since an app update"
         }
     }
 
@@ -696,9 +697,9 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
     var shortLabel: String {
         switch self {
         case .apps: return "Apps"
-        case .unresolved: return "Unresolved"
-        case .proposals: return "Proposals"
-        case .findings: return "Changed"
+        case .unresolved: return "No Name"
+        case .proposals: return "Suggestions"
+        case .findings: return "New Since Update"
         }
     }
 }
@@ -1048,13 +1049,13 @@ final class InsightsViewModel: ObservableObject {
             ? proposal.widenedRule(profile: state.activeProfile)
             : proposal.rule(profile: state.activeProfile)
         guard let rule else {
-            errorMessage = "That proposal cannot be widened, because no DNS name is known for the destination."
+            errorMessage = "That suggestion cannot be widened, because no DNS name is known for the destination."
             return
         }
         state.helper.addRule(rule) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.errorMessage = message ?? "The helper rejected the proposed rule."
+                self.errorMessage = message ?? "The helper rejected the suggested rule."
                 return
             }
             self.accepted.insert(proposal.id)
