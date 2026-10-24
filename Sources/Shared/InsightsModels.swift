@@ -373,7 +373,7 @@ public struct InsightsBehaviourFinding: Codable, Sendable, Hashable, Identifiabl
     }
 
     public var wording: String {
-        versionKnown ? "New after update" : "New destination, app version not known"
+        versionKnown ? "New since update" : "New destination, app version not known"
     }
 
     /// The count is already on the row as a chip, so the sentence carries only

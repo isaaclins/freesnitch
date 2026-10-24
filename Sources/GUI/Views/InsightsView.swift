@@ -521,7 +521,7 @@ struct InsightsView: View {
                     .padding(.horizontal, 12).padding(.bottom, 6)
             }
             if model.proposals.isEmpty && !model.isLoading {
-                emptyState("No proposals in this range.")
+                emptyState("No suggestions in this range.")
             } else {
                 // Each proposal is a card with its own decision to make, and a
                 // decision has to be clickable: inside a `List` row it was not
@@ -537,7 +537,7 @@ struct InsightsView: View {
                     }
                 }
                 listFooter(hasMore: model.hasMoreProposals,
-                           title: "Load more proposals",
+                           title: "Load more suggestions",
                            action: { model.loadMoreProposals() })
             }
         }
