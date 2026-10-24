@@ -669,7 +669,7 @@ public struct InsightsUnresolvedDestination: Codable, Sendable, Hashable, Identi
     /// Tailscale, NTP and plenty of ordinary software connect to bare
     /// addresses, and the DNS map is only as complete as the DNS proxy.
     public static let signalWording =
-        "No DNS answer for this address was seen while recording. That is worth a look, not a verdict: VPNs, Tailscale, NTP and apps that resolve names themselves all reach addresses directly."
+        "Apps usually look up a name before they connect. FreeSnitch saw no lookup for these addresses. That is often harmless: VPNs, Tailscale, time servers and apps that do their own lookups connect to addresses directly. Worth a glance, not a verdict."
 }
 
 /// A proposal. Nothing here is in force. A human accepts each one, per D2.
