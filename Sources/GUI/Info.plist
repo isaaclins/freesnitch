@@ -44,7 +44,7 @@
 	<key>SUFeedURL</key>
 	<string>https://isaaclins.com/freesnitch/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8=</string>
+	<string>s19KDKXgrxZQgfYO2yymuly/OjXMOpCpwqsIvVebbfU=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

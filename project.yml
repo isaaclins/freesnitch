@@ -65,7 +65,7 @@ targets:
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.utilities
         SUFeedURL: "https://isaaclins.com/freesnitch/appcast.xml"
-        SUPublicEDKey: "4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8="
+        SUPublicEDKey: "s19KDKXgrxZQgfYO2yymuly/OjXMOpCpwqsIvVebbfU="
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         SUAllowsAutomaticUpdates: false

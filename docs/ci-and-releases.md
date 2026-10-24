@@ -95,7 +95,10 @@ tools, Sparkle's `generate_appcast`, `gh`, and these exact signing credentials:
   `io.isaaclins.freesnitch.netext.systemextension`
 - Notarytool keychain profile: `puresnitch-dev`
 - Sparkle 2.10.0 account: `puresnitch` (or `SPARKLE_EDDSA_PRIVATE_KEY_FILE`)
-- Sparkle public key: `4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8=`
+- Sparkle public key: `s19KDKXgrxZQgfYO2yymuly/OjXMOpCpwqsIvVebbfU=` (since 1.1.0, build 34; the 1.0.0 key
+  `4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8=` was lost, so builds below 34
+  get every newer update as informational only: Sparkle announces it and
+  opens the releases page, and the user installs it by hand once)
 - GitHub CLI authenticated with access to `isaaclins/freesnitch`
 
 The release build always sets `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO`. Do not

@@ -22,6 +22,12 @@ NOTARY_PROFILE="${NOTARY_PROFILE:-puresnitch-dev}"
 SPARKLE_VERSION="2.10.0"
 SPARKLE_ACCOUNT="puresnitch"
 FEED_URL="https://isaaclins.com/freesnitch/appcast.xml"
+DOWNLOAD_PAGE_URL="https://github.com/isaaclins/freesnitch/releases/latest"
+# Builds below this one (1.0.0 and older) trust an EdDSA key that was lost.
+# Sparkle could never verify an update signed with the current key for them,
+# so new feed items are informational there: they announce the update and
+# open DOWNLOAD_PAGE_URL instead of failing to install it.
+SPARKLE_KEY_ROTATION_BUILD="34"
 
 MODE="release"
 VERSION=""
@@ -618,11 +624,13 @@ generate_appcast() {
   rm -rf "$appcast_tmp_dir"
   mkdir -p "$appcast_tmp_dir" "$APPCAST_ARCHIVES"
 
-  # Keep the prior feed beside the archives so Sparkle preserves its history.
-  # The output path does not exist yet because generate_appcast parses an
-  # existing output path as an input appcast.
+  # Start from the published feed at the output path: generate_appcast reads an
+  # existing output file as the input appcast and keeps its older items. A feed
+  # beside the archives is ignored when -o points elsewhere, so a release from
+  # a checkout without the old archives used to publish a feed with only the
+  # new item.
   if [[ -f "$ROOT/docs/appcast.xml" ]]; then
-    cp "$ROOT/docs/appcast.xml" "$APPCAST_ARCHIVES/appcast.xml"
+    cp "$ROOT/docs/appcast.xml" "$appcast_tmp"
   fi
   # The archive is normally built straight into the archive directory, so this
   # would be a copy onto itself, which cp refuses and pipefail turns fatal.
@@ -645,12 +653,16 @@ generate_appcast() {
   "$generator" \
     "${key_args[@]}" \
     --download-url-prefix "$DOWNLOAD_PREFIX" \
+    --link "$DOWNLOAD_PAGE_URL" \
+    --informational-update-versions "<$SPARKLE_KEY_ROTATION_BUILD" \
     --embed-release-notes \
     -o "$appcast_tmp" \
     "$APPCAST_ARCHIVES"
   rewrite_appcast_download_urls "$appcast_tmp"
   grep -Fq "$DOWNLOAD_PREFIX$ZIP_NAME" "$appcast_tmp" || \
     die "generated appcast does not contain the current release URL"
+  grep -Fq "<sparkle:belowVersion>$SPARKLE_KEY_ROTATION_BUILD</sparkle:belowVersion>" "$appcast_tmp" || \
+    die "generated appcast does not mark the update informational for builds below $SPARKLE_KEY_ROTATION_BUILD"
   grep -Fq 'sparkle:edSignature' "$appcast_tmp" || \
     die "generated appcast has no Sparkle EdDSA signature"
   # Sparkle writes the element with attributes, for example
