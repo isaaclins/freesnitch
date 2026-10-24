@@ -1,5 +1,6 @@
 import SwiftUI
 import ServiceManagement
+import SystemConfiguration
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
@@ -7,7 +8,11 @@ struct SettingsView: View {
     @ObservedObject private var mapHome = MapHomeAnchor.shared
     @ObservedObject var uninstall: UninstallFlowModel
     @State private var doh = ""
+    /// What the helper last confirmed, so Apply knows whether there is
+    /// anything to apply.
+    @State private var savedDoH = ""
     @State private var dohError: String?
+    @State private var systemResolvers: [String] = []
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var pane: Pane = .general
 
@@ -51,10 +56,12 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 520, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
-        .onAppear { loadDoHUpstream() }
+        .onAppear { loadDoHUpstream(); systemResolvers = Self.currentSystemResolvers() }
         .onChange(of: state.helperConnected) { connected in
             if connected { loadDoHUpstream() }
         }
+        .onChange(of: state.dnsProxyEnabled) { _ in systemResolvers = Self.currentSystemResolvers() }
+        .onChange(of: pane) { _ in systemResolvers = Self.currentSystemResolvers() }
     }
 
     @ViewBuilder
@@ -203,6 +210,44 @@ struct SettingsView: View {
         return state.enforcementEnabled ? "Not running" : "Off, because enforcement is off"
     }
 
+    /// A running proxy is not the same as a proxy in use. FreeSnitch does not
+    /// change the Mac's DNS servers, so lookups only reach the proxy, and the
+    /// upstream above, when the network's DNS server is this Mac. Without
+    /// saying so, a saved upstream read as broken: the Mac kept asking the
+    /// resolver it already had (#142).
+    private var routesThroughProxy: Bool {
+        systemResolvers.contains { $0 == "127.0.0.1" || $0 == "::1" }
+    }
+
+    private var dnsUsage: (status: String, detail: String) {
+        guard state.helperConnected else {
+            return ("Unknown", "The helper is not connected.")
+        }
+        guard state.enforcementEnabled else {
+            return ("No",
+                    "The upstream applies only while enforcement is on. Turn it on in General.")
+        }
+        guard state.dnsProxyEnabled else {
+            return ("No", "Enforcement is on, but the DNS proxy is not running.")
+        }
+        if routesThroughProxy {
+            return ("Yes", "This Mac's lookups go to FreeSnitch, which filters them and forwards the rest over HTTPS.")
+        }
+        let servers = systemResolvers.isEmpty
+            ? "the resolver your network or a DNS app provides"
+            : systemResolvers.joined(separator: ", ")
+        return ("No",
+                "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that.")
+    }
+
+    /// The resolvers macOS is using right now, as the system reports them.
+    private static func currentSystemResolvers() -> [String] {
+        guard let store = SCDynamicStoreCreate(nil, "FreeSnitchSettings" as CFString, nil, nil),
+              let dns = SCDynamicStoreCopyValue(store, "State:/Network/Global/DNS" as CFString) as? [String: Any],
+              let servers = dns["ServerAddresses"] as? [String] else { return [] }
+        return servers
+    }
+
     private var helperSummary: String {
         if case .mismatch(let helperVersion, let appVersion) = state.helperVersionState {
             return "Running version \(helperVersion), while this app is version \(appVersion)"
@@ -232,6 +277,7 @@ struct SettingsView: View {
             Task { @MainActor in
                 if let value {
                     doh = value
+                    savedDoH = value
                     dohError = nil
                 } else {
                     // Keep the field empty rather than putting a sentinel such
@@ -245,9 +291,11 @@ struct SettingsView: View {
     }
 
     private func saveDoHUpstream() {
-        state.helper.remote?.setDoHUpstream(url: doh) { ok, message in
+        let value = doh
+        state.helper.remote?.setDoHUpstream(url: value) { ok, message in
             Task { @MainActor in
                 if ok {
+                    savedDoH = value
                     dohError = nil
                 } else {
                     dohError = message ?? "The helper refused the DoH upstream."
@@ -264,10 +312,16 @@ struct SettingsView: View {
                 // The prompt is deliberately not a URL: macOS styles a URL in
                 // a field as a blue link, and an empty field then reads as if
                 // it already held that value.
-                TextField("Upstream", text: $doh,
-                          prompt: Text("Leave empty to use the system resolver"))
-                    .onSubmit { saveDoHUpstream() }
-                    .disabled(!state.helperConnected)
+                // Return was the only way to save, and nothing said so: an
+                // edited field looked saved and was not (#142).
+                HStack {
+                    TextField("Upstream", text: $doh,
+                              prompt: Text("Leave empty to use the system resolver"))
+                        .onSubmit { saveDoHUpstream() }
+                    Button("Apply") { saveDoHUpstream() }
+                        .disabled(doh == savedDoH)
+                }
+                .disabled(!state.helperConnected)
                 if let dohError, state.helperConnected {
                     Text(dohError).font(.caption).foregroundColor(.red)
                 }
@@ -279,6 +333,19 @@ struct SettingsView: View {
             Section("Local DNS proxy") {
                 LabeledContent("Status") {
                     Text(dnsProxyStatus)
+                }
+                LabeledContent("Used by this Mac") {
+                    Text(dnsUsage.status)
+                }
+                Text(dnsUsage.detail)
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if state.dnsProxyEnabled, !routesThroughProxy {
+                    Button("Open Network Settings…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
                 }
                 Text("The DNS proxy runs inside the privileged helper and filters domain lookups against the enabled blocklists. It reports as running only once the helper confirms it.")
                     .font(.caption).foregroundColor(.secondary)
