@@ -25,13 +25,13 @@
   <a href="https://github.com/isaaclins/freesnitch/releases/latest"><img src="https://img.shields.io/github/v/release/isaaclins/freesnitch?style=flat-square&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-13.0+-blue?style=flat-square" alt="macOS 13.0+">
   <img src="https://img.shields.io/badge/Swift-5.10-orange?style=flat-square" alt="Swift 5.10">
-  <a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/Firewall_build-Notarized-success?style=flat-square" alt="Notarized firewall build"></a>
+  <a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/Firewall_build-Notarized-success?style=flat-square" alt="Notarized firewall build"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/isaaclins/freesnitch?style=flat-square" alt="MIT License"></a>
   <a href="https://github.com/isaaclins/freesnitch/stargazers"><img src="https://img.shields.io/github/stars/isaaclins/freesnitch?style=flat-square" alt="Stars"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg"><b>Download FreeSnitch 1.0.0</b></a> -
+  <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg"><b>Download FreeSnitch 1.1.0</b></a> -
   <a href="#install">Install</a> -
   <a href="#why-this-exists">Why this exists</a> -
   <a href="#what-it-does">What it does</a> -
@@ -45,7 +45,7 @@
 
 ## Install
 
-**[Download FreeSnitch 1.0.0](https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.dmg)** (`FreeSnitch-1.0.0.dmg`, 13.7 MB) or pick a file from the [release page](https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0).
+**[Download FreeSnitch 1.1.0](https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg)** (`FreeSnitch-1.1.0.dmg`, 12.5 MB) or pick a file from the [release page](https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0).
 
 - macOS 13 or later, one universal build for Apple Silicon and Intel.
 - Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
@@ -58,8 +58,8 @@
 To check the download before you open it:
 
 ```console
-$ shasum -a 256 ~/Downloads/FreeSnitch-1.0.0.dmg
-610ef02c2201dba159172f774fd22fa88f6cbc3b79449bef9dacaab5ce361044
+$ shasum -a 256 ~/Downloads/FreeSnitch-1.1.0.dmg
+f15857e6e328936b1623cfe309c1d7a357d1150f77fbe2e24a8ed7c1650382cd
 ```
 
 Coming from PureSnitch? Run `Scripts/uninstall_puresnitch.sh` first. The old and new content filters must not run together.
@@ -134,7 +134,7 @@ FreeSnitch is the fourth choice:
 - **Free under MIT.** Read the code, fork it, audit it. The matcher, DNS proxy, pf integration, and UI are all open.
 - **No telemetry.** No analytics SDKs. No crash reporters phoning home. No "anonymous usage" pings. Network requests are limited to enabled blocklists, the DoH resolver you choose, offline geolocation data sources, and Sparkle update checks.
 - **Built like a Mac app, not a port.** Native SwiftUI for the windows, real `NSStatusItem` for the menubar, `SMAppService` for the privileged helper, and XPC over a Mach service for the GUI to daemon bridge.
-- **Signed and notarized.** [Version 1.0.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0) is the firewall build, signed with a Developer ID and notarized by Apple.
+- **Signed and notarized.** [Version 1.1.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0) is the firewall build, signed with a Developer ID and notarized by Apple.
 
 What FreeSnitch is **honest** about: released builds ship the per-process firewall, and `Sources/NetExt/FilterDataProvider.swift` is a real `NEFilterDataProvider` that evaluates every new socket flow and returns an allow or drop verdict, or pauses the flow for a decision from the GUI. The monitor build omits that extension so contributors can build without this team's provisioning profiles; it is a development convenience, not the shipped product.
 
@@ -281,7 +281,7 @@ FreeSnitch's firewall flavour provides per-process kernel filtering alongside it
 
 Per-process outbound filtering works today, through a signed Network System Extension that evaluates every new socket flow. Alongside it: DNS-level filtering with blocklists and DNS over HTTPS, `pfctl` enforcement, a rules manager, a live traffic monitor, a command line interface that mirrors the GUI, and Sparkle update support.
 
-The current release is [FreeSnitch 1.0.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.0.0), published on 15 August 2026. Every release is listed on the [releases page](https://github.com/isaaclins/freesnitch/releases).
+The current release is [FreeSnitch 1.1.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0), published on 25 October 2026. Every release is listed on the [releases page](https://github.com/isaaclins/freesnitch/releases).
 
 There is no fixed roadmap here, and pretending otherwise ages badly. Direction is decided in the open on the [issue tracker](https://github.com/isaaclins/freesnitch/issues), where proposed work carries the reasoning behind it and the constraints it has to respect.
 
