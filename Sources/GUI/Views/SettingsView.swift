@@ -62,6 +62,11 @@ struct SettingsView: View {
         }
         .onChange(of: state.dnsProxyEnabled) { _ in systemResolvers = Self.currentSystemResolvers() }
         .onChange(of: pane) { _ in systemResolvers = Self.currentSystemResolvers() }
+        // Coming back from System Settings, where the tab sends you to change
+        // the DNS server, has to show the new answer.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            systemResolvers = Self.currentSystemResolvers()
+        }
     }
 
     @ViewBuilder
@@ -215,8 +220,30 @@ struct SettingsView: View {
     /// upstream above, when the network's DNS server is this Mac. Without
     /// saying so, a saved upstream read as broken: the Mac kept asking the
     /// resolver it already had (#142).
+    /// The proxy listens on every interface, so a DNS server set to one of
+    /// this Mac's own addresses reaches it as well as loopback does.
     private var routesThroughProxy: Bool {
-        systemResolvers.contains { $0 == "127.0.0.1" || $0 == "::1" }
+        let own = Self.ownAddresses()
+        return systemResolvers.contains { server in
+            server == "::1" || server.hasPrefix("127.") || own.contains(server)
+        }
+    }
+
+    private static func ownAddresses() -> Set<String> {
+        var result: Set<String> = []
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return result }
+        defer { freeifaddrs(list) }
+        for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let addr = entry.pointee.ifa_addr else { continue }
+            let family = Int32(addr.pointee.sa_family)
+            guard family == AF_INET || family == AF_INET6 else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let length = socklen_t(family == AF_INET ? MemoryLayout<sockaddr_in>.size : MemoryLayout<sockaddr_in6>.size)
+            guard getnameinfo(addr, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            result.insert(String(cString: host).split(separator: "%").first.map(String.init) ?? "")
+        }
+        return result
     }
 
     private var dnsUsage: (status: String, detail: String) {
@@ -231,7 +258,7 @@ struct SettingsView: View {
             return ("No", "Enforcement is on, but the DNS proxy is not running.")
         }
         if routesThroughProxy {
-            return ("Yes", "This Mac's lookups go to FreeSnitch, which filters them and forwards the rest over HTTPS.")
+            return ("Yes", "This Mac's DNS server is FreeSnitch, which filters lookups and forwards the rest over HTTPS. A DNS profile, VPN or DNS app can still take some or all lookups elsewhere.")
         }
         let servers = systemResolvers.isEmpty
             ? "the resolver your network or a DNS app provides"
