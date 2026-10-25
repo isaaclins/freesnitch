@@ -187,6 +187,17 @@ fileprivate struct PreparedIPPattern: Sendable {
     }
 }
 
+/// A rule's path covers the process at that path and everything inside it,
+/// such as the helpers in an app bundle. It is compared as a path, not as a
+/// string prefix: a rule for /usr/local/bin/node must not also match
+/// /usr/local/bin/nodemon, nor /usr/bin/ssh match /usr/bin/ssh-agent (#158).
+func processPathCovers(_ rulePath: String, _ processPath: String) -> Bool {
+    guard processPath.hasPrefix(rulePath) else { return false }
+    if rulePath.hasSuffix("/") { return true }
+    let rest = processPath.dropFirst(rulePath.count)
+    return rest.isEmpty || rest.first == "/"
+}
+
 fileprivate struct PreparedRule: Sendable {
     let action: RuleAction
     let expiresAt: Date?
@@ -214,7 +225,7 @@ fileprivate struct PreparedRule: Sendable {
     func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
         if let direction, direction != connection.direction { return false }
         if let processBundleId, (connection.processBundleId ?? "") != processBundleId { return false }
-        if let processPath, !connection.processPath.hasPrefix(processPath) { return false }
+        if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
         if let remotePort, connection.remotePort != remotePort { return false }
         if let remoteHost, !remoteHost.matches(connection.remoteHost) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
@@ -292,7 +303,7 @@ public struct RuleMatcher: Sendable {
             if (c.processBundleId ?? "") != bid { return false }
         }
         if let path = r.processPath, !path.isEmpty {
-            if c.processPath != path && !c.processPath.hasPrefix(path) { return false }
+            if !processPathCovers(path, c.processPath) { return false }
         }
         if let port = r.remotePort, port != 0 {
             if c.remotePort != port { return false }
