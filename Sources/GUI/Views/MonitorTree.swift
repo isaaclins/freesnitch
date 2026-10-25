@@ -207,11 +207,6 @@ struct MonitorTreeBuild: Sendable {
     let order: MonitorRowOrder
 }
 
-/// Groups a flat connection list into the two-level tree.
-///
-/// Pure and bounded: one linear pass over the connections, then a sort of the
-/// group keys that are new in this rebuild. Never call this on the main
-/// thread; `MonitorTreeController` runs it on a background task.
 /// How a process that does an app's networking for it is shown (#169).
 ///
 /// Browsers and many other apps connect from helper processes: Chromium
@@ -234,11 +229,16 @@ enum MonitorAppPresentation {
             || path?.contains("/com.apple.WebKit.Networking.xpc/") == true {
             return Presentation(title: webContentTitle, iconPath: nil, isWebContent: true)
         }
-        // A bundle nested in an app (a helper app or an XPC service) is shown
-        // under the outermost app.
+        // A helper bundle inside an app (a helper app, an XPC service or an
+        // extension) is shown under the outermost app. Only the places apps
+        // keep their helpers count: a full app shipped inside another, such
+        // as Simulator inside Xcode, keeps its own name.
         guard let path, let outer = path.range(of: ".app/") else { return nil }
         let inside = path[outer.upperBound...]
-        guard inside.contains(".app/") || inside.contains(".xpc/") else { return nil }
+        let helperFolders = ["Contents/Frameworks/", "Contents/XPCServices/", "Contents/PlugIns/",
+                             "Contents/Helpers/", "Contents/Library/LoginItems/"]
+        guard helperFolders.contains(where: { inside.hasPrefix($0) }),
+              [".app/", ".xpc/", ".appex/"].contains(where: { inside.contains($0) }) else { return nil }
         let bundlePath = String(path[..<outer.upperBound])
         let appName = ((bundlePath as NSString).lastPathComponent as NSString).deletingPathExtension
         guard !appName.isEmpty, appName != processName else { return nil }
@@ -246,6 +246,11 @@ enum MonitorAppPresentation {
     }
 }
 
+/// Groups a flat connection list into the two-level tree.
+///
+/// Pure and bounded: one linear pass over the connections, then a sort of the
+/// group keys that are new in this rebuild. Never call this on the main
+/// thread; `MonitorTreeController` runs it on a background task.
 enum MonitorTreeBuilder {
     private struct DestinationAccumulator {
         var label: String

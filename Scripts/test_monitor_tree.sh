@@ -437,6 +437,12 @@ equal(MonitorAppPresentation.of(processName: "bird",
 let webKitPath = "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking"
 check(MonitorAppPresentation.of(processName: "com.apple.WebKit.Networking", path: webKitPath)?.isWebContent == true,
       "WebKit's networking service is labelled as web content, not as one app")
+check(MonitorAppPresentation.of(processName: "Simulator",
+                                path: "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator") == nil,
+      "a full app shipped inside another keeps its own title")
+equal(MonitorAppPresentation.of(processName: "ShareExtension",
+                                path: "/Applications/Slack.app/Contents/PlugIns/ShareExtension.appex/Contents/MacOS/ShareExtension")?.title,
+      "Slack", "an app extension is shown as its app")
 var helperConnection = connection(app: "Helium Helper", bundle: nil, host: "example.com", ip: "203.0.113.20")
 helperConnection.processPath = heliumHelper
 let helperApp = MonitorTreeBuilder.build(connections: [helperConnection], order: MonitorRowOrder())
