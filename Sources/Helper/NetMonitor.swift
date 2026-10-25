@@ -3,6 +3,7 @@ import Darwin
 
 final class NetMonitor: @unchecked Sendable {
     private var lsofTimer: DispatchSourceTimer?
+    private var trafficTimer: DispatchSourceTimer?
     private var nettopProc: Process?
     private var nettopInput: Pipe?
     private var nettopOutput: FileHandle?
@@ -16,10 +17,8 @@ final class NetMonitor: @unchecked Sendable {
     var onSample: ((TrafficSample) -> Void)?
     var onProcessUsage: (([ProcessUsage]) -> Void)?
 
-    private var lastIn: Int64 = 0
-    private var lastOut: Int64 = 0
-    private var lastSampleTime = Date()
-    private var hasBaseline = false
+    private var lastInterfaceTotals: [String: InterfaceTotals] = [:]
+    private var lastTrafficUptime: TimeInterval = 0
     private var pending = ""
     private var frame: [String] = []
     private(set) var isRunning = false
@@ -30,6 +29,7 @@ final class NetMonitor: @unchecked Sendable {
         queue.sync {
             stopLocked()   // idempotent: tear down any existing pollers before (re)starting
             startLsofPolling()
+            startTrafficSampling()
             startNettop()
             isRunning = true
         }
@@ -41,11 +41,13 @@ final class NetMonitor: @unchecked Sendable {
 
     private func stopLocked() {
         lsofTimer?.cancel(); lsofTimer = nil
+        trafficTimer?.cancel(); trafficTimer = nil
+        lastInterfaceTotals = [:]
         nettopGeneration += 1
         nettopOutput?.readabilityHandler = nil; nettopOutput = nil
         nettopProc?.terminate(); nettopProc = nil
         nettopInput = nil
-        pending = ""; frame = []; hasBaseline = false
+        pending = ""; frame = []
         isRunning = false
     }
 
@@ -174,7 +176,7 @@ final class NetMonitor: @unchecked Sendable {
         nettopProc = p
         nettopInput = input
         nettopOutput = pipe.fileHandleForReading
-        pending = ""; frame = []; hasBaseline = false; lastIn = 0; lastOut = 0
+        pending = ""; frame = []
         let generation = nettopGeneration
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -193,9 +195,9 @@ final class NetMonitor: @unchecked Sendable {
 
     /// nettop writes one *frame* per interval: a `,bytes_in,bytes_out,` header
     /// followed by one cumulative line per process. A pipe read is not a frame -
-    /// it can split mid-line or carry half a frame - so summing whatever arrived
-    /// and diffing it against the previous sum produced nonsense rates
-    /// (multi-GB/s spikes). Buffer, cut on the header, and only diff whole frames.
+    /// it can split mid-line or carry half a frame - so reading whatever arrived
+    /// as a frame produced nonsense (multi-GB/s spikes). Buffer, cut on the
+    /// header, and only report whole frames.
     private func ingestNettop(_ chunk: String) {
         pending += chunk
         while let nl = pending.firstIndex(of: "\n") {
@@ -211,16 +213,12 @@ final class NetMonitor: @unchecked Sendable {
     }
 
     private func completeFrame(_ lines: [String]) {
-        var totalIn: Int64 = 0
-        var totalOut: Int64 = 0
         var usages: [ProcessUsage] = []
         for line in lines {
             let parts = line.split(separator: ",")
             guard parts.count >= 3,
                   let bin = Int64(parts[parts.count - 2]),
                   let bout = Int64(parts[parts.count - 1]) else { continue }
-            totalIn += bin
-            totalOut += bout
 
             let identifier = String(parts[0])
             let separator = identifier.lastIndex(of: ".")
@@ -236,32 +234,93 @@ final class NetMonitor: @unchecked Sendable {
             }
             usages.append(ProcessUsage(processName: processName, pid: pid, bytesIn: bin, bytesOut: bout))
         }
-        let now = Date()
         onProcessUsage?(usages)
+    }
 
-        // The first frame is only a baseline: nettop counters are cumulative
-        // since it started, so emitting a rate here would report the whole
-        // history as if it happened in one second.
-        guard hasBaseline else {
-            hasBaseline = true
-            lastIn = totalIn; lastOut = totalOut; lastSampleTime = now
-            return
-        }
+    /// The live speed comes from the interface counters, once a second.
+    /// nettop block-buffers into a pipe, so its frames arrive in bursts of
+    /// about eleven every eleven seconds; a rate taken from their arrival
+    /// times updated the menu bar every ten seconds or more (#156).
+    private func startTrafficSampling() {
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now(), repeating: .seconds(1), leeway: .milliseconds(100))
+        t.setEventHandler { [weak self] in self?.sampleTraffic() }
+        t.resume()
+        trafficTimer = t
+    }
 
-        let dt = now.timeIntervalSince(lastSampleTime)
-        guard dt >= 0.4 else { return }
-        // Counters only go up while nettop lives; a drop means processes exited,
-        // so treat it as a fresh baseline instead of a negative or huge delta.
-        guard totalIn >= lastIn, totalOut >= lastOut else {
-            lastIn = totalIn; lastOut = totalOut; lastSampleTime = now
-            return
+    private func sampleTraffic() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let totals = NetMonitor.interfaceTotals()
+        let previous = lastInterfaceTotals
+        let dt = now - lastTrafficUptime
+        lastInterfaceTotals = totals
+        lastTrafficUptime = now
+        // The first reading is only a baseline: the counters run since boot.
+        guard !previous.isEmpty, dt > 0 else { return }
+        let (deltaIn, deltaOut) = NetMonitor.delta(from: previous, to: totals)
+        onSample?(TrafficSample(timestamp: Date(),
+                                bytesIn: Int64(Double(deltaIn) / dt),
+                                bytesOut: Int64(Double(deltaOut) / dt)))
+    }
+
+    struct InterfaceTotals: Equatable {
+        var bytesIn: UInt64
+        var bytesOut: UInt64
+    }
+
+    /// Bytes moved since the previous reading, summed over the interfaces in
+    /// both. An interface that appeared, vanished or was reset (its counter
+    /// went down) contributes nothing for this second rather than a negative
+    /// or since-boot jump.
+    static func delta(from previous: [String: InterfaceTotals],
+                      to current: [String: InterfaceTotals]) -> (UInt64, UInt64) {
+        var bytesIn: UInt64 = 0
+        var bytesOut: UInt64 = 0
+        for (name, now) in current {
+            guard let before = previous[name] else { continue }
+            if now.bytesIn >= before.bytesIn { bytesIn &+= now.bytesIn - before.bytesIn }
+            if now.bytesOut >= before.bytesOut { bytesOut &+= now.bytesOut - before.bytesOut }
         }
-        let deltaIn = totalIn - lastIn
-        let deltaOut = totalOut - lastOut
-        lastIn = totalIn; lastOut = totalOut; lastSampleTime = now
-        let sample = TrafficSample(timestamp: now,
-                                   bytesIn: Int64(Double(deltaIn) / dt),
-                                   bytesOut: Int64(Double(deltaOut) / dt))
-        onSample?(sample)
+        return (bytesIn, bytesOut)
+    }
+
+    /// 64-bit byte counters of the Ethernet-like interfaces (Wi-Fi, Ethernet,
+    /// USB tethering, cellular). Loopback, tunnels and bridges are left out
+    /// because their traffic is also counted on the interface it really
+    /// leaves by, and a VPN would otherwise count every byte twice.
+    /// `getifaddrs` would be simpler, but its counters are 32-bit and wrap
+    /// after 4 GB.
+    static func interfaceTotals() -> [String: InterfaceTotals] {
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var length = 0
+        guard sysctl(&mib, UInt32(mib.count), nil, &length, nil, 0) == 0, length > 0 else { return [:] }
+        var buffer = [UInt8](repeating: 0, count: length)
+        guard sysctl(&mib, UInt32(mib.count), &buffer, &length, nil, 0) == 0 else { return [:] }
+
+        var totals: [String: InterfaceTotals] = [:]
+        buffer.withUnsafeBytes { raw in
+            var offset = 0
+            while offset + MemoryLayout<if_msghdr>.size <= length {
+                let header = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr.self)
+                let messageLength = Int(header.ifm_msglen)
+                guard messageLength > 0 else { break }
+                defer { offset += messageLength }
+                guard Int32(header.ifm_type) == RTM_IFINFO2,
+                      offset + MemoryLayout<if_msghdr2>.size <= length else { continue }
+                let info = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
+                guard info.ifm_flags & IFF_LOOPBACK == 0,
+                      [IFT_ETHER, IFT_CELLULAR].contains(Int32(info.ifm_data.ifi_type)) else { continue }
+                var nameBuffer = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
+                guard if_indextoname(UInt32(info.ifm_index), &nameBuffer) != nil else { continue }
+                let name = String(cString: nameBuffer)
+                // Virtual machines' interfaces carry traffic that leaves again
+                // through the Mac's own interface.
+                guard !name.hasPrefix("vmenet") else { continue }
+                totals[name] = InterfaceTotals(bytesIn: info.ifm_data.ifi_ibytes,
+                                               bytesOut: info.ifm_data.ifi_obytes)
+            }
+        }
+        return totals
     }
 }

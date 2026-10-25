@@ -87,7 +87,8 @@ pass out quick proto { tcp udp } to 1.1.1.1 port 443
 
 ## Per-process observation
 
-- `nettop -P -L 0 -x -J bytes_in,bytes_out -s 1` runs continuously. Each line update is parsed for per-process throughput which feeds the menubar histogram + Network Monitor process list.
+- `nettop -P -L 0 -x -J bytes_in,bytes_out -s 1` runs continuously. Each frame is parsed for per-process throughput, which feeds the Network Monitor process list.
+- The menubar speed and histogram come from the interfaces' 64-bit byte counters (`sysctl` `NET_RT_IFLIST2`), read once a second. nettop block-buffers into a pipe, so its frames arrive in bursts and cannot time a rate (#156).
 - `lsof -i -n -P -F pcnT` is polled every 2 s. Output is parsed into `Connection` records with PID, process path, local/remote IP+port, and an inferred bundle ID (via Info.plist of the enclosing `.app`).
 
 ## Rule matching
