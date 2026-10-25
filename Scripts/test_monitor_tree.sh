@@ -335,6 +335,7 @@ let named = MonitorTreeBuilder.build(connections: [plainSeen, seen, asked], orde
 let seenRow = named.destinations.first { $0.remoteIP == "185.199.110.153" }!
 equal(seenRow.label, "github.com", "an address with a seen name shows the name, even if it arrived second")
 check(seenRow.labelIsSeenName, "the row knows its label is a seen name, so it can show the address too")
+equal(seenRow.decisionSubject, "github.com (185.199.110.153)", "buttons and prompts on a named row name its address")
 equal(seenRow.connectionCount, 2, "connections to the address stay one row whether or not they carried the name")
 let askedRow = named.destinations.first { $0.remoteIP == "203.0.113.10" }!
 equal(askedRow.label, "api.beeper.com", "a name the app asked for wins over a seen name")

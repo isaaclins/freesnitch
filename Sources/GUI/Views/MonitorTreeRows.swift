@@ -221,7 +221,9 @@ struct MonitorTreeList: View {
         }
         for app in visible.apps {
             if let destination = app.destinations.first(where: { $0.id == id }) {
-                return [NSItemProvider(object: destination.label as NSString)]
+                // A seen name is a label; the row is the address.
+                let value = destination.labelIsSeenName ? destination.remoteIP ?? destination.label : destination.label
+                return [NSItemProvider(object: value as NSString)]
             }
         }
         return []
@@ -234,7 +236,7 @@ struct MonitorTreeList: View {
 
     private func clear(destination: MonitorDestinationNode, app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.destination(destination, in: app) else { return }
-        pendingClear = PendingClear(subject: "\(app.name) to \(destination.label)", target: target)
+        pendingClear = PendingClear(subject: "\(app.name) to \(destination.decisionSubject)", target: target)
     }
 }
 
@@ -328,7 +330,7 @@ struct MonitorDestinationRow: View {
             MonitorDecisionControls(decision: decision,
                                     pending: pending,
                                     addressable: isAddressable,
-                                    subject: decisionSubject,
+                                    subject: destination.decisionSubject,
                                     onSelection: selected,
                                     onDecide: onDecide,
                                     onClear: onClear)
@@ -340,13 +342,6 @@ struct MonitorDestinationRow: View {
         if let host = destination.remoteHost { return PFHostValidator.kind(for: host) != nil }
         if let ip = destination.remoteIP { return PFHostValidator.kind(for: ip) != nil }
         return false
-    }
-
-    /// A row named after a seen name still writes a rule for its address, so
-    /// the buttons say which address.
-    private var decisionSubject: String {
-        guard destination.labelIsSeenName, let ip = destination.remoteIP else { return destination.label }
-        return "\(destination.label) (\(ip))"
     }
 
     private var subtitle: String {
@@ -594,6 +589,8 @@ enum MonitorTreeFilter {
                 let textMatches = needle.isEmpty
                     || nameMatches
                     || destination.label.lowercased().contains(needle)
+                    || destination.remoteIP?.lowercased().contains(needle) == true
+                    || destination.remoteHost?.lowercased().contains(needle) == true
                 let verdictMatches = !deniedOnly || destination.deniedCount > 0
                 return textMatches && verdictMatches
             }

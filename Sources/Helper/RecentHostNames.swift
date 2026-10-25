@@ -28,7 +28,8 @@ final class RecentHostNames: @unchecked Sendable {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let ip = rawIP.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard PFHostValidator.kind(for: name) == .hostname,
-              let kind = PFHostValidator.kind(for: ip), kind != .hostname else { return }
+              let kind = PFHostValidator.kind(for: ip), kind != .hostname,
+              !Self.namesNothing(ip) else { return }
         lock.lock()
         defer { lock.unlock() }
         names[ip] = Entry(name: name, seen: date)
@@ -63,6 +64,17 @@ final class RecentHostNames: @unchecked Sendable {
             named.resolvedName = name
             return named
         }
+    }
+
+    /// A filtering resolver answers blocked names with 0.0.0.0 or a loopback
+    /// address, and mDNS goes to multicast. None of those is where a name
+    /// lives, so none may label a row with it.
+    static func namesNothing(_ ip: String) -> Bool {
+        if ip.contains(":") {
+            return ip == "::" || ip == "::1" || ip.hasPrefix("ff")
+        }
+        guard let first = ip.split(separator: ".").first.flatMap({ Int($0) }) else { return true }
+        return first == 0 || first == 127 || first >= 224
     }
 
     private func evictLocked(now: Date) {

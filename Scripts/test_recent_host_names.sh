@@ -42,6 +42,12 @@ struct Verify {
         names.note(name: "ok.example", for: "not-an-address", at: now)
         check("an address is never stored as its own name", names.name(for: "203.0.113.9", now: now) == nil)
         check("an invalid name is refused", names.name(for: "203.0.113.10", now: now) == nil)
+        for junk in ["0.0.0.0", "127.0.0.1", "::", "::1", "224.0.0.251", "ff02::fb", "255.255.255.255"] {
+            names.note(name: "blocked.example", for: junk, at: now)
+            check("\(junk) never gets a name", names.name(for: junk, now: now) == nil)
+        }
+        names.note(name: "nas.example", for: "192.168.1.20", at: now)
+        check("a device on the local network keeps its name", names.name(for: "192.168.1.20", now: now) == "nas.example")
 
         let lsof = Connection(pid: 2, processName: "curl", processPath: "/usr/bin/curl",
                               remoteHost: "203.0.113.5", remoteIP: "203.0.113.5", remotePort: 443)

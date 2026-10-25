@@ -74,6 +74,15 @@ struct MonitorDestinationNode: Identifiable, Hashable, Sendable {
     let order: UInt64
 }
 
+extension MonitorDestinationNode {
+    /// A row named after a seen name still writes and removes a rule for its
+    /// address, so the buttons and prompts say which address.
+    var decisionSubject: String {
+        guard labelIsSeenName, let ip = remoteIP else { return label }
+        return "\(label) (\(ip))"
+    }
+}
+
 struct MonitorAppNode: Identifiable, Hashable, Sendable {
     let id: String
     let name: String

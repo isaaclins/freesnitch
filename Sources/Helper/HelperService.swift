@@ -920,7 +920,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func currentConnections(reply: @escaping (Data) -> Void) {
-        let conns = store.recentConnections(limit: 500)
+        let conns = recentNames.annotate(store.recentConnections(limit: 500))
         reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
     }
 
