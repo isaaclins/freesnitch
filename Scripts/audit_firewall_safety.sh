@@ -1177,4 +1177,17 @@ absence_action_line="$(grep -nF 'action { ok, message in' "$BUNDLE_WATCHER" | he
 [[ -n "$absence_evidence_line" && -n "$absence_action_line" && "$absence_evidence_line" -lt "$absence_action_line" ]] \
   || fail "the bundle-absence stand-down acts before it logs its evidence"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, and a bundle-absence stand-down that can neither unregister nor delete are present.\n'
+# The matcher never reads a rule's name, so an enabled rule that names its app
+# only by name matches every app (#157). Every helper ingest path and the
+# shared import reader must refuse one.
+helper_reject_body="$(swift_function_body "$HELPER" 'private func rejectionReason(for rule: Rule)')"
+printf '%s\n' "$helper_reject_body" | grep -Fq 'rule.nameOnlyRejectionReason' \
+  || fail "the helper accepts an enabled rule that names its app only by name, which matches every app"
+for ingest in 'func addRule(ruleJSON' 'func reloadRules(rulesJSON' 'func replaceRules(rulesJSON'; do
+  swift_function_body "$HELPER" "$ingest" | grep -Fq 'rejectionReason(for:' \
+    || fail "the helper's $ingest path skips rule content validation"
+done
+grep -Fq 'rule.nameOnlyRejectionReason' "$ROOT/Sources/Shared/RuleExportFormat.swift" \
+  || fail "rule import accepts an enabled rule that names its app only by name"
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, and refusal of rules that name an app only by name are present.\n'

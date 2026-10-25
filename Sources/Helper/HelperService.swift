@@ -730,8 +730,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     // for a good error message; the helper validates because a malformed
     // address must never reach the store, whatever the caller did.
     private func rejectionReason(for rule: Rule) -> String? {
-        guard let reason = RuleAddressValidator.rejectionReason(forRemoteIP: rule.remoteIP) else { return nil }
-        return "rule \(rule.id.uuidString) has an invalid remote IP `\(rule.remoteIP ?? "")`: \(reason). \(RuleAddressValidator.remediation)"
+        if let reason = RuleAddressValidator.rejectionReason(forRemoteIP: rule.remoteIP) {
+            return "rule \(rule.id.uuidString) has an invalid remote IP `\(rule.remoteIP ?? "")`: \(reason). \(RuleAddressValidator.remediation)"
+        }
+        if let reason = rule.nameOnlyRejectionReason {
+            return "Refused: \(reason)."
+        }
+        return nil
     }
 
     private func mergedRules(_ incoming: [Rule], into existing: inout [Rule]) {
