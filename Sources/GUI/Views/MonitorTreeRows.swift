@@ -254,7 +254,11 @@ struct MonitorAppRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if let icon = MonitorAppIconCache.icon(for: app) {
+            if app.isWebContent {
+                Image(systemName: "safari")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+            } else if let icon = MonitorAppIconCache.icon(for: app) {
                 Image(nsImage: icon).resizable().frame(width: 16, height: 16)
             } else {
                 Image(systemName: "app.dashed")
@@ -263,10 +267,11 @@ struct MonitorAppRow: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(app.name)
+                Text(app.displayName ?? app.name)
                     .font(.body)
                     .lineLimit(1)
-                Text("\(app.destinationCount) destination\(app.destinationCount == 1 ? "" : "s") · \(PSFormat.bytes(app.traffic.total))")
+                    .modifier(OptionalHelp(text: app.displayName == nil ? nil : "Connections made by \(app.name)"))
+                Text(appSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -291,6 +296,14 @@ struct MonitorAppRow: View {
                                     onClear: onClear)
         }
         .padding(.vertical, 2)
+    }
+
+    /// The process's own name leads when the row is titled after its app,
+    /// because the rule a decision writes is for that process.
+    private var appSubtitle: String {
+        let summary = "\(app.destinationCount) destination\(app.destinationCount == 1 ? "" : "s") · \(PSFormat.bytes(app.traffic.total))"
+        guard app.displayName != nil else { return summary }
+        return "\(app.name) · \(summary)"
     }
 }
 
@@ -580,7 +593,9 @@ enum MonitorTreeFilter {
             // "Denied" narrows to the rows the menu bar badge counted, so the
             // badge lands on the list it promised (#138).
             if deniedOnly && app.deniedCount == 0 { return nil }
-            let nameMatches = needle.isEmpty || app.name.lowercased().contains(needle)
+            let nameMatches = needle.isEmpty
+                || app.name.lowercased().contains(needle)
+                || app.displayName?.lowercased().contains(needle) == true
             if nameMatches && !deniedOnly { return app }
             let matches = app.destinations.filter { destination in
                 let textMatches = needle.isEmpty
@@ -602,7 +617,10 @@ enum MonitorTreeFilter {
                                   hiddenDestinationCount: app.hiddenDestinationCount,
                                   ungroupedConnectionCount: app.ungroupedConnectionCount,
                                   peakDestinationTraffic: app.peakDestinationTraffic,
-                                  order: app.order)
+                                  order: app.order,
+                                  displayName: app.displayName,
+                                  iconPath: app.iconPath,
+                                  isWebContent: app.isWebContent)
         }
         return Result(apps: apps, hiddenAppCount: 0)
     }
@@ -620,7 +638,8 @@ enum MonitorAppIconCache {
     static func icon(for app: MonitorAppNode) -> NSImage? {
         if let cached = cache[app.id] { return cached }
         if cache.count >= capacity { cache.removeAll(keepingCapacity: true) }
-        let resolved = AppIcon.resolve(bundleId: app.bundleID, path: app.path, name: app.name)
+        let resolved = app.iconPath.map { NSWorkspace.shared.icon(forFile: $0) }
+            ?? AppIcon.resolve(bundleId: app.bundleID, path: app.path, name: app.name)
         cache[app.id] = resolved
         return resolved
     }
