@@ -296,6 +296,9 @@ struct InsightsHarness {
               "a name that was only looked up is not listed as a destination")
         let resolver = mail.destinations.first { $0.destinationKey == resolverIP }
         equal(resolver?.connectionCount, 2, "the lookups are contacts with the resolver")
+        let mailProposals = try! store.report(for: InsightsQuery(kind: .proposals, since: now.addingTimeInterval(-day), limit: 50))
+        check(!mailProposals.proposals.contains { $0.remoteIP == resolverIP || $0.domain == "formulae.brew.sh" },
+              "no block is proposed against the DNS server or a name that was only looked up")
 
         // MARK: purge, including the write-ahead log
         try! store.record([observation(app: "Beeper", bundle: "com.beeper.app", path: "/Applications/Beeper.app",

@@ -824,7 +824,9 @@ extension InsightsStore {
                 SELECT \(Self.appIdentitySQL) AS app, MAX(process_name), MAX(process_bundle_id), MAX(process_path),
                        \(Self.destinationSQL) AS dest, MAX(remote_ip), COUNT(*), MAX(observed_at)
                 FROM flow_observations
-                WHERE observed_at >= ? AND observed_at <= ?
+                -- A proposal is a block suggestion, and one against the DNS
+                -- server an app uses would cut its lookups (#167).
+                WHERE observed_at >= ? AND observed_at <= ? AND remote_port <> 53
                 GROUP BY app, dest
                 ORDER BY COUNT(*) DESC, app ASC, dest ASC
                 LIMIT ? OFFSET ?;

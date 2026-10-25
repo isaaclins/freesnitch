@@ -35,11 +35,11 @@ struct ContactHarness {
     }
 
     static func observation(app: String, bundle: String?, host: String, ip: String,
-                            version: String? = nil, at date: Date) -> FlowObservation {
+                            version: String? = nil, port: Int = 443, at date: Date) -> FlowObservation {
         let connection = Connection(pid: 501, processName: app,
                                     processPath: "/Applications/\(app).app/Contents/MacOS/\(app)",
                                     processBundleId: bundle, remoteHost: host, remoteIP: ip,
-                                    remotePort: 443, direction: .outgoing)
+                                    remotePort: port, direction: .outgoing)
         return FlowObservation(connection: connection, observedAt: date, processVersion: version)
     }
 
@@ -65,7 +65,10 @@ struct ContactHarness {
         // The contact set is prepared away from the verdict path.
         let known = observation(app: "Chat", bundle: app, host: destination, ip: "203.0.113.10", at: now.addingTimeInterval(-3600))
         let otherApp = observation(app: "Other", bundle: "com.example.other", host: destination, ip: "203.0.113.10", at: now.addingTimeInterval(-3500))
-        try! store.record([known, otherApp])
+        // A lookup the app sent through its DNS server (#167).
+        let lookup = observation(app: "Chat", bundle: app, host: "first.example.org", ip: "9.9.9.9",
+                                 port: 53, at: now.addingTimeInterval(-3400))
+        try! store.record([known, otherApp, lookup])
         let snapshot = try! store.contactSnapshot(now: now)
         let classifier = InsightsContactClassifier(snapshot: snapshot, now: now)
 
@@ -73,6 +76,14 @@ struct ContactHarness {
         let seen = observation(app: "Chat", bundle: app, host: destination, ip: "203.0.113.10", at: now)
         let sameDestinationOtherApp = observation(app: "New", bundle: "com.example.new", host: destination, ip: "203.0.113.10", at: now)
         check(classifier.decision(for: unseen) == .firstContact, "unseen app + destination is first contact")
+        let laterLookup = observation(app: "Chat", bundle: app, host: "other.example.org", ip: "9.9.9.9", port: 53, at: now)
+        check(classifier.decision(for: laterLookup) == .knownContact,
+              "a lookup through a DNS server the app already uses is a known contact, whatever name it asks for")
+        let lookupElsewhere = observation(app: "Chat", bundle: app, host: "first.example.org", ip: "1.1.1.1", port: 53, at: now)
+        check(classifier.decision(for: lookupElsewhere) == .firstContact,
+              "a lookup through a DNS server the app never used is a first contact")
+        check(!snapshot.contacts.contains { $0.destination == "first.example.org" },
+              "a looked-up name is not stored as a contact of the app")
         check(classifier.decision(for: seen) == .knownContact, "seen app + destination is known contact")
         check(classifier.decision(for: sameDestinationOtherApp) == .firstContact,
               "a destination seen by another app is first contact for this app")
