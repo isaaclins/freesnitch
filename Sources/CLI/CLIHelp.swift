@@ -352,7 +352,9 @@ enum CLIHelp {
 
     Options:
       --process-bundle-id ID       Match an application bundle ID.
-      --process-path PATH          Match a process path or path prefix.
+      --process-path PATH          Match the process at PATH, or anything inside
+                                   it when PATH is a folder or app bundle
+                                   (/Applications/App.app/ covers its helpers).
       --process-name NAME          Display name only. Needs --process-path or
                                    --process-bundle-id, which do the matching.
       --host HOST                  Match a domain, including *.example.com.
