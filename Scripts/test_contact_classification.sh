@@ -108,7 +108,7 @@ struct ContactHarness {
                                                           since: now.addingTimeInterval(-24 * 60 * 60),
                                                           limit: 50), now: now)
         let updateFinding = report.findings.first { $0.destination == "new.example.com" }
-        check(updateFinding?.wording == "new after update", "version 2 new destination is a new-after-update finding")
+        check(updateFinding?.wording == "New since update", "version 2 new destination is a new-after-update finding")
         check(updateFinding?.oldVersion == "1.0 (1)" && updateFinding?.newVersion == "1.0 (2)",
               "finding includes both old and new app builds")
         check(updateFinding.map { abs($0.firstSeen.timeIntervalSince(v2New.observedAt)) < 0.001 && $0.connectionCount == 1 } ?? false,
@@ -117,7 +117,7 @@ struct ContactHarness {
               "a destination already present in version 1 is not flagged for version 2")
         let unknownFinding = report.findings.first { $0.destination == "unknown.example.com" }
         check(unknownFinding?.versionKnown == false && unknownFinding?.newVersion == nil &&
-              unknownFinding?.versionLabel == "Unknown app version",
+              unknownFinding?.versionLabel == "Version not known",
               "unknown app version is labelled unknown and never guessed")
 
         // Constructing a proposed rule is still only a proposal. Nothing in a
