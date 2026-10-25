@@ -2,23 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FreeSnitch: see every outbound connection on your Mac</title>
-<meta name="description" content="FreeSnitch is an open-source macOS outbound application firewall. See per-process connections, make scoped decisions, and keep your network private with zero telemetry.">
-<meta name="theme-color" content="#0e1219">
-<link rel="canonical" href="https://isaaclins.com/freesnitch/">
-<link rel="stylesheet" href="styles.css?v=1.0.0-site2">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FreeSnitch: see every app that talks to the internet</title>
+<meta name="description" content="FreeSnitch is a free, open-source firewall for your Mac. It shows which app connects where, and asks before anything new gets out. No account, no telemetry.">
+<meta name="theme-color" content="#06080d">
 <link rel="icon" href="favicon.png">
+<link rel="canonical" href="https://isaaclins.com/freesnitch/">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="FreeSnitch: see every outbound connection on your Mac">
+<meta property="og:title" content="FreeSnitch: see every app that talks to the internet">
 <meta property="og:description" content="An open-source macOS outbound application firewall with a live map, scoped connection decisions, and zero telemetry.">
 <meta property="og:url" content="https://isaaclins.com/freesnitch/">
 <meta property="og:image" content="https://isaaclins.com/freesnitch/social-preview.png?v=1.0.0">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="FreeSnitch: see every outbound connection on your Mac">
+<meta name="twitter:title" content="FreeSnitch: see every app that talks to the internet">
 <meta name="twitter:description" content="Open-source macOS outbound application firewall. Zero telemetry. MIT licensed. Source available.">
 <meta name="twitter:image" content="https://isaaclins.com/freesnitch/social-preview.png?v=1.0.0">
 
@@ -42,430 +41,381 @@
   "screenshot": ["screenshot-hero.png", "screenshot-monitor.png", "screenshot-alert.png", "screenshot-rules.png"]
 }
 </script>
+<script>document.documentElement.classList.add('js');if(location.search.includes('shot'))document.documentElement.classList.add('shot-mode')</script>
+<style>
+:root{
+  --bg:#06080d; --ink:#f4f6fb; --muted:rgba(244,246,251,.68); --faint:rgba(244,246,251,.5);
+  --line:rgba(255,255,255,.09); --line-strong:rgba(255,255,255,.16);
+  --blue:#4f8dff; --blue-deep:#2f6bf0; --blue-soft:#9cc0ff;
+  --glass:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));
+  --glass-strong:linear-gradient(180deg,rgba(22,27,38,.92),rgba(14,18,26,.88));
+  --r-card:28px; --r-tile:22px;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0}
+html{background:var(--bg);color:var(--ink);font-family:var(--font);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;scroll-behavior:smooth}
+html,body{overflow-x:clip}
+body{min-height:100vh;position:relative}
+img{display:block;max-width:100%}
+a{color:inherit;text-decoration:none}
+::selection{background:rgba(79,141,255,.4)}
+
+/* atmosphere: mesh + grain */
+.mesh{position:absolute;inset:0 0 auto 0;height:1400px;pointer-events:none;z-index:0;
+  background:
+   radial-gradient(60% 50% at 18% 6%,rgba(47,107,240,.30),transparent 70%),
+   radial-gradient(45% 40% at 86% 10%,rgba(124,92,255,.20),transparent 70%),
+   radial-gradient(50% 40% at 50% 62%,rgba(36,196,180,.08),transparent 70%)}
+.grain{position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+main,header,footer{position:relative;z-index:1}
+.skip{position:fixed;left:16px;top:-60px;z-index:60;padding:12px 16px;border-radius:12px;background:#fff;color:#0a0d14;font-weight:600;font-size:14px}
+.skip:focus{top:16px}
+:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.wrap{width:min(1120px,calc(100% - 40px));margin-inline:auto}
+
+/* nav: floating glass pill */
+.nav{position:fixed;top:14px;left:0;right:0;z-index:40}
+.nav-in{width:min(920px,calc(100% - 24px));margin-inline:auto;height:60px;border-radius:999px;display:flex;align-items:center;gap:6px;padding:0 9px 0 18px;position:relative}
+.nav-in::before{content:"";position:absolute;inset:0;border-radius:inherit;background:rgba(14,18,27,.62);backdrop-filter:blur(22px) saturate(170%);-webkit-backdrop-filter:blur(22px) saturate(170%);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 30px rgba(0,0,0,.35);z-index:-1}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.02em;font-size:17px;margin-right:auto}
+.brand img{width:28px;height:28px;border-radius:7px}
+.nav a.link{font-size:14px;font-weight:500;color:var(--muted);padding:9px 13px;border-radius:999px;transition:color .2s,background .2s}
+.nav a.link:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:44px;padding:0 20px;border-radius:999px;font-weight:600;font-size:15px;letter-spacing:-.01em;transition:transform .25s var(--ease),background .2s,box-shadow .25s;white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:#fff;color:#0a0d14;box-shadow:0 6px 24px rgba(79,141,255,.25)}
+.btn-primary:hover{background:#e9efff}
+.btn-glass{background:var(--glass);border:1px solid var(--line-strong);color:var(--ink);backdrop-filter:blur(16px)}
+.btn-glass:hover{background:rgba(255,255,255,.1)}
+.nav .btn{height:42px;padding:0 17px;font-size:14px}
+.btn svg{width:17px;height:17px}
+
+/* hero */
+.hero{padding:150px 0 0;text-align:center}
+h1{font-size:clamp(44px,7.6vw,92px);line-height:1;letter-spacing:-.05em;font-weight:760;margin-inline:auto}
+h1 .dim{display:block;color:rgba(244,246,251,.42)}
+.lede{margin:26px auto 0;max-width:40ch;font-size:clamp(18px,2.1vw,21px);line-height:1.45;color:var(--muted);letter-spacing:-.01em}
+.cta{margin-top:34px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.cta .btn{height:52px;padding:0 26px;font-size:16px}
+.meta{margin-top:18px;font-size:13px;color:var(--faint);letter-spacing:.005em}
+.meta b{color:var(--muted);font-weight:500}
+
+/* stage: product card + sonar + floating alert + live pill */
+.stage{position:relative;margin:70px auto 0;width:min(1060px,100%)}
+.sonar{position:absolute;left:50%;top:44%;width:0;height:0;pointer-events:none;z-index:0}
+.sonar i{position:absolute;left:50%;top:50%;width:300px;height:300px;margin:-150px 0 0 -150px;border-radius:50%;border:1.5px solid rgba(79,141,255,.55);opacity:0;animation:ping 6s var(--ease) infinite}
+.sonar i:nth-child(2){animation-delay:2s}.sonar i:nth-child(3){animation-delay:4s}
+@keyframes ping{0%{transform:scale(.4);opacity:0}12%{opacity:.7}100%{transform:scale(4.2);opacity:0}}
+.shot{position:relative;z-index:1;border-radius:var(--r-card);padding:10px;background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.03));border:1px solid var(--line-strong);box-shadow:0 40px 120px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.12)}
+.shot img{border-radius:19px;width:100%}
+.float-alert{position:absolute;z-index:2;right:-34px;bottom:-46px;width:min(330px,38%);border-radius:20px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.12);transform:translateY(24px) scale(.96);opacity:0;transition:transform 1s var(--ease) .5s,opacity .8s ease .5s}
+.loaded .float-alert{transform:none;opacity:1}
+.live{position:absolute;z-index:2;left:22px;bottom:22px;display:flex;align-items:center;gap:10px;height:44px;padding:0 16px 0 8px;border-radius:999px;background:var(--glass-strong);border:1px solid var(--line-strong);backdrop-filter:blur(18px);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;max-width:calc(100% - 44px)}
+.live .dot{width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:rgba(52,199,89,.16);flex:none}
+.live .dot::after{content:"";width:9px;height:9px;border-radius:50%;background:#34c759;box-shadow:0 0 0 0 rgba(52,199,89,.6);animation:beat 2s infinite}
+@keyframes beat{0%{box-shadow:0 0 0 0 rgba(52,199,89,.55)}100%{box-shadow:0 0 0 10px rgba(52,199,89,0)}}
+.live .txt{display:flex;gap:8px;white-space:nowrap;overflow:hidden;transition:opacity .35s,transform .35s var(--ease)}
+.live .txt.out{opacity:0;transform:translateY(6px)}
+.live b{font-weight:600}.live span{color:var(--muted)}
+
+/* start cards */
+.start{padding:120px 0 0}
+.kicker{text-align:center;font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:22px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.tile{position:relative;padding:20px 18px 22px;border-radius:var(--r-tile);background:var(--glass);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05);transition:transform .35s var(--ease),border-color .3s,background .3s}
+.tile:hover{transform:translateY(-3px);border-color:var(--line-strong);background:rgba(255,255,255,.07)}
+.sq{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;margin-bottom:22px;box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 6px 16px rgba(0,0,0,.3)}
+.sq svg{width:22px;height:22px;stroke:#fff;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.g-blue{background:linear-gradient(160deg,#6aa6ff,#2f6bf0)}.g-orange{background:linear-gradient(160deg,#ffae5c,#f2680e)}
+.g-green{background:linear-gradient(160deg,#4fe0a0,#0f9a62)}.g-violet{background:linear-gradient(160deg,#b39bff,#7357f6)}
+.tile h3{font-size:16px;font-weight:650;letter-spacing:-.015em}
+.tile p{margin-top:5px;font-size:14px;line-height:1.4;color:var(--muted)}
+
+/* statement */
+.statement{padding:170px 0 150px;display:grid;grid-template-columns:1.35fr 1fr;gap:60px;align-items:center}
+.say{font-size:clamp(34px,4.6vw,58px);line-height:1.08;letter-spacing:-.045em;font-weight:720}
+.js .say .w{color:rgba(244,246,251,.18);transition:color .5s ease}
+.say .w.on{color:var(--ink)}
+.chip{display:inline-block;width:1.25em;height:.92em;vertical-align:-.1em;border-radius:.28em;overflow:hidden;border:1px solid var(--line-strong);margin:0 .06em;background:#111}
+.chip img{width:100%;height:100%;object-fit:cover}
+.chip.ic{display:inline-grid;place-items:center;background:var(--glass)}
+.chip.ic svg{width:.55em;height:.55em;stroke:var(--ink);stroke-width:2;fill:none}
+.emblem{position:relative;display:grid;place-items:center;aspect-ratio:1}
+.emblem img{width:58%;border-radius:23%;filter:drop-shadow(0 30px 60px rgba(47,107,240,.45));position:relative;z-index:1;animation:bob 7s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-10px)}}
+.emblem .sonar{top:50%}
+.stat{position:absolute;z-index:2;right:0;bottom:6%;padding:18px 22px;border-radius:20px;background:var(--glass-strong);border:1px solid var(--line-strong);backdrop-filter:blur(18px);box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.stat b{display:block;font-size:38px;letter-spacing:-.04em;line-height:1}
+.stat span{display:block;margin-top:6px;font-size:13px;color:var(--muted)}
+
+/* feature rows */
+.feature{display:grid;grid-template-columns:1fr 1.25fr;gap:64px;align-items:center;padding:70px 0}
+.feature.flip{grid-template-columns:1.25fr 1fr}
+.feature.flip .copy{order:2}
+.label{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--blue-soft)}
+.label .sq{width:28px;height:28px;border-radius:9px;margin:0}
+.label .sq svg{width:15px;height:15px}
+h2{margin-top:16px;font-size:clamp(32px,4vw,48px);line-height:1.04;letter-spacing:-.045em;font-weight:730}
+.copy p{margin-top:16px;font-size:18px;line-height:1.5;color:var(--muted);max-width:30ch}
+.more{margin-top:22px;display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:600;color:var(--blue-soft)}
+.more svg{width:15px;height:15px;transition:transform .25s var(--ease)}
+.more:hover svg{transform:translateX(3px)}
+.panel{border-radius:var(--r-card);padding:9px;background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.03));border:1px solid var(--line-strong);box-shadow:0 30px 90px rgba(0,0,0,.5)}
+.panel img{border-radius:20px;width:100%}
+.panel.tall{width:min(400px,100%);margin-inline:auto}
+
+/* reveal */
+.js .rv{opacity:0;transform:translateY(26px);transition:opacity .9s ease,transform 1s var(--ease)}
+.js .rv.in,.shot-mode .rv{opacity:1;transform:none}
+.shot-mode .say .w{color:var(--ink)}
+
+/* trust strip */
+.trust{margin-top:60px;padding:56px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(3,1fr);gap:40px}
+.trust h3{font-size:19px;font-weight:650;letter-spacing:-.02em}
+.trust p{margin-top:8px;font-size:15px;line-height:1.5;color:var(--muted)}
+
+/* compare */
+.compare{padding:120px 0 0;text-align:center}
+.compare h2{margin-inline:auto;max-width:18ch}
+.compare .sub{margin:16px auto 0;max-width:46ch;color:var(--muted);font-size:18px;line-height:1.5}
+.table{margin:44px auto 0;max-width:900px;border-radius:var(--r-tile);border:1px solid var(--line);overflow:hidden;background:rgba(255,255,255,.025);text-align:left}
+.row{display:grid;grid-template-columns:1.6fr repeat(4,1fr);border-top:1px solid var(--line);font-size:14.5px}
+.row:first-child{border-top:0}
+.row>*{padding:15px 16px}
+.row.head{font-size:13px;color:var(--faint);font-weight:600}
+.row.head .us{color:var(--ink)}
+.row .us{background:rgba(79,141,255,.08);font-weight:600}
+.yes{color:#7ee2a8}.no{color:var(--faint)}
+details.limits{margin:28px auto 0;max-width:900px;text-align:left;border-radius:var(--r-tile);border:1px solid var(--line);background:rgba(255,255,255,.025)}
+details.limits summary{list-style:none;cursor:pointer;padding:18px 20px;font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+details.limits summary::-webkit-details-marker{display:none}
+details.limits summary svg{width:16px;height:16px;transition:transform .3s var(--ease);stroke:var(--muted)}
+details.limits[open] summary svg{transform:rotate(180deg)}
+.limits-body{padding:0 20px 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.limits-body h4{font-size:15px;font-weight:650}
+.limits-body p{margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted)}
+
+/* install */
+.install{margin:140px auto 0;border-radius:36px;padding:72px 56px;position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(47,107,240,.16),rgba(47,107,240,.04));border:1px solid rgba(79,141,255,.22)}
+.install::before{content:"";position:absolute;inset:-40% -10% auto auto;width:640px;height:640px;background:radial-gradient(circle,rgba(79,141,255,.28),transparent 65%);pointer-events:none}
+.install-top{display:flex;justify-content:space-between;align-items:flex-end;gap:30px;flex-wrap:wrap;position:relative}
+.install h2{margin-top:0;max-width:13ch}
+.steps{margin-top:48px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;position:relative}
+.step{padding:22px;border-radius:var(--r-tile);background:rgba(6,8,13,.55);border:1px solid var(--line)}
+.step .n{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:14px;font-weight:700;background:rgba(255,255,255,.08);border:1px solid var(--line-strong)}
+.step h3{margin-top:16px;font-size:16px;font-weight:650;letter-spacing:-.015em}
+.step p{margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted)}
+.sum{margin-top:22px;font-size:13px;color:var(--faint);position:relative}
+.sum code{font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-all}
+
+/* footer */
+footer{margin-top:120px;padding:56px 0 48px;border-top:1px solid var(--line)}
+.foot{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:30px}
+.foot p{margin-top:12px;font-size:14px;line-height:1.5;color:var(--muted);max-width:34ch}
+.foot h4{font-size:13px;font-weight:600;color:var(--faint);margin-bottom:12px}
+.foot li{list-style:none;margin:9px 0;font-size:14px;color:var(--muted)}
+.foot ul{padding:0}
+.foot a:hover{color:var(--ink)}
+.fine{margin-top:44px;font-size:12.5px;color:var(--faint)}
+
+@media (max-width:900px){
+  .nav a.link{display:none}
+  .tiles{grid-template-columns:1fr 1fr}
+  .statement{grid-template-columns:1fr;gap:20px;padding:120px 0 90px}
+  .emblem{width:min(340px,86%);margin-inline:auto}
+  .emblem img{width:50%;transform:translateY(-8%)}
+  .stat{right:auto;left:50%;transform:translateX(-50%);bottom:2%;padding:12px 18px;white-space:nowrap;text-align:center}
+  .stat b{font-size:28px}
+  .feature,.feature.flip{grid-template-columns:1fr;gap:34px;padding:56px 0}
+  .feature.flip .copy{order:0}
+  .trust{grid-template-columns:1fr;gap:28px}
+  .limits-body{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr}
+  .install{padding:48px 22px;border-radius:28px}
+  .foot{grid-template-columns:1fr 1fr}
+  .foot>div:first-child{grid-column:1/-1}
+  .float-alert{right:-6px;bottom:-60px;width:52%}
+}
+@media (max-width:560px){
+  .hero{padding-top:118px}
+  .cta .btn{width:100%}
+  .cta{padding:0 6px}
+  .tiles{grid-template-columns:1fr}
+  .tile{display:grid;grid-template-columns:44px 1fr;gap:0 14px;align-items:center;padding:16px}
+  .tile .sq{margin:0;grid-row:span 2}
+  .tile p{margin-top:2px}
+  .stage{margin-top:48px}
+  .shot{padding:6px;border-radius:20px}.shot img{border-radius:15px}
+  .live{left:10px;bottom:-62px;font-size:13px;max-width:calc(100% - 20px)}
+  .float-alert{display:none}
+  .start{padding-top:110px}
+  .row{grid-template-columns:1.4fr repeat(4,1fr);font-size:12.5px}
+  .row>*{padding:12px 8px}
+  .row.head{font-size:11px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}.float-alert{opacity:1;transform:none}
+  .say .w{color:var(--ink)}
+}
+</style>
 </head>
+<body>
+<a class="skip" href="#start">Skip to content</a>
+<div class="mesh"></div><div class="grain"></div>
 
-<body class="bg-page font-sans text-primary antialiased">
-<a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-xl focus:bg-beam-600 focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-beam-50">Skip to content</a>
-
-<header class="sticky top-0 z-40 border-b border-line bg-page backdrop-blur-xl">
-  <div class="mx-auto flex h-[4.5rem] max-w-7xl items-center justify-between px-6 lg:px-8">
-    <a href="#top" class="flex items-center gap-3 text-primary" aria-label="FreeSnitch home">
-      <img src="icon-512.png" class="h-9 w-9 rounded-xl" alt="">
-      <span class="font-display text-lg font-semibold tracking-tight">FreeSnitch</span>
-    </a>
-    <nav class="hidden items-center gap-6 text-sm text-muted lg:flex" aria-label="Primary navigation">
-      <a href="#observe" class="transition-colors hover:text-primary">Observe</a>
-      <a href="#decide" class="transition-colors hover:text-primary">Decide</a>
-      <a href="#control" class="transition-colors hover:text-primary">Control</a>
-      <a href="#trust" class="transition-colors hover:text-primary">Trust</a>
-      <a href="#compare" class="transition-colors hover:text-primary">Compare</a>
-      <a href="#install" class="transition-colors hover:text-primary">Install</a>
-      <a href="https://github.com/isaaclins/freesnitch" class="border-l border-line pl-6 transition-colors hover:text-primary">Source</a>
-      <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg" class="rounded-lg bg-beam-600 px-3.5 py-2 font-semibold text-beam-50 transition-colors hover:bg-beam-700">Download</a>
-    </nav>
-    <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg" class="rounded-lg bg-beam-600 px-3.5 py-2 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700 lg:hidden">Download</a>
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top"><img src="icon-512.png" alt="">FreeSnitch</a>
+    <a class="link" href="#map">How it works</a>
+    <a class="link" href="#compare">Compare</a>
+    <a class="link" href="https://github.com/isaaclins/freesnitch">Source</a>
+    <a class="btn btn-primary" href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg">Download</a>
   </div>
 </header>
 
-<main id="main">
-  <section id="top" class="min-h-[100dvh] border-b border-line" aria-labelledby="hero-title">
-    <div class="mx-auto grid min-h-[calc(100dvh-4.5rem)] max-w-7xl items-center gap-14 px-6 py-16 lg:grid-cols-[0.82fr_1.18fr] lg:gap-16 lg:px-8 lg:py-20">
-      <div class="max-w-xl">
-        <p class="mb-6 font-mono text-xs font-medium uppercase tracking-[0.18em] text-accent">Outbound visibility for macOS</p>
-        <h1 id="hero-title" class="hero-title font-display font-semibold leading-[0.98] tracking-[-0.055em] text-primary">See every connection.</h1>
-        <p class="mt-7 max-w-lg text-lg leading-8 text-secondary">FreeSnitch is an open-source macOS firewall that shows where processes connect and lets you decide what happens next.</p>
-        <div class="mt-9 flex flex-wrap items-center gap-4">
-          <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg" class="inline-flex items-center justify-center gap-2 rounded-xl bg-beam-600 px-5 py-3.5 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700"><svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download for Mac</a>
-          <a href="https://github.com/isaaclins/freesnitch" class="inline-flex items-center justify-center rounded-xl border border-line px-5 py-3.5 text-sm font-semibold text-primary transition-colors hover:border-accent hover:text-accent">Read the source</a>
-        </div>
-        <p class="mt-5 font-mono text-xs leading-6 text-muted"><a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0" class="text-accent underline decoration-beam-500/50 underline-offset-4 transition-colors hover:text-beam-400">Version 1.1.0</a> <span aria-hidden="true">&middot;</span> macOS 13+ <span aria-hidden="true">&middot;</span> Apple Silicon and Intel <span aria-hidden="true">&middot;</span> Notarized</p>
-      </div>
-      <figure class="lg:justify-self-end lg:max-w-[47rem]">
-        <div class="overflow-hidden rounded-xl border border-line bg-surface-raised p-2">
-          <img src="screenshot-hero.png" alt="FreeSnitch Network Monitor: apps with their traffic, a world map of where it goes, and a summary of the busiest apps, domains and countries" class="w-full rounded-xl" width="1600" height="978" fetchpriority="high" decoding="async">
-        </div>
-        <figcaption class="mt-4 max-w-xl text-sm leading-6 text-muted">The monitor brings destinations, processes, and byte counts into one view.</figcaption>
-      </figure>
+<main id="top">
+  <section class="hero wrap">
+    <h1>See every app that <span class="dim">talks to the internet.</span></h1>
+    <p class="lede">A free, open-source firewall for your Mac. It shows who connects where, and asks before anything new gets out.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>Download for Mac</a>
+      <a class="btn btn-glass" href="https://github.com/isaaclins/freesnitch">View the source</a>
+    </div>
+    <p class="meta"><b>Version 1.1.0</b> · macOS 13 or later · Apple Silicon and Intel · Notarized by Apple</p>
+
+    <div class="stage" id="map">
+      <div class="sonar"><i></i><i></i><i></i></div>
+      <div class="shot"><img src="screenshot-hero.png" alt="FreeSnitch Network Monitor: apps on the left, their connections on a world map, totals on the right"></div>
+      <div class="live" aria-live="polite"><span class="dot"></span><span class="txt" id="live"><b>Discord</b><span>gateway.discord.gg · allowed</span></span></div>
+      <img class="float-alert" src="screenshot-alert.png" alt="Alert: Discord wants to connect to gateway.discord.gg. Allow or Deny.">
     </div>
   </section>
 
-  <section id="observe" class="border-b border-line py-24 lg:py-32" aria-labelledby="observe-title">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="max-w-3xl">
-        <h2 id="observe-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Start with a map, not a mystery.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">See active connections in real time, grouped by process and destination. Geolocation stays offline, and FreeSnitch collects no telemetry.</p>
-      </div>
-
-      <dl class="mt-12 grid gap-0 border-y border-line md:grid-cols-3">
-        <div class="py-5 md:pr-8">
-          <dt class="text-sm text-muted">Cost</dt>
-          <dd class="mt-2 font-display text-xl font-semibold text-primary">Free to use</dd>
-        </div>
-        <div class="border-line py-5 md:border-l md:px-8">
-          <dt class="text-sm text-muted">Collection</dt>
-          <dd class="mt-2 font-display text-xl font-semibold text-primary">Zero telemetry</dd>
-        </div>
-        <div class="border-line py-5 md:border-l md:pl-8">
-          <dt class="text-sm text-muted">Platform</dt>
-          <dd class="mt-2 font-display text-xl font-semibold text-primary">macOS 13+, Apple Silicon and Intel</dd>
-        </div>
-      </dl>
-
-      <div class="mt-16 grid items-start gap-12 lg:grid-cols-[1.35fr_0.65fr] lg:gap-20">
-        <figure>
-          <div class="overflow-hidden rounded-xl border border-line bg-surface-raised p-2">
-            <img src="screenshot-monitor.png" alt="Network Monitor in light mode with Arc expanded to show each destination it reached, including one denied tracker, next to the world map" class="w-full rounded-xl" width="1600" height="978" loading="lazy" decoding="async">
-          </div>
-          <figcaption class="mt-4 text-sm leading-6 text-muted">A live view of the connections that are easy to miss in an ordinary network menu.</figcaption>
-        </figure>
-        <div class="pt-1">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">The useful detail is per process.</h3>
-          <p class="mt-4 leading-7 text-secondary">A destination means more when you can see which app reached it and how much data moved. FreeSnitch keeps that context next to the map.</p>
-          <dl class="mt-9 divide-y divide-line">
-            <div class="py-4 first:pt-0">
-              <dt class="font-medium text-primary">Process</dt>
-              <dd class="mt-1 text-sm leading-6 text-muted">Identify the app that opened the connection.</dd>
-            </div>
-            <div class="py-4">
-              <dt class="font-medium text-primary">Destination</dt>
-              <dd class="mt-1 text-sm leading-6 text-muted">Inspect the hostname, address, and port.</dd>
-            </div>
-            <div class="py-4 last:pb-0">
-              <dt class="font-medium text-primary">Traffic</dt>
-              <dd class="mt-1 text-sm leading-6 text-muted">Read the bytes moving through each process.</dd>
-            </div>
-          </dl>
-        </div>
-      </div>
+  <section class="start wrap" id="start">
+    <p class="kicker">Start with what you want</p>
+    <div class="tiles">
+      <a class="tile rv" href="#map"><div class="sq g-blue"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg></div><h3>See who is online</h3><p>Every app, where it connects, how much it sends.</p></a>
+      <a class="tile rv" href="#ask"><div class="sq g-orange"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg></div><h3>Ask before apps connect</h3><p>Allow or deny once, for an hour, or for good.</p></a>
+      <a class="tile rv" href="#rules"><div class="sq g-green"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Block ads and trackers</h3><p>Blocklists you choose, refreshed on a schedule.</p></a>
+      <a class="tile rv" href="#places"><div class="sq g-violet"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 1 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg></div><h3>Rules for every place</h3><p>Stricter at the café, relaxed at home.</p></a>
     </div>
   </section>
 
-  <section id="decide" class="border-b border-line py-24 lg:py-32" aria-labelledby="decide-title">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="max-w-3xl">
-        <h2 id="decide-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">When something reaches out, the choice is yours.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">Connection alerts turn an unfamiliar outbound request into a decision you can inspect, narrow, and remember.</p>
-      </div>
-
-      <div class="mt-16 grid gap-14 lg:grid-cols-[0.65fr_1.35fr] lg:gap-24">
-        <div>
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">A rule should match the question you are asking.</h3>
-          <p class="mt-4 leading-7 text-secondary">Allow or deny the request, then choose how much of the future to cover. Keep a one-off decision temporary, or make a clear rule that lasts.</p>
-          <figure class="mt-10 max-w-lg">
-            <div class="overflow-hidden rounded-xl border border-line bg-surface-raised p-2">
-              <img src="screenshot-alert.png" alt="Connection alert: Discord wants to connect to gateway.discord.gg on port 443, with Remember, Applies to and Expires choices and Deny or Allow" class="w-full rounded-xl" width="880" height="754" loading="lazy" decoding="async">
-            </div>
-            <figcaption class="mt-4 text-sm leading-6 text-muted">The alert says who is asking, for what, and what the answer will create.</figcaption>
-          </figure>
-        </div>
-        <ol class="border-t border-line">
-          <li class="grid gap-3 border-b border-line py-7 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <h3 class="font-display text-xl font-semibold text-primary">A process connects</h3>
-            <p class="leading-7 text-secondary">FreeSnitch identifies the process, destination, address, and port before you decide.</p>
-          </li>
-          <li class="grid gap-3 border-b border-line py-7 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <h3 class="font-display text-xl font-semibold text-primary">You set the boundary</h3>
-            <p class="leading-7 text-secondary">Scope the decision to the process, domain, IP, or port. Choose 5 minutes, 1 hour, or forever.</p>
-          </li>
-          <li class="grid gap-3 border-b border-line py-7 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <h3 class="font-display text-xl font-semibold text-primary">The decision persists</h3>
-            <p class="leading-7 text-secondary">Priority ordering keeps broad and narrow rules understandable in the Rules Manager.</p>
-          </li>
-        </ol>
-      </div>
-
-      <dl class="mt-16 grid border-y border-line md:grid-cols-[1.1fr_0.9fr_1.1fr]">
-        <div class="py-6 md:pr-8">
-          <dt class="font-display text-xl font-semibold text-primary">Alert</dt>
-          <dd class="mt-2 leading-7 text-muted">Ask before an unapproved connection leaves the Mac.</dd>
-        </div>
-        <div class="border-line py-6 md:border-l md:px-8">
-          <dt class="font-display text-xl font-semibold text-primary">Silent Allow</dt>
-          <dd class="mt-2 leading-7 text-muted">Let matching traffic pass without interrupting you.</dd>
-        </div>
-        <div class="border-line py-6 md:border-l md:pl-8">
-          <dt class="font-display text-xl font-semibold text-primary">Silent Deny</dt>
-          <dd class="mt-2 leading-7 text-muted">Reject matching traffic without opening an alert.</dd>
-        </div>
-      </dl>
+  <section class="statement wrap">
+    <p class="say" id="say">FreeSnitch watches every connection <span class="chip"><img src="chip-map.png" alt=""></span> your Mac makes, asks before a new app <span class="chip"><img src="chip-discord.png" alt=""></span> reaches out, and keeps every answer on your Mac. No account, no telemetry, and every line <span class="chip ic"><svg viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg></span> is open source.</p>
+    <div class="emblem rv">
+      <div class="sonar"><i></i><i></i><i></i></div>
+      <img src="icon-512.png" alt="FreeSnitch app icon">
+      <div class="stat"><b>Free</b><span>MIT licence. No account, no trial.</span></div>
     </div>
   </section>
 
-  <section id="control" class="border-b border-line py-24 lg:py-32" aria-labelledby="control-title">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="max-w-3xl">
-        <h2 id="control-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Set boundaries that make sense to you.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">The Rules Manager turns decisions into a policy you can inspect. Other controls cover the paths that names alone cannot.</p>
-      </div>
-
-      <div class="mt-16">
-        <figure class="max-w-5xl">
-          <div class="overflow-hidden rounded-xl border border-line bg-surface-raised p-2">
-            <img src="screenshot-rules.png" alt="Rules: allow, deny and ask rules per app and destination, with the blocklists in force" class="w-full rounded-xl" width="1600" height="978" loading="lazy" decoding="async">
-          </div>
-          <figcaption class="mt-4 text-sm leading-6 text-muted">Rules stay visible as policy, not hidden as a series of one-time prompts.</figcaption>
-        </figure>
-        <div class="mt-12 max-w-2xl border-l-4 border-beam-500 pl-6">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">The rule stays legible.</h3>
-          <p class="mt-4 leading-7 text-secondary">Use glob hostnames, CIDR ranges, and ports. Search the fields you care about, then let priority ordering make the match explicit.</p>
-          <p class="mt-6 text-sm leading-6 text-muted">The map helps you notice. The Rules Manager helps you make the decision repeatable.</p>
-        </div>
-      </div>
-
-      <dl class="mt-16 grid gap-x-12 gap-y-0 border-y border-line md:grid-cols-2">
-        <div class="border-b border-line py-7 md:pr-8">
-          <dt class="font-display text-xl font-semibold text-primary">DNS over HTTPS</dt>
-          <dd class="mt-2 leading-7 text-muted">Choose Cloudflare, Quad9, Google, or a custom endpoint. A local proxy listens on <code class="font-mono text-sm text-accent">127.0.0.1:53</code>.</dd>
-        </div>
-        <div class="border-b border-line py-7 md:pl-8">
-          <dt class="font-display text-xl font-semibold text-primary">Blocklists</dt>
-          <dd class="mt-2 leading-7 text-muted">Subscribe to 1Hosts, OISD, StevenBlack, or HaGeZi, with scheduled refreshes. With Enforcement enabled, they filter DNS names sent through FreeSnitch's proxy, not hardcoded IP addresses or names resolved through an app's own encrypted DNS, such as Chrome and Firefox DoH.</dd>
-        </div>
-        <div class="py-7 md:pr-8">
-          <dt class="font-display text-xl font-semibold text-primary">pfctl anchor</dt>
-          <dd class="mt-2 leading-7 text-muted">Apply kernel-level IP, CIDR, and port blocking through a pfctl anchor.</dd>
-        </div>
-        <div class="border-line py-7 md:border-l md:pl-8">
-          <dt class="font-display text-xl font-semibold text-primary">Offline city-level geolocation</dt>
-          <dd class="mt-2 leading-7 text-muted">Place active IPv4 and IPv6 connections on the map, down to the city, without sending location lookups to a third party. The database is downloaded once in bulk and refreshed monthly; individual addresses are never sent anywhere. Where only the country is known, the endpoint is shown at the country centroid and labelled as country level. <a href="https://db-ip.com/" class="underline decoration-line underline-offset-4 transition-colors hover:text-primary">IP Geolocation by DB-IP</a>.</dd>
-        </div>
-      </dl>
+  <section class="feature wrap" id="ask">
+    <div class="copy rv">
+      <span class="label"><span class="sq g-orange"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg></span>Alerts</span>
+      <h2>Allow once, or for good.</h2>
+      <p>When an app reaches somewhere new, FreeSnitch asks. Pick the host, the app or the port, and how long the answer lasts. The menu bar shows what is happening right now.</p>
     </div>
+    <div class="panel tall rv"><img src="screenshot-menubar.png" alt="Menu bar panel: traffic graph, busiest apps, recently denied" loading="lazy"></div>
   </section>
 
-  <section id="trust" class="border-b border-line bg-surface py-24 lg:py-32" aria-labelledby="trust-title">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="max-w-3xl">
-        <h2 id="trust-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">A firewall should explain its own limits.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">FreeSnitch separates visibility, policy, and enforcement so you can see what the app can do before you rely on it.</p>
-      </div>
-
-      <div class="mt-16 grid gap-14 lg:grid-cols-[0.8fr_1.2fr] lg:gap-24">
-        <div class="border-l-4 border-beam-500 pl-6">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">It fails open by design.</h3>
-          <p class="mt-4 text-lg leading-8 text-secondary">If the GUI is not running or does not answer, traffic is allowed rather than blocked. That keeps a broken interface from becoming a connectivity outage.</p>
-        </div>
-        <dl class="divide-y divide-line border-y border-line">
-          <div class="grid gap-2 py-6 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <dt class="font-medium text-primary">Network System Extension</dt>
-            <dd class="leading-7 text-muted">FreeSnitch is a per-process outbound application firewall built on a Network System Extension.</dd>
-          </div>
-          <div class="grid gap-2 py-6 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <dt class="font-medium text-primary">Privileged helper</dt>
-            <dd class="leading-7 text-muted">The helper handles the system-level work while the GUI presents decisions and policy.</dd>
-          </div>
-          <div class="grid gap-2 py-6 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <dt class="font-medium text-primary">Data collection</dt>
-            <dd class="leading-7 text-muted">No telemetry, analytics SDK, or license check. Connection geolocation is offline.</dd>
-          </div>
-          <div class="grid gap-2 py-6 sm:grid-cols-[12rem_1fr] sm:gap-8">
-            <dt class="font-medium text-primary">Distribution</dt>
-            <dd class="leading-7 text-muted">The release is signed with a Developer ID, notarized and stapled by Apple. Updates arrive through Sparkle and are checked against an EdDSA signature before they install.</dd>
-          </div>
-        </dl>
-      </div>
+  <section class="feature flip wrap" id="rules">
+    <div class="copy rv">
+      <span class="label"><span class="sq g-green"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span>Rules</span>
+      <h2>Rules you can read.</h2>
+      <p>Every rule says which app, where, and whether it is in force where you are. Pick an app from the list or drop it on the page. Blocklists and DNS over HTTPS sit next to them.</p>
+      <a class="more" href="https://github.com/isaaclins/freesnitch#readme">Everything it does<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></a>
     </div>
+    <div class="panel rv"><img src="screenshot-rules.png" alt="Rules table with app, destination, action and place" loading="lazy"></div>
   </section>
 
-  <section id="compare" class="border-b border-line py-24 lg:py-32" aria-labelledby="compare-title">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="max-w-3xl">
-        <h2 id="compare-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">The differences are practical.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">FreeSnitch sits between a full outbound firewall and the narrow protection built into macOS. Here is the shape of that choice.</p>
-      </div>
-
-      <div class="mt-14 overflow-x-auto rounded-xl border border-line">
-        <table class="min-w-[50rem] w-full border-collapse text-left text-sm">
-          <caption class="sr-only">Comparison of FreeSnitch with Little Snitch, LuLu, and the macOS Firewall</caption>
-          <thead class="bg-surface-raised text-primary">
-            <tr>
-              <th scope="col" class="w-[28%] px-5 py-4 font-semibold">Capability</th>
-              <th scope="col" class="px-5 py-4 font-semibold text-accent">FreeSnitch</th>
-              <th scope="col" class="px-5 py-4 font-semibold">Little Snitch</th>
-              <th scope="col" class="px-5 py-4 font-semibold">LuLu</th>
-              <th scope="col" class="px-5 py-4 font-semibold">macOS Firewall</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-line">
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Cost</th>
-              <td class="px-5 py-4 text-accent">Free</td>
-              <td class="px-5 py-4 text-muted">Paid</td>
-              <td class="px-5 py-4 text-muted">Free</td>
-              <td class="px-5 py-4 text-muted">Included</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Outbound application firewall</th>
-              <td class="px-5 py-4 text-accent">Per process</td>
-              <td class="px-5 py-4 text-muted">Per process</td>
-              <td class="px-5 py-4 text-muted">Per process</td>
-              <td class="px-5 py-4 text-muted">Inbound only</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Live world map and byte counts</th>
-              <td class="px-5 py-4 text-accent">Yes</td>
-              <td class="px-5 py-4 text-muted">Yes</td>
-              <td class="px-5 py-4 text-muted">No</td>
-              <td class="px-5 py-4 text-muted">No</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Scoped connection alerts</th>
-              <td class="px-5 py-4 text-accent">Yes</td>
-              <td class="px-5 py-4 text-muted">Yes</td>
-              <td class="px-5 py-4 text-muted">Yes</td>
-              <td class="px-5 py-4 text-muted">No</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Rules for host, CIDR, and port</th>
-              <td class="px-5 py-4 text-accent">Yes</td>
-              <td class="px-5 py-4 text-muted">Yes</td>
-              <td class="px-5 py-4 text-muted">Limited</td>
-              <td class="px-5 py-4 text-muted">No</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">DNS over HTTPS and local proxy</th>
-              <td class="px-5 py-4 text-accent">Yes</td>
-              <td class="px-5 py-4 text-muted">Yes</td>
-              <td class="px-5 py-4 text-muted">No</td>
-              <td class="px-5 py-4 text-muted">No</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Blocklists with scheduled refresh</th>
-              <td class="px-5 py-4 text-accent">Yes</td>
-              <td class="px-5 py-4 text-muted">Yes</td>
-              <td class="px-5 py-4 text-muted">No</td>
-              <td class="px-5 py-4 text-muted">No</td>
-            </tr>
-            <tr>
-              <th scope="row" class="px-5 py-4 font-medium text-primary">Source license</th>
-              <td class="px-5 py-4 text-accent">MIT</td>
-              <td class="px-5 py-4 text-muted">Proprietary</td>
-              <td class="px-5 py-4 text-muted">GPL</td>
-              <td class="px-5 py-4 text-muted">Proprietary</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="mt-6 max-w-3xl text-sm leading-6 text-muted">FreeSnitch column as of version 1.1.0. Per-process filtering runs in a Network System Extension that macOS asks you to approve on first launch.</p>
+  <section class="feature wrap" id="places">
+    <div class="copy rv">
+      <span class="label"><span class="sq g-violet"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 1 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg></span>Places</span>
+      <h2>Stricter at the café.</h2>
+      <p>Make a place for home, work or the café, and choose how strict FreeSnitch is there. It knows where you are from the network you join, without asking for your location.</p>
     </div>
+    <div class="panel rv"><img src="screenshot-profiles.png" alt="Profiles: a place, how strict it is there, and its blocklists" loading="lazy"></div>
   </section>
 
-  <section id="boundaries" class="border-b border-line py-24 lg:py-32" aria-labelledby="boundaries-title">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="max-w-3xl">
-        <h2 id="boundaries-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Know where it stops.</h2>
-        <p class="mt-5 max-w-2xl text-lg leading-8 text-secondary">Version 1.1.0 is signed, notarized, and ready to install. Here is what it does not cover, said up front.</p>
-      </div>
-
-      <div class="mt-14 grid border-y border-line md:grid-cols-[1.15fr_0.85fr_1fr]">
-        <div class="py-7 md:pr-10">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Blocklists are DNS only</h3>
-          <p class="mt-3 leading-7 text-secondary">Lists filter domain names through the local DNS proxy. They do not stop connections to hardcoded IP addresses, or names an app resolves with its own encrypted DNS, such as Chrome and Firefox with DoH on.</p>
-        </div>
-        <div class="border-line border-t py-7 md:border-l md:border-t-0 md:px-10">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">The map is an estimate</h3>
-          <p class="mt-3 leading-7 text-secondary">Locations come from offline IP geolocation, not measurement.</p>
-        </div>
-        <div class="border-line border-t py-7 md:border-l md:border-t-0 md:pl-10">
-          <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Enforcement is opt-in</h3>
-          <p class="mt-3 leading-7 text-secondary">Out of the box FreeSnitch watches. The DNS proxy and pf rules start only when you turn on Enforcement in Settings.</p>
-        </div>
-      </div>
-    </div>
+  <section class="trust wrap rv">
+    <div><h3>It fails open.</h3><p>If FreeSnitch stops answering, your internet keeps working. A broken firewall never becomes an outage.</p></div>
+    <div><h3>Signed and notarized.</h3><p>Built with a Developer ID and checked by Apple. Updates are verified with a signature before they install.</p></div>
+    <div><h3>Nothing phones home.</h3><p>No analytics, no account, no licence check. It only contacts the blocklists and DNS you pick, and its update feed.</p></div>
   </section>
 
-  <section id="install" class="border-b border-line py-24 lg:py-32" aria-labelledby="install-title">
-    <div class="mx-auto grid max-w-7xl gap-14 px-6 lg:grid-cols-[0.7fr_1.3fr] lg:gap-24 lg:px-8">
-      <div class="min-w-0">
-        <h2 id="install-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Install it. Approve only what you understand.</h2>
-        <p class="mt-5 text-lg leading-8 text-secondary">One universal disk image for macOS 13 or later, on Apple Silicon and Intel. Signed with a Developer ID and notarized by Apple.</p>
-        <div class="mt-8 flex flex-wrap items-center gap-4">
-          <a href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg" class="inline-flex items-center justify-center gap-2 rounded-xl bg-beam-600 px-5 py-3.5 text-sm font-semibold text-beam-50 transition-colors hover:bg-beam-700"><svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download 1.1.0</a>
-          <a href="https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0" class="text-sm font-semibold text-accent transition-colors hover:text-beam-400">Release notes</a>
-        </div>
-        <p class="mt-4 text-sm leading-6 text-muted">FreeSnitch-1.1.0.dmg, 12.5 MB. Free, no account.</p>
-      </div>
-
-      <div class="min-w-0">
-        <ol class="grid gap-0 border-y border-line sm:grid-cols-3">
-          <li class="py-6 sm:pr-6">
-            <p class="font-mono text-xs text-accent">01</p>
-            <h3 class="mt-2 font-display text-xl font-semibold text-primary">Drag to Applications</h3>
-            <p class="mt-2 text-sm leading-6 text-muted">Open the disk image and drag FreeSnitch into Applications. macOS only installs its helper from there.</p>
-          </li>
-          <li class="border-line border-t py-6 sm:border-l sm:border-t-0 sm:px-6">
-            <p class="font-mono text-xs text-accent">02</p>
-            <h3 class="mt-2 font-display text-xl font-semibold text-primary">Allow the helper</h3>
-            <p class="mt-2 text-sm leading-6 text-muted">System Settings / General / Login Items &amp; Extensions. Turn on Allow in the Background for FreeSnitch.</p>
-          </li>
-          <li class="border-line border-t py-6 sm:border-l sm:border-t-0 sm:pl-6">
-            <p class="font-mono text-xs text-accent">03</p>
-            <h3 class="mt-2 font-display text-xl font-semibold text-primary">Approve the filter</h3>
-            <p class="mt-2 text-sm leading-6 text-muted">When macOS asks, allow the FreeSnitch system extension in System Settings. It does the per-process filtering.</p>
-          </li>
-        </ol>
-
-        <p class="mt-10 text-sm leading-6 text-muted">Check the download before you open it:</p>
-        <pre class="mt-3 overflow-x-auto rounded-xl border border-line bg-surface-raised p-6 font-mono text-sm leading-7 text-secondary"><code>shasum -a 256 ~/Downloads/FreeSnitch-1.1.0.dmg
-f15857e6e328936b1623cfe309c1d7a357d1150f77fbe2e24a8ed7c1650382cd</code></pre>
-
-        <aside class="mt-8 border-l-4 border-beam-500 pl-6" aria-labelledby="source-build-title">
-          <h3 id="source-build-title" class="font-display text-xl font-semibold text-primary">Rather build it yourself?</h3>
-          <p class="mt-2 leading-7 text-secondary">XcodeGen and Xcode build the contributor flavour, which has everything except the Network Extension, so it needs no provisioning profiles. The <a href="https://github.com/isaaclins/freesnitch#build-from-source" class="text-accent underline decoration-beam-500/50 underline-offset-4 hover:text-beam-400">README</a> has both build flavours.</p>
-          <pre class="mt-4 overflow-x-auto rounded-xl border border-line bg-surface-raised p-6 font-mono text-sm leading-7 text-secondary"><code>brew install xcodegen
-git clone https://github.com/isaaclins/freesnitch.git
-cd freesnitch
-xcodegen generate --spec project.yml
-xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch \
-  -configuration Release -derivedDataPath build build</code></pre>
-        </aside>
-      </div>
+  <section class="compare wrap" id="compare">
+    <h2 class="rv">How it compares.</h2>
+    <p class="sub rv">Between the inbound-only firewall built into macOS and the paid outbound firewalls.</p>
+    <div class="table rv" role="table">
+      <div class="row head" role="row"><span></span><span class="us">FreeSnitch</span><span>Little Snitch</span><span>LuLu</span><span>macOS</span></div>
+      <div class="row" role="row"><span>Price</span><span class="us">Free</span><span>Paid</span><span>Free</span><span>Included</span></div>
+      <div class="row" role="row"><span>Stops apps going out</span><span class="us yes">Per app</span><span class="yes">Per app</span><span class="yes">Per app</span><span class="no">Inbound only</span></div>
+      <div class="row" role="row"><span>Live map and traffic</span><span class="us yes">Yes</span><span class="yes">Yes</span><span class="no">No</span><span class="no">No</span></div>
+      <div class="row" role="row"><span>Rules for host, range, port</span><span class="us yes">Yes</span><span class="yes">Yes</span><span>Some</span><span class="no">No</span></div>
+      <div class="row" role="row"><span>Blocklists, DNS over HTTPS</span><span class="us yes">Yes</span><span class="yes">Yes</span><span class="no">No</span><span class="no">No</span></div>
+      <div class="row" role="row"><span>Source code</span><span class="us">MIT</span><span>Closed</span><span>GPL</span><span>Closed</span></div>
     </div>
+    <details class="limits rv">
+      <summary>Where it stops<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="limits-body">
+        <div><h4>Blocklists work on names</h4><p>They don't stop apps that connect to a fixed address, or that look names up with their own encrypted DNS, like Chrome or Firefox with DoH on.</p></div>
+        <div><h4>The map is an estimate</h4><p>Locations come from offline IP data, not measurement.</p></div>
+        <div><h4>Blocking is opt-in</h4><p>Out of the box FreeSnitch only watches. Rules and blocklists start when you turn on Enforcement in Settings.</p></div>
+      </div>
+    </details>
   </section>
 
-  <section id="source" class="py-24 lg:py-32" aria-labelledby="source-title">
-    <div class="mx-auto grid max-w-7xl gap-14 px-6 lg:grid-cols-[1fr_0.9fr] lg:gap-24 lg:px-8">
-      <div>
-        <h2 id="source-title" class="font-display text-4xl font-semibold tracking-[-0.04em] text-primary sm:text-5xl">Read the source before you trust the filter.</h2>
-        <p class="mt-5 max-w-xl text-lg leading-8 text-secondary">FreeSnitch is free to inspect, fork, and improve. Source, issues, contribution notes, and the MIT license live in the repository.</p>
-        <div class="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold">
-          <a href="https://github.com/isaaclins/freesnitch/issues" class="text-accent transition-colors hover:text-beam-400">Open issues</a>
-          <a href="https://github.com/isaaclins/freesnitch/blob/main/LICENSE" class="text-accent transition-colors hover:text-beam-400">Read the MIT license</a>
-          <a href="https://github.com/isaaclins/freesnitch/blob/main/CONTRIBUTING.md" class="text-accent transition-colors hover:text-beam-400">Contributing</a>
-        </div>
-      </div>
-      <div class="border-t border-line pt-6 lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
-        <h3 class="font-display text-2xl font-semibold tracking-tight text-primary">Project origin</h3>
-        <p class="mt-4 leading-7 text-secondary">FreeSnitch is an independently maintained fork of <a href="https://github.com/momenbasel/puresnitch" class="text-accent underline decoration-beam-500/50 underline-offset-4 hover:text-beam-400">PureSnitch</a> created by <a href="https://github.com/momenbasel" class="text-accent underline decoration-beam-500/50 underline-offset-4 hover:text-beam-400">Moamen Basel</a>. It is MIT licensed. Moamen Basel does not maintain or endorse this fork.</p>
-      </div>
+  <section class="install wrap" id="install">
+    <div class="install-top">
+      <h2 class="rv">Install it in a minute.</h2>
+      <a class="btn btn-primary rv" style="height:52px;padding:0 26px;font-size:16px" href="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>Download 1.1.0 · 12.5 MB</a>
     </div>
+    <div class="steps">
+      <div class="step rv"><span class="n">1</span><h3>Drag to Applications</h3><p>Open the disk image and drag FreeSnitch into Applications.</p></div>
+      <div class="step rv"><span class="n">2</span><h3>Allow the helper</h3><p>System Settings, General, Login Items &amp; Extensions: allow FreeSnitch in the background.</p></div>
+      <div class="step rv"><span class="n">3</span><h3>Approve the filter</h3><p>When macOS asks, allow the FreeSnitch system extension. It does the per-app filtering.</p></div>
+    </div>
+    <p class="sum">SHA-256 <code>f15857e6e328936b1623cfe309c1d7a357d1150f77fbe2e24a8ed7c1650382cd</code></p>
   </section>
 </main>
 
-<footer class="border-t border-line py-10 text-sm text-muted">
-  <div class="mx-auto flex max-w-7xl flex-col gap-7 px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-    <div class="flex items-center gap-3">
-      <img src="icon-512.png" class="h-8 w-8 rounded-xl" alt="">
-      <div>
-        <p class="font-medium text-primary">FreeSnitch</p>
-        <p class="text-xs">MIT licensed. Free to inspect and fork.</p>
-      </div>
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div><a class="brand" href="#top"><img src="icon-512.png" alt="">FreeSnitch</a><p>A free, open-source firewall for macOS. Made by Isaac Lins, MIT licensed.</p></div>
+      <div><h4>Product</h4><ul><li><a href="#map">How it works</a></li><li><a href="#compare">Compare</a></li><li><a href="#install">Install</a></li></ul></div>
+      <div><h4>Source</h4><ul><li><a href="https://github.com/isaaclins/freesnitch">GitHub</a></li><li><a href="https://github.com/isaaclins/freesnitch/releases">Releases</a></li><li><a href="https://github.com/isaaclins/freesnitch/issues">Report a problem</a></li></ul></div>
+      <div><h4>More</h4><ul><li><a href="https://github.com/isaaclins/freesnitch/blob/main/CONTRIBUTING.md">Contributing</a></li><li><a href="https://github.com/isaaclins/freesnitch/blob/main/docs/CLI.md">Command line</a></li><li><a href="https://isaaclins.com">isaaclins.com</a></li></ul></div>
     </div>
-    <nav class="flex flex-wrap gap-x-6 gap-y-2" aria-label="Footer navigation">
-      <a href="https://github.com/isaaclins/freesnitch/releases" class="transition-colors hover:text-primary">Releases</a>
-      <a href="https://github.com/isaaclins/freesnitch" class="transition-colors hover:text-primary">Read the source</a>
-      <a href="https://github.com/isaaclins/freesnitch/issues" class="transition-colors hover:text-primary">Issues</a>
-      <a href="https://github.com/isaaclins/freesnitch/blob/main/LICENSE" class="transition-colors hover:text-primary">License</a>
-      <a href="README.ar.md" class="transition-colors hover:text-primary">العربية</a>
-      <a href="README.es.md" class="transition-colors hover:text-primary">Español</a>
-      <a href="README.ja.md" class="transition-colors hover:text-primary">日本語</a>
-      <a href="README.zh-Hans.md" class="transition-colors hover:text-primary">简体中文</a>
-      <a href="README.zh-Hant.md" class="transition-colors hover:text-primary">繁體中文</a>
-    </nav>
+    <p class="fine">Little Snitch is a trademark of Objective Development. LuLu is made by Objective-See. FreeSnitch is not affiliated with either.</p>
   </div>
-  <p class="mx-auto mt-8 max-w-7xl px-6 text-xs leading-5 text-subtle lg:px-8">Geolocation data is DB-IP City Lite, used under <a href="https://creativecommons.org/licenses/by/4.0/" class="underline decoration-line underline-offset-4 transition-colors hover:text-primary">CC BY 4.0</a>: <a href="https://db-ip.com/" class="underline decoration-line underline-offset-4 transition-colors hover:text-primary">IP Geolocation by DB-IP</a>. Country names and centroids come from the Google DSPL canonical country table.</p>
-  <p class="mx-auto mt-3 max-w-7xl px-6 text-xs leading-5 text-subtle lg:px-8">"Little Snitch" is a registered trademark of Objective Development Software GmbH. FreeSnitch is an independent open-source project, not affiliated with or endorsed by Objective Development.</p>
 </footer>
 
+<script>
+// entrance
+if(document.documentElement.classList.contains('shot-mode'))document.querySelectorAll('img[loading]').forEach(i=>i.loading='eager');
+requestAnimationFrame(()=>document.documentElement.classList.add('loaded'));
+// reveal on scroll
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{rootMargin:'0px 0px -10% 0px'});
+document.querySelectorAll('.rv').forEach((el,i)=>{el.style.transitionDelay=(el.closest('.tiles,.steps')?[...el.parentNode.children].indexOf(el)*80:0)+'ms';io.observe(el)});
+// statement: words light up as you read down
+const say=document.getElementById('say');
+(function wrap(node){[...node.childNodes].forEach(n=>{if(n.nodeType===3){const f=document.createDocumentFragment();n.textContent.split(/(\s+)/).forEach(t=>{if(!t)return;if(/^\s+$/.test(t))f.append(t);else{const s=document.createElement('span');s.className='w';s.textContent=t;f.append(s)}});n.replaceWith(f)}else if(n.classList&&n.classList.contains('chip')){n.classList.add('w')}})})(say);
+const words=[...say.querySelectorAll('.w')];
+const rvs=[...document.querySelectorAll('.rv')];
+function paint(){rvs.forEach(el=>{if(!el.classList.contains('in')&&el.getBoundingClientRect().top<innerHeight)el.classList.add('in')});const r=say.getBoundingClientRect(),vh=innerHeight;const p=Math.min(1,Math.max(0,(vh*.82-r.top)/(r.height+vh*.25)));const k=Math.round(p*words.length);words.forEach((w,i)=>w.classList.toggle('on',i<k))}
+addEventListener('scroll',paint,{passive:true});paint();
+// live connection pill: real connections from the demo data
+const live=[['Discord','gateway.discord.gg · allowed'],['Claude','api.anthropic.com · allowed'],['Zed','zed.dev · allowed'],['Music','itunes.apple.com · allowed'],['Arc','stats.g.doubleclick.net · denied']];
+let li=0;const el=document.getElementById('live');
+if(!matchMedia('(prefers-reduced-motion: reduce)').matches)setInterval(()=>{el.classList.add('out');setTimeout(()=>{li=(li+1)%live.length;el.innerHTML='<b>'+live[li][0]+'</b><span>'+live[li][1]+'</span>';el.classList.remove('out')},350)},2800);
+</script>
 </body>
 </html>

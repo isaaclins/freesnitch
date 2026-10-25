@@ -13,23 +13,13 @@ Extension and System Extension entitlements are absent. The firewall flavour
 is built only by the maintainer release command after the required profiles are
 available.
 
-## Website CSS
+## Website
 
-The website stylesheet is generated before publishing and committed as
-`docs/styles.css`. GitHub Pages serves that file directly, so it does not need a
-build step or JavaScript at runtime. From the repository root, regenerate it
-with:
-
-```sh
-npx tailwindcss@3.4.17 -c docs/_tailwind/tailwind.config.js -i docs/_tailwind/input.css -o docs/styles.css
-```
-
-The Tailwind configuration and input stylesheet in `docs/_tailwind/` are the
-sources used to produce the committed CSS.
-
-The site sits behind a cache that keeps `styles.css` for up to four hours.
-When you regenerate it, change the `?v=` value on the stylesheet link in
-`docs/index.html` so visitors do not get new markup with old CSS.
+The site is one self-contained page, `docs/index.html`, with its CSS and
+JavaScript inline and the screenshots beside it in `docs/`. GitHub Pages serves
+it as is: there is no build step. The page works without JavaScript; with it,
+sections fade in as you scroll. Add `?shot` to the URL to show everything at
+once, for full-page screenshots.
 
 ## Release command
 
@@ -69,8 +59,10 @@ Neither mode changes tracked files, tags, remotes, or GitHub Releases.
 current version, its download link, and its SHA-256, so update them by hand
 once the GitHub Release is live:
 
-- `docs/index.html`: the download links, the version line in the hero, the
-  install section, and `softwareVersion` and `downloadUrl` in the JSON-LD.
+- `docs/index.html`: every `releases/download/vX.Y.Z/FreeSnitch-X.Y.Z.dmg`
+  link (navigation, hero, install), the version line under the hero buttons,
+  the size on the install button, the SHA-256 under the install steps, and
+  `softwareVersion` and `downloadUrl` in the JSON-LD.
 - `README.md`: the Install section and the Status paragraph.
 
 Get the checksum from the published asset, not from the local build folder:
