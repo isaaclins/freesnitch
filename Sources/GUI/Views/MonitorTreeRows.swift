@@ -430,6 +430,12 @@ struct MonitorDecisionControls: View {
 
     var body: some View {
         HStack(spacing: 2) {
+            if let decision {
+                // The buttons alone did not say whether a click had taken
+                // (#142), so the rule in force is also named in words.
+                MonitorDecisionBadge(decision: decision)
+                    .padding(.trailing, 4)
+            }
             button(action: .allow,
                    symbol: "checkmark.circle.fill",
                    color: .green,
@@ -473,14 +479,16 @@ struct MonitorDecisionControls: View {
     /// colours: at rest a tinted glyph on a faint disc, in force a white glyph
     /// on a solid disc, which stays obvious on a selected row too.
     private func button(action: RuleAction, symbol: String, color: Color, help: String) -> some View {
-        let isActive = decision?.action == action
-        let isDisabledRule = isActive && decision?.enabled == false
+        let isChosen = decision?.action == action
+        let isDisabledRule = isChosen && decision?.enabled == false
+        // A disabled rule decides nothing, so it is drawn at rest.
+        let isActive = isChosen && !isDisabledRule
         return Button {
             onDecide(action)
         } label: {
             Image(systemName: symbol)
                 .symbolRenderingMode(.palette)
-                .foregroundStyle(glyphColor(isActive: isActive), discColor(color, isActive: isActive))
+                .foregroundStyle(glyphColor(color, isActive: isActive), discColor(color, isActive: isActive))
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(action == .allow ? "Allow \(subject)" : "Deny \(subject)")
@@ -489,14 +497,53 @@ struct MonitorDecisionControls: View {
               ?? (isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help))
     }
 
-    private func glyphColor(isActive: Bool) -> Color {
-        if isActive { return .white }
-        return onSelection ? .white : .white.opacity(0.9)
+    /// At rest the disc was 85% of the in-force colour, so a row looked the
+    /// same before and after a decision (#142). The two states now differ in
+    /// both layers.
+    private func glyphColor(_ color: Color, isActive: Bool) -> Color {
+        if isActive || onSelection { return .white }
+        return color
     }
 
     private func discColor(_ color: Color, isActive: Bool) -> Color {
         if isActive { return color }
-        return onSelection ? color.opacity(0.55) : color.opacity(0.85)
+        return onSelection ? .white.opacity(0.25) : color.opacity(0.18)
+    }
+}
+
+/// The rule a row is under, in words: "Denied", "Allowed", "Ask", or "Rule off"
+/// for a disabled one.
+struct MonitorDecisionBadge: View {
+    let decision: Rule
+
+    var body: some View {
+        Group {
+            if !decision.enabled {
+                PSChip("Rule off", color: .secondary, icon: "pause.circle.fill")
+            } else {
+                switch decision.action {
+                case .deny: PSChip("Denied", color: .red, icon: "xmark.circle.fill")
+                case .allow: PSChip("Allowed", color: .green, icon: "checkmark.circle.fill")
+                case .ask: PSChip("Ask", color: .orange, icon: "questionmark.circle.fill")
+                }
+            }
+        }
+        .fixedSize()
+        .help(helpText)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var helpText: String {
+        if !decision.enabled {
+            return "A rule exists for this row but is turned off in Rules, so it decides nothing."
+        }
+        let verb: String
+        switch decision.action {
+        case .deny: verb = "are blocked"
+        case .allow: verb = "are allowed"
+        case .ask: verb = "ask first"
+        }
+        return "New connections here \(verb) by your rule. Connections that are already open are not affected."
     }
 }
 
