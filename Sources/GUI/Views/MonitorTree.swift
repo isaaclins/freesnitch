@@ -55,6 +55,10 @@ struct MonitorDestinationNode: Identifiable, Hashable, Sendable {
     let appID: String
     /// What the row shows: the resolved name when there is one, else the IP.
     let label: String
+    /// True when `label` is a name the helper recently saw this address
+    /// under, rather than a name the connection asked for. The rule the row
+    /// writes is still the address, so the row shows the address too (#168).
+    var labelIsSeenName: Bool = false
     /// The domain to write into a rule, when this destination has one.
     let remoteHost: String?
     /// The literal address to write into a rule, when there is no name.
@@ -208,6 +212,7 @@ struct MonitorTreeBuild: Sendable {
 enum MonitorTreeBuilder {
     private struct DestinationAccumulator {
         var label: String
+        var labelIsSeenName = false
         var remoteHost: String?
         var remoteIP: String?
         var countryCode: String?
@@ -256,6 +261,10 @@ enum MonitorTreeBuilder {
                 if destination.countryCode == nil {
                     destination.countryCode = MonitorTreeKey.normalized(connection.countryCode)
                 }
+                if !destination.labelIsSeenName, let name = seenName(for: connection) {
+                    destination.label = name
+                    destination.labelIsSeenName = true
+                }
                 app.destinations[destinationKey] = destination
             } else if app.destinations.count < MonitorTreeLimits.trackedDestinationsPerApp {
                 var destination = newDestination(for: connection, hostKey: hostKey)
@@ -302,6 +311,7 @@ enum MonitorTreeBuilder {
                 MonitorDestinationNode(id: entry.key,
                                        appID: appKey,
                                        label: entry.value.label,
+                                       labelIsSeenName: entry.value.labelIsSeenName,
                                        remoteHost: entry.value.remoteHost,
                                        remoteIP: entry.value.remoteIP,
                                        countryCode: entry.value.countryCode,
@@ -341,6 +351,15 @@ enum MonitorTreeBuilder {
     private static func newDestination(for connection: Connection, hostKey: String) -> DestinationAccumulator {
         let name = connection.remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
         let ip = connection.remoteIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let seen = seenName(for: connection) {
+            // Only the label changes. The rule target stays what the
+            // connection carried, so Allow and Deny still write the address.
+            return DestinationAccumulator(label: seen,
+                                          labelIsSeenName: true,
+                                          remoteHost: name.isEmpty ? nil : name,
+                                          remoteIP: ip.isEmpty ? nil : ip,
+                                          countryCode: MonitorTreeKey.normalized(connection.countryCode))
+        }
         if name.isEmpty {
             return DestinationAccumulator(label: ip.isEmpty ? "Unknown destination" : ip,
                                           remoteHost: nil,
@@ -351,6 +370,16 @@ enum MonitorTreeBuilder {
                                       remoteHost: name,
                                       remoteIP: ip.isEmpty ? nil : ip,
                                       countryCode: MonitorTreeKey.normalized(connection.countryCode))
+    }
+
+    /// The name the helper saw this address under, for a connection that
+    /// carries only the address.
+    private static func seenName(for connection: Connection) -> String? {
+        let host = connection.remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ip = connection.remoteIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard host.isEmpty || host == ip,
+              let name = MonitorTreeKey.normalized(connection.resolvedName) else { return nil }
+        return name
     }
 
     private static func displayName(for connection: Connection) -> String {

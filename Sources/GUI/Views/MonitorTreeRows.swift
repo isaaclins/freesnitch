@@ -328,7 +328,7 @@ struct MonitorDestinationRow: View {
             MonitorDecisionControls(decision: decision,
                                     pending: pending,
                                     addressable: isAddressable,
-                                    subject: destination.label,
+                                    subject: decisionSubject,
                                     onSelection: selected,
                                     onDecide: onDecide,
                                     onClear: onClear)
@@ -342,8 +342,16 @@ struct MonitorDestinationRow: View {
         return false
     }
 
+    /// A row named after a seen name still writes a rule for its address, so
+    /// the buttons say which address.
+    private var decisionSubject: String {
+        guard destination.labelIsSeenName, let ip = destination.remoteIP else { return destination.label }
+        return "\(destination.label) (\(ip))"
+    }
+
     private var subtitle: String {
         var parts = ["\(destination.connectionCount) connection\(destination.connectionCount == 1 ? "" : "s")"]
+        if destination.labelIsSeenName, let ip = destination.remoteIP { parts.insert(ip, at: 0) }
         if destination.deniedCount > 0 { parts.append("\(destination.deniedCount) denied") }
         parts.append(PSFormat.bytes(destination.traffic.total))
         if let code = destination.countryCode, !code.isEmpty { parts.append(code) }
