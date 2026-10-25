@@ -1179,24 +1179,26 @@ absence_action_line="$(grep -nF 'action { ok, message in' "$BUNDLE_WATCHER" | he
 [[ -n "$absence_evidence_line" && -n "$absence_action_line" && "$absence_evidence_line" -lt "$absence_action_line" ]] \
   || fail "the bundle-absence stand-down acts before it logs its evidence"
 
-# pf matches packets, not processes. A rule that names an app used to be
-# rendered from its address or port alone, so "Discord, deny, <address>"
-# blocked that address for every app (issue #155). Only rules without an app
-# may reach the anchor, and the deny and allow lists must both come from them.
-# The signature spans several lines, so take everything up to the method's
-# closing brace at member indentation.
+# pf matches packets, not processes. An app's deny rule used to be rendered
+# from its address or port alone, so "Discord, deny, <address>" blocked that
+# address for every app (issue #155). Deny rules that name an app must stay
+# out of the anchor, and no other loop may render the rule set. Allow rules
+# stay in, so an address feed never blocks what the user allowed.
 anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
-printf '%s\n' "$anchor_body" | grep -Fq '!PFManager.namesAnApp($0)' \
-  || fail "the pf anchor no longer drops rules that name an app, so an app's rule would apply to every app"
-for list in 'let denyRules = machineWide.filter' 'let allowRules = machineWide.filter'; do
-  printf '%s\n' "$anchor_body" | grep -Fq -- "$list" \
-    || fail "the pf anchor builds a rule list from rules that may name an app ($list missing)"
-done
+printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = rules.filter { $0.enabled && $0.action == .deny && !PFManager.namesAnApp($0) }' \
+  || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
+printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = rules.filter { $0.enabled && $0.action == .allow }' \
+  || fail "the pf anchor no longer renders every enabled allow rule, so an address feed could block what the user allowed"
+if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
+  fail "the pf anchor renders the unfiltered rule set somewhere"
+fi
 names_body="$(swift_function_body "$PF_MANAGER" 'static func namesAnApp(')"
-for field in processBundleId processPath processName; do
+for field in processBundleId processPath; do
   printf '%s\n' "$names_body" | grep -Fq "rule.$field" \
-    || fail "namesAnApp ignores $field, so a rule naming an app that way would reach pf"
+    || fail "namesAnApp ignores $field, so a deny naming an app that way would reach pf"
 done
+printf '%s\n' "$names_body" | grep -Fq 'trimming' \
+  && fail "namesAnApp trims whitespace, which the matcher does not, so pf and the extension would disagree"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, and a pf anchor that never carries a rule naming an app are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, and a pf anchor that never carries a deny naming an app are present.\n'
