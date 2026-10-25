@@ -119,11 +119,14 @@ final class PFManager: @unchecked Sendable {
         lines.append("# Hostname rules are intentionally not emitted to pf.")
         lines.append("# The Network Extension filter evaluates them when active, avoiding pf's one-time DNS resolution.")
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
+        lines.append("# Rules that name an app are not emitted either: pf cannot tell processes apart,")
+        lines.append("# so an app's address or port rule would apply to every app on the Mac.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
-        let denyRules = rules.filter { $0.action == .deny && $0.enabled }
-        let allowRules = rules.filter { $0.action == .allow && $0.enabled }
+        let machineWide = rules.filter { $0.enabled && !PFManager.namesAnApp($0) }
+        let denyRules = machineWide.filter { $0.action == .deny }
+        let allowRules = machineWide.filter { $0.action == .allow }
 
         for rule in denyRules {
             if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
@@ -139,6 +142,18 @@ final class PFManager: @unchecked Sendable {
         lines.append(contentsOf: ipBlocklistLines(ipBlocklist, resolverAddresses: resolverAddresses))
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// pf matches packets, not processes, so a line rendered from an app's rule
+    /// would block or pass that destination for every app (issue #155). Those
+    /// rules belong to the Network Extension, which sees the process. Any app
+    /// field counts, including a bare name, because skipping a rule can only
+    /// make pf block less than asked, never more.
+    static func namesAnApp(_ rule: Rule) -> Bool {
+        [rule.processBundleId, rule.processPath, rule.processName].contains { value in
+            guard let value else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// The address feed section (issue #51).

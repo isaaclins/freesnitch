@@ -11,6 +11,7 @@
 #   3. Loopback, the configured resolvers, DHCP and the app's own traffic are
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
+#      Rules that name an app are never written to pf (issue #155).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -213,6 +214,25 @@ struct IPBlocklistHarness {
         let plain = pf.renderAnchor(rules: [])
         checks.expect(!plain.contains("freesnitch_ipblock"),
                       "an anchor with no feed loaded must not mention the feed table at all")
+
+        // Rules that name an app never reach pf, which cannot tell processes
+        // apart (issue #155). Only rules without an app are machine-wide.
+        let appScoped = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.hnc.Discord", remoteIP: "162.159.128.233", action: .deny, scope: .ip),
+            Rule(processPath: "/Applications/Firefox.app/", remotePort: 443, action: .deny, scope: .port),
+            Rule(processName: "Discord", remoteIP: "198.51.100.20", action: .deny, scope: .ip),
+            Rule(processPath: "/usr/bin/curl", remoteIP: "198.51.100.21", action: .allow, scope: .ip),
+            Rule(processBundleId: "  ", remoteIP: "198.51.100.30", action: .deny, scope: .ip),
+            Rule(remotePort: 8443, action: .deny, scope: .port)
+        ])
+        for leaked in ["162.159.128.233", "port 443", "198.51.100.20", "198.51.100.21"] {
+            checks.expect(!appScoped.contains(leaked),
+                          "a rule that names an app must not be written to pf, but the anchor carries \(leaked)")
+        }
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.30"),
+                      "a rule whose app field is only whitespace is machine-wide and must still reach pf")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } port 8443"),
+                      "a rule with no app must still be written to pf")
 
         // 7. Feed handling: unreachable, malformed, then usable. All fail open.
         let storePath = (NSTemporaryDirectory() as NSString)
