@@ -273,7 +273,8 @@ final class InsightsStore: @unchecked Sendable {
         let app = observation.processBundleId?.isEmpty == false
             ? observation.processBundleId!
             : observation.processPath
-        let destination = PFHostValidator.kind(for: observation.remoteHost) == .hostname
+        let destination = observation.remotePort != 53
+            && PFHostValidator.kind(for: observation.remoteHost) == .hostname
             ? observation.remoteHost
             : observation.remoteIP
         guard !app.isEmpty, !destination.isEmpty else { return }
@@ -484,9 +485,12 @@ extension InsightsStore {
 
     private static let appIdentitySQL = "COALESCE(NULLIF(process_bundle_id,''), process_path)"
     /// The hostname the app asked for when one was recorded, otherwise the
-    /// address it connected to.
+    /// address it connected to. A flow to port 53 is a lookup: its hostname is
+    /// the name being looked up and its address is the resolver, so it counts
+    /// as a contact with the resolver, never with the name (#167). Rows
+    /// recorded before that rule are read the same way.
     private static let destinationSQL =
-        "CASE WHEN remote_host <> '' AND remote_host <> remote_ip THEN remote_host ELSE remote_ip END"
+        "CASE WHEN remote_port <> 53 AND remote_host <> '' AND remote_host <> remote_ip THEN remote_host ELSE remote_ip END"
 
     func report(for query: InsightsQuery, now: Date = Date()) throws -> InsightsReport {
         try query.validate(now: now)
@@ -610,7 +614,11 @@ extension InsightsStore {
         switch source {
         case .rawEvents:
             let sql = """
-                SELECT \(Self.destinationSQL) AS dest, MAX(remote_ip),
+                -- remote_ip is a bare column on purpose: with exactly one MAX()
+                -- in the query, SQLite takes it from the row of the latest
+                -- observation, so a name shows the address it was last
+                -- reached at. MAX(remote_ip) was a text maximum (#167).
+                SELECT \(Self.destinationSQL) AS dest, remote_ip,
                        COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
                 FROM flow_observations
                 WHERE observed_at >= ? AND observed_at <= ? AND \(Self.appIdentitySQL) = ?
