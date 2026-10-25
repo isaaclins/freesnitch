@@ -191,11 +191,14 @@ extension Rule {
     /// The matcher knows an app only by its bundle id or path. A rule that
     /// carries nothing but a name reads as "this app" and matches every app
     /// (#157), so ingest refuses it while it is enabled and the Rules list
-    /// flags the ones already stored.
+    /// flags the ones already stored. A rule remembered from a DNS alert is
+    /// the exception: its name says where it came from, and covering every
+    /// app is what it means.
     public var namesAppOnlyByName: Bool {
-        (processBundleId ?? "").isEmpty
-            && (processPath ?? "").isEmpty
-            && !(processName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard (processBundleId ?? "").isEmpty, (processPath ?? "").isEmpty,
+              let name = processName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else { return false }
+        return name != Connection.dnsLookupProcessName
     }
 
     /// Why an enabled name-only rule may not enter the policy. A disabled one
@@ -205,7 +208,7 @@ extension Rule {
         guard enabled, namesAppOnlyByName else { return nil }
         return "the rule for \u{201C}\(processName ?? "")\u{201D} names the app only by its name. "
             + "FreeSnitch matches apps by path or bundle id, so this rule would apply to every app. "
-            + "Choose the app (its path or bundle id), or remove the name to make it a rule for every app"
+            + "Add the rule again for the app, or keep this one turned off"
     }
 }
 

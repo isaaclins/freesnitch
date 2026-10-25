@@ -182,6 +182,13 @@ struct Verify {
         check("rule for every app with no name still imports",
               (try? RuleExportCodec.decode(anyAppBatch).rules.count) == 1)
 
+        var dnsRule = ruleB()
+        dnsRule.processPath = nil
+        dnsRule.processName = Connection.dnsLookupProcessName
+        let dnsBatch = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [dnsRule]))
+        check("rule remembered from a DNS alert still imports",
+              (try? RuleExportCodec.decode(dnsBatch).rules.count) == 1)
+
         // 13. Empty file rejected.
         expectRejected("empty payload rejected", Data(), .empty)
 

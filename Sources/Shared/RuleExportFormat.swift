@@ -218,7 +218,9 @@ public enum RuleExportCodec {
                 throw RuleExportError.invalidRule(id: id, reason: "the profile name is empty")
             }
             if let reason = rule.nameOnlyRejectionReason {
-                throw RuleExportError.invalidRule(id: id, reason: reason)
+                throw RuleExportError.invalidRule(
+                    id: id,
+                    reason: reason + ". In the file, set its \"enabled\" to false, or give it a \"processPath\" or \"processBundleId\"")
             }
             for (label, value) in [("profile", rule.profile as String?),
                                    ("process bundle id", rule.processBundleId),

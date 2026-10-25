@@ -534,7 +534,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                     "DNS query name '\(domain)' is not a connectable PF destination: \(PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
                 )
             }
-            let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: ruleHost, status: .pending)
+            let stub = Connection(pid: 0, processName: Connection.dnsLookupProcessName, processPath: "", remoteHost: ruleHost, status: .pending)
             // An unencodable alert is the same situation as an unreachable
             // client: zero deliveries, so the coordinator fails open.
             guard let data = try? FreeSnitchWireCodec.encode(stub) else { return 0 }

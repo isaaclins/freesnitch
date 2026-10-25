@@ -730,7 +730,7 @@ struct RulesManagerView: View {
                 Label {
                     Text(rule.displayProcessName).lineLimit(1)
                 } icon: {
-                    if rule.namesAppOnlyByName {
+                    if rule.enabled && rule.namesAppOnlyByName {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.yellow)
                     } else if let icon = AppIcon.resolve(bundleId: rule.processBundleId,
@@ -742,7 +742,7 @@ struct RulesManagerView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .help(rule.namesAppOnlyByName
+                .help(rule.enabled && rule.namesAppOnlyByName
                       ? Rule.nameOnlyWarning
                       : rule.processPath ?? rule.displayProcessName)
             }
@@ -1038,7 +1038,7 @@ struct RulesManagerView: View {
     @ViewBuilder
     private func ruleDetails(_ r: Rule) -> some View {
         Form {
-            if r.namesAppOnlyByName {
+            if r.enabled && r.namesAppOnlyByName {
                 Section {
                     Label(Rule.nameOnlyWarning, systemImage: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)

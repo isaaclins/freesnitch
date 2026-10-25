@@ -1187,7 +1187,16 @@ for ingest in 'func addRule(ruleJSON' 'func reloadRules(rulesJSON' 'func replace
   swift_function_body "$HELPER" "$ingest" | grep -Fq 'rejectionReason(for:' \
     || fail "the helper's $ingest path skips rule content validation"
 done
-grep -Fq 'rule.nameOnlyRejectionReason' "$ROOT/Sources/Shared/RuleExportFormat.swift" \
+swift_function_body "$ROOT/Sources/Shared/RuleExportFormat.swift" 'public static func validate(_ rules: [Rule])' \
+  | grep -Fq 'rule.nameOnlyRejectionReason' \
   || fail "rule import accepts an enabled rule that names its app only by name"
+# A rule remembered from a DNS alert carries the proxy's name and no app, and
+# means every app. Refusing it would make "remember" on a DNS alert store
+# nothing, so the exception must stay, keyed to the name the proxy uses.
+swift_function_body "$RULE_MATCHER" 'public var namesAppOnlyByName: Bool' \
+  | grep -Fq 'Connection.dnsLookupProcessName' \
+  || fail "a rule remembered from a DNS alert counts as name-only and would be refused"
+require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
+  "the DNS proxy's alerts no longer use the name the name-only check exempts"
 
 printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, and refusal of rules that name an app only by name are present.\n'
