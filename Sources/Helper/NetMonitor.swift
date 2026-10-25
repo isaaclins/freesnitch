@@ -285,42 +285,41 @@ final class NetMonitor: @unchecked Sendable {
         return (bytesIn, bytesOut)
     }
 
-    /// 64-bit byte counters of the Ethernet-like interfaces (Wi-Fi, Ethernet,
-    /// USB tethering, cellular). Loopback, tunnels and bridges are left out
-    /// because their traffic is also counted on the interface it really
-    /// leaves by, and a VPN would otherwise count every byte twice.
-    /// `getifaddrs` would be simpler, but its counters are 32-bit and wrap
-    /// after 4 GB.
+    /// Byte counters of the interfaces traffic really leaves the Mac by:
+    /// Ethernet-like ones (Wi-Fi, Ethernet, USB tethering) and cellular.
+    /// Loopback, tunnels and bridges are left out, because their traffic is
+    /// also counted on the interface it leaves by, and a VPN would otherwise
+    /// count every byte twice. So are AirDrop, Sidecar, Internet Sharing and
+    /// virtual machine interfaces, which are Ethernet-like but carry traffic
+    /// that is local or counted again on the real interface.
+    ///
+    /// The per-interface MIB is read because it is exact and 64-bit for any
+    /// user. `getifaddrs` and `NET_RT_IFLIST2` return counters truncated to
+    /// 32 bits and rounded, which wrap every half minute at 1 Gbit/s.
     static func interfaceTotals() -> [String: InterfaceTotals] {
-        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
-        var length = 0
-        guard sysctl(&mib, UInt32(mib.count), nil, &length, nil, 0) == 0, length > 0 else { return [:] }
-        var buffer = [UInt8](repeating: 0, count: length)
-        guard sysctl(&mib, UInt32(mib.count), &buffer, &length, nil, 0) == 0 else { return [:] }
-
+        guard let list = if_nameindex() else { return [:] }
+        defer { if_freenameindex(list) }
         var totals: [String: InterfaceTotals] = [:]
-        buffer.withUnsafeBytes { raw in
-            var offset = 0
-            while offset + MemoryLayout<if_msghdr>.size <= length {
-                let header = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr.self)
-                let messageLength = Int(header.ifm_msglen)
-                guard messageLength > 0 else { break }
-                defer { offset += messageLength }
-                guard Int32(header.ifm_type) == RTM_IFINFO2,
-                      offset + MemoryLayout<if_msghdr2>.size <= length else { continue }
-                let info = raw.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
-                guard info.ifm_flags & IFF_LOOPBACK == 0,
-                      [IFT_ETHER, IFT_CELLULAR].contains(Int32(info.ifm_data.ifi_type)) else { continue }
-                var nameBuffer = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
-                guard if_indextoname(UInt32(info.ifm_index), &nameBuffer) != nil else { continue }
-                let name = String(cString: nameBuffer)
-                // Virtual machines' interfaces carry traffic that leaves again
-                // through the Mac's own interface.
-                guard !name.hasPrefix("vmenet") else { continue }
-                totals[name] = InterfaceTotals(bytesIn: info.ifm_data.ifi_ibytes,
-                                               bytesOut: info.ifm_data.ifi_obytes)
-            }
+        var entry = list
+        while entry.pointee.if_index != 0, let rawName = entry.pointee.if_name {
+            defer { entry += 1 }
+            let name = String(cString: rawName)
+            guard !excludedInterfacePrefixes.contains(where: { name.hasPrefix($0) }) else { continue }
+            var mib: [Int32] = [CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFDATA,
+                                Int32(entry.pointee.if_index), IFDATA_GENERAL]
+            var data = ifmibdata()
+            var length = MemoryLayout<ifmibdata>.size
+            guard sysctl(&mib, UInt32(mib.count), &data, &length, nil, 0) == 0,
+                  data.ifmd_flags & UInt32(IFF_LOOPBACK) == 0,
+                  [IFT_ETHER, IFT_CELLULAR].contains(Int32(data.ifmd_data.ifi_type)) else { continue }
+            totals[name] = InterfaceTotals(bytesIn: data.ifmd_data.ifi_ibytes,
+                                           bytesOut: data.ifmd_data.ifi_obytes)
         }
         return totals
     }
+
+    /// AirDrop and peer-to-peer Wi-Fi (awdl, llw, nan), Internet Sharing's
+    /// access point (ap), the Mac's internal links (anpi) and virtual
+    /// machines (vmenet).
+    private static let excludedInterfacePrefixes = ["awdl", "llw", "nan", "ap", "anpi", "vmenet"]
 }

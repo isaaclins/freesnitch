@@ -35,6 +35,8 @@ struct Verify {
         let interfaces = NetMonitor.interfaceTotals()
         check("the Mac's interfaces can be read", !interfaces.isEmpty)
         check("loopback is not counted", interfaces["lo0"] == nil)
+        check("AirDrop and sharing interfaces are not counted",
+              !interfaces.keys.contains { $0.hasPrefix("awdl") || $0.hasPrefix("llw") || $0.hasPrefix("ap") })
 
         let monitor = NetMonitor()
         let lock = NSLock()
