@@ -299,6 +299,10 @@ struct InsightsHarness {
         let mailProposals = try! store.report(for: InsightsQuery(kind: .proposals, since: now.addingTimeInterval(-day), limit: 50))
         check(!mailProposals.proposals.contains { $0.remoteIP == resolverIP || $0.domain == "formulae.brew.sh" },
               "no block is proposed against the DNS server or a name that was only looked up")
+        let longProposals = try! store.report(for: InsightsQuery(kind: .proposals, since: now.addingTimeInterval(-30 * day), limit: 50))
+        check(longProposals.source == .dailyRollups, "a 30 day range is answered from the daily rollups")
+        check(!longProposals.proposals.contains { $0.remoteIP == resolverIP || $0.domain == "formulae.brew.sh" || $0.domain == "github.com" && $0.connectionCount > 2 },
+              "the daily rollups carry no lookups, so long ranges propose nothing against the DNS server either")
 
         // MARK: purge, including the write-ahead log
         try! store.record([observation(app: "Beeper", bundle: "com.beeper.app", path: "/Applications/Beeper.app",

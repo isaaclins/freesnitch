@@ -270,11 +270,15 @@ final class InsightsStore: @unchecked Sendable {
     }
 
     private func rollupLocked(_ observation: FlowObservation) throws {
+        // Lookups stay in the raw events only. The daily rollups carry no
+        // port, so a lookup there would read as a contact with the DNS server
+        // that ranges past 14 days propose blocking, or under an old
+        // update's findings (#167).
+        guard observation.remotePort != 53 else { return }
         let app = observation.processBundleId?.isEmpty == false
             ? observation.processBundleId!
             : observation.processPath
-        let destination = observation.remotePort != 53
-            && PFHostValidator.kind(for: observation.remoteHost) == .hostname
+        let destination = PFHostValidator.kind(for: observation.remoteHost) == .hostname
             ? observation.remoteHost
             : observation.remoteIP
         guard !app.isEmpty, !destination.isEmpty else { return }
