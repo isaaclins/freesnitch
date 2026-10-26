@@ -445,6 +445,38 @@ for round in 0..<40 {
 check(churnOrder.trackedKeyCount <= MonitorTreeLimits.orderLedgerCapacity + 401,
       "the ordering ledger stays bounded across churn (tracked \(churnOrder.trackedKeyCount))")
 
+// Helper processes are shown under their app, and WebKit's shared networking
+// service says what it is (#169). The process stays the rule target.
+let heliumHelper = "/Applications/Helium.app/Contents/Frameworks/Helium Framework.framework/Versions/1/Helpers/Helium Helper.app/Contents/MacOS/Helium Helper"
+equal(MonitorAppPresentation.of(processName: "Helium Helper", path: heliumHelper),
+      MonitorAppPresentation.Presentation(title: "Helium", iconPath: "/Applications/Helium.app/", isWebContent: false),
+      "a helper app inside a browser is shown as that browser")
+check(MonitorAppPresentation.of(processName: "Helium", path: "/Applications/Helium.app/Contents/MacOS/Helium") == nil,
+      "an app's own executable keeps its own row title")
+check(MonitorAppPresentation.of(processName: "curl", path: "/usr/bin/curl") == nil,
+      "a plain tool keeps its own row title")
+equal(MonitorAppPresentation.of(processName: "bird",
+                                path: "/Applications/Mail Sync.app/Contents/XPCServices/bird.xpc/Contents/MacOS/bird")?.title,
+      "Mail Sync", "an XPC service inside an app is shown as that app")
+let webKitPath = "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking"
+check(MonitorAppPresentation.of(processName: "com.apple.WebKit.Networking", path: webKitPath)?.isWebContent == true,
+      "WebKit's networking service is labelled as web content, not as one app")
+check(MonitorAppPresentation.of(processName: "Simulator",
+                                path: "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator") == nil,
+      "a full app shipped inside another keeps its own title")
+equal(MonitorAppPresentation.of(processName: "ShareExtension",
+                                path: "/Applications/Slack.app/Contents/PlugIns/ShareExtension.appex/Contents/MacOS/ShareExtension")?.title,
+      "Slack", "an app extension is shown as its app")
+var helperConnection = connection(app: "Helium Helper", bundle: nil, host: "example.com", ip: "203.0.113.20")
+helperConnection.processPath = heliumHelper
+let helperApp = MonitorTreeBuilder.build(connections: [helperConnection], order: MonitorRowOrder())
+    .snapshot.apps.first!
+equal(helperApp.displayName, "Helium", "the helper's row is titled after its browser")
+equal(helperApp.name, "Helium Helper", "the row still knows the process it is for")
+let helperRule = MonitorRuleDraft.rule(for: MonitorRuleTarget.app(helperApp)!, processName: helperApp.name,
+                                       action: .deny, profile: "default", existing: nil)!
+equal(helperRule.processPath, heliumHelper, "a decision on the row is still a rule for the helper process")
+
 if failures > 0 {
     FileHandle.standardError.write(Data("monitor tree harness: \(failures) failure(s)\n".utf8))
     exit(1)

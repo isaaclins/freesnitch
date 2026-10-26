@@ -106,6 +106,13 @@ struct MonitorAppNode: Identifiable, Hashable, Sendable {
     /// Largest destination total under this app, for bar scaling.
     let peakDestinationTraffic: Int64
     let order: UInt64
+    /// What the row is titled when that is not the process's own name: the
+    /// app a helper process belongs to, or what a shared system service does
+    /// (#169). Display only; `name` and the rule target stay the process.
+    var displayName: String? = nil
+    /// The bundle to take the row's icon from when it is not the process's.
+    var iconPath: String? = nil
+    var isWebContent = false
 }
 
 struct MonitorTreeSnapshot: Sendable {
@@ -211,6 +218,45 @@ enum MonitorTreeKey {
 struct MonitorTreeBuild: Sendable {
     let snapshot: MonitorTreeSnapshot
     let order: MonitorRowOrder
+}
+
+/// How a process that does an app's networking for it is shown (#169).
+///
+/// Browsers and many other apps connect from helper processes: Chromium
+/// browsers from "<Name> Helper" deep inside their bundle, and Safari and
+/// every app with an Apple web view from the shared WebKit networking
+/// service. Rows named after those processes were not where users looked.
+enum MonitorAppPresentation {
+    static let webContentTitle = "Web content (Safari and other apps)"
+
+    struct Presentation: Equatable {
+        let title: String
+        let iconPath: String?
+        let isWebContent: Bool
+    }
+
+    static func of(processName: String, path: String?) -> Presentation? {
+        // Shared by every WebKit app, so it is never named after one of them.
+        // Which app it works for needs the responsible process (#159).
+        if processName.hasPrefix("com.apple.WebKit.Networking")
+            || path?.contains("/com.apple.WebKit.Networking.xpc/") == true {
+            return Presentation(title: webContentTitle, iconPath: nil, isWebContent: true)
+        }
+        // A helper bundle inside an app (a helper app, an XPC service or an
+        // extension) is shown under the outermost app. Only the places apps
+        // keep their helpers count: a full app shipped inside another, such
+        // as Simulator inside Xcode, keeps its own name.
+        guard let path, let outer = path.range(of: ".app/") else { return nil }
+        let inside = path[outer.upperBound...]
+        let helperFolders = ["Contents/Frameworks/", "Contents/XPCServices/", "Contents/PlugIns/",
+                             "Contents/Helpers/", "Contents/Library/LoginItems/"]
+        guard helperFolders.contains(where: { inside.hasPrefix($0) }),
+              [".app/", ".xpc/", ".appex/"].contains(where: { inside.contains($0) }) else { return nil }
+        let bundlePath = String(path[..<outer.upperBound])
+        let appName = ((bundlePath as NSString).lastPathComponent as NSString).deletingPathExtension
+        guard !appName.isEmpty, appName != processName else { return nil }
+        return Presentation(title: appName, iconPath: bundlePath, isWebContent: false)
+    }
 }
 
 /// Groups a flat connection list into the two-level tree.
@@ -329,6 +375,7 @@ enum MonitorTreeBuilder {
                                        traffic: entry.value.traffic,
                                        order: entry.rank)
             }
+            let presentation = MonitorAppPresentation.of(processName: app.name, path: app.path)
             appNodes.append(MonitorAppNode(id: appKey,
                                            name: app.name,
                                            bundleID: app.bundleID,
@@ -341,7 +388,10 @@ enum MonitorTreeBuilder {
                                            hiddenDestinationCount: ranked.count - destinations.count,
                                            ungroupedConnectionCount: app.ungroupedConnectionCount,
                                            peakDestinationTraffic: destinations.map(\.traffic.total).max() ?? 0,
-                                           order: order.rank(of: appKey) ?? .max))
+                                           order: order.rank(of: appKey) ?? .max,
+                                           displayName: presentation?.title,
+                                           iconPath: presentation?.iconPath,
+                                           isWebContent: presentation?.isWebContent ?? false))
         }
         appNodes.sort { $0.order < $1.order }
         let hiddenAppCount = max(0, appNodes.count - MonitorTreeLimits.maxApps)
