@@ -110,23 +110,32 @@ final class PFManager: @unchecked Sendable {
     /// render schedules the next one. It runs on the wall clock, so a Mac that
     /// slept through the expiry re-renders as soon as it wakes.
     private func scheduleExpiryRender(for rules: [Rule], now: Date = Date()) {
+        scheduleRender(at: PFManager.nextExpiry(of: rules, after: now), now: now)
+    }
+
+    private func scheduleRender(at deadline: Date?, now: Date = Date()) {
         expiryTimer?.cancel()
         expiryTimer = nil
-        guard let next = PFManager.nextExpiry(of: rules, after: now) else { return }
+        guard let deadline else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(wallDeadline: .now() + max(0, next.timeIntervalSince(now)), leeway: .seconds(1))
+        timer.schedule(wallDeadline: .now() + max(0, deadline.timeIntervalSince(now)), leeway: .seconds(1))
         timer.setEventHandler { [weak self] in self?.renderAfterExpiry() }
         timer.resume()
         expiryTimer = timer
     }
 
-    /// The earliest moment a rule the anchor still carries runs out.
+    /// The earliest moment a rule the anchor carries runs out. Rules pf never
+    /// carries, such as an app's temporary deny, need no render.
     static func nextExpiry(of rules: [Rule], after now: Date) -> Date? {
         rules
-            .filter { $0.enabled && !hasExpired($0, at: now) }
+            .filter { $0.enabled && !hasExpired($0, at: now) && reachesPF($0) }
             .compactMap(\.expiresAt)
             .min()
     }
+
+    /// A failed reload is tried again after this long, so one pfctl hiccup
+    /// cannot leave an expired rule in pf until some unrelated change.
+    static let expiryRetryInterval: TimeInterval = 30
 
     private func renderAfterExpiry() {
         applyLock.lock()
@@ -138,7 +147,11 @@ final class PFManager: @unchecked Sendable {
         do {
             try writeAndLoad(rules: rules)
         } catch {
-            onWarning?("PF could not drop an expired temporary rule from the anchor: \(error.localizedDescription)")
+            onWarning?("PF could not drop an expired temporary rule from the anchor, trying again in "
+                + "\(Int(PFManager.expiryRetryInterval)) seconds: \(error.localizedDescription)")
+            let now = Date()
+            let retry = now.addingTimeInterval(PFManager.expiryRetryInterval)
+            scheduleRender(at: min(retry, PFManager.nextExpiry(of: rules, after: now) ?? retry), now: now)
         }
     }
 
@@ -184,8 +197,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("set skip on lo0")
 
         let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }
-        let denyRules = liveRules.filter { $0.action == .deny && !PFManager.namesAnApp($0) }
-        let allowRules = liveRules.filter { $0.action == .allow }
+        let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }
+        let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
 
         for rule in denyRules {
             if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
@@ -213,6 +226,16 @@ final class PFManager: @unchecked Sendable {
     /// not empty. A name alone identifies nothing (#157).
     static func namesAnApp(_ rule: Rule) -> Bool {
         !(rule.processBundleId ?? "").isEmpty || !(rule.processPath ?? "").isEmpty
+    }
+
+    /// Which rules the anchor renders at all: every allow, and the denies that
+    /// do not name an app (issue #155).
+    static func reachesPF(_ rule: Rule) -> Bool {
+        switch rule.action {
+        case .allow: return true
+        case .deny: return !namesAnApp(rule)
+        case .ask: return false
+        }
     }
 
     /// The matcher's own test: a rule still applies at the instant it expires.

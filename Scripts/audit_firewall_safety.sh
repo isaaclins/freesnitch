@@ -1210,9 +1210,14 @@ anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
 printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }' \
   || fail "the pf anchor renders disabled or expired rules, so a temporary deny keeps blocking after it ran out"
-printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && !PFManager.namesAnApp($0) }' \
+printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }' \
+  || fail "the pf anchor no longer filters deny rules through reachesPF"
+printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }' \
+  || fail "the pf anchor no longer filters allow rules through reachesPF"
+reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .deny: return !namesAnApp(rule)' \
   || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
-printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow }' \
+printf '%s\n' "$reaches_body" | grep -Fq 'case .allow: return true' \
   || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
 if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
   fail "the pf anchor renders the unfiltered rule set somewhere"

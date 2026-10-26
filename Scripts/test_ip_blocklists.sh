@@ -278,6 +278,10 @@ struct IPBlocklistHarness {
                       "with every temporary rule expired no render may be scheduled")
         checks.expect(PFManager.nextExpiry(of: [temporary[4], temporary[5]], after: clock) == nil,
                       "a disabled or permanent rule must never schedule a render")
+        let appOnlyTemporary = Rule(processBundleId: "com.hnc.Discord", remoteIP: "203.0.113.11", action: .deny,
+                                    scope: .ip, temporary: true, expiresAt: clock.addingTimeInterval(60))
+        checks.expect(PFManager.nextExpiry(of: [appOnlyTemporary, temporary[2]], after: clock) == clock.addingTimeInterval(3600),
+                      "a temporary rule pf never carries, such as an app's deny, must not schedule a render")
 
         // 7. Feed handling: unreachable, malformed, then usable. All fail open.
         let storePath = (NSTemporaryDirectory() as NSString)
