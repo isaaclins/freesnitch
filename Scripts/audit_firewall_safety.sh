@@ -928,12 +928,30 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q '\\\('; then
 fi
 # Flushing the shared anchor is required; deleting it or disabling pf is not,
 # because /etc/pf.conf still references it and the user's firewall would be
-# stranded.
-if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|anchors/puresnitch'; then
+# stranded. Emptying the anchor file is required too: pf.conf loads it at boot,
+# so rules left in it came back after FreeSnitch was gone (issue #192). The one
+# mention of the file allowed is that write of a comment-only anchor; it is
+# removed before the check, so any other use of the path still fails.
+EMPTY_ANCHOR_WRITE="[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; "
+privileged_uninstall_code="$(rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL")"
+if printf '%s\n' "${privileged_uninstall_code//"$EMPTY_ANCHOR_WRITE"/}" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|anchors/puresnitch'; then
   fail "the privileged uninstall disables pf globally or removes the shared anchor file"
 fi
 require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
   "the privileged uninstall no longer flushes the FreeSnitch anchor"
+# Both scripts (keep or remove the database) must start with that write, so
+# it runs before the flush and before anything is removed.
+[[ "$(rg -F -c "do shell script \"$EMPTY_ANCHOR_WRITE" "$PRIVILEGED_UNINSTALL" || true)" == 2 ]] \
+  || fail "the privileged uninstall leaves the last rules in the anchor file pf.conf loads at boot"
+UNINSTALL_SCRIPT="$ROOT/Scripts/uninstall_freesnitch.sh"
+uninstall_flush="$(awk '/^flush_pf_anchor\(\) [{]/,/^}/' "$UNINSTALL_SCRIPT")"
+printf '%s\n' "$uninstall_flush" | awk '/empty_pf_anchor_file/ { seen = 1 } /-F all/ { ok = seen; exit } END { exit !ok }' \
+  || fail "the uninstall script flushes the anchor without first emptying the file pf.conf loads at boot"
+uninstall_empty="$(awk '/^empty_pf_anchor_file\(\) [{]/,/^}/' "$UNINSTALL_SCRIPT")"
+printf '%s\n' "$uninstall_empty" | grep -Fq 'run_privileged /usr/bin/tee "$PF_ANCHOR"' \
+  || fail "the uninstall script no longer empties the anchor file"
+printf '%s\n' "$uninstall_empty" | grep -Eq '\brm\b|pfctl' \
+  && fail "emptying the anchor file deletes it or touches pf"
 # The app bundle must go to the Trash through Finder, never be deleted.
 # Moving an app that hosts a system extension to the Trash is what makes macOS
 # remove the extension; deleting the bundle directly takes the app away and

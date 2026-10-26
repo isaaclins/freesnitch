@@ -272,16 +272,33 @@ require_helper_not_running_from_bundle() {
   fi
 }
 
+# What the anchor file holds once FreeSnitch is gone: no rules at all.
+readonly EMPTY_PF_ANCHOR="# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules."
+
+# /etc/pf.conf loads the anchor from this file at boot, and so does any VPN or
+# tool that reloads pf.conf. Flushing only the kernel left the last rules in
+# the file, so they came back after FreeSnitch was gone, with nothing left on
+# the Mac to turn them off (issue #192). Empty it, never delete it: pf.conf
+# still names it, and a missing file would make that load fail.
+empty_pf_anchor_file() {
+  assert_exact_path "$PF_ANCHOR"
+  [[ -e "$PF_ANCHOR" || -L "$PF_ANCHOR" ]] || return 0
+  [[ -f "$PF_ANCHOR" && ! -L "$PF_ANCHOR" ]] || die "refusing to write $PF_ANCHOR: it is not a regular file"
+  printf '%s\n' "$EMPTY_PF_ANCHOR" | run_privileged /usr/bin/tee "$PF_ANCHOR" >/dev/null \
+    || die "could not empty $PF_ANCHOR, so the next boot would load FreeSnitch's last rules again; empty it by hand, then rerun with --yes"
+}
+
 # FreeSnitch intentionally reuses this old anchor name. Flush the exact anchor
 # before removing the app and store; never disable PF globally or leave rules
 # active with the anchor file gone.
 flush_pf_anchor() {
   [[ -x "$PFCTL" ]] || die "$PFCTL is unavailable; refusing to remove FreeSnitch while the reused PF anchor cannot be flushed"
+  empty_pf_anchor_file
   if ! run_privileged "$PFCTL" -a puresnitch -F all >/dev/null 2>&1 \
      || ! run_privileged "$PFCTL" -a puresnitch -f /dev/null >/dev/null 2>&1; then
     die "could not flush and disable the reused puresnitch PF anchor; run '$PFCTL -a puresnitch -F all' and '$PFCTL -a puresnitch -f /dev/null', then rerun with --yes"
   fi
-  log "Flushed the reused puresnitch PF anchor. The empty anchor file is retained because pf.conf still references it."
+  log "Emptied and flushed the reused puresnitch PF anchor. The empty anchor file is retained because pf.conf still references it."
 }
 
 main() {
