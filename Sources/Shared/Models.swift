@@ -126,6 +126,10 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     public var longitude: Double?
     public var firstSeen: Date
     public var lastSeen: Date
+    /// A name this address was recently seen under, for display when the
+    /// connection itself carries only the address (#168). Never a rule target:
+    /// rules are written from `remoteHost` and `remoteIP`.
+    public var resolvedName: String?
 
     public init(
         id: UUID = UUID(),

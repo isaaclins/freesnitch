@@ -119,11 +119,15 @@ final class PFManager: @unchecked Sendable {
         lines.append("# Hostname rules are intentionally not emitted to pf.")
         lines.append("# The Network Extension filter evaluates them when active, avoiding pf's one-time DNS resolution.")
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
+        lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
+        lines.append("# so an app's address or port deny would block every app on the Mac.")
+        lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
+        lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
-        let denyRules = rules.filter { $0.action == .deny && $0.enabled }
-        let allowRules = rules.filter { $0.action == .allow && $0.enabled }
+        let denyRules = rules.filter { $0.enabled && $0.action == .deny && !PFManager.namesAnApp($0) }
+        let allowRules = rules.filter { $0.enabled && $0.action == .allow }
 
         for rule in denyRules {
             if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
@@ -139,6 +143,18 @@ final class PFManager: @unchecked Sendable {
         lines.append(contentsOf: ipBlocklistLines(ipBlocklist, resolverAddresses: resolverAddresses))
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// pf matches packets, not processes, so a block line rendered from an
+    /// app's deny rule blocked that destination for every app (issue #155).
+    /// Those rules belong to the Network Extension, which sees the process.
+    /// An app's allow rule is still rendered: dropping it would let an
+    /// address feed block what the user allowed, and a pass line can only
+    /// block less. The test is the matcher's own, so pf and the extension
+    /// agree on which rules apply to every app: a bundle id or path that is
+    /// not empty. A name alone identifies nothing (#157).
+    static func namesAnApp(_ rule: Rule) -> Bool {
+        !(rule.processBundleId ?? "").isEmpty || !(rule.processPath ?? "").isEmpty
     }
 
     /// The address feed section (issue #51).

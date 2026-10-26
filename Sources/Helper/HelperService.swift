@@ -172,6 +172,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let profileQueue = DispatchQueue(label: "io.isaaclins.freesnitch.profiles", qos: .userInitiated)
     private let dns = DNSProxy()
     private let netmon = NetMonitor()
+    private let recentNames = RecentHostNames()
     private let blocklists: BlocklistManager
     private let listener: NSXPCListener
     private let insightsMaintenanceQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-maintenance", qos: .utility)
@@ -263,6 +264,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         dns.onResolve = { [weak self] domain, ips in
             let observedAt = Date()
+            for ip in ips { self?.recentNames.note(name: domain, for: ip, at: observedAt) }
             let mappings = ips.map {
                 DNSMapping(domain: domain, ip: $0, observedAt: observedAt,
                            expiresAt: observedAt.addingTimeInterval(5 * 60))
@@ -316,8 +318,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             for c in conns {
                 try? self.store.recordConnection(c)
             }
+            let named = self.recentNames.annotate(conns)
             self.broadcast { c in
-                if let data = try? FreeSnitchWireCodec.encode(conns) {
+                if let data = try? FreeSnitchWireCodec.encode(named) {
                     c.notifyConnection(connectionJSON: data)
                 }
             }
@@ -917,7 +920,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func currentConnections(reply: @escaping (Data) -> Void) {
-        let conns = store.recentConnections(limit: 500)
+        let conns = recentNames.annotate(store.recentConnections(limit: 500))
         reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
     }
 
@@ -1052,6 +1055,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         do {
             let batch = try FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: observationBatch)
             try batch.validate(payloadBytes: observationBatch.count)
+            recentNames.note(batch.observations)
             enqueueObservations(batch.observations, reply: reply)
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")

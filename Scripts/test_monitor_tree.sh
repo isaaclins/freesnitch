@@ -323,6 +323,30 @@ equal(allowAddress.remoteIP, "203.0.113.77", "the address rule names the address
 check(allowAddress.remoteHost == nil, "the address rule leaves the domain field empty")
 equal(MonitorRuleTarget.of(allowAddress), addressTarget, "a drafted address rule round-trips to its row")
 
+// A name the helper saw an address under is only a label (#168): the row
+// shows it, and Allow or Deny still writes the address rule it wrote before.
+var seen = connection(app: "Beeper", bundle: "com.beeper.app", host: "185.199.110.153", ip: "185.199.110.153")
+seen.resolvedName = "github.com"
+let plainSeen = connection(app: "Beeper", bundle: "com.beeper.app", host: "185.199.110.153", ip: "185.199.110.153")
+var asked = connection(app: "Beeper", bundle: "com.beeper.app", host: "api.beeper.com", ip: "203.0.113.10")
+asked.resolvedName = "other.example"
+let named = MonitorTreeBuilder.build(connections: [plainSeen, seen, asked], order: MonitorRowOrder())
+    .snapshot.apps.first { $0.name == "Beeper" }!
+let seenRow = named.destinations.first { $0.remoteIP == "185.199.110.153" }!
+equal(seenRow.label, "github.com", "an address with a seen name shows the name, even if it arrived second")
+check(seenRow.labelIsSeenName, "the row knows its label is a seen name, so it can show the address too")
+equal(seenRow.decisionSubject, "github.com (185.199.110.153)", "buttons and prompts on a named row name its address")
+equal(seenRow.connectionCount, 2, "connections to the address stay one row whether or not they carried the name")
+let askedRow = named.destinations.first { $0.remoteIP == "203.0.113.10" }!
+equal(askedRow.label, "api.beeper.com", "a name the app asked for wins over a seen name")
+check(!askedRow.labelIsSeenName, "a name the app asked for is not marked as a seen name")
+let seenTarget = MonitorRuleTarget.destination(seenRow, in: named)!
+let denySeen = MonitorRuleDraft.rule(for: seenTarget, processName: "Beeper", action: .deny,
+                                     profile: "default", existing: nil)!
+equal(denySeen.scope, .ip, "a row labelled with a seen name still drafts an address rule")
+equal(denySeen.remoteIP, "185.199.110.153", "the drafted rule names the address, not the seen name")
+check(denySeen.remoteHost == nil, "the seen name never becomes a rule's domain")
+
 let allowApp = MonitorRuleDraft.rule(for: appTarget, processName: "Beeper", action: .allow,
                                      profile: "default", existing: nil)!
 equal(allowApp.scope, .process, "an app row drafts a process rule")
