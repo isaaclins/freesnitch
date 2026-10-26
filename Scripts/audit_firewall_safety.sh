@@ -934,8 +934,13 @@ fi
 # removed before the check, so any other use of the path still fails.
 EMPTY_ANCHOR_WRITE="[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; "
 privileged_uninstall_code="$(rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL")"
-if printf '%s\n' "${privileged_uninstall_code//"$EMPTY_ANCHOR_WRITE"/}" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|anchors/puresnitch'; then
+if printf '%s\n' "${privileged_uninstall_code//"$EMPTY_ANCHOR_WRITE"/}" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|pf\.anchors|/private/etc/pf'; then
   fail "the privileged uninstall disables pf globally or removes the shared anchor file"
+fi
+# Every pfctl call stays inside FreeSnitch's own anchor; a bare `pfctl -F all`
+# would flush every rule on the Mac.
+if printf '%s\n' "$privileged_uninstall_code" | rg -o 'pfctl[^;"]*' | rg -qv '^pfctl -a puresnitch '; then
+  fail "the privileged uninstall runs pfctl outside the puresnitch anchor"
 fi
 require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
   "the privileged uninstall no longer flushes the FreeSnitch anchor"
