@@ -245,7 +245,7 @@ struct UninstallFlowSheet: View {
             if !flow.removeDatabase {
                 bullet("\(databasePath), your rules, profiles and blocklists. Reinstalling FreeSnitch picks them up again.")
             }
-            bullet("The empty puresnitch pf anchor file, because /etc/pf.conf still references it. Removing it while pf.conf points at it would strand your firewall configuration.")
+            bullet("The puresnitch pf anchor file, emptied of every rule, because /etc/pf.conf still references it. Removing it while pf.conf points at it would strand your firewall configuration.")
             bullet("Legacy PureSnitch user data, which FreeSnitch never touches.")
         }
         .font(.caption)
