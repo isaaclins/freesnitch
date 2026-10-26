@@ -11,6 +11,7 @@
 #   3. Loopback, the configured resolvers, DHCP and the app's own traffic are
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
+#      Deny rules that name an app are never written to pf (issue #155).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -213,6 +214,36 @@ struct IPBlocklistHarness {
         let plain = pf.renderAnchor(rules: [])
         checks.expect(!plain.contains("freesnitch_ipblock"),
                       "an anchor with no feed loaded must not mention the feed table at all")
+
+        // Deny rules that name an app never reach pf, which cannot tell
+        // processes apart (issue #155). Allow rules still do, so a feed can
+        // never block what the user allowed for an app. Which rules name an
+        // app is decided exactly as the matcher decides it.
+        let appScoped = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.hnc.Discord", remoteIP: "162.159.128.233", action: .deny, scope: .ip),
+            Rule(processPath: "/Applications/Firefox.app/", remotePort: 443, action: .deny, scope: .port),
+            Rule(processPath: "/usr/bin/curl", remoteIP: "198.51.100.21", action: .allow, scope: .ip),
+            Rule(processName: "Discord", remoteIP: "198.51.100.20", action: .deny, scope: .ip),
+            Rule(processBundleId: "  ", remoteIP: "198.51.100.30", action: .deny, scope: .ip),
+            Rule(processBundleId: "", processPath: "", remoteIP: "198.51.100.31", action: .deny, scope: .ip),
+            Rule(remotePort: 8443, action: .deny, scope: .port)
+        ], ipBlocklist: hostile, resolverAddresses: resolvers)
+        for leaked in ["162.159.128.233", "port 443", "198.51.100.30"] {
+            checks.expect(!appScoped.contains(leaked),
+                          "a deny rule that names an app must not be written to pf, but the anchor carries \(leaked)")
+        }
+        checks.expect(appScoped.contains("pass out quick proto { tcp udp } to 198.51.100.21"),
+                      "an app's allow rule must still reach pf, so the feed cannot block what the user allowed")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.20"),
+                      "a name alone identifies no app for the matcher, so pf must treat the rule as every app's too")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.31"),
+                      "empty app fields are no app, as in the matcher")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } port 8443"),
+                      "a rule with no app must still be written to pf")
+        let allowIndex = appScoped.range(of: "to 198.51.100.21")?.lowerBound
+        let feedIndex = appScoped.range(of: "to <freesnitch_ipblock>")?.lowerBound
+        checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
+                      "the user's allow must come before the feed's block")
 
         // 7. Feed handling: unreachable, malformed, then usable. All fail open.
         let storePath = (NSTemporaryDirectory() as NSString)
