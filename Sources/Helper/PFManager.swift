@@ -329,6 +329,11 @@ final class PFManager: @unchecked Sendable {
                 if port == 67 || port == 68 {
                     return reject("blocking destination port \(port) could disable DHCP")
                 }
+                // DHCPv6, which the address feed section already lets through
+                // (issue #186).
+                if port == 546 || port == 547 {
+                    return reject("blocking destination port \(port) could disable DHCPv6")
+                }
             }
         }
 

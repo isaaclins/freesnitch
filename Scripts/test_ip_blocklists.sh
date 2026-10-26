@@ -245,6 +245,33 @@ struct IPBlocklistHarness {
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
 
+        // A user's deny can never take DHCP or DHCPv6 away, whatever the
+        // direction (issue #186). The refusal is reported, not silent.
+        var refusedPorts: [String] = []
+        let infrastructure = pf.renderAnchor(rules: [
+            Rule(remotePort: 67, action: .deny, scope: .port),
+            Rule(remotePort: 68, direction: .incoming, action: .deny, scope: .port),
+            Rule(remotePort: 546, action: .deny, scope: .port),
+            Rule(remotePort: 546, direction: .incoming, action: .deny, scope: .port),
+            Rule(remoteIP: "203.0.113.40", remotePort: 547, direction: .outgoing, action: .deny, scope: .ip),
+            Rule(remotePort: 547, action: .allow, scope: .port),
+            Rule(remotePort: 548, action: .deny, scope: .port)
+        ]) { _, reason in refusedPorts.append(reason) }
+        for port in [67, 68, 546] {
+            checks.expect(!infrastructure.contains("block out quick proto { tcp udp } port \(port)")
+                            && !infrastructure.contains("block in quick proto { tcp udp } port \(port)")
+                            && !infrastructure.contains("block quick proto { tcp udp } port \(port)"),
+                          "a deny on port \(port) must never be written to pf")
+        }
+        checks.expect(!infrastructure.contains("203.0.113.40"),
+                      "a deny on port 547 must never be written to pf, even with an address")
+        checks.expect(infrastructure.contains("pass out quick proto { tcp udp } port 547"),
+                      "an allow on a DHCPv6 port must still be written, since a pass can only block less")
+        checks.expect(infrastructure.contains("block out quick proto { tcp udp } port 548"),
+                      "a deny on an ordinary port next to DHCPv6 must still be written")
+        checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 3,
+                      "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
+
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again
         // (issue #180).
