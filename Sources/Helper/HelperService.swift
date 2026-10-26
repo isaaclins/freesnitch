@@ -221,7 +221,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         // generation durable, so the policy state read below already carries
         // both halves of the ordering the extension compares.
         let session = self.store.beginPolicySession()
-        let persistedPolicy = store.policyState()
+        // The active profile's policy, as every later publication uses: the
+        // raw store state carries every profile's rules (issue #184).
+        let persistedPolicy = store.activePolicyState()
         self.mode = persistedPolicy.mode
         self.policyGeneration = persistedPolicy.generation
         self.blocklists = BlocklistManager(store: store)
@@ -369,6 +371,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             let state = store.activePolicyState()
             adoptLocked(state)
             dns.applyPolicy(mode: state.mode, rules: state.rules)
+        }
+        // pf follows the switch too, or it kept enforcing the previous
+        // profile's rules until some unrelated rule change (issue #184).
+        do { try applyRulesIfEnforcing() } catch {
+            PSLog.error(PSLog.pf,
+                        "the profile switch could not be applied to the pf anchor: \(error.localizedDescription)")
         }
         broadcast { client in
             client.notifyLog(level: "info", message: AppConstants.profilePolicyChangedLogMessage)
@@ -625,7 +633,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     private func authoritativePolicyState() -> RuleStore.PolicyState {
         policyQueue.sync {
-            let state = store.policyState()
+            let state = store.activePolicyState()
             adoptLocked(state)
             return state
         }
@@ -667,9 +675,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     /// The database commit, generation advance, and runtime policy assignment
     /// are one ordered owner. PF work happens only after this returns.
+    ///
+    /// What is published is the active profile's policy, the same list and
+    /// order the extension's snapshot carries. Publishing the store's raw
+    /// state made pf and the DNS proxy enforce every profile's rules
+    /// (issue #184).
     private func mutatePolicy(_ change: (inout RuleStore.PolicyDraft) throws -> Void) throws -> SharedRuleBridge.Snapshot {
         try policyQueue.sync {
-            let state = try store.mutatePolicy(change)
+            let state = try store.mutateActivePolicy(change)
             adoptLocked(state)
             // Mode and rules belong to the same committed generation, so they
             // are published together. Assigning them one after the other left a
@@ -722,7 +735,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func setMode(rawValue: String, reply: @escaping (Bool, String?) -> Void) {
         guard let m = AppMode(rawValue: rawValue) else { reply(false, "invalid mode"); return }
         do {
-            _ = try mutatePolicy { draft in draft.mode = m }
+            // What is enforced is the active profile's mode, so a mode change
+            // lands there as well, in the same transaction, as the app already
+            // does (#128). Without it a mode set from the command line would
+            // change nothing.
+            _ = try mutatePolicy { draft in
+                draft.mode = m
+                draft.activeProfileMode = m
+            }
             reply(true, nil)
         } catch {
             reply(false, "could not persist mode: \(error)")
@@ -875,13 +895,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         reply(true, nil)
     }
 
-    /// pf only has an anchor loaded while enforcement is on; pushing rules at it
-    /// otherwise is both pointless and a source of phantom errors.
+    /// Hands pf the policy in force. pf always records it but only writes the
+    /// anchor while enforcement is on, deciding that under its own lock, so
+    /// turning enforcement on later loads exactly these rules and nothing
+    /// stale can come back (issue #185).
     private func applyRulesIfEnforcing() throws {
-        guard pf.isLoaded else { return }
         do {
-            try pf.applyRules(dns.rules)
-            clearPFError()
+            if try pf.applyRules(dns.rules) { clearPFError() }
         } catch {
             recordPFError(error)
             throw error
@@ -894,7 +914,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         if enabled {
             do {
                 do {
-                    try pf.install()
+                    try pf.install(rules: dns.rules)
                     clearPFError()
                 } catch {
                     recordPFError(error)
@@ -1009,7 +1029,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func installPF(reply: @escaping (Bool, String?) -> Void) {
         PSLog.error(PSLog.helper, "AUDIT: pf install requested")
         do {
-            try pf.install()
+            try pf.install(rules: dns.rules)
             clearPFError()
             reply(true, nil)
         } catch {
