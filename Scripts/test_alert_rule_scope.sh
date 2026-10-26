@@ -82,7 +82,7 @@ check(matcher.matches(rule: broken, connection: unrelated),
 
 // And the guard that stops it being created at all.
 let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
-check(source.contains("remoteIP: ruleIP"),
+check(source.contains("scopedIP = ruleIP") && source.contains("remoteIP: scopedIP"),
       "AppState carries the remote address into the remembered rule")
 check(source.contains("hasDestination"),
       "AppState refuses to store a remembered rule with an empty destination")

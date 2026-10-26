@@ -34,6 +34,7 @@ RULE_MATCHER="$ROOT/Sources/Shared/RuleMatcher.swift"
 CLI_PARSER="$ROOT/Sources/CLI/CLIParser.swift"
 POLICY_EPOCH="$ROOT/Sources/Shared/PolicyEpoch.swift"
 SNAPSHOT_RECOVERY="$ROOT/Sources/Shared/SnapshotRecovery.swift"
+PF_MANAGER="$ROOT/Sources/Helper/PFManager.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -75,6 +76,7 @@ require_text() {
 [[ -f "$DNS_PROXY" ]] || fail "missing $DNS_PROXY"
 [[ -f "$POLICY_EPOCH" ]] || fail "missing $POLICY_EPOCH"
 [[ -f "$SNAPSHOT_RECOVERY" ]] || fail "missing $SNAPSHOT_RECOVERY"
+[[ -f "$PF_MANAGER" ]] || fail "missing $PF_MANAGER"
 
 # A CIDR prefix outside 0...32 used to produce mask 0 through Swift's
 # non-trapping smart shift, and mask 0 matches every IPv4 address. The matcher
@@ -1199,4 +1201,26 @@ swift_function_body "$RULE_MATCHER" 'public var namesAppOnlyByName: Bool' \
 require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
   "the DNS proxy's alerts no longer use the name the name-only check exempts"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, and refusal of rules that name an app only by name are present.\n'
+# pf matches packets, not processes. An app's deny rule used to be rendered
+# from its address or port alone, so "Discord, deny, <address>" blocked that
+# address for every app (issue #155). Deny rules that name an app must stay
+# out of the anchor, and no other loop may render the rule set. Allow rules
+# stay in, so an address feed never blocks what the user allowed.
+anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
+[[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
+printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = rules.filter { $0.enabled && $0.action == .deny && !PFManager.namesAnApp($0) }' \
+  || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
+printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = rules.filter { $0.enabled && $0.action == .allow }' \
+  || fail "the pf anchor no longer renders every enabled allow rule, so an address feed could block what the user allowed"
+if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
+  fail "the pf anchor renders the unfiltered rule set somewhere"
+fi
+names_body="$(swift_function_body "$PF_MANAGER" 'static func namesAnApp(')"
+for field in processBundleId processPath; do
+  printf '%s\n' "$names_body" | grep -Fq "rule.$field" \
+    || fail "namesAnApp ignores $field, so a deny naming an app that way would reach pf"
+done
+printf '%s\n' "$names_body" | grep -Fq 'trimming' \
+  && fail "namesAnApp trims whitespace, which the matcher does not, so pf and the extension would disagree"
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, and refusal of rules that name an app only by name are present.\n'
