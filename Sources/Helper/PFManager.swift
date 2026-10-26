@@ -28,15 +28,22 @@ final class PFManager: @unchecked Sendable {
     /// to the helper event stream so the GUI can show it to the user.
     var onWarning: ((String) -> Void)?
 
-    func install() throws {
+    /// Loads the anchor with `rules`, the policy in force right now. Loading
+    /// it empty left pf enforcing none of the user's rules until the next
+    /// rule change, and the next feed refresh then rendered whatever rules
+    /// were recorded before enforcement went off (issue #185).
+    func install(rules: [Rule]) throws {
         applyLock.lock()
         defer { applyLock.unlock() }
+        stateLock.lock()
+        lastRules = rules
+        stateLock.unlock()
         try ensureMainPFConfReferencesAnchor()
         try run(pfctl, ["-E"]) // enable pf
         // Use the same fail-open load path as later rule/feed updates. If a
         // feed table is rejected, the user's anchor still gets loaded without
         // the feed rather than leaving enforcement in a half-applied state.
-        try writeAndLoad(rules: [])
+        try writeAndLoad(rules: rules)
         loaded = true
     }
 
@@ -52,13 +59,29 @@ final class PFManager: @unchecked Sendable {
 
     var isLoaded: Bool { loaded }
 
-    func applyRules(_ rules: [Rule]) throws {
+    /// The rules the anchor renders the next time it is written.
+    var currentRules: [Rule] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return lastRules
+    }
+
+    /// Records `rules` as the policy in force and, only while the anchor is
+    /// loaded, writes and loads it. Recording always happens, so a later
+    /// install or feed refresh can never render rules the user has since
+    /// changed (issue #185). The loaded check is made under `applyLock`, so
+    /// an update racing `uninstall` cannot load the anchor again after
+    /// enforcement went off. Returns whether the anchor was written.
+    @discardableResult
+    func applyRules(_ rules: [Rule]) throws -> Bool {
         applyLock.lock()
         defer { applyLock.unlock() }
         stateLock.lock()
         lastRules = rules
         stateLock.unlock()
+        guard loaded else { return false }
         try writeAndLoad(rules: rules)
+        return true
     }
 
     /// Publishes an address feed set into the anchor.
