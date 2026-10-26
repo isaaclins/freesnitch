@@ -1208,13 +1208,24 @@ require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
 # stay in, so an address feed never blocks what the user allowed.
 anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
-printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = rules.filter { $0.enabled && $0.action == .deny && !PFManager.namesAnApp($0) }' \
+printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }' \
+  || fail "the pf anchor renders disabled or expired rules, so a temporary deny keeps blocking after it ran out"
+printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && !PFManager.namesAnApp($0) }' \
   || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
-printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = rules.filter { $0.enabled && $0.action == .allow }' \
-  || fail "the pf anchor no longer renders every enabled allow rule, so an address feed could block what the user allowed"
+printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow }' \
+  || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
 if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
   fail "the pf anchor renders the unfiltered rule set somewhere"
 fi
+# pf only changes when the anchor is rendered, so every render must schedule
+# the next one for the earliest expiry, or an expired temporary deny keeps
+# blocking until some unrelated rule change (issue #180).
+write_body="$(swift_function_body "$PF_MANAGER" 'private func writeAndLoad(')"
+printf '%s\n' "$write_body" | grep -Fq 'scheduleExpiryRender(for: rules)' \
+  || fail "writing the pf anchor no longer schedules a render for the next rule expiry"
+expired_body="$(swift_function_body "$PF_MANAGER" 'static func hasExpired(')"
+printf '%s\n' "$expired_body" | grep -Fq 'expiresAt < now' \
+  || fail "pf decides expiry differently from the matcher, which drops a rule only once expiresAt < now"
 names_body="$(swift_function_body "$PF_MANAGER" 'static func namesAnApp(')"
 for field in processBundleId processPath; do
   printf '%s\n' "$names_body" | grep -Fq "rule.$field" \
@@ -1223,4 +1234,4 @@ done
 printf '%s\n' "$names_body" | grep -Fq 'trimming' \
   && fail "namesAnApp trims whitespace, which the matcher does not, so pf and the extension would disagree"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, and refusal of rules that name an app only by name are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, and expired temporary rules leaving pf on time are present.\n'

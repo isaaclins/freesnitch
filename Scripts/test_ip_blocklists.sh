@@ -245,6 +245,40 @@ struct IPBlocklistHarness {
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
 
+        // A temporary rule leaves pf when it expires, as it leaves the matcher,
+        // and the next expiry is when the anchor must be rendered again
+        // (issue #180).
+        let clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let temporary = [
+            Rule(remoteIP: "203.0.113.5", action: .deny, scope: .ip, temporary: true,
+                 expiresAt: clock.addingTimeInterval(-1)),
+            Rule(remoteIP: "203.0.113.6", action: .allow, scope: .ip, temporary: true,
+                 expiresAt: clock.addingTimeInterval(-3600)),
+            Rule(remoteIP: "203.0.113.7", action: .deny, scope: .ip, temporary: true,
+                 expiresAt: clock.addingTimeInterval(3600)),
+            Rule(remoteIP: "203.0.113.8", action: .deny, scope: .ip, temporary: true,
+                 expiresAt: clock),
+            Rule(remoteIP: "203.0.113.9", action: .deny, scope: .ip, enabled: false, temporary: true,
+                 expiresAt: clock.addingTimeInterval(60)),
+            Rule(remoteIP: "203.0.113.10", action: .deny, scope: .ip)
+        ]
+        let expiring = pf.renderAnchor(rules: temporary, now: clock)
+        checks.expect(!expiring.contains("203.0.113.5"), "an expired temporary deny must leave the pf anchor")
+        checks.expect(!expiring.contains("203.0.113.6"), "an expired temporary allow must leave the pf anchor")
+        checks.expect(expiring.contains("block out quick proto { tcp udp } to 203.0.113.7"),
+                      "a temporary deny that has not expired must stay in the anchor")
+        checks.expect(expiring.contains("to 203.0.113.8"),
+                      "a rule still applies at the instant it expires, as in the matcher")
+        checks.expect(expiring.contains("to 203.0.113.10"), "a rule without an expiry must stay in the anchor")
+        checks.expect(PFManager.nextExpiry(of: temporary, after: clock) == clock,
+                      "the next render must come at the earliest expiry the anchor still carries")
+        checks.expect(PFManager.nextExpiry(of: temporary, after: clock.addingTimeInterval(1)) == clock.addingTimeInterval(3600),
+                      "after one rule runs out, the next render must come at the following expiry")
+        checks.expect(PFManager.nextExpiry(of: temporary, after: clock.addingTimeInterval(7200)) == nil,
+                      "with every temporary rule expired no render may be scheduled")
+        checks.expect(PFManager.nextExpiry(of: [temporary[4], temporary[5]], after: clock) == nil,
+                      "a disabled or permanent rule must never schedule a render")
+
         // 7. Feed handling: unreachable, malformed, then usable. All fail open.
         let storePath = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("freesnitch-ipbl-\(UUID().uuidString).sqlite")
