@@ -1179,6 +1179,28 @@ absence_action_line="$(grep -nF 'action { ok, message in' "$BUNDLE_WATCHER" | he
 [[ -n "$absence_evidence_line" && -n "$absence_action_line" && "$absence_evidence_line" -lt "$absence_action_line" ]] \
   || fail "the bundle-absence stand-down acts before it logs its evidence"
 
+# The matcher never reads a rule's name, so an enabled rule that names its app
+# only by name matches every app (#157). Every helper ingest path and the
+# shared import reader must refuse one.
+helper_reject_body="$(swift_function_body "$HELPER" 'private func rejectionReason(for rule: Rule)')"
+printf '%s\n' "$helper_reject_body" | grep -Fq 'rule.nameOnlyRejectionReason' \
+  || fail "the helper accepts an enabled rule that names its app only by name, which matches every app"
+for ingest in 'func addRule(ruleJSON' 'func reloadRules(rulesJSON' 'func replaceRules(rulesJSON'; do
+  swift_function_body "$HELPER" "$ingest" | grep -Fq 'rejectionReason(for:' \
+    || fail "the helper's $ingest path skips rule content validation"
+done
+swift_function_body "$ROOT/Sources/Shared/RuleExportFormat.swift" 'public static func validate(_ rules: [Rule])' \
+  | grep -Fq 'rule.nameOnlyRejectionReason' \
+  || fail "rule import accepts an enabled rule that names its app only by name"
+# A rule remembered from a DNS alert carries the proxy's name and no app, and
+# means every app. Refusing it would make "remember" on a DNS alert store
+# nothing, so the exception must stay, keyed to the name the proxy uses.
+swift_function_body "$RULE_MATCHER" 'public var namesAppOnlyByName: Bool' \
+  | grep -Fq 'Connection.dnsLookupProcessName' \
+  || fail "a rule remembered from a DNS alert counts as name-only and would be refused"
+require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
+  "the DNS proxy's alerts no longer use the name the name-only check exempts"
+
 # pf matches packets, not processes. An app's deny rule used to be rendered
 # from its address or port alone, so "Discord, deny, <address>" blocked that
 # address for every app (issue #155). Deny rules that name an app must stay
@@ -1201,4 +1223,4 @@ done
 printf '%s\n' "$names_body" | grep -Fq 'trimming' \
   && fail "namesAnApp trims whitespace, which the matcher does not, so pf and the extension would disagree"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, and a pf anchor that never carries a deny naming an app are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, and refusal of rules that name an app only by name are present.\n'

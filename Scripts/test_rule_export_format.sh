@@ -26,6 +26,7 @@ struct Verify {
 
     static func ruleA() -> Rule {
         Rule(id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+             processPath: "/Applications/Safari.app/",
              processName: "Safari",
              remoteHost: "example.com",
              remoteIP: "1.2.3.4",
@@ -37,6 +38,7 @@ struct Verify {
 
     static func ruleB() -> Rule {
         Rule(id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+             processPath: "/usr/bin/curl",
              processName: "curl",
              remoteHost: "b.example",
              action: .allow,
@@ -153,7 +155,41 @@ struct Verify {
         let dupes = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [ruleA(), ruleA()]))
         expectRejected("duplicate rule id rejected", dupes, .duplicateRuleID(ruleA().id.uuidString))
 
-        // 12. Empty file rejected.
+        // 12. An enabled rule that names its app only by name would match
+        //     every app (#157), so the batch is refused. A disabled one
+        //     matches nothing and still imports.
+        var nameOnly = ruleB()
+        nameOnly.processPath = nil
+        let nameOnlyBatch = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [ruleA(), nameOnly]))
+        do {
+            let accepted = try RuleExportCodec.decode(nameOnlyBatch)
+            failures += 1
+            print("rule export harness: FAIL: name-only rule imported with \(accepted.rules.count) rules")
+        } catch let error as RuleExportError {
+            var refused = false
+            if case .invalidRule(let id, let reason) = error, id == nameOnly.id.uuidString,
+               reason.contains("every app") { refused = true }
+            check("enabled name-only rule refused at import", refused)
+        }
+        nameOnly.enabled = false
+        let disabledBatch = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [ruleA(), nameOnly]))
+        check("disabled name-only rule still imports",
+              (try? RuleExportCodec.decode(disabledBatch).rules.count) == 2)
+        var anyApp = ruleB()
+        anyApp.processPath = nil
+        anyApp.processName = nil
+        let anyAppBatch = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [anyApp]))
+        check("rule for every app with no name still imports",
+              (try? RuleExportCodec.decode(anyAppBatch).rules.count) == 1)
+
+        var dnsRule = ruleB()
+        dnsRule.processPath = nil
+        dnsRule.processName = Connection.dnsLookupProcessName
+        let dnsBatch = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [dnsRule]))
+        check("rule remembered from a DNS alert still imports",
+              (try? RuleExportCodec.decode(dnsBatch).rules.count) == 1)
+
+        // 13. Empty file rejected.
         expectRejected("empty payload rejected", Data(), .empty)
 
         if failures == 0 {

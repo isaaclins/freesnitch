@@ -730,7 +730,10 @@ struct RulesManagerView: View {
                 Label {
                     Text(rule.displayProcessName).lineLimit(1)
                 } icon: {
-                    if let icon = AppIcon.resolve(bundleId: rule.processBundleId,
+                    if rule.enabled && rule.namesAppOnlyByName {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                    } else if let icon = AppIcon.resolve(bundleId: rule.processBundleId,
                                                   path: rule.processPath,
                                                   name: rule.processName) {
                         Image(nsImage: icon).resizable().frame(width: 16, height: 16)
@@ -739,7 +742,9 @@ struct RulesManagerView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .help(rule.processPath ?? rule.displayProcessName)
+                .help(rule.enabled && rule.namesAppOnlyByName
+                      ? Rule.nameOnlyWarning
+                      : rule.processPath ?? rule.displayProcessName)
             }
             .width(min: 104)
 
@@ -1033,6 +1038,13 @@ struct RulesManagerView: View {
     @ViewBuilder
     private func ruleDetails(_ r: Rule) -> some View {
         Form {
+            if r.enabled && r.namesAppOnlyByName {
+                Section {
+                    Label(Rule.nameOnlyWarning, systemImage: "exclamationmark.triangle.fill")
+                        .symbolRenderingMode(.multicolor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Section {
                 infoField("Process", r.displayProcessName)
                 if let p = r.processPath, !p.isEmpty { infoField("Path", p) }
@@ -1765,6 +1777,11 @@ private enum RuleDate {
 /// the helper, the extension and the CLI.
 extension Rule {
     var displayProcessName: String { processName ?? "Any Process" }
+
+    /// Rules saved before #151 could name an app only by its name, which the
+    /// matcher cannot use (#157). They are shown as what they really do.
+    static let nameOnlyWarning = "This rule names the app only by its name, so it applies to every app. "
+        + "Turn it off, or remove it and add it again for the app."
 
     var displayDestination: String {
         if let host = remoteHost, !host.isEmpty { return host }
