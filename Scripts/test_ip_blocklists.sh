@@ -11,7 +11,8 @@
 #   3. Loopback, the configured resolvers, DHCP and the app's own traffic are
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
-#      Deny rules that name an app are never written to pf (issue #155).
+#      Deny rules that name an app are never written to pf (issue #155), and
+#      the anchor follows the matcher's priority order (issue #181).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -244,6 +245,56 @@ struct IPBlocklistHarness {
         let feedIndex = appScoped.range(of: "to <freesnitch_ipblock>")?.lowerBound
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
+
+        // pf stops at the first quick line that matches, so the lines must
+        // come in the matcher's order. A lower-priority deny must never
+        // override a higher-priority allow (issue #181), and equal priorities
+        // keep the order the snapshot delivered them in, as in the matcher.
+        func position(_ needle: String, in text: String) -> String.Index? {
+            text.range(of: needle)?.lowerBound
+        }
+        let wideDeny = Rule(remoteIP: "203.0.113.0/24", action: .deny, scope: .ip, priority: 50)
+        let firefoxAllow = Rule(processPath: "/Applications/Firefox.app/", remoteIP: "203.0.113.7",
+                                action: .allow, scope: .ip, priority: 100)
+        let everyAppAllow = Rule(remoteIP: "203.0.113.8", action: .allow, scope: .ip, priority: 100)
+        let ranked = pf.renderAnchor(rules: [wideDeny, firefoxAllow, everyAppAllow])
+        let wideIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: ranked)
+        for allowed in ["203.0.113.7", "203.0.113.8"] {
+            let passIndex = position("pass out quick proto { tcp udp } to \(allowed)", in: ranked)
+            checks.expect(passIndex != nil && wideIndex != nil && passIndex! < wideIndex!,
+                          "a higher-priority allow for \(allowed) must come before a lower-priority deny that covers it")
+        }
+        var outranked = wideDeny
+        outranked.priority = 200
+        let denyFirst = pf.renderAnchor(rules: [everyAppAllow, outranked])
+        let outrankedIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: denyFirst)
+        let lowerAllowIndex = position("pass out quick proto { tcp udp } to 203.0.113.8", in: denyFirst)
+        checks.expect(outrankedIndex != nil && lowerAllowIndex != nil && outrankedIndex! < lowerAllowIndex!,
+                      "a higher-priority deny must still come before a lower-priority allow")
+        let tiedDeny = Rule(remoteIP: "198.51.100.0/24", action: .deny, scope: .ip)
+        let tiedAllow = Rule(remoteIP: "198.51.100.4", action: .allow, scope: .ip)
+        let tieProbe = Connection(pid: 501, processName: "curl", processPath: "/usr/bin/curl", remoteHost: "198.51.100.4",
+                                  remoteIP: "198.51.100.4", remotePort: 443, direction: .outgoing)
+        for order in [[tiedDeny, tiedAllow], [tiedAllow, tiedDeny]] {
+            let tied = pf.renderAnchor(rules: order)
+            let blockAt = position("block out quick proto { tcp udp } to 198.51.100.0/24", in: tied)
+            let passAt = position("pass out quick proto { tcp udp } to 198.51.100.4", in: tied)
+            let pfFirst: RuleAction? = (blockAt != nil && passAt != nil) ? (blockAt! < passAt! ? .deny : .allow) : nil
+            let matcherSays = RuleMatcher().decision(for: tieProbe, rules: order, defaultMode: .alert)
+            checks.expect(pfFirst == matcherSays,
+                          "with equal priorities pf must pick what the matcher picks, got pf \(String(describing: pfFirst)) and matcher \(matcherSays)")
+        }
+        let disabledFirst = pf.renderAnchor(rules: [
+            Rule(remoteIP: "198.51.100.9", action: .allow, scope: .ip, priority: 900, enabled: false),
+            Rule(remoteIP: "198.51.100.9", action: .ask, scope: .ip, priority: 800),
+            Rule(remoteIP: "198.51.100.9", action: .deny, scope: .ip)
+        ])
+        let passAt = position("pass out quick proto { tcp udp } to 198.51.100.9", in: disabledFirst)
+        let blockAt = position("block out quick proto { tcp udp } to 198.51.100.9", in: disabledFirst)
+        checks.expect(disabledFirst.components(separatedBy: "pass out quick proto { tcp udp } to 198.51.100.9").count == 2,
+                      "only the ask rule may pass 198.51.100.9; a disabled allow must not reach pf")
+        checks.expect(passAt != nil && blockAt != nil && passAt! < blockAt!,
+                      "a higher-priority ask rule must pass ahead of the deny, since the matcher stops at it and the extension asks")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again

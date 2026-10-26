@@ -1208,17 +1208,20 @@ require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
 # stay in, so an address feed never blocks what the user allowed.
 anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
-printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }' \
-  || fail "the pf anchor renders disabled or expired rules, so a temporary deny keeps blocking after it ran out"
-printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }' \
-  || fail "the pf anchor no longer filters deny rules through reachesPF"
-printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }' \
-  || fail "the pf anchor no longer filters allow rules through reachesPF"
+# Every anchor line is quick, so the lines must follow the matcher's order
+# (PreparedRuleSet: enabled rules, priority first) or a lower-priority deny
+# overrides a higher-priority allow (issue #181).
+printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = PreparedRuleSet(rules: rules).ordered.filter { !PFManager.hasExpired($0, at: now) }' \
+  || fail "the pf anchor no longer renders the matcher's order of enabled, unexpired rules, so pf and the extension can disagree"
+printf '%s\n' "$anchor_body" | grep -Fq 'let renderedRules = liveRules.filter { PFManager.reachesPF($0) }' \
+  || fail "the pf anchor no longer filters the rules it renders through reachesPF"
+[[ "$(printf '%s\n' "$anchor_body" | grep -c 'pfLine(')" -eq 1 ]] \
+  || fail "the pf anchor renders rules in more than one pass, which ignores rule priority"
 reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
 printf '%s\n' "$reaches_body" | grep -Fq 'case .deny: return !namesAnApp(rule)' \
   || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
-printf '%s\n' "$reaches_body" | grep -Fq 'case .allow: return true' \
-  || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .allow, .ask: return true' \
+  || fail "the pf anchor no longer renders every live allow and ask rule, so pf could block what the matcher does not deny"
 if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
   fail "the pf anchor renders the unfiltered rule set somewhere"
 fi
@@ -1239,4 +1242,4 @@ done
 printf '%s\n' "$names_body" | grep -Fq 'trimming' \
   && fail "namesAnApp trims whitespace, which the matcher does not, so pf and the extension would disagree"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, and expired temporary rules leaving pf on time are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, and pf lines in matcher priority order are present.\n'

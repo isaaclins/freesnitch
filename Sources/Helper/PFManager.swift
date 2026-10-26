@@ -191,22 +191,23 @@ final class PFManager: @unchecked Sendable {
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
         lines.append("# so an app's address or port deny would block every app on the Mac.")
-        lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
+        lines.append("# Allow and ask rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
+        lines.append("# Rules are written in priority order, the order the Network Extension consults them.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
-        let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }
-        let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }
-        let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
+        // Every line is quick, so pf stops at the first line that matches, as
+        // the matcher stops at the first rule in its order. Writing every deny
+        // before every allow let a lower-priority deny override a
+        // higher-priority allow (issue #181), so the lines follow the
+        // matcher's own order: priority first, then the snapshot's order.
+        let liveRules = PreparedRuleSet(rules: rules).ordered.filter { !PFManager.hasExpired($0, at: now) }
+        let renderedRules = liveRules.filter { PFManager.reachesPF($0) }
 
-        for rule in denyRules {
-            if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
-                lines.append(line)
-            }
-        }
-        for rule in allowRules {
-            if let line = pfLine(rule: rule, verb: "pass", onRejected: onRejected) {
+        for rule in renderedRules {
+            let verb = rule.action == .deny ? "block" : "pass"
+            if let line = pfLine(rule: rule, verb: verb, onRejected: onRejected) {
                 lines.append(line)
             }
         }
@@ -229,12 +230,13 @@ final class PFManager: @unchecked Sendable {
     }
 
     /// Which rules the anchor renders at all: every allow, and the denies that
-    /// do not name an app (issue #155).
+    /// do not name an app (issue #155). An ask rule is rendered as a pass: the
+    /// matcher stops at it and the extension asks, and allows when nobody can
+    /// answer, so a lower-priority deny behind it must not block in pf.
     static func reachesPF(_ rule: Rule) -> Bool {
         switch rule.action {
-        case .allow: return true
+        case .allow, .ask: return true
         case .deny: return !namesAnApp(rule)
-        case .ask: return false
         }
     }
 
