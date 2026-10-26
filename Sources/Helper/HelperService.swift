@@ -736,13 +736,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         guard let m = AppMode(rawValue: rawValue) else { reply(false, "invalid mode"); return }
         do {
             // What is enforced is the active profile's mode, so a mode change
-            // lands there as well, as the app already does (#128). Without it
-            // a mode set from the command line would change nothing.
-            if var profile = store.activeProfile(), profile.mode != m {
-                profile.mode = m
-                _ = try store.updateProfile(profile)
+            // lands there as well, in the same transaction, as the app already
+            // does (#128). Without it a mode set from the command line would
+            // change nothing.
+            _ = try mutatePolicy { draft in
+                draft.mode = m
+                draft.activeProfileMode = m
             }
-            _ = try mutatePolicy { draft in draft.mode = m }
             reply(true, nil)
         } catch {
             reply(false, "could not persist mode: \(error)")

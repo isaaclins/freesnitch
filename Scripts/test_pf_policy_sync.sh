@@ -14,7 +14,9 @@
 #      enforcement was off cannot come back on the next feed refresh.
 #
 # Nothing here loads a pf anchor: PFManager is never installed, so every pf
-# call takes the "enforcement off" path and no pfctl command runs.
+# call takes the "enforcement off" path and no pfctl command runs. The store
+# and PFManager are driven directly; that HelperService hands pf what the
+# store publishes, on every path, is checked by Scripts/audit_firewall_safety.sh.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -109,6 +111,19 @@ struct Verify {
         try pf.applyRules(switched.rules)
         checks.expect(pf.currentRules.map(\.id) == switched.rules.map(\.id),
                       "a profile switch must reach pf")
+
+        // A mode change lands in the active profile, in the same commit, so
+        // every layer enforces it. Other profiles keep their own mode.
+        let modeChanged = try store.mutateActivePolicy { draft in
+            draft.mode = .silentAllow
+            draft.activeProfileMode = .silentAllow
+        }
+        checks.expect(modeChanged.mode == .silentAllow && store.activePolicyState().mode == .silentAllow,
+                      "a mode change must be enforced through the active profile, got \(modeChanged.mode)")
+        checks.expect(store.profile(named: "office")?.mode == AppMode.silentDeny,
+                      "a mode change must not touch a profile that is not active")
+        let ruleEdit = try store.mutateActivePolicy { draft in draft.rules = draft.rules }
+        checks.expect(ruleEdit.mode == .silentAllow, "a rule edit must keep the active profile's mode")
 
         // 3. A deny deleted while enforcement is off must not come back. The
         //    feed refresh renders the recorded rules, so they must be the

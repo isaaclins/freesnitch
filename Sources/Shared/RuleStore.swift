@@ -42,6 +42,9 @@ public final class RuleStore: @unchecked Sendable {
     public struct PolicyDraft {
         public var mode: AppMode
         public var rules: [Rule]
+        /// Set to also write this mode to the active profile, in the same
+        /// transaction. What is enforced is the active profile's mode.
+        public var activeProfileMode: AppMode?
 
         public init(mode: AppMode, rules: [Rule]) {
             self.mode = mode
@@ -435,7 +438,12 @@ public final class RuleStore: @unchecked Sendable {
     private func activePolicyStateLocked() -> PolicyState {
         let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
         guard let profile = activeProfileLocked() else {
-            return policyStateLocked()
+            // No profile at all: the Always layer only, never every
+            // profile's rules (issue #184).
+            return PolicyState(mode: policyStateLocked().mode,
+                               rules: allRulesLocked(profile: Profile.alwaysName),
+                               generation: generation,
+                               epoch: sessionEpoch)
         }
         return PolicyState(mode: profile.mode,
                            rules: layeredRulesLocked(profileName: profile.name),
@@ -502,6 +510,12 @@ public final class RuleStore: @unchecked Sendable {
         do {
             try replaceRulesLocked(draft.rules)
             try setSettingLocked(Self.modeSettingKey, draft.mode.rawValue)
+            if let profileMode = draft.activeProfileMode, let profile = activeProfileLocked() {
+                try executeLocked("UPDATE profiles SET mode=? WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profileMode.rawValue, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, profile.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+            }
             try setSettingLocked(Self.policyGenerationSettingKey, String(nextGeneration))
             try execLocked("COMMIT;")
         } catch {

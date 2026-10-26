@@ -32,9 +32,13 @@ final class PFManager: @unchecked Sendable {
     /// it empty left pf enforcing none of the user's rules until the next
     /// rule change, and the next feed refresh then rendered whatever rules
     /// were recorded before enforcement went off (issue #185).
-    func install(rules: [Rule]) throws {
+    ///
+    /// `rules` is read under `applyLock`, as in `applyRules`, so whichever
+    /// call takes the lock last renders the newest published policy.
+    func install(rules readRules: @autoclosure () -> [Rule]) throws {
         applyLock.lock()
         defer { applyLock.unlock() }
+        let rules = readRules()
         stateLock.lock()
         lastRules = rules
         stateLock.unlock()
@@ -72,10 +76,15 @@ final class PFManager: @unchecked Sendable {
     /// changed (issue #185). The loaded check is made under `applyLock`, so
     /// an update racing `uninstall` cannot load the anchor again after
     /// enforcement went off. Returns whether the anchor was written.
+    ///
+    /// `rules` is read under `applyLock`. Read before it, a call holding an
+    /// older list could take the lock after a newer one and load a deny the
+    /// user had just deleted.
     @discardableResult
-    func applyRules(_ rules: [Rule]) throws -> Bool {
+    func applyRules(_ readRules: @autoclosure () -> [Rule]) throws -> Bool {
         applyLock.lock()
         defer { applyLock.unlock() }
+        let rules = readRules()
         stateLock.lock()
         lastRules = rules
         stateLock.unlock()

@@ -1261,6 +1261,10 @@ printf '%s\n' "$install_body" | grep -Fq 'writeAndLoad(rules: [])' \
 apply_body="$(swift_function_body "$PF_MANAGER" 'func applyRules(')"
 printf '%s\n' "$apply_body" | grep -Fq 'lastRules = rules' \
   || fail "pf no longer records every rule change, so a feed refresh could render stale rules"
+for body_name in install_body apply_body; do
+  printf '%s\n' "${!body_name}" | grep -Fq 'let rules = readRules()' \
+    || fail "pf reads the rules to load before taking its lock, so an older list can win over a newer one"
+done
 printf '%s\n' "$apply_body" | grep -Fq 'guard loaded else { return false }' \
   || fail "pf no longer decides under its own lock whether the anchor is loaded"
 grep -Eq 'pf\.install\(\)' "$HELPER" \
