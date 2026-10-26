@@ -1279,7 +1279,7 @@ printf '%s\n' "$gate_body" | grep -Fq 'pf.isLoaded' \
 # kernel anchor, so a later load of /etc/pf.conf cannot bring the last rules
 # back (issue #190). Scripts/test_pf_leftover_anchor.sh exercises both.
 start_body="$(swift_function_body "$HELPER" '    func start() {')"
-printf '%s\n' "$start_body" | awk '/pf\.clearLeftoverAnchor\(\)/ { seen = 1 } /listener\.resume\(\)/ { exit !seen }' \
+printf '%s\n' "$start_body" | awk '/pf\.clearLeftoverAnchor\(\)/ { seen = 1 } /listener\.resume\(\)/ { resumed = 1; ok = seen; exit } END { exit !(resumed && ok) }' \
   || fail "the helper accepts clients before clearing a pf anchor a previous helper left loaded"
 for entry in 'func uninstall(' 'func clearLeftoverAnchor('; do
   swift_function_body "$PF_MANAGER" "$entry" | grep -Fq 'unloadLocked()' \

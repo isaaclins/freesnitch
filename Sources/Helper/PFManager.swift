@@ -70,11 +70,13 @@ final class PFManager: @unchecked Sendable {
     /// says so. Leaving those rules in force meant rule edits were only
     /// recorded and pf kept enforcing what the user had since changed (issue
     /// #189). Clearing them fails open: the app turns enforcement back on with
-    /// the current rules as soon as it reconnects.
-    func clearLeftoverAnchor() {
+    /// the current rules as soon as it reconnects. Throws when the kernel
+    /// anchor could not be flushed: no client is connected yet to hear a
+    /// warning, so the helper reports it in its status instead.
+    func clearLeftoverAnchor() throws {
         applyLock.lock()
         defer { applyLock.unlock() }
-        unloadLocked()
+        if let error = unloadLocked() { throw error }
     }
 
     /// Empties the anchor in the kernel and in the file pf.conf loads it from.
@@ -82,8 +84,10 @@ final class PFManager: @unchecked Sendable {
     /// load of pf.conf (boot, a VPN, another tool) brought them back while
     /// FreeSnitch reported enforcement off (issue #190). The file is emptied,
     /// not deleted: pf.conf still names it, and a missing file would make that
-    /// load fail. Caller holds `applyLock`.
-    private func unloadLocked() {
+    /// load fail. Caller holds `applyLock`. Returns why the kernel anchor
+    /// could not be flushed, if it could not.
+    @discardableResult
+    private func unloadLocked() -> Error? {
         expiryTimer?.cancel()
         expiryTimer = nil
         if FileManager.default.fileExists(atPath: anchorPath) {
@@ -95,9 +99,11 @@ final class PFManager: @unchecked Sendable {
                     + "back FreeSnitch's last rules: \(error.localizedDescription)")
             }
         }
-        _ = try? run(pfctl, ["-a", PFManager.anchorName, "-F", "all"])
+        var flushError: Error?
+        do { try run(pfctl, ["-a", PFManager.anchorName, "-F", "all"]) } catch { flushError = error }
         _ = try? run(pfctl, ["-a", PFManager.anchorName, "-f", "/dev/null"])
         loaded = false
+        return flushError
     }
 
     /// What the anchor file holds while enforcement is off: no rules at all.

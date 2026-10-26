@@ -355,7 +355,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func start() {
         // Before any client can turn enforcement on (issue #189).
-        pf.clearLeftoverAnchor()
+        do { try pf.clearLeftoverAnchor() } catch { recordPFError(error) }
         listener.resume()
         netmon.start()
         startInsightsMaintenance()

@@ -313,7 +313,7 @@ final class HelperBundleWatchdog: @unchecked Sendable {
             // in the log even if the action itself goes badly.
             PSLog.error(PSLog.helper,
                         "AUDIT: the containing app bundle is gone; standing down enforcement. \(evidence.summary). "
-                            + "The launchd registration, the policy database and the shared pf anchor file are left untouched; "
+                            + "The launchd registration and the policy database are left untouched and the shared pf anchor file is emptied, not removed; "
                             + "reinstalling FreeSnitch restores enforcement.")
             guard let action else {
                 PSLog.error(PSLog.helper, "AUDIT: no stand-down action is wired; enforcement was left as it was")

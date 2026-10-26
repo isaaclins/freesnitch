@@ -10,7 +10,9 @@
 #   2. Clearing a leftover anchor at helper start does the same, so a restarted
 #      helper never leaves rules in pf that it reports as off and no longer
 #      updates (#189).
-#   3. Neither creates an anchor file that was not there.
+#   3. A flush that fails at helper start is reported, and the file is still
+#      emptied.
+#   4. Neither creates an anchor file that was not there.
 #
 # Nothing here touches the real pf or /etc: PFManager is pointed at a scratch
 # anchor file and a stub pfctl that only logs its arguments, and install() is
@@ -29,6 +31,7 @@ TARGET="arm64-apple-macos13.0"
 cat > "$TMP/pfctl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$PF_STUB_LOG"
+[[ -e "$PF_STUB_FAIL" ]] && { printf 'stub failure\n' >&2; exit 1; }
 exit 0
 STUB
 chmod +x "$TMP/pfctl"
@@ -83,7 +86,7 @@ struct Verify {
 
         let cases: [(String, (PFManager) throws -> Void)] = [
             ("turning enforcement off", { try $0.uninstall() }),
-            ("a helper start", { $0.clearLeftoverAnchor() }),
+            ("a helper start", { try $0.clearLeftoverAnchor() }),
         ]
         for (name, unload) in cases {
             try reset()
@@ -104,10 +107,21 @@ struct Verify {
             checks.expect(warnings.isEmpty, "\(name) warned: \(warnings)")
         }
 
+        // A flush that fails at helper start is reported, not swallowed: no
+        // client is connected yet to hear a warning. The file is still emptied.
+        try reset()
+        try "".write(toFile: env["PF_STUB_FAIL"]!, atomically: true, encoding: .utf8)
+        var startError: Error?
+        do { try PFManager(anchorPath: anchor, pfctl: stub).clearLeftoverAnchor() } catch { startError = error }
+        checks.expect(startError != nil, "a failed flush at helper start went unreported")
+        checks.expect(anchorFile() == PFManager.emptyAnchor,
+                      "a failed flush at helper start left the rules in the anchor file")
+        try FileManager.default.removeItem(atPath: env["PF_STUB_FAIL"]!)
+
         // A Mac where enforcement was never on has no anchor file; clearing
         // must not create one.
         try FileManager.default.removeItem(atPath: anchor)
-        PFManager(anchorPath: anchor, pfctl: stub).clearLeftoverAnchor()
+        try PFManager(anchorPath: anchor, pfctl: stub).clearLeftoverAnchor()
         checks.expect(!FileManager.default.fileExists(atPath: anchor),
                       "a helper start created an anchor file that was not there")
 
@@ -125,6 +139,6 @@ xcrun swiftc -O -sdk "$SDK" -target "$TARGET" -parse-as-library \
   "$TMP/verify.swift"
 
 mkdir -p "$TMP/work"
-PF_WORK="$TMP/work" PF_STUB="$TMP/pfctl" PF_STUB_LOG="$TMP/pfctl.log" "$TMP/run"
+PF_WORK="$TMP/work" PF_STUB="$TMP/pfctl" PF_STUB_LOG="$TMP/pfctl.log" PF_STUB_FAIL="$TMP/pfctl.fail" "$TMP/run"
 
 printf 'pf leftover verification: PASS\n'
