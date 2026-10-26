@@ -1273,4 +1273,24 @@ gate_body="$(swift_function_body "$HELPER" 'private func applyRulesIfEnforcing('
 printf '%s\n' "$gate_body" | grep -Fq 'pf.isLoaded' \
   && fail "the helper skips recording rules in pf while enforcement is off"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, and pf and the DNS proxy enforcing exactly the current rules of the active profile are present.\n'
+# A new helper starts with enforcement off, so it clears whatever anchor the
+# previous helper or pf.conf left in the kernel before any client can reach it
+# (issue #189). Turning enforcement off empties the anchor file as well as the
+# kernel anchor, so a later load of /etc/pf.conf cannot bring the last rules
+# back (issue #190). Scripts/test_pf_leftover_anchor.sh exercises both.
+start_body="$(swift_function_body "$HELPER" '    func start() {')"
+printf '%s\n' "$start_body" | awk '/pf\.clearLeftoverAnchor\(\)/ { seen = 1 } /listener\.resume\(\)/ { resumed = 1; ok = seen; exit } END { exit !(resumed && ok) }' \
+  || fail "the helper accepts clients before clearing a pf anchor a previous helper left loaded"
+for entry in 'func uninstall(' 'func clearLeftoverAnchor('; do
+  swift_function_body "$PF_MANAGER" "$entry" | grep -Fq 'unloadLocked()' \
+    || fail "pf's $entry no longer empties both the kernel anchor and the anchor file"
+done
+unload_body="$(swift_function_body "$PF_MANAGER" 'private func unloadLocked(')"
+printf '%s\n' "$unload_body" | grep -Fq 'PFManager.emptyAnchor.write(toFile: anchorPath' \
+  || fail "turning enforcement off leaves the last rules in the anchor file pf.conf loads at boot"
+printf '%s\n' "$unload_body" | grep -Fq -- '"-F", "all"' \
+  || fail "turning enforcement off no longer flushes the kernel anchor"
+printf '%s\n' "$unload_body" | grep -Eq 'removeItem|"-d"' \
+  && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
