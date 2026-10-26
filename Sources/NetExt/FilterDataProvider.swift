@@ -575,7 +575,8 @@ final class FilterDataProvider: NEFilterDataProvider {
         ip.hasPrefix("127.") || ip == "::1" || ip == "localhost"
     }
 
-    /// DHCP remains exempt for every policy state. Port 53 is exempt only
+    /// DHCP and DHCPv6 remain exempt for every policy state, as they are in
+    /// the pf anchor (issue #186). Port 53 is exempt only
     /// while a valid helper boot snapshot is active, and only for a configured
     /// resolver. If resolver configuration is unavailable during that boot
     /// window, ResolverBypass fails open so name resolution still works.
@@ -587,7 +588,7 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// wildcard is never a configured resolver, so such a flow keeps exactly
     /// the answer it received before the destination was recorded honestly.
     private func isDNSOrDHCP(_ conn: Connection, snapshotOrigin: SnapshotOrigin) -> Bool {
-        if conn.remotePort == 67 || conn.remotePort == 68 { return true }
+        if [67, 68, 546, 547].contains(conn.remotePort) { return true }
         guard conn.remotePort == 53, snapshotOrigin == .boot else { return false }
         let lookup = conn.remoteIP.isEmpty ? FlowDestination.unspecifiedLookupToken : conn.remoteIP
         return resolverBypass.allowsDNS(to: lookup)
