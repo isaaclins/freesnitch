@@ -18,11 +18,19 @@ final class PFManager: @unchecked Sendable {
     private var resolverAddresses: [String] = []
     private var lastRules: [Rule] = []
 
+    /// Serializes every write and load of the anchor, so the expiry timer can
+    /// never load an older rule set over a newer one.
+    private let applyLock = NSLock()
+    /// Fires when the next temporary rule runs out. Guarded by `applyLock`.
+    private var expiryTimer: DispatchSourceTimer?
+
     /// Invalid rules are omitted from the anchor, but their rejection is sent
     /// to the helper event stream so the GUI can show it to the user.
     var onWarning: ((String) -> Void)?
 
     func install() throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
         try ensureMainPFConfReferencesAnchor()
         try run(pfctl, ["-E"]) // enable pf
         // Use the same fail-open load path as later rule/feed updates. If a
@@ -33,6 +41,10 @@ final class PFManager: @unchecked Sendable {
     }
 
     func uninstall() throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        expiryTimer?.cancel()
+        expiryTimer = nil
         _ = try? run(pfctl, ["-a", PFManager.anchorName, "-F", "all"])
         _ = try? run(pfctl, ["-a", PFManager.anchorName, "-f", "/dev/null"])
         loaded = false
@@ -41,6 +53,8 @@ final class PFManager: @unchecked Sendable {
     var isLoaded: Bool { loaded }
 
     func applyRules(_ rules: [Rule]) throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
         stateLock.lock()
         lastRules = rules
         stateLock.unlock()
@@ -53,6 +67,8 @@ final class PFManager: @unchecked Sendable {
     /// same reason rules are: enforcement is off, so the feed is blocking
     /// nothing and must not say otherwise.
     func setIPBlocklist(_ set: IPBlocklistSet, resolverAddresses: [String] = []) throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
         stateLock.lock()
         ipBlocklist = set
         self.resolverAddresses = resolverAddresses
@@ -68,6 +84,7 @@ final class PFManager: @unchecked Sendable {
     /// firewall that drops the feed is strictly safer than one that drops the
     /// user's own rules.
     private func writeAndLoad(rules: [Rule]) throws {
+        scheduleExpiryRender(for: rules)
         try writeAnchorFile(rules: rules, includeIPBlocklist: true)
         do {
             try loadAnchor()
@@ -83,6 +100,58 @@ final class PFManager: @unchecked Sendable {
             PSLog.error(PSLog.pf, "pf anchor load failed with the IP blocklist table; retrying without it")
             try writeAnchorFile(rules: rules, includeIPBlocklist: false)
             try loadAnchor()
+        }
+    }
+
+    /// The matcher and the DNS proxy stop applying a temporary rule the moment
+    /// it expires, but pf only changes when the anchor is rendered again, so a
+    /// "deny for 1 hour" kept blocking until the next rule change (issue #180).
+    /// One timer for the earliest expiry re-renders the anchor then, and that
+    /// render schedules the next one. It runs on the wall clock, so a Mac that
+    /// slept through the expiry re-renders as soon as it wakes.
+    private func scheduleExpiryRender(for rules: [Rule], now: Date = Date()) {
+        scheduleRender(at: PFManager.nextExpiry(of: rules, after: now), now: now)
+    }
+
+    private func scheduleRender(at deadline: Date?, now: Date = Date()) {
+        expiryTimer?.cancel()
+        expiryTimer = nil
+        guard let deadline else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(wallDeadline: .now() + max(0, deadline.timeIntervalSince(now)), leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in self?.renderAfterExpiry() }
+        timer.resume()
+        expiryTimer = timer
+    }
+
+    /// The earliest moment a rule the anchor carries runs out. Rules pf never
+    /// carries, such as an app's temporary deny, need no render.
+    static func nextExpiry(of rules: [Rule], after now: Date) -> Date? {
+        rules
+            .filter { $0.enabled && !hasExpired($0, at: now) && reachesPF($0) }
+            .compactMap(\.expiresAt)
+            .min()
+    }
+
+    /// A failed reload is tried again after this long, so one pfctl hiccup
+    /// cannot leave an expired rule in pf until some unrelated change.
+    static let expiryRetryInterval: TimeInterval = 30
+
+    private func renderAfterExpiry() {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        guard loaded else { return }
+        stateLock.lock()
+        let rules = lastRules
+        stateLock.unlock()
+        do {
+            try writeAndLoad(rules: rules)
+        } catch {
+            onWarning?("PF could not drop an expired temporary rule from the anchor, trying again in "
+                + "\(Int(PFManager.expiryRetryInterval)) seconds: \(error.localizedDescription)")
+            let now = Date()
+            let retry = now.addingTimeInterval(PFManager.expiryRetryInterval)
+            scheduleRender(at: min(retry, PFManager.nextExpiry(of: rules, after: now) ?? retry), now: now)
         }
     }
 
@@ -112,6 +181,7 @@ final class PFManager: @unchecked Sendable {
         rules: [Rule],
         ipBlocklist: IPBlocklistSet = .empty,
         resolverAddresses: [String] = [],
+        now: Date = Date(),
         onRejected: ((Rule, String) -> Void)? = nil
     ) -> String {
         var lines: [String] = []
@@ -126,8 +196,9 @@ final class PFManager: @unchecked Sendable {
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
-        let denyRules = rules.filter { $0.enabled && $0.action == .deny && !PFManager.namesAnApp($0) }
-        let allowRules = rules.filter { $0.enabled && $0.action == .allow }
+        let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }
+        let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }
+        let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
 
         for rule in denyRules {
             if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
@@ -155,6 +226,22 @@ final class PFManager: @unchecked Sendable {
     /// not empty. A name alone identifies nothing (#157).
     static func namesAnApp(_ rule: Rule) -> Bool {
         !(rule.processBundleId ?? "").isEmpty || !(rule.processPath ?? "").isEmpty
+    }
+
+    /// Which rules the anchor renders at all: every allow, and the denies that
+    /// do not name an app (issue #155).
+    static func reachesPF(_ rule: Rule) -> Bool {
+        switch rule.action {
+        case .allow: return true
+        case .deny: return !namesAnApp(rule)
+        case .ask: return false
+        }
+    }
+
+    /// The matcher's own test: a rule still applies at the instant it expires.
+    static func hasExpired(_ rule: Rule, at now: Date) -> Bool {
+        guard let expiresAt = rule.expiresAt else { return false }
+        return expiresAt < now
     }
 
     /// The address feed section (issue #51).
