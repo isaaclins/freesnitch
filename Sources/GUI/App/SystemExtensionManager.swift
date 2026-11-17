@@ -372,10 +372,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                         // Turned off or removed while this enabling save
                         // was running: the turn-off is saved after it, so
                         // this save must not report the firewall as on (#318).
-                        let enableOvertaken = shouldEnable && self.filterTurnOffs != turnOffsAtLoad
-                        // Turned back on after that: the next cycle saves
-                        // the fresh policy and reports active itself.
-                        if enableOvertaken && !self.enableFilterRequested {
+                        let completion = FilterSaveCompletion.decide(enabling: shouldEnable,
+                                                                     turnOffsAtLoad: turnOffsAtLoad,
+                                                                     turnOffsNow: self.filterTurnOffs,
+                                                                     enableRequestedNow: self.enableFilterRequested,
+                                                                     saveFailed: saveError != nil)
+                        if completion == .stayedOff {
                             self.filterConfigurationActive = false
                             self.status = .idle
                             self.state?.appendLog(level: "info",
@@ -391,10 +393,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 os_log("A cancelled boot policy save failed: %{public}@", log: self.log, type: .info,
                                        saveError.sentence)
                             }
-                            if enableOvertaken {
-                                // Off is what the user asked for last.
-                            } else if shouldEnable {
-                                self.fail("filter save: \(saveError.localizedDescription)")
+                            if shouldEnable {
+                                if completion == .failed {
+                                    self.fail("filter save: \(saveError.localizedDescription)")
+                                }
                             } else if let pending,
                                       self.persistenceQueue.requeueFailed(pending) {
                                 // Nothing newer arrived during the save, so
@@ -410,13 +412,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                     self.persistenceRetry.reset()
                                     self.state?.clearFilterPersistenceFailure()
                                 }
-                                if (shouldEnable && !enableOvertaken) || self.filterConfigurationActive {
+                                if completion == .active || self.filterConfigurationActive {
                                     self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                                 }
-                            } else if shouldEnable && !enableOvertaken {
+                            } else if completion == .active {
                                 self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                             }
-                            if shouldEnable && !enableOvertaken {
+                            if completion == .active {
                                 self.filterConfigurationActive = true
                                 self.status = .active
                                 // Deliberately does NOT touch `helperConnected`: the

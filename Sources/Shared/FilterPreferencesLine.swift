@@ -45,3 +45,37 @@ final class FilterPreferencesLine {
         }
     }
 }
+
+/// What the end of a boot-policy save cycle reports about the filter (#318).
+///
+/// A save that was started to turn the filter on can finish after the user
+/// turned it off or removed it. The line saves the turn-off after it, so the
+/// preferences end up off; this decides what the app says meanwhile.
+enum FilterSaveCompletion: Equatable {
+    /// A plain policy save: nothing to report about the filter itself.
+    case none
+    /// The enabling save landed and nothing overtook it: the filter is on.
+    case active
+    /// The enabling save failed and nothing overtook it: say so.
+    case failed
+    /// Turned off or removed meanwhile: the filter stays off.
+    case stayedOff
+    /// Turned off and then on again meanwhile: the next cycle saves the
+    /// fresh policy and reports the result itself.
+    case awaitReenable
+
+    /// - Parameters:
+    ///   - enabling: the cycle was started to turn the filter on.
+    ///   - turnOffsAtLoad: the turn-off count when the cycle started.
+    ///   - turnOffsNow: the turn-off count when its save finished.
+    ///   - enableRequestedNow: an enable request is waiting now.
+    ///   - saveFailed: the save returned an error.
+    static func decide(enabling: Bool, turnOffsAtLoad: Int, turnOffsNow: Int,
+                       enableRequestedNow: Bool, saveFailed: Bool) -> FilterSaveCompletion {
+        guard enabling else { return .none }
+        guard turnOffsNow == turnOffsAtLoad else {
+            return enableRequestedNow ? .awaitReenable : .stayedOff
+        }
+        return saveFailed ? .failed : .active
+    }
+}

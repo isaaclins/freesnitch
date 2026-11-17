@@ -437,8 +437,12 @@ printf '%s\n' "$disable_body" | grep -Fq 'filterTurnOffs &+= 1' \
 printf '%s\n' "$remove_body" | grep -Fq 'filterTurnOffs &+= 1' \
   || fail "an enabling save that finishes after the filter was removed still reports it active"
 active_guard="$(grep -B1 -F 'self.filterConfigurationActive = true' "$SYSTEM_EXTENSION_MANAGER" | head -1)"
-printf '%s\n' "$active_guard" | grep -Fq '!enableOvertaken' \
+printf '%s\n' "$active_guard" | grep -Fq 'if completion == .active {' \
   || fail "an enabling save overtaken by a turn-off still marks the filter active"
+require_text "$SYSTEM_EXTENSION_MANAGER" "turnOffsNow: self.filterTurnOffs," \
+  "the enabling save's completion does not check whether the filter was turned off meanwhile"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if completion == .stayedOff {" \
+  "an enabling save overtaken by a turn-off leaves the status as it was"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"
