@@ -189,7 +189,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // No filter is left to save rules for, so a warning
                                 // about an earlier failed save no longer applies (#311).
                                 self.state?.clearFilterPersistenceFailure()
-                                self.filterKnownOff = true
+                                // A turn-on asked for meanwhile waits behind this
+                                // and decides the state, not this late answer.
+                                if !self.enableFilterRequested { self.filterKnownOff = true }
                             }
                             done()
                             completion()
@@ -414,6 +416,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                             }
                             if shouldEnable {
+                                self.filterKnownOff = false
                                 self.filterConfigurationActive = true
                                 self.status = .active
                                 // Deliberately does NOT touch `helperConnected`: the
@@ -522,7 +525,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // With the filter off there is nothing to restart with
                                 // these rules; turning it on saves the current ones again.
                                 self.state?.clearFilterPersistenceFailure()
-                                self.filterKnownOff = true
+                                // A turn-on asked for meanwhile waits behind this
+                                // and decides the state, not this late answer.
+                                if !self.enableFilterRequested { self.filterKnownOff = true }
                             }
                             done()
                         }

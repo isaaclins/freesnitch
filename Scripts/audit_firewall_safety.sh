@@ -399,10 +399,12 @@ printf '%s\n' "$no_config_block" | grep -Fq 'clearFilterPersistenceFailure()' \
 # boot-policy save is logged without the could-not-save banner, and turning
 # the filter on saves the current rules again (#321).
 failure_body="$(awk '/private func recordPersistenceFailure\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$failure_body" | awk '/if filterKnownOff/ {g=1} /recordFilterPersistenceFailure/ {exit !g} END {}' \
+printf '%s\n' "$failure_body" | awk '/if filterKnownOff/ {g=1} g && /return$/ {r=1} /recordFilterPersistenceFailure/ {seen=1; ok=g&&r; exit} END {exit !(seen&&ok)}' \
   || fail "a boot-policy save that fails while the filter is off still raises the could-not-save banner"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.filterKnownOff = !mgr.isEnabled" \
   "a save cycle does not notice the filter is off, so its failure raises the could-not-save banner"
+grep -A1 -F 'if shouldEnable {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterKnownOff = false' \
+  || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
 printf '%s\n' "$enable_body" | grep -Fq 'filterKnownOff = false' \
   || fail "turning the filter on keeps treating it as off, so a failed save there stays hidden"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \

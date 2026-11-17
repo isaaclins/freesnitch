@@ -260,6 +260,12 @@ mutate_and_expect_failure off-not-noticed \
 mutate_and_expect_failure enable-stays-off \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'enableFilterRequested = true\n        filterKnownOff = false' 'enableFilterRequested = true'
+mutate_and_expect_failure off-branch-falls-through \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'os_log("%{public}@", log: log, type: .error, offDetail)\n            return' 'os_log("%{public}@", log: log, type: .error, offDetail)'
+mutate_and_expect_failure late-off-overrides-on \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'if shouldEnable {\n                                self.filterKnownOff = false' 'if shouldEnable {'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''
