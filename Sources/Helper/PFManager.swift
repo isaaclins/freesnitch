@@ -344,8 +344,9 @@ final class PFManager: @unchecked Sendable {
     /// get past the feed. An outgoing pass tags its packets, and the feed's
     /// block skips tagged packets: pf keeps a tag even when a later rule
     /// decides (pf.conf(5), `tag`), so the allowed traffic gets past the
-    /// feed while a block after the anchor in /etc/pf.conf still wins. The passes that precede the block are the bypasses
-    /// that no feed may cross: DNS, DHCP, and the configured resolvers.
+    /// feed while a block after the anchor in /etc/pf.conf still wins.
+    /// The passes that precede the block are the bypasses that no feed may
+    /// cross: DNS, DHCP, and the configured resolvers.
     /// Loopback is already covered by the `set skip on lo0` at the top of
     /// the anchor.
     private func ipBlocklistLines(_ set: IPBlocklistSet, resolverAddresses: [String]) -> [String] {
