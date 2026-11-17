@@ -15,7 +15,7 @@
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
-#      and a lookup takes at most log2(n) + 1 search steps, counted, not timed.
+#      and a lookup takes at most floor(log2(n)) + 1 search steps, counted, not timed.
 #   6. A feed of more than 100k entries loads and answers within a sane time.
 set -euo pipefail
 
