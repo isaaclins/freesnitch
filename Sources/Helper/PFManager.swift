@@ -337,10 +337,10 @@ final class PFManager: @unchecked Sendable {
     /// exception is an app's incoming allow, written without `quick` (#313):
     /// the feed only blocks outgoing traffic, and that pass keeps state,
     /// which pf checks before any rule, so the replies to that peer still
-    /// get past the feed. The passes that
-    /// precede the block are the bypasses that no feed may cross: DNS, DHCP,
-    /// and the configured resolvers. Loopback is already covered by the
-    /// `set skip on lo0` at the top of the anchor.
+    /// get past the feed. The passes that precede the block are the bypasses
+    /// that no feed may cross: DNS, DHCP, and the configured resolvers.
+    /// Loopback is already covered by the `set skip on lo0` at the top of
+    /// the anchor.
     private func ipBlocklistLines(_ set: IPBlocklistSet, resolverAddresses: [String]) -> [String] {
         let entries = set.pfTableEntries()
         guard !entries.isEmpty else { return [] }
@@ -461,10 +461,10 @@ final class PFManager: @unchecked Sendable {
                 // Without quick, pf keeps evaluating and the last matching
                 // rule wins, so a block after this anchor still applies. A
                 // non-quick block before it still loses, as it did to the
-                // quick pass. When nothing
-                // blocks the peer, the pass still keeps state, and that state
-                // is what lets this Mac's replies to it past the feed below:
-                // the feed is the only reason an app's allow is in pf.
+                // quick pass (#327). When nothing blocks the peer, the pass
+                // still keeps state, and that state is what lets this Mac's
+                // replies to it past the feed below: the feed is the only
+                // reason an app's allow is in pf.
                 let quick = PFManager.namesAnApp(r) ? "" : " quick"
                 passes.append("pass in\(quick) proto { tcp udp } from" + host)
             }
