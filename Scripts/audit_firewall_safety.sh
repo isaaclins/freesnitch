@@ -408,6 +408,10 @@ if printf '%s\n' "$removal_block" | grep -Fq 'clearFilterPersistenceFailure()'; 
 fi
 require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil" \
   "a failed save of the boot-policy removal swaps the over-limit banner for the Send Rules Again one"
+require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removalPending ? self.state?.filterPersistenceUnsavable : nil" \
+  "a failed load while the boot-policy removal is queued swaps the over-limit banner for the Send Rules Again one"
+require_text "$SYSTEM_EXTENSION_MANAGER" "let removalPending = self.persistenceQueue.newestPendingData == SharedRuleBridge.bootSnapshotRemoval" \
+  "a failed load no longer checks whether the queued save is the boot-policy removal"
 require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
   "the over-limit banner says the filter is using the rules when the extension does not hold them"
 printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \

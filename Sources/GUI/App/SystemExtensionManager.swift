@@ -308,7 +308,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 if let loadError {
                     self.endPersistenceCycle()
-                    self.recordPersistenceFailure("load", error: loadError)
+                    // A removal still waiting is about rules that can't be
+                    // kept: keep that reason and banner, as a failed save does.
+                    let removalPending = self.persistenceQueue.newestPendingData == SharedRuleBridge.bootSnapshotRemoval
+                    self.recordPersistenceFailure("load", error: loadError,
+                                                  unsavable: removalPending ? self.state?.filterPersistenceUnsavable : nil)
                     if self.enableFilterRequested {
                         self.fail("filter load: \(loadError.localizedDescription)")
                         let hasNewerSnapshot = self.persistenceQueue.hasNewerWork(since: generationAtLoad)

@@ -139,6 +139,10 @@ print("boot save harness: an unsaveable newer policy is never replaced by an old
 //     older policy's deny rules.
 tooBig.enqueue(SharedRuleBridge.bootSnapshotRemoval)
 expect(tooBig.hasPending, "turning the filter on would wait forever: nothing is queued to save")
+// A failed preference load leaves the queue as it was; the app looks at what
+// is still waiting to keep the over-limit banner and its reason (#340).
+expect(tooBig.newestPendingData == SharedRuleBridge.bootSnapshotRemoval && tooBig.hasPending,
+       "a failed load cannot tell that the queued save is the removal")
 let removal = tooBig.takeNewest()!
 expect(removal.data == SharedRuleBridge.bootSnapshotRemoval && removal.data != encoded(withDeny),
        "the removal cannot be told apart from a real saved policy")
@@ -280,6 +284,12 @@ mutate_and_expect_failure removal-clears-unsavable-banner \
 mutate_and_expect_failure failed-removal-drops-reason \
   Sources/GUI/App/SystemExtensionManager.swift \
   'unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil' 'unsavable: nil'
+mutate_and_expect_failure failed-load-drops-reason \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'unsavable: removalPending ? self.state?.filterPersistenceUnsavable : nil' 'unsavable: nil'
+mutate_and_expect_failure failed-load-ignores-removal \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'let removalPending = self.persistenceQueue.newestPendingData == SharedRuleBridge.bootSnapshotRemoval' 'let removalPending = false'
 mutate_and_expect_failure banner-claims-rules-in-use \
   Sources/GUI/Views/HelperBanner.swift \
   'liveRulesReady ? "The filter is using them now." : nil' '"The filter is using them now."'
