@@ -155,6 +155,36 @@ expect(tooBig.requeueFailed(removal) && tooBig.takeNewest()?.data == SharedRuleB
        "a failed removal save is not retried")
 print("boot save harness: an over-limit policy turns on live and removes the older saved policy")
 
+// 6c-3. The banner only tells the user to remove rules when the count or the
+//     size is why the policy can't be kept (#341). Each cause is classified
+//     from the real encoder's error.
+func problem(_ s: SharedRuleBridge.Snapshot) -> SharedRuleBridge.BootSnapshotProblem? {
+    do { _ = try SharedRuleBridge.encodeBootSnapshot(s); return nil }
+    catch { return SharedRuleBridge.BootSnapshotProblem(error, ruleCount: s.rules.count) }
+}
+expect(problem(snapshot(hugeRules, generation: 21))
+           == .tooManyRules(count: hugeRules.count, maximum: SharedRuleBridge.maximumBootSnapshotRuleCount),
+       "a policy over the rule count is not reported as too many rules")
+let longNotes = String(repeating: "n", count: RuleTransportBoundary.maximumNotesBytes)
+let bulkyRules = (0..<100).map {
+    Rule(id: UUID(), remoteHost: "b\($0).example", action: .deny, scope: .domain, notes: longNotes)
+}
+expect(bulkyRules.count <= SharedRuleBridge.maximumBootSnapshotRuleCount, "the size case is over the rule count")
+if case .tooLarge(_, let maximum)? = problem(snapshot(bulkyRules, generation: 22)) {
+    expect(maximum == RuleTransportBoundary.maximumEncodedBootSnapshotBytes, "the size limit reported is not the boot limit")
+} else {
+    expect(false, "a policy over the boot size limit with fewer rules than the count limit is not reported as too large")
+}
+let future = SharedRuleBridge.Snapshot(mode: .alert, rules: [denyTracker], updatedAt: Date(timeIntervalSinceNow: 3600),
+                                       generation: 23, epoch: 3)
+expect(problem(future) == .datedInFuture, "a policy dated after the clock is not reported as dated in the future")
+expect(problem(snapshot([denyTracker], generation: 24)) == nil, "a small policy dated now does not encode")
+expect(SharedRuleBridge.BootSnapshotProblem(NSError(domain: "Other", code: 2), ruleCount: 1) == .other,
+       "an unrelated error is reported as a size or count problem")
+expect(SharedRuleBridge.BootSnapshotProblem(NSError(domain: "SharedRuleBridge", code: 1), ruleCount: 1) == .other,
+       "another boot snapshot error (such as an unsupported version) is reported as a size, count or date problem")
+print("boot save harness: each reason a policy can't be kept for the next start is told apart")
+
 // 6d. Retries are spaced, bounded, and start over after a newer policy.
 var schedule = SharedRuleBridge.RetrySchedule()
 expect(schedule.nextDelay() == 5 && schedule.nextDelay() == 30 && schedule.nextDelay() == 120,
@@ -669,6 +699,18 @@ mutate_and_expect_failure retry-not-scheduled \
 mutate_and_expect_failure extra-cycle-after-requeue \
   Sources/Shared/BootPolicySaveCycle.swift \
   'hasNewerWork(since: attempted)' 'hasNewerWork(since: save.load.generation)'
+mutate_and_expect_failure banner-always-says-remove-rules \
+  Sources/GUI/Views/HelperBanner.swift \
+  'sends them again.",' 'sends them again. Remove some rules to keep them across restarts.",'
+mutate_and_expect_failure clock-skew-says-remove-rules \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'for example with the next rule change."' 'for example with the next rule change. Remove some rules."'
+mutate_and_expect_failure other-failure-says-remove-rules \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'could not be saved for the next start: \(error.sentence)"' 'could not be saved for the next start. Remove some rules."'
+mutate_and_expect_failure reason-ignores-cause \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'Self.unsavableReason(SharedRuleBridge.BootSnapshotProblem(error, ruleCount: snapshot.rules.count),' 'Self.unsavableReason(.other,'
 mutate_and_expect_failure over-limit-keeps-older-saved-policy \
   Sources/Shared/BootPolicySaveCycle.swift \
   'queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)' ''

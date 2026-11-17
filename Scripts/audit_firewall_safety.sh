@@ -460,6 +460,18 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: self.unsavableLogged ? self
   "a failed preferences load while the removal is queued swaps the over-limit banner for the Send Rules Again one"
 require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil" \
   "a failed save of the boot-policy removal swaps the over-limit banner for the Send Rules Again one"
+# Removing rules only helps when the count or size is the cause; a policy
+# dated after the clock (or any other failure) must not say so (#341).
+if grep -Fq 'Remove some rules' "$ROOT/Sources/GUI/Views/HelperBanner.swift"; then
+  fail "the won't-survive-a-restart banner tells the user to remove rules whatever the cause"
+fi
+printf '%s\n' "$request_body" | grep -Fq 'Self.unsavableReason(SharedRuleBridge.BootSnapshotProblem(error, ruleCount: snapshot.rules.count)' \
+  || fail "a boot policy that can't be kept no longer says why"
+for problem_case in datedInFuture other; do
+  if awk -v c="case .$problem_case" 'index($0, c) {a=1; next} a && /case \.|^        }$/ {exit} a {print}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'Remove'; then
+    fail "a boot policy that can't be kept because of $problem_case tells the user to remove rules"
+  fi
+done
 require_text "$SYSTEM_EXTENSION_MANAGER" "if result.reportFailure {" \
   "a save the user cancelled by turning the filter on, off or removing it can bring the warning back"
 require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
