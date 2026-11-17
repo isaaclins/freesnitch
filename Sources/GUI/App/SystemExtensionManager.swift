@@ -62,11 +62,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private let filterPreferences = FilterPreferencesLine()
     private var persistenceWorkItem: DispatchWorkItem?
     private var enableFilterRequested = false
-    /// The filter is turned off (by the app, or in System Settings) or has no
-    /// configuration, as last seen. A failed boot-policy save then has no
+    /// Whether the filter is turned off (by the app, or in System Settings) or
+    /// has no configuration, as last seen. A failed boot-policy save then has no
     /// restart to affect: it is logged, but the could-not-save banner stays
     /// down, and turning the filter on saves the current rules again (#321).
-    private var filterKnownOff = false
+    private var filterOff = FilterOffState()
     /// Automatic retries of a failed boot-policy save (#213). Bounded and
     /// spaced; reset by a successful save or a newer policy.
     private var persistenceRetry = SharedRuleBridge.RetrySchedule()
@@ -96,8 +96,22 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    private func apply(_ change: FilterOffState.Change) {
+        switch change {
+        case .none:
+            break
+        case .clearBanner:
+            // Nothing restarts with these rules while it is off.
+            state?.clearFilterPersistenceFailure()
+        case .saveCurrentRules:
+            // Turned on outside the app: save the current rules again, as
+            // turning it on in the app does.
+            state?.syncSharedRules()
+        }
+    }
+
     /// Reads whether the filter is on, in its turn on the preferences line,
-    /// so `filterKnownOff` follows changes made outside the app. It only reads.
+    /// so `filterOff` follows changes made outside the app. It only reads.
     private func refreshFilterOffState() {
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
@@ -105,17 +119,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     guard let self else { done(); return }
                     let mgr = NEFilterManager.shared()
                     guard error == nil, !self.enableFilterRequested else { done(); return }
-                    let wasOff = self.filterKnownOff
-                    self.filterKnownOff = mgr.providerConfiguration == nil || !mgr.isEnabled
+                    let change = self.filterOff.observed(configured: mgr.providerConfiguration != nil,
+                                                         enabled: mgr.isEnabled, fromOutside: true)
                     done()
-                    if self.filterKnownOff {
-                        // Nothing restarts with these rules while it is off.
-                        self.state?.clearFilterPersistenceFailure()
-                    } else if wasOff {
-                        // Turned on outside the app: save the current rules
-                        // again, as turning it on in the app does.
-                        self.state?.syncSharedRules()
-                    }
+                    self.apply(change)
                 }
             }
         }
@@ -223,7 +230,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.state?.clearFilterPersistenceFailure()
                                 // A turn-on asked for meanwhile waits behind this
                                 // and decides the state, not this late answer.
-                                if !self.enableFilterRequested { self.filterKnownOff = true }
+                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)
                             }
                             done()
                             completion()
@@ -260,7 +267,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // only the helper's fresh answer below may enable the filter.
         cancelPendingPersistence()
         enableFilterRequested = true
-        filterKnownOff = false
+        filterOff.turnedOn()
         // AppState fetches the helper-owned snapshot and invokes the
         // persistence callback only after it has updated its display cache.
         // There is no cached-rule fallback during activation.
@@ -376,17 +383,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // Nothing to save rules for, so an earlier save-failure
                     // warning no longer applies (#311).
                     self.state?.clearFilterPersistenceFailure()
-                    self.filterKnownOff = true
+                    self.filterOff.turnedOff(turnOnPending: false)
                     return
                 }
                 if !shouldEnable {
                     // Turned off here or in System Settings: the saved rules
                     // only matter once it is turned on, and that saves the
                     // current ones again (#321).
-                    self.filterKnownOff = !mgr.isEnabled
-                    if self.filterKnownOff {
-                        self.state?.clearFilterPersistenceFailure()
-                    }
+                    self.apply(self.filterOff.observed(configured: true, enabled: mgr.isEnabled,
+                                                       fromOutside: false))
                 }
                 let pending = self.persistenceQueue.takeNewest()
                 let snapshotData = pending?.data
@@ -448,7 +453,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                             }
                             if shouldEnable {
-                                self.filterKnownOff = false
+                                self.filterOff.turnedOn()
                                 self.filterConfigurationActive = true
                                 self.status = .active
                                 // Deliberately does NOT touch `helperConnected`: the
@@ -516,7 +521,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func recordPersistenceFailure(_ operation: String, error: Error) {
         let detail = "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. "
             + "If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones."
-        if filterKnownOff {
+        if !filterOff.saveFailureShowsBanner {
             // Nothing restarts with these rules while the filter is off, so
             // the banner's warning does not apply; keep it in the log only.
             let offDetail = "Persisted boot policy \(operation) failed while the filter is off: \(error.sentence) "
@@ -559,7 +564,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.state?.clearFilterPersistenceFailure()
                                 // A turn-on asked for meanwhile waits behind this
                                 // and decides the state, not this late answer.
-                                if !self.enableFilterRequested { self.filterKnownOff = true }
+                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)
                             }
                             done()
                         }

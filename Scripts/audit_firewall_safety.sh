@@ -397,20 +397,29 @@ printf '%s\n' "$no_config_block" | grep -Fq 'clearFilterPersistenceFailure()' \
   || fail "a save cycle that finds no filter configuration leaves the could-not-save banner up"
 # With the filter off nothing restarts with the saved rules, so a failed
 # boot-policy save is logged without the could-not-save banner, and turning
-# the filter on saves the current rules again (#321).
+# the filter on saves the current rules again (#321). FilterOffState holds
+# the decisions; test_boot_policy_save_failure.sh runs them.
 failure_body="$(awk '/private func recordPersistenceFailure\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$failure_body" | awk '/if filterKnownOff/ {g=1} g && /return$/ {r=1} /recordFilterPersistenceFailure/ {seen=1; ok=g&&r; exit} END {exit !(seen&&ok)}' \
+printf '%s\n' "$failure_body" | awk '/if !filterOff.saveFailureShowsBanner/ {g=1} g && /return$/ {r=1} /recordFilterPersistenceFailure/ {seen=1; ok=g&&r; exit} END {exit !(seen&&ok)}' \
   || fail "a boot-policy save that fails while the filter is off still raises the could-not-save banner"
-require_text "$SYSTEM_EXTENSION_MANAGER" "self.filterKnownOff = !mgr.isEnabled" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.apply(self.filterOff.observed(configured: true, enabled: mgr.isEnabled," \
   "a save cycle does not notice the filter is off, so its failure raises the could-not-save banner"
-grep -A1 -F 'if shouldEnable {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterKnownOff = false' \
+grep -A1 -F 'if shouldEnable {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterOff.turnedOn()' \
   || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
+[[ "$(grep -cF 'self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)' "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
+  || fail "turning the filter off or removing it does not record the filter as off, or overrides a turn-on asked for meanwhile"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
 refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$refresh_body" | grep -Fq 'self.state?.syncSharedRules()' \
+printf '%s\n' "$refresh_body" | grep -Fq 'fromOutside: true' \
+  && printf '%s\n' "$refresh_body" | grep -Fq 'self.apply(change)' \
   || fail "turning the filter on in System Settings does not save the current rules again"
-printf '%s\n' "$enable_body" | grep -Fq 'filterKnownOff = false' \
+apply_body="$(awk '/private func apply\(_ change: FilterOffState.Change\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$apply_body" | grep -A3 -F 'case .saveCurrentRules:' | grep -Fq 'state?.syncSharedRules()' \
+  || fail "turning the filter on in System Settings does not save the current rules again"
+printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \
+  || fail "finding the filter off leaves an earlier could-not-save banner up"
+printf '%s\n' "$enable_body" | grep -Fq 'filterOff.turnedOn()' \
   || fail "turning the filter on keeps treating it as off, so a failed save there stays hidden"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
   "cancelling a boot-policy save does not invalidate a save already in flight"

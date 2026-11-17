@@ -194,6 +194,40 @@ try Data("not json".utf8).write(to: watermarkURL)
 expect(extensionStart(saved: encoded(withDeny)) != nil,
        "an unreadable watermark refused the saved policy")
 print("boot save harness: a missing or unreadable watermark changes nothing")
+
+// 10. #321: with the filter off, a failed boot-policy save is only logged,
+//     and turning it on (in the app or in System Settings) saves the current
+//     rules again, after which a failure warns as before.
+var off = FilterOffState()
+expect(off.saveFailureShowsBanner, "a failed save while the filter is on does not warn")
+off.turnedOff(turnOnPending: false)                      // turned off in the app
+expect(!off.saveFailureShowsBanner, "a failed save while the filter is off still raises the banner")
+expect(off.observed(configured: true, enabled: false, fromOutside: false) == .clearBanner,
+       "a save cycle that finds the filter off keeps an old banner up")
+expect(!off.saveFailureShowsBanner, "a rule change while off brings the banner back")
+off.turnedOn()                                           // turned on in the app
+expect(off.saveFailureShowsBanner, "a failed save after turning the filter on is hidden")
+//     Off and on in System Settings, seen only through the change notification.
+expect(off.observed(configured: true, enabled: false, fromOutside: true) == .clearBanner,
+       "turning the filter off in System Settings keeps the banner up")
+expect(!off.saveFailureShowsBanner, "a failed save after turning off in System Settings warns")
+expect(off.observed(configured: true, enabled: true, fromOutside: true) == .saveCurrentRules,
+       "turning the filter on in System Settings does not save the current rules again")
+expect(off.saveFailureShowsBanner, "a failed save after turning on in System Settings is hidden")
+expect(off.observed(configured: true, enabled: true, fromOutside: true) == .none,
+       "an unrelated change while on saves again for nothing")
+//     The app's own save cycle is already saving: it never asks for another.
+off.turnedOff(turnOnPending: false)
+expect(off.observed(configured: true, enabled: true, fromOutside: false) == .none,
+       "a save cycle that finds the filter on asks for a second save")
+//     A turn-off that finishes after a turn-on was asked for does not win.
+off.turnedOn()
+off.turnedOff(turnOnPending: true)
+expect(off.saveFailureShowsBanner, "a late turn-off overrode the turn-on asked for after it")
+//     No configuration at all counts as off.
+expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
+       "a removed filter configuration is not treated as off")
+print("boot save harness: with the filter off a failed save is logged, and turning it on saves again")
 SWIFT
   swiftc "$ROOT"/Sources/Shared/*.swift "$dir/main.swift" -lsqlite3 -o "$dir/harness"
   mkdir -p "$TMP/container"
@@ -253,25 +287,31 @@ mutate_and_expect_failure no-config-keeps-banner \
   $'// warning no longer applies (#311).\n                    self.state?.clearFilterPersistenceFailure()' '// removed'
 mutate_and_expect_failure off-save-shows-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
-  'if filterKnownOff {' 'if false {'
-mutate_and_expect_failure off-not-noticed \
-  Sources/GUI/App/SystemExtensionManager.swift \
-  'self.filterKnownOff = !mgr.isEnabled' 'self.filterKnownOff = false'
-mutate_and_expect_failure enable-stays-off \
-  Sources/GUI/App/SystemExtensionManager.swift \
-  $'enableFilterRequested = true\n        filterKnownOff = false' 'enableFilterRequested = true'
+  'if !filterOff.saveFailureShowsBanner {' 'if false {'
 mutate_and_expect_failure off-branch-falls-through \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'os_log("%{public}@", log: log, type: .error, offDetail)\n            return' 'os_log("%{public}@", log: log, type: .error, offDetail)'
+mutate_and_expect_failure off-not-noticed \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'self.apply(self.filterOff.observed(configured: true, enabled: mgr.isEnabled,' 'self.apply(self.filterOff.observed(configured: true, enabled: true,'
+mutate_and_expect_failure enable-stays-off \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'enableFilterRequested = true\n        filterOff.turnedOn()' 'enableFilterRequested = true'
 mutate_and_expect_failure late-off-overrides-on \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'if shouldEnable {\n                                self.filterKnownOff = false' 'if shouldEnable {'
+  $'if shouldEnable {\n                                self.filterOff.turnedOn()' 'if shouldEnable {'
+mutate_and_expect_failure off-ignores-pending-on \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)' 'self.filterOff.turnedOff(turnOnPending: false)'
 mutate_and_expect_failure settings-change-ignored \
   Sources/GUI/App/SystemExtensionManager.swift \
   'forName: .NEFilterConfigurationDidChange' 'forName: .init("unused")'
 mutate_and_expect_failure settings-on-keeps-old-rules \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'again, as turning it on in the app does.\n                        self.state?.syncSharedRules()' 'again, as turning it on in the app does.'
+  $'turning it on in the app does.\n            state?.syncSharedRules()' 'turning it on in the app does.'
+mutate_and_expect_failure settings-off-keeps-banner \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'while it is off.\n            state?.clearFilterPersistenceFailure()' 'while it is off.'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''
