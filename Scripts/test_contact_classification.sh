@@ -35,10 +35,11 @@ struct ContactHarness {
     }
 
     static func observation(app: String, bundle: String?, host: String, ip: String,
-                            version: String? = nil, port: Int = 443, at date: Date) -> FlowObservation {
+                            version: String? = nil, port: Int = 443, team: String? = nil,
+                            at date: Date) -> FlowObservation {
         let connection = Connection(pid: 501, processName: app,
                                     processPath: "/Applications/\(app).app/Contents/MacOS/\(app)",
-                                    processBundleId: bundle, remoteHost: host, remoteIP: ip,
+                                    processBundleId: bundle, processTeamId: team, remoteHost: host, remoteIP: ip,
                                     remotePort: port, direction: .outgoing)
         return FlowObservation(connection: connection, observedAt: date, processVersion: version)
     }
@@ -102,6 +103,72 @@ struct ContactHarness {
         check(InsightsContactClassifier(snapshot: malformed, now: now).decision(for: seen) == .askHistoryUnavailable,
               "malformed history retains existing Alert ask semantics")
 
+        // #372: a contact counts only for the team Insights saw sign the
+        // bundle id. Another Developer ID can sign its own binary as
+        // com.example.browser; it must be asked about, not let through.
+        let browser = "com.example.browser"
+        let realTeam = "AAAAAAAAAA"
+        let otherTeam = "BBBBBBBBBB"
+        // Recorded before teams were: no team on the row, none kept.
+        let legacy = observation(app: "Browser", bundle: browser, host: "old.example.com", ip: "203.0.113.50",
+                                 at: now.addingTimeInterval(-5000))
+        try! store.record([legacy])
+        var teamSnapshot = try! store.contactSnapshot(now: now)
+        var teamClassifier = InsightsContactClassifier(snapshot: teamSnapshot, now: now)
+        check(teamSnapshot.appTeams[browser] == nil, "a contact recorded without a team leaves no team behind")
+        check(teamClassifier.decision(for: observation(app: "Browser", bundle: browser, host: "old.example.com",
+                                                       ip: "203.0.113.50", team: realTeam, at: now)) == .knownContact,
+              "a contact recorded before teams were known keeps counting for its app")
+
+        let real = observation(app: "Browser", bundle: browser, host: "mail.example.com", ip: "203.0.113.51",
+                               team: realTeam, at: now.addingTimeInterval(-4000))
+        try! store.record([real])
+        teamSnapshot = try! store.contactSnapshot(now: now)
+        teamClassifier = InsightsContactClassifier(snapshot: teamSnapshot, now: now)
+        check(teamSnapshot.appTeams[browser] == realTeam, "the first team seen signing a bundle id is kept")
+        let realAgain = observation(app: "Browser", bundle: browser, host: "mail.example.com", ip: "203.0.113.51",
+                                    team: realTeam, at: now)
+        let impostor = observation(app: "Browser", bundle: browser, host: "mail.example.com", ip: "203.0.113.51",
+                                   team: otherTeam, at: now)
+        let impostorOld = observation(app: "Browser", bundle: browser, host: "old.example.com", ip: "203.0.113.50",
+                                      team: otherTeam, at: now)
+        let unsignedImpostor = observation(app: "Browser", bundle: browser, host: "mail.example.com",
+                                           ip: "203.0.113.51", at: now)
+        check(teamClassifier.decision(for: realAgain) == .knownContact,
+              "the team that signed the app still gets its known contacts")
+        check(teamClassifier.decision(for: impostor) == .firstContact,
+              "another team's binary with the same bundle id is asked about")
+        check(teamClassifier.decision(for: impostorOld) == .firstContact,
+              "another team cannot use contacts recorded before the team was known either")
+        check(teamClassifier.decision(for: unsignedImpostor) == .firstContact,
+              "a process with the bundle id but no team does not match a recorded team")
+        let impostorConnection = Connection(pid: 502, processName: "Browser",
+                                            processPath: "/tmp/Browser", processBundleId: browser,
+                                            processTeamId: otherTeam, remoteHost: "new.example.com",
+                                            remoteIP: "203.0.113.52", remotePort: 443, direction: .outgoing)
+        check(teamClassifier.knownDestinationCount(for: impostorConnection) == 0,
+              "the alert does not credit another team with the app's history")
+
+        // The impostor's own flows are recorded but never take the team over.
+        try! store.record([observation(app: "Browser", bundle: browser, host: "evil.example.net", ip: "198.51.100.9",
+                                       team: otherTeam, at: now.addingTimeInterval(-60))])
+        teamSnapshot = try! store.contactSnapshot(now: now)
+        teamClassifier = InsightsContactClassifier(snapshot: teamSnapshot, now: now)
+        check(teamSnapshot.appTeams[browser] == realTeam, "a later team never replaces the first one")
+        check(teamClassifier.decision(for: impostor) == .firstContact,
+              "after the impostor is recorded it still does not count as the app")
+
+        // A snapshot written before #372 decodes, with no teams.
+        var oldJSON = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(teamSnapshot)) as! [String: Any]
+        oldJSON.removeValue(forKey: "appTeams")
+        let decodedOld = try? JSONDecoder().decode(InsightsContactSnapshot.self,
+                                                   from: JSONSerialization.data(withJSONObject: oldJSON))
+        check(decodedOld?.appTeams.isEmpty == true, "a snapshot without teams still decodes")
+        let badTeam = InsightsContactSnapshot(contacts: teamSnapshot.contacts,
+                                              appTeams: [browser: String(repeating: "A", count: 65)], preparedAt: now)
+        check(InsightsContactClassifier(snapshot: badTeam, now: now).decision(for: realAgain) == .askHistoryUnavailable,
+              "a snapshot with a malformed team keeps the existing ask behaviour")
+
         // Version 1 is the baseline. Version 2 adds one destination and keeps
         // the old one. Unknown version metadata is never replaced by a guess.
         let v1Old = observation(app: "Chat", bundle: app, host: destination, ip: "203.0.113.10",
@@ -139,6 +206,15 @@ struct ContactHarness {
         check(proposal?.rule().groupName == "Insights",
               "a finding proposal is marked as an Insights proposal")
         check(report.findings.count > 0, "findings are first-class report rows")
+
+        // A kept team lives as long as the app's history does, no longer.
+        let day: TimeInterval = 24 * 60 * 60
+        try! store.prune(now: now.addingTimeInterval(20 * day))
+        check((try! store.contactSnapshot(now: now.addingTimeInterval(20 * day))).appTeams[browser] == realTeam,
+              "the team is kept while the app's rollups are")
+        try! store.prune(now: now.addingTimeInterval(400 * day))
+        check((try! store.contactSnapshot(now: now.addingTimeInterval(400 * day))).appTeams.isEmpty,
+              "the team goes once the app has no history left")
 
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {
