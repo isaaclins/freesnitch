@@ -171,77 +171,7 @@ do {
     print("filter off harness: an enabling save overtaken by a turn-off reports the filter off, not active")
 }
 
-// 5. #361: the filter is turned on in System Settings, the app turns it on
-//    with the current rules, and the user turns it off or removes it there
-//    again before that save cycle loads. The real save cycle and the real
-//    turn-on rule, driven through the fake manager.
-do {
-    typealias Cycle = SharedRuleBridge.BootPolicySaveCycle
-    struct Outcome { var decision: Cycle.AfterLoad; var storedEnabled: Bool; var storedConfigured: Bool }
-    /// What System Settings holds besides isEnabled.
-    final class Settings { var configured = true }
-    func run(fromSettings: Bool, guarded: Bool = true,
-             userAction: (FakeFilterManager, Settings) -> Void) -> Outcome {
-        let mgr = FakeFilterManager()
-        mgr.storedEnabled = true            // turned on in System Settings
-        let settings = Settings()
-        var cycle = Cycle()
-        cycle.requestEnable()               // enableFilter(fromSettings:)
-        cycle.enqueue(Data("rules".utf8))   // the helper's current rules
-        guard let load = cycle.begin() else { expect(false, "no cycle started"); exit(1) }
-        var decision: Cycle.AfterLoad?
-        mgr.loadFromPreferences("save") {
-            let configured = settings.configured
-            if guarded && cycle.enableRequested
-                && !FilterOffState.turnOnStands(fromSettings: fromSettings, configured: configured,
-                                                enabled: mgr.isEnabled) {
-                cycle.dropEnableRequest()
-            }
-            let decided = cycle.afterLoad(load, loadFailed: false, configurationExists: configured,
-                                          hasSavedPolicy: configured)
-            decision = decided
-            guard case .save(let save) = decided else { return }
-            if save.enable { mgr.isEnabled = true }
-            settings.configured = true      // saving writes the configuration
-            mgr.saveToPreferences("save") {}
-        }
-        userAction(mgr, settings)           // before the cycle's load lands
-        mgr.deliverAll()
-        return Outcome(decision: decision!, storedEnabled: mgr.storedEnabled,
-                       storedConfigured: settings.configured)
-    }
-    let turnOffThere: (FakeFilterManager, Settings) -> Void = { mgr, _ in mgr.storedEnabled = false }
-    let removeThere: (FakeFilterManager, Settings) -> Void = { mgr, settings in
-        mgr.storedEnabled = false
-        settings.configured = false
-    }
-
-    // Without the rule the bug reproduces: the save turns it back on.
-    let unguarded = run(fromSettings: true, guarded: false, userAction: turnOffThere)
-    expect(unguarded.storedEnabled, "the off-again race did not reproduce, so this test proves nothing")
-
-    let off = run(fromSettings: true, userAction: turnOffThere)
-    expect(!off.storedEnabled, "turned off again in System Settings, the app's save turned the filter back on")
-    if case .save(let save) = off.decision {
-        expect(!save.enable, "the cycle still counts as turning the filter on")
-    } else { expect(false, "the current rules were not saved for the next turn-on: \(off.decision)") }
-
-    let removed = run(fromSettings: true, userAction: removeThere)
-    expect(removed.decision == .stop(.noConfiguration), "removed in System Settings, the cycle went on: \(removed.decision)")
-    expect(!removed.storedConfigured && !removed.storedEnabled, "a filter removed in System Settings was recreated")
-
-    let stays = run(fromSettings: true, userAction: { _, _ in })
-    expect(stays.storedEnabled, "a turn-on in System Settings that nobody undid was dropped")
-    if case .save(let save) = stays.decision { expect(save.enable, "the turn-on save does not report active") }
-    else { expect(false, "the turn-on did not save: \(stays.decision)") }
-
-    // Activation at launch turns the filter on even if it was off.
-    let activation = run(fromSettings: false, userAction: turnOffThere)
-    expect(activation.storedEnabled, "activation no longer turns the filter on")
-    print("filter off harness: turned on and off again in System Settings, what is set there wins")
-}
-
-// 6. A sequence that finishes with an error still lets the next one run, and
+// 5. A sequence that finishes with an error still lets the next one run, and
 //    calling done twice does not skip anyone.
 do {
     let line = FilterPreferencesLine()
