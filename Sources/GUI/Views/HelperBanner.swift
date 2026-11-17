@@ -28,7 +28,10 @@ struct HelperBanner: View {
             // like a healthy one: this state was computed and rendered nowhere
             // (#131). It stays on screen until it is resolved.
             if let info = BannerInfo(persistenceDegraded: state.filterPersistenceDegraded,
-                                     persistenceMessage: state.filterPersistenceMessage,
+                                     unsavableReason: state.filterPersistenceUnsavable,
+                                     liveRulesReady: state.filterSnapshotStatus.isReady
+                                        && state.filterSnapshotStatus.generation == state.authoritativeSnapshotGeneration
+                                        && state.filterSnapshotStatus.epoch == state.authoritativeSnapshotEpoch,
                                      recoveryMessage: state.filterRecoveryMessage) {
                 banner(info)
             }
@@ -148,19 +151,44 @@ private struct BannerInfo {
         }
     }
 
-    /// The extension accepted the policy but could not persist it, so the next
-    /// start will come up with no rules and fail open.
-    init?(persistenceDegraded: Bool, persistenceMessage: String?, recoveryMessage: String?) {
+    /// The extension accepted the policy but it could not be saved. Until a
+    /// save succeeds, the next start refuses saved rules older than the ones
+    /// it last enforced and fails open (#213).
+    /// The technical reason stays in the log; the banner says what it means.
+    /// `unsavableReason` is set when the current rules can never be kept for
+    /// the next start (#320): sending them again cannot help, so the banner
+    /// says what a restart does instead and offers no retry.
+    init?(persistenceDegraded: Bool, unsavableReason: String? = nil,
+          liveRulesReady: Bool, recoveryMessage: String?) {
         guard persistenceDegraded || recoveryMessage != nil else { return nil }
         icon = "externaldrive.badge.exclamationmark"
         tint = Color.orange
+        if persistenceDegraded, let unsavableReason {
+            title = "The current rules won't survive a restart"
+            // Only claim the rules are in use when the extension holds them
+            // (the filter may be off while rules still sync).
+            detail = [unsavableReason,
+                      liveRulesReady ? "The filter is using them now." : nil,
+                      "After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again. Remove some rules to keep them across restarts.",
+                      recoveryMessage]
+                .compactMap { $0?.isEmpty == false ? $0 : nil }
+                .joined(separator: " ")
+            // Sending the rules again can't make them fit, but it is still the
+            // way out of a filter recovery shown alongside.
+            action = recoveryMessage == nil
+                ? nil
+                : BannerAction(title: "Send Rules Again") { state, _ in state.syncSharedRules() }
+            return
+        }
         title = persistenceDegraded
             ? "FreeSnitch could not save the current rules"
             : "The network filter needs attention"
         let base = persistenceDegraded
-            ? "The filter is enforcing the rules it has now, but it could not write them down, so the next time it starts it will come up with none and allow everything until this app sends them again."
+            ? (liveRulesReady
+                ? "The filter is using them now, but after a restart it may not have them until FreeSnitch sends them again."
+                : "After a restart the filter may use older saved rules until FreeSnitch sends them again.")
             : ""
-        detail = [base, persistenceMessage, recoveryMessage]
+        detail = [base, recoveryMessage]
             .compactMap { $0?.isEmpty == false ? $0 : nil }
             .joined(separator: " ")
         action = BannerAction(title: "Send Rules Again") { state, _ in state.syncSharedRules() }

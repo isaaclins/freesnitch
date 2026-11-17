@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The rule snapshot exchanged between the GUI and the Network System
@@ -11,6 +12,11 @@ public enum SharedRuleBridge {
     public static let bootSnapshotVersion = 1
     /// Stable key in NEFilterProviderConfiguration.vendorConfiguration.
     public static let bootSnapshotVendorConfigurationKey = "io.isaaclins.freesnitch.bootSnapshot"
+    /// Queued in place of a boot snapshot when the live policy cannot be
+    /// kept for the next start: saving it removes the saved policy, so the
+    /// next start fails open instead of enforcing older rules (#320). No real
+    /// encoded snapshot is empty.
+    public static let bootSnapshotRemoval = Data()
     /// Keep provider preferences bounded because they are persisted by the
     /// system, not streamed like the live XPC payload.
     public static let maximumBootSnapshotEncodedBytes = RuleTransportBoundary.maximumEncodedBootSnapshotBytes
@@ -31,7 +37,7 @@ public enum SharedRuleBridge {
     /// may take only the newest pending payload after a load completes; any
     /// request arriving during a save remains visible as newer work.
     public struct NewestWriteWinsQueue: Sendable {
-        public struct Pending: Sendable {
+        public struct Pending: Equatable, Sendable {
             public let generation: Int
             public let data: Data
         }
@@ -42,6 +48,9 @@ public enum SharedRuleBridge {
         public init() {}
 
         public var hasPending: Bool { pendingData != nil }
+
+        /// The payload the next flush would save, without taking it.
+        public var peekNewest: Data? { pendingData }
 
         @discardableResult
         public mutating func enqueue(_ data: Data) -> Int {
@@ -66,6 +75,125 @@ public enum SharedRuleBridge {
         public mutating func discardThrough(_ generation: Int) {
             guard self.generation <= generation else { return }
             pendingData = nil
+        }
+
+        /// Drop whatever is queued and invalidate every attempt already taken,
+        /// so a save in flight that fails later cannot be requeued. Used when
+        /// the filter is turned on, off, or removed.
+        public mutating func invalidateAll() {
+            generation += 1
+            pendingData = nil
+        }
+
+        /// Put a snapshot whose save failed back in the queue, so the next
+        /// flush retries it instead of leaving an older saved policy as the
+        /// last word (#213). A request enqueued while that save was in flight
+        /// is newer and wins; the failed one is then dropped.
+        @discardableResult
+        public mutating func requeueFailed(_ failed: Pending) -> Bool {
+            guard generation == failed.generation, pendingData == nil else { return false }
+            pendingData = failed.data
+            return true
+        }
+    }
+
+    /// Spaced, bounded retries of a failed boot-policy save (#213). A newer
+    /// policy or a successful save resets it; after the last delay it gives up
+    /// until one of those happens, so nothing retries forever.
+    public struct RetrySchedule: Sendable {
+        public static let defaultDelays: [TimeInterval] = [5, 30, 120]
+        public let delays: [TimeInterval]
+        public private(set) var attempts = 0
+
+        public init(delays: [TimeInterval] = RetrySchedule.defaultDelays) {
+            self.delays = delays
+        }
+
+        /// The delay before the next retry, or nil when the retries are used up.
+        public mutating func nextDelay() -> TimeInterval? {
+            guard attempts < delays.count else { return nil }
+            defer { attempts += 1 }
+            return delays[attempts]
+        }
+
+        public mutating func reset() { attempts = 0 }
+    }
+
+    /// The (session, generation) of the last live policy the extension
+    /// accepted, kept by the extension in its own container.
+    ///
+    /// The boot policy lives in the filter preferences and only the app can
+    /// write it. When that save fails, the previously saved policy stays there
+    /// and may still hold a deny rule the user has since removed. The extension
+    /// cannot repair the preferences, but it knows which policy it last
+    /// enforced, so at its next start it refuses a saved policy that is older
+    /// than that and fails open until the app sends the current one (#213).
+    /// A missing or unreadable record changes nothing: the saved policy loads
+    /// exactly as before.
+    public struct LivePolicyWatermark: Codable, Equatable, Sendable {
+        public static let fileName = "live-policy-watermark.json"
+
+        public var epoch: UInt64
+        public var generation: UInt64
+        /// SHA-256 of the policy content (mode and rules). A helper restart
+        /// opens a new session for the same rules, so an older saved policy
+        /// with identical content is current, not stale. Missing in a record
+        /// that could not compute it; then the order alone decides.
+        public var contentDigest: String?
+
+        public init(epoch: UInt64, generation: UInt64, contentDigest: String? = nil) {
+            self.epoch = epoch
+            self.generation = generation
+            self.contentDigest = contentDigest
+        }
+
+        public init(_ snapshot: Snapshot) {
+            self.init(epoch: snapshot.epoch, generation: snapshot.generation,
+                      contentDigest: Self.digest(of: snapshot))
+        }
+
+        /// True when a saved boot policy is older than the policy this record
+        /// describes, by the same (session, generation) order the live gate
+        /// uses, and its content differs. Only ever used to refuse a policy,
+        /// never to load one.
+        public func supersedes(_ boot: Snapshot) -> Bool {
+            let older = boot.epoch != epoch ? boot.epoch < epoch : boot.generation < generation
+            guard older else { return false }
+            if let contentDigest, let bootDigest = Self.digest(of: boot), contentDigest == bootDigest {
+                return false
+            }
+            return true
+        }
+
+        private struct Content: Encodable {
+            let mode: AppMode
+            let rules: [Rule]
+        }
+
+        public static func digest(of snapshot: Snapshot) -> String? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            // Usage counters change without changing what a rule matches, so
+            // they are not part of the policy content.
+            let rules = snapshot.rules.map { rule -> Rule in
+                var policyOnly = rule
+                policyOnly.hitCount = 0
+                policyOnly.lastUsedAt = nil
+                return policyOnly
+            }
+            guard let data = try? encoder.encode(Content(mode: snapshot.mode, rules: rules)) else { return nil }
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+
+        public static func read(from url: URL) -> LivePolicyWatermark? {
+            guard let data = try? Data(contentsOf: url), data.count <= 4096 else { return nil }
+            return try? JSONDecoder().decode(LivePolicyWatermark.self, from: data)
+        }
+
+        public func write(to url: URL) throws {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try JSONEncoder().encode(self).write(to: url, options: .atomic)
         }
     }
 
