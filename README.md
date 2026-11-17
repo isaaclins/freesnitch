@@ -128,7 +128,7 @@ The script refuses to remove the app while macOS still holds a record for the ex
 
 Without a checkout, the Uninstall tab shows and copies the equivalent commands.
 
-Installed with Homebrew? Do the steps in the app and restart, then `brew uninstall --cask freesnitch` stops the helper and empties the `pf` anchor the same way, and `--zap` also deletes your rules and settings. It refuses while macOS still lists the extension.
+Installed with Homebrew? Use the Uninstall tab in the app and restart, then run `brew uninstall --cask freesnitch` instead of the script. It stops the helper and empties the `pf` anchor the same way, and `--zap` also deletes your rules and settings. It refuses while macOS still lists the extension.
 
 ## Why this exists
 

@@ -332,12 +332,19 @@ update_homebrew_tap() {
   digest="$(gh release view "v${VERSION}" --repo "$REPOSITORY" --json assets \
     --jq ".assets[] | select(.name == \"${DMG_NAME}\") | .digest" 2>/dev/null || true)"
   sha="${digest#sha256:}"
+  if [[ "$MODE" == "release" ]]; then
+    local built
+    built="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+    # Older gh versions do not report digests. The disk image built above is
+    # the file that was just uploaded, so its checksum stands in.
+    [[ -n "$digest" ]] || sha="$built"
+    if [[ "$built" != "$sha" ]]; then
+      printf 'The published %s does not match the disk image built here.\n' "$DMG_NAME" >&2
+      return 1
+    fi
+  fi
   if [[ ! "$sha" =~ ^[0-9a-f]{64}$ ]]; then
     printf 'Could not read the SHA-256 of %s from the v%s GitHub Release.\n' "$DMG_NAME" "$VERSION" >&2
-    return 1
-  fi
-  if [[ "$MODE" == "release" && "$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')" != "$sha" ]]; then
-    printf 'The published %s does not match the disk image built here.\n' "$DMG_NAME" >&2
     return 1
   fi
 
