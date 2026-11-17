@@ -132,7 +132,7 @@ expect(tooBig.hasNewerWork(since: retainedA.generation),
        "a late save of the older snapshot would count as the newest and clear the warning")
 print("boot save harness: an unsaveable newer policy is never replaced by an older retry")
 
-// 6e. The same over-limit policy is enforced live, so turning the filter on
+// 6c-2. The same over-limit policy is enforced live, so turning the filter on
 //     goes ahead (#320). The app queues a removal in its place: the save takes
 //     the older saved policy out of the preferences, and the next start fails
 //     open until the app sends the live rules again, instead of enforcing the
@@ -143,7 +143,8 @@ let removal = tooBig.takeNewest()!
 expect(removal.data == SharedRuleBridge.bootSnapshotRemoval && removal.data != encoded(withDeny),
        "the removal cannot be told apart from a real saved policy")
 var vendorConfiguration: [String: Any] = [SharedRuleBridge.bootSnapshotVendorConfigurationKey: encoded(withDeny)]
-// What the app's save cycle does with a removal:
+// What the app's save cycle does with a removal (mirrored here: the cycle
+// needs NEFilterManager; the audit checks and mutations guard the real code):
 vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)
 // What the extension does at start when the key is missing:
 let savedAtStart = vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] as? Data

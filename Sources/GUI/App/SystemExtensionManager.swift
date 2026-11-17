@@ -250,7 +250,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             let reason = snapshot.rules.count > SharedRuleBridge.maximumBootSnapshotRuleCount
                 ? "There are \(snapshot.rules.count) rules and at most \(SharedRuleBridge.maximumBootSnapshotRuleCount) can be kept for the next start."
                 : "They could not be saved for the next start."
-            recordPersistenceFailure("encode", error: error, unsavable: reason)
+            // Each rule edit while over the limit lands here again: log it
+            // once, not twice per edit.
+            if state?.filterPersistenceUnsavable != reason {
+                recordPersistenceFailure("encode", error: error, unsavable: reason)
+            }
             schedulePersistence(immediate: enableFilterRequested)
         }
     }
@@ -355,6 +359,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 configuration.filterSockets = true
                 configuration.filterPackets = false
                 let removesBootSnapshot = snapshotData == SharedRuleBridge.bootSnapshotRemoval
+                let hadBootSnapshot = configuration.vendorConfiguration?[SharedRuleBridge.bootSnapshotVendorConfigurationKey] != nil
                 if let snapshotData {
                     var vendorConfiguration = configuration.vendorConfiguration ?? [:]
                     if removesBootSnapshot {
@@ -401,10 +406,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // can be kept is saved.
                                 self.persistenceRetry.reset()
                                 let reason = self.state?.filterPersistenceUnsavable ?? "The current rules could not be saved for the next start."
-                                let message = "Removed the saved rules for the next start. \(reason) "
-                                    + "After a restart the per-process filter lets every connection through until FreeSnitch sends the current rules."
-                                self.state?.appendLog(level: "info", message: message)
-                                os_log("%{public}@", log: self.log, type: .info, message)
+                                if hadBootSnapshot {
+                                    let message = "Removed the saved rules for the next start. \(reason) "
+                                        + "After a restart the per-process filter lets every connection through until FreeSnitch sends the current rules."
+                                    self.state?.appendLog(level: "info", message: message)
+                                    os_log("%{public}@", log: self.log, type: .info, message)
+                                }
                                 if shouldEnable || self.filterConfigurationActive {
                                     self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                                 }
@@ -473,8 +480,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func schedulePersistenceRetry() {
         guard let delay = persistenceRetry.nextDelay() else {
-            let message = "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
-                + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
+            let message = state?.filterPersistenceUnsavable != nil
+                ? "The older saved rules could still not be removed after \(persistenceRetry.delays.count) retries. "
+                    + "FreeSnitch tries again with the next rule change or when the app restarts."
+                : "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
+                    + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
             state?.appendLog(level: "error", message: message)
             os_log("%{public}@", log: log, type: .error, message)
             return
@@ -490,7 +500,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         let detail = "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. "
             + (unsavable == nil
                 ? "If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones."
-                : "The saved policy is removed, so after a restart the filter allows everything until this app sends the current rules.")
+                : "FreeSnitch removes the saved policy, so after a restart the filter allows everything until this app sends the current rules.")
         recordFilterDiagnostic(state: "degraded", detail: detail)
         state?.recordFilterPersistenceFailure(detail, unsavable: unsavable)
         os_log("%{public}@", log: log, type: .error, detail)
