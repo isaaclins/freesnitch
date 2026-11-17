@@ -347,6 +347,23 @@ let enableLoadRetry = savePlan(enableLoadFails.afterLoad(enableLoadRetryAt, load
                                "the retry after a failed activation load did not save")
 expect(enableLoadRetry.pending?.data == policyB && !enableLoadRetry.enable,
        "the retry after a failed activation load saved the wrong snapshot or turned the filter on")
+//      #334: a rule change made while the activation load fails runs right
+//      after it and saves the rules, but the filter stays off: only turning it
+//      on again may enable it.
+var enableLoadRaced = Cycle()
+enableLoadRaced.requestEnable()
+enableLoadRaced.enqueue(policyA)
+let enableRacedAt = enableLoadRaced.begin()!
+enableLoadRaced.enqueue(policyB)
+expect(enableLoadRaced.afterLoad(enableRacedAt, loadFailed: true, configurationExists: true, hasSavedPolicy: true)
+       == .loadFailed(failActivation: true, next: .now),
+       "a rule change made during a failed activation load was not saved next")
+let racedRuleChange = savePlan(enableLoadRaced.afterLoad(enableLoadRaced.begin()!, loadFailed: false, configurationExists: true, hasSavedPolicy: true),
+                               "the rule change made during a failed activation load did not save")
+expect(racedRuleChange.pending?.data == policyB && !racedRuleChange.enable,
+       "a rule change made during a failed activation load turned the filter on")
+expect(!enableLoadRaced.afterSave(racedRuleChange, saveFailed: false).activated,
+       "a rule change made during a failed activation load reported the filter active")
 //      #345: rules over the limit, so the queued save is the removal of the
 //      older saved policy. A failed activation load keeps it, and the retry
 //      removes the older policy without turning the filter on.
