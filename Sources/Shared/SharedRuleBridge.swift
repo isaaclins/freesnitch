@@ -67,6 +67,63 @@ public enum SharedRuleBridge {
             guard self.generation <= generation else { return }
             pendingData = nil
         }
+
+        /// Put a snapshot whose save failed back in the queue, so the next
+        /// flush retries it instead of leaving an older saved policy as the
+        /// last word (#213). A request enqueued while that save was in flight
+        /// is newer and wins; the failed one is then dropped.
+        @discardableResult
+        public mutating func requeueFailed(_ failed: Pending) -> Bool {
+            guard generation == failed.generation, pendingData == nil else { return false }
+            pendingData = failed.data
+            return true
+        }
+    }
+
+    /// The (session, generation) of the last live policy the extension
+    /// accepted, kept by the extension in its own container.
+    ///
+    /// The boot policy lives in the filter preferences and only the app can
+    /// write it. When that save fails, the previously saved policy stays there
+    /// and may still hold a deny rule the user has since removed. The extension
+    /// cannot repair the preferences, but it knows which policy it last
+    /// enforced, so at its next start it refuses a saved policy that is older
+    /// than that and fails open until the app sends the current one (#213).
+    /// A missing or unreadable record changes nothing: the saved policy loads
+    /// exactly as before.
+    public struct LivePolicyWatermark: Codable, Equatable, Sendable {
+        public static let fileName = "live-policy-watermark.json"
+
+        public var epoch: UInt64
+        public var generation: UInt64
+
+        public init(epoch: UInt64, generation: UInt64) {
+            self.epoch = epoch
+            self.generation = generation
+        }
+
+        public init(_ snapshot: Snapshot) {
+            self.init(epoch: snapshot.epoch, generation: snapshot.generation)
+        }
+
+        /// True when a saved boot policy is older than the policy this record
+        /// describes, by the same (session, generation) order the live gate
+        /// uses. Only ever used to refuse a policy, never to load one.
+        public func supersedes(_ boot: Snapshot) -> Bool {
+            if boot.epoch != epoch { return boot.epoch < epoch }
+            return boot.generation < generation
+        }
+
+        public static func read(from url: URL) -> LivePolicyWatermark? {
+            guard let data = try? Data(contentsOf: url), data.count <= 4096 else { return nil }
+            return try? JSONDecoder().decode(LivePolicyWatermark.self, from: data)
+        }
+
+        public func write(to url: URL) throws {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        }
     }
 
     public struct Snapshot: Codable, Sendable {

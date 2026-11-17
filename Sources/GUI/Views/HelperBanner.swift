@@ -148,8 +148,9 @@ private struct BannerInfo {
         }
     }
 
-    /// The extension accepted the policy but could not persist it, so the next
-    /// start will come up with no rules and fail open.
+    /// The extension accepted the policy but it could not be saved. The app
+    /// retries; until a save succeeds, the next start refuses the older saved
+    /// rules and fails open (#213).
     init?(persistenceDegraded: Bool, persistenceMessage: String?, recoveryMessage: String?) {
         guard persistenceDegraded || recoveryMessage != nil else { return nil }
         icon = "externaldrive.badge.exclamationmark"
@@ -158,7 +159,7 @@ private struct BannerInfo {
             ? "FreeSnitch could not save the current rules"
             : "The network filter needs attention"
         let base = persistenceDegraded
-            ? "The filter is enforcing the rules it has now, but it could not write them down, so the next time it starts it will come up with none and allow everything until this app sends them again."
+            ? "The filter is enforcing your current rules, but they could not be saved for the next start. FreeSnitch tries again by itself, and Send Rules Again tries now."
             : ""
         detail = [base, persistenceMessage, recoveryMessage]
             .compactMap { $0?.isEmpty == false ? $0 : nil }
