@@ -473,6 +473,9 @@ grep -A2 -F 'if completion == .active {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 
   || fail "turning the filter off or removing it does not record the filter as off, or overrides a turn-on asked for meanwhile"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
+init_body="$(awk '/^    init\(state: AppState\) [{]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$init_body" | grep -Fq 'if hasEmbeddedExtension { refreshFilterOffState() }' \
+  || fail "the app does not read at launch whether the filter is off, so an early save failure can raise the banner (#348)"
 refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$refresh_body" | grep -Fq 'fromOutside: true' \
   && printf '%s\n' "$refresh_body" | grep -Fq 'self.apply(change)' \

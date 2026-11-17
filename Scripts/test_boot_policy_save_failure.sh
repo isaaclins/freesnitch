@@ -250,6 +250,17 @@ expect(off.saveFailureShowsBanner, "a late turn-off overrode the turn-on asked f
 //     No configuration at all counts as off.
 expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
        "a removed filter configuration is not treated as off")
+//     #348: at launch the app reads the filter state once. Before that read
+//     it assumes on, so a failure then warns; finding the filter left off
+//     takes the banner down, and finding it on asks for no extra save.
+var launch = FilterOffState()
+expect(launch.saveFailureShowsBanner, "a failure before the launch read is hidden")
+expect(launch.observed(configured: true, enabled: false, fromOutside: true) == .clearBanner,
+       "finding the filter left off at launch keeps an early banner up")
+expect(!launch.saveFailureShowsBanner, "a failed save after finding the filter off at launch warns")
+var launchOn = FilterOffState()
+expect(launchOn.observed(configured: true, enabled: true, fromOutside: true) == .none,
+       "finding the filter on at launch saves the rules a second time")
 print("boot save harness: with the filter off a failed save is logged, and turning it on saves again")
 
 // 11. The app's save cycle around NEFilterManager (#310). The harness plays
@@ -688,6 +699,9 @@ mutate_and_expect_failure off-ignores-pending-on \
 mutate_and_expect_failure settings-change-ignored \
   Sources/GUI/App/SystemExtensionManager.swift \
   'forName: .NEFilterConfigurationDidChange' 'forName: .init("unused")'
+mutate_and_expect_failure launch-off-not-read \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'if hasEmbeddedExtension { refreshFilterOffState() }' ''
 mutate_and_expect_failure settings-on-keeps-old-rules \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'turning it on in the app does.\n            state?.syncSharedRules()' 'turning it on in the app does.'
