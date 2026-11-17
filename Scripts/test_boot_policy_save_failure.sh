@@ -247,7 +247,7 @@ mutate_and_expect_failure extra-cycle-after-requeue \
   'hasNewerWork(since: attempted)' 'hasNewerWork(since: generationAtLoad)'
 mutate_and_expect_failure removal-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
-  'DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }' ''
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()' 'no longer applies (#311).'
 mutate_and_expect_failure no-config-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'// warning no longer applies (#311).\n                    self.state?.clearFilterPersistenceFailure()' '// removed'
