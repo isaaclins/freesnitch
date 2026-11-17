@@ -23,6 +23,14 @@
 #     claimed one, so an unsigned binary claiming Safari's id gets Safari's
 #     deny but never its allow, and a user's deny for an unsigned app keeps
 #     blocking it
+#   - a signed id comes with the team that signed it, and an allow or ask rule
+#     that recorded a team only matches that team's code (#364): another
+#     Developer ID signing a binary as com.google.Chrome gets none of Chrome's
+#     allows, still gets its denies, and the extension says why
+#   - a rule without a team (older, hand-made, imported) keeps matching and
+#     learns the team the first time its app is seen, only from a process
+#     under its own path when it names one; an existing database gains the
+#     column and keeps every rule
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -114,6 +122,7 @@ FAKE_PID=$!
 
 cat > "$TMP/main.swift" <<'SWIFT'
 import Foundation
+import SQLite3
 import os.log
 
 var checks = 0
@@ -134,6 +143,12 @@ let fm = FileManager.default
 
 func id(_ path: String, pid: Int32 = 0) -> String? {
     CodeSigningIdentity.resolve(executablePath: path, auditToken: nil, pid: pid).bundleIdentifier
+}
+func team(_ path: String) -> String? {
+    CodeSigningIdentity.resolve(executablePath: path, auditToken: nil, pid: 0).signed?.team
+}
+func signed(_ identifier: String, _ team: String = "EQHXZ8M8AV") -> CodeSigningIdentity.SignedBundle {
+    CodeSigningIdentity.SignedBundle(identifier: identifier, team: team)
 }
 
 // Fakes carrying Safari's plist.
@@ -180,12 +195,16 @@ if fm.fileExists(atPath: safari) {
 }
 expect(id("/System/Applications/Calculator.app/Contents/MacOS/Calculator") == "com.apple.calculator",
        "Apple's own Calculator keeps its bundle id")
+expect(team("/System/Applications/Calculator.app/Contents/MacOS/Calculator") == CodeSigningIdentity.appleTeam,
+       "Apple's own code is recorded as signed by Apple")
 expect(id("/bin/ls") == nil, "a binary outside any .app still has no bundle id")
 
 let chrome = "/Applications/Google Chrome.app"
 if fm.fileExists(atPath: chrome) {
     expect(id(chrome + "/Contents/MacOS/Google Chrome") == "com.google.Chrome",
            "a Developer ID app keeps its bundle id")
+    expect(team(chrome + "/Contents/MacOS/Google Chrome") == "EQHXZ8M8AV",
+           "a Developer ID app comes with its own team id (\(team(chrome + "/Contents/MacOS/Google Chrome") ?? "nil"))")
     let helpers = chrome + "/Contents/Frameworks/Google Chrome Framework.framework/Helpers"
     expect(id(helpers + "/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper") == "com.google.Chrome.helper",
            "a nested helper app keeps its own bundle id")
@@ -254,6 +273,10 @@ expect(decideID(.trusted(S(identifier: "com.apple.Pages", signer: .team("K36BKF7
        "Apple's own App Store apps keep their com.apple. id")
 expect(decideID(.trusted(S(identifier: "com.google.Chrome", signer: .team("EQHXZ8M8AV"), appStore: false))) == "com.google.Chrome",
        "a Developer ID app keeps its own id")
+expect(CodeSigningIdentity.decide(.trusted(S(identifier: "com.google.Chrome", signer: .team("ATTACKER01"), appStore: false))).signed?.team == "ATTACKER01",
+       "another Developer ID may sign with Chrome's id, but its own team comes with it")
+expect(CodeSigningIdentity.decide(.trusted(S(identifier: "com.apple.Safari", signer: .apple, appStore: false))).signed?.team == CodeSigningIdentity.appleTeam,
+       "Apple's own code carries the Apple signer")
 expect(decideID(.untrusted) == nil, "an untrusted signature gives no bundle id")
 expect(CodeSigningIdentity.failure(errSecCSReqFailed) == .untrusted && CodeSigningIdentity.failure(errSecCSUnsigned) == .untrusted,
        "an unsigned binary, or a signer rules may not trust, is untrusted")
@@ -321,7 +344,7 @@ final class HashBox: @unchecked Sendable { var hash: CDHash? = h1; var checks: [
 let current = HashBox()
 let swapCache = BundleIdentifierCache(read: { _ in .read(AppBundleMetadata(bundleIdentifier: "com.google.Chrome", version: "1")) }, identify: { _, _ in
     current.checks.append(current.hash)
-    return current.hash == h1 ? .resolved("com.google.Chrome") : .resolved(nil)
+    return current.hash == h1 ? .resolved(signed("com.google.Chrome")) : .resolved(nil)
 }, codeHash: { _ in current.hash })
 let chromePath = "/Users/someone/Copied Chrome.app/Contents/MacOS/Google Chrome"
 _ = swapCache.cachedMetadata(forExecutablePath: chromePath)
@@ -365,7 +388,7 @@ expect(retrying.cachedBundleId(forExecutablePath: path) == nil, "an unreadable s
 retrying.waitForPendingResolves()
 expect(box.calls == 1, "an unreadable signature is not checked again on every flow")
 clock.nanos += 1_000_000_000
-box.answer = .resolved("com.example.gone")
+box.answer = .resolved(signed("com.example.gone"))
 _ = retrying.cachedMetadata(forExecutablePath: path)
 retrying.waitForPendingResolves()
 expect(box.calls == 2 && retrying.cachedBundleId(forExecutablePath: path) == "com.example.gone",
@@ -413,7 +436,7 @@ _ = claiming.cachedMetadata(forExecutablePath: fakeSafari)
 claiming.waitForPendingResolves()
 expect(claiming.cachedMetadata(forExecutablePath: fakeSafari)?.claimedBundleIdentifier == "com.apple.Safari",
        "the extension's cache keeps the plist's id only as the claimed one")
-let signedSafari = BundleIdentifierCache(read: plistOnly, identify: { _, _ in .resolved("com.apple.Safari") }, codeHash: { _ in h1 })
+let signedSafari = BundleIdentifierCache(read: plistOnly, identify: { _, _ in .resolved(signed("com.apple.Safari", CodeSigningIdentity.appleTeam)) }, codeHash: { _ in h1 })
 _ = signedSafari.cachedMetadata(forExecutablePath: fakeSafari)
 signedSafari.waitForPendingResolves()
 expect(signedSafari.cachedMetadata(forExecutablePath: fakeSafari)?.claimedBundleIdentifier == nil,
@@ -421,9 +444,11 @@ expect(signedSafari.cachedMetadata(forExecutablePath: fakeSafari)?.claimedBundle
 
 // Matching: an unsigned claim can get a binary blocked, never let through.
 let matcher = RuleMatcher()
-func flow(signed: String?, claimed: String?, path: String = "/tmp/x/Safari.app/Contents/MacOS/Safari") -> Connection {
+func flow(signed: String?, claimed: String?, path: String = "/tmp/x/Safari.app/Contents/MacOS/Safari",
+          team: String? = nil) -> Connection {
     Connection(pid: 4242, processName: "Safari", processPath: path,
-               processBundleId: signed, claimedBundleId: claimed,
+               processBundleId: signed, processTeamId: signed == nil ? nil : (team ?? CodeSigningIdentity.appleTeam),
+               claimedBundleId: claimed,
                remoteHost: "example.com", remoteIP: "203.0.113.5", remotePort: 443, direction: .outgoing)
 }
 let allowSafari = Rule(processBundleId: "com.apple.Safari", action: .allow, priority: 100)
@@ -513,6 +538,110 @@ expect(decide(realSafari, [allowHigh, denyLow], .silentAllow).0 == .allow,
        "the real Safari still gets its higher-priority allow")
 expect(decide(flow(signed: nil, claimed: nil), [denySafari], .silentAllow).0 == .allow,
        "a binary with no claim at all is not caught by a bundle-id deny")
+
+// The signing team (#364): another Developer ID cannot sign its way into
+// Chrome's allow rules by using Chrome's identifier.
+let chromeTeam = "EQHXZ8M8AV", attackerTeam = "ATTACKER01"
+let chromeExe = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+let realChrome = flow(signed: "com.google.Chrome", claimed: nil, path: chromeExe, team: chromeTeam)
+let impostor = flow(signed: "com.google.Chrome", claimed: nil,
+                    path: "/Users/someone/Downloads/Chrome.app/Contents/MacOS/Chrome", team: attackerTeam)
+let allowChrome = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, action: .allow, priority: 100)
+let askChrome = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, action: .ask, priority: 100)
+let denyChrome = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam,
+                      remoteHost: "example.com", action: .deny, priority: 100)
+expect(decide(realChrome, [allowChrome]).0 == .allow, "Chrome signed by its own team gets its allow rule")
+expect(decide(impostor, [allowChrome]).0 == .ask,
+       "a binary another team signed with Chrome's id does not get Chrome's allow rule")
+expect(decide(impostor, [allowChrome], .silentDeny).0 == .deny,
+       "with no allow, the impostor falls to the default mode like any unknown app")
+expect(decide(impostor, [allowChrome]).1?.id == allowChrome.id,
+       "the allow skipped for another team is reported, so the extension can log why the user was asked")
+expect(!matcher.matches(rule: allowChrome, connection: impostor) && matcher.matches(rule: allowChrome, connection: realChrome),
+       "the one-rule matcher agrees on the team")
+expect(!matcher.matches(rule: askChrome, connection: impostor) && decide(impostor, [askChrome], .silentAllow).1?.id == askChrome.id,
+       "an ask rule needs the same team too")
+expect(decide(impostor, [denyChrome], .silentAllow).0 == .deny && matcher.matches(rule: denyChrome, connection: impostor),
+       "a deny for Chrome still blocks a binary any team signed with Chrome's id")
+expect(decide(impostor, [Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, remoteHost: "example.com",
+                              action: .allow, priority: 200), denyChrome], .silentAllow).0 == .deny,
+       "the impostor skips Chrome's allow and lands on Chrome's deny")
+let unboundAllow = Rule(processBundleId: "com.google.Chrome", action: .allow, priority: 100)
+expect(decide(realChrome, [unboundAllow]).0 == .allow,
+       "a rule that has not learned a team yet keeps matching the app it was made for")
+expect(decide(flow(signed: "com.apple.Safari", claimed: nil, team: attackerTeam),
+              [Rule(processBundleId: "com.apple.Safari", processTeamId: CodeSigningIdentity.appleTeam, action: .allow)]).0 == .ask,
+       "a rule bound to Apple only matches Apple's own code")
+expect(decide(flow(signed: "com.apple.Safari", claimed: nil),
+              [Rule(processBundleId: "com.apple.Safari", processTeamId: CodeSigningIdentity.appleTeam, action: .allow)]).0 == .allow,
+       "Apple's own Safari matches a rule bound to Apple")
+
+// Learning the team.
+typealias Sighting = RuleSigningTeam.Sighting
+let pathBound = Rule(processBundleId: "com.google.Chrome", processPath: chromeExe, action: .allow)
+let otherApp = Rule(processBundleId: "org.example.other", action: .allow)
+let alreadyBound = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, action: .allow)
+let byPath = Rule(processPath: chromeExe, action: .allow)
+let start = [unboundAllow, pathBound, otherApp, alreadyBound, byPath]
+expect(RuleSigningTeam.teamlessBundleIds(start) == ["com.google.Chrome", "org.example.other"],
+       "the helper knows which bundle ids are still waiting for a team")
+let first = RuleSigningTeam.learn(rules: start, from: [Sighting(bundleId: "com.google.Chrome", team: chromeTeam, processPath: chromeExe)])
+expect(first?.rules[0].processTeamId == chromeTeam && first?.rules[1].processTeamId == chromeTeam,
+       "rules for Chrome learn Chrome's team the first time it is seen")
+expect(first?.rules[2].processTeamId == nil && first?.rules[3] == alreadyBound && first?.rules[4] == byPath,
+       "rules for other apps, rules that know their team and path-only rules are left alone")
+expect(first?.taught == [Sighting(bundleId: "com.google.Chrome", team: chromeTeam, processPath: chromeExe)],
+       "the helper is told which sighting taught a team")
+let elsewhere = RuleSigningTeam.learn(rules: [pathBound], from: [Sighting(bundleId: "com.google.Chrome", team: attackerTeam,
+                                                                          processPath: "/tmp/Chrome.app/Contents/MacOS/Chrome")])
+expect(elsewhere == nil, "a rule that names a path does not learn from a process somewhere else")
+let learned = first!.rules
+expect(RuleSigningTeam.learn(rules: learned, from: [Sighting(bundleId: "com.google.Chrome", team: attackerTeam,
+                                                             processPath: chromeExe)]) == nil,
+       "a rule that learned its team never takes another")
+expect(decide(impostor, [learned[0]]).0 == .ask && decide(realChrome, [learned[0]]).0 == .allow,
+       "once learned, the impostor is asked about and Chrome still gets its allow")
+let fromObservation = RuleSigningTeam.Sighting(FlowObservation(connection: realChrome))
+expect(fromObservation == Sighting(bundleId: "com.google.Chrome", team: chromeTeam, processPath: chromeExe),
+       "an observation from the extension carries the team")
+expect(RuleSigningTeam.Sighting(FlowObservation(connection: spoof)) == nil,
+       "an unsigned claim never teaches a team")
+let roundTrip = try! FreeSnitchWireCodec.decode(FlowObservation.self,
+                                                from: FreeSnitchWireCodec.encode(FlowObservation(connection: realChrome)))
+expect(roundTrip.processTeamId == chromeTeam, "the team survives the trip from the extension to the helper")
+let pending = PendingAlertDescriptor(id: UUID(), connection: realChrome, expiresAt: Date().addingTimeInterval(60))
+let answered = try! PendingAlertRuleFactory.rule(for: pending, answer: PendingAlertAnswer(allow: true, scope: .domain, remember: .forever),
+                                                 profile: "always")
+expect(answered?.processTeamId == chromeTeam, "a rule made from an alert records the app's team")
+expect(RuleSigningTeam.label(nil).hasPrefix("Not known yet") && RuleSigningTeam.label("apple") == "Apple"
+       && RuleSigningTeam.label(chromeTeam) == "Team EQHXZ8M8AV", "the Rules list names the signer plainly")
+
+// The store: an existing database gains the column and keeps its rules.
+let dbPath = NSTemporaryDirectory() + "freesnitch-team-\(UUID().uuidString).sqlite"
+var old: OpaquePointer?
+sqlite3_open(dbPath, &old)
+sqlite3_exec(old, """
+CREATE TABLE rules (id TEXT PRIMARY KEY, process_bundle_id TEXT, process_path TEXT, process_name TEXT, remote_host TEXT,
+  remote_ip TEXT, remote_port INTEGER, direction TEXT, action TEXT, scope TEXT, priority INTEGER, profile TEXT,
+  group_name TEXT, notes TEXT, enabled INTEGER, temporary INTEGER, created_at REAL, expires_at REAL, last_used_at REAL,
+  hit_count INTEGER);
+INSERT INTO rules VALUES ('\(allowSafari.id.uuidString)', 'com.google.Chrome', NULL, 'Chrome', 'example.com', NULL, NULL,
+  'outgoing', 'allow', 'domain', 100, 'always', NULL, NULL, 1, 0, 0, NULL, NULL, 3);
+""", nil, nil, nil)
+sqlite3_close(old)
+let store = try! RuleStore(path: dbPath)
+let migrated = store.allRules()
+expect(migrated.count == 1 && migrated[0].processBundleId == "com.google.Chrome" && migrated[0].processTeamId == nil
+       && migrated[0].hitCount == 3, "an existing rule survives the new column, with no team yet")
+var bound = migrated[0]
+bound.processTeamId = chromeTeam
+try! store.upsertRule(bound)
+expect(store.allRules().first?.processTeamId == chromeTeam, "a learned team is stored")
+expect((try? RuleStore(path: dbPath))?.allRules().first?.processTeamId == chromeTeam,
+       "opening the store again keeps the column and the team")
+try? FileManager.default.removeItem(atPath: dbPath)
+let exported = try! RuleExportCodec.decode(RuleExportCodec.encode([allowChrome])).rules
+expect(exported.first?.processTeamId == chromeTeam, "an exported rule keeps its team")
 
 print("code signing harness: all \(checks) checks passed")
 SWIFT

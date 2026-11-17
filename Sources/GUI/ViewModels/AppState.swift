@@ -755,6 +755,7 @@ final class AppState: ObservableObject {
             }
             let rule = Rule(
                 processBundleId: alert.connection.processBundleId,
+                processTeamId: alert.connection.processTeamId,
                 processPath: alert.connection.processPath,
                 processName: alert.connection.processName,
                 remoteHost: scopedHost,

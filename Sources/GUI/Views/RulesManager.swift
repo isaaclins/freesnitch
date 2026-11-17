@@ -1055,6 +1055,7 @@ struct RulesManagerView: View {
                 infoField("Process", r.displayProcessName)
                 if let p = r.processPath, !p.isEmpty { infoField("Path", p) }
                 if let b = r.processBundleId, !b.isEmpty { infoField("Bundle ID", b) }
+                if let b = r.processBundleId, !b.isEmpty { infoField("Signed by", RuleSigningTeam.label(r.processTeamId)) }
                 infoField("Host", ruleHost(r))
                 if let port = r.remotePort, port > 0 { infoField("Port", "\(port)") }
             }

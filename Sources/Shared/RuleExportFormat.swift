@@ -224,6 +224,7 @@ public enum RuleExportCodec {
             }
             for (label, value) in [("profile", rule.profile as String?),
                                    ("process bundle id", rule.processBundleId),
+                                   ("process team id", rule.processTeamId),
                                    ("process path", rule.processPath),
                                    ("process name", rule.processName),
                                    ("remote host", rule.remoteHost),

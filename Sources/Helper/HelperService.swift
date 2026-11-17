@@ -207,6 +207,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let diagnosticsLock = NSLock()
     private var mode: AppMode = .alert
     private var policyGeneration: UInt64 = 0
+    /// Bundle ids some stored rule has not learned the signing team for yet
+    /// (#364). Nil means not computed since the last rule change. Guarded by
+    /// `policyQueue`.
+    private var teamlessBundleIds: Set<String>?
+    /// Sightings that taught no rule anything since the last rule change (a
+    /// rule for that id names another path), so they are not tried again on
+    /// every observation batch. Guarded by `policyQueue`.
+    private var fruitlessSightings = Set<RuleSigningTeam.Sighting>()
 
     init(listener: NSXPCListener) throws {
         let dbDir = "/Library/Application Support/FreeSnitch"
@@ -685,6 +693,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func mutatePolicy(_ change: (inout RuleStore.PolicyDraft) throws -> Void) throws -> SharedRuleBridge.Snapshot {
         try policyQueue.sync {
             let state = try store.mutateActivePolicy(change)
+            teamlessBundleIds = nil
+            fruitlessSightings.removeAll()
             adoptLocked(state)
             // Mode and rules belong to the same committed generation, so they
             // are published together. Assigning them one after the other left a
@@ -1114,10 +1124,66 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             let batch = try FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: observationBatch)
             try batch.validate(payloadBytes: observationBatch.count)
             recentNames.note(batch.observations)
+            learnSigningTeams(from: batch.observations)
             enqueueObservations(batch.observations, reply: reply)
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
             reply(false, error.localizedDescription)
+        }
+    }
+
+    private struct NothingLearned: Error {}
+
+    /// Records the team that signed an app on the rules for its bundle id that
+    /// do not know it yet (#364), the first time the extension sees that app
+    /// signed. From then on an allow or ask rule only matches that team's
+    /// code. Cheap when there is nothing to learn: one set lookup per signed
+    /// observation, no database read.
+    private func learnSigningTeams(from observations: [FlowObservation]) {
+        var sightings: [RuleSigningTeam.Sighting] = []
+        var seen = Set<RuleSigningTeam.Sighting>()
+        for observation in observations {
+            if let sighting = RuleSigningTeam.Sighting(observation), seen.insert(sighting).inserted {
+                sightings.append(sighting)
+            }
+        }
+        guard !sightings.isEmpty else { return }
+        sightings = policyQueue.sync {
+            if teamlessBundleIds == nil {
+                teamlessBundleIds = RuleSigningTeam.teamlessBundleIds(store.allRules())
+            }
+            return sightings.filter {
+                teamlessBundleIds?.contains($0.bundleId) == true && !fruitlessSightings.contains($0)
+            }
+        }
+        guard !sightings.isEmpty else { return }
+        var taught: [RuleSigningTeam.Sighting] = []
+        do {
+            _ = try mutatePolicy { draft in
+                guard let learned = RuleSigningTeam.learn(rules: draft.rules, from: sightings) else {
+                    throw NothingLearned()
+                }
+                draft.rules = learned.rules
+                taught = learned.taught
+            }
+        } catch is NothingLearned {
+            policyQueue.sync {
+                if fruitlessSightings.count >= 4096 { fruitlessSightings.removeAll() }
+                fruitlessSightings.formUnion(sightings)
+            }
+            return
+        } catch {
+            PSLog.error(PSLog.helper, "the signing team of an app could not be saved on its rules: \(error.localizedDescription)")
+            return
+        }
+        for sighting in taught {
+            PSLog.info(PSLog.helper, "Rules for \(sighting.bundleId) now only allow it when signed by \(RuleSigningTeam.label(sighting.team)), the signer seen at \(sighting.processPath).")
+        }
+        do { try applyRulesIfEnforcing() } catch {
+            PSLog.error(PSLog.pf, "the learned signing team could not be applied to the pf anchor: \(error.localizedDescription)")
+        }
+        _ = broadcast { client in
+            client.notifyLog(level: "info", message: AppConstants.ruleSigningTeamsLearnedLogMessage)
         }
     }
 

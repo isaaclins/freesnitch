@@ -212,6 +212,7 @@ public final class RuleStore: @unchecked Sendable {
         );
         """
         try exec(ddl)
+        try addRuleTeamColumnIfMissing()
         try seedProfiles()
         try seedBlocklists()
         try migrateLegacyRuleProfiles()
@@ -248,6 +249,23 @@ public final class RuleStore: @unchecked Sendable {
             BlocklistInfo(name: "Peter Lowe", url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext")
         ]
         for b in defaults { try insertBlocklistIfMissing(b) }
+    }
+
+    /// The signing team a bundle-id rule is bound to (#364). Older databases
+    /// get the column empty: their rules learn the team the first time their
+    /// app is seen (`recordSigningTeam`). It is appended, so `SELECT *` reads
+    /// it at index 20.
+    private func addRuleTeamColumnIfMissing() throws {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(rules);", -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "RuleStore", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "could not read the rules table's columns"])
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if text(stmt, 1) == "process_team_id" { return }
+        }
+        try exec("ALTER TABLE rules ADD COLUMN process_team_id TEXT;")
     }
 
     /// Rules written before profiles became real used `default` for the one
@@ -554,8 +572,8 @@ public final class RuleStore: @unchecked Sendable {
         INSERT OR REPLACE INTO rules(
             id, process_bundle_id, process_path, process_name, remote_host, remote_ip,
             remote_port, direction, action, scope, priority, profile, group_name, notes,
-            enabled, temporary, created_at, expires_at, last_used_at, hit_count
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+            enabled, temporary, created_at, expires_at, last_used_at, hit_count, process_team_id
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
         """
         try executeLocked(sql) { stmt in
             sqlite3_bind_text(stmt, 1, r.id.uuidString, -1, SQLITE_TRANSIENT)
@@ -578,6 +596,7 @@ public final class RuleStore: @unchecked Sendable {
             if let e = r.expiresAt { sqlite3_bind_double(stmt, 18, e.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 18) }
             if let l = r.lastUsedAt { sqlite3_bind_double(stmt, 19, l.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 19) }
             sqlite3_bind_int(stmt, 20, Int32(r.hitCount))
+            bindOpt(stmt, 21, r.processTeamId)
         }
     }
 
@@ -1568,7 +1587,8 @@ public final class RuleStore: @unchecked Sendable {
         let exp: Date? = sqlite3_column_type(stmt, 17) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
         let last: Date? = sqlite3_column_type(stmt, 18) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 18))
         let hits = Int(sqlite3_column_int(stmt, 19))
-        return Rule(id: id, processBundleId: bundleId, processPath: path, processName: name, remoteHost: host, remoteIP: ip, remotePort: port, direction: dir, action: action, scope: scope, priority: priority, profile: profile, groupName: group, notes: notes, enabled: enabled, temporary: temp, createdAt: created, expiresAt: exp, lastUsedAt: last, hitCount: hits)
+        let team = sqlite3_column_count(stmt) > 20 ? textOpt(stmt, 20) : nil
+        return Rule(id: id, processBundleId: bundleId, processTeamId: team, processPath: path, processName: name, remoteHost: host, remoteIP: ip, remotePort: port, direction: dir, action: action, scope: scope, priority: priority, profile: profile, groupName: group, notes: notes, enabled: enabled, temporary: temp, createdAt: created, expiresAt: exp, lastUsedAt: last, hitCount: hits)
     }
     private func readConn(_ stmt: OpaquePointer?) -> Connection? {
         let id = UUID(uuidString: text(stmt, 0)) ?? UUID()

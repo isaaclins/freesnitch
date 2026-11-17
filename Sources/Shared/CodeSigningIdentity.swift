@@ -33,6 +33,30 @@ public enum CodeSigningIdentity {
     enum Signer: Equatable {
         case apple
         case team(String)
+
+        /// How a rule records who signed its app (#364): the team id, or
+        /// `appleTeam` for Apple's own code, which carries none.
+        var ruleTeam: String {
+            switch self {
+            case .apple: return CodeSigningIdentity.appleTeam
+            case .team(let team): return team
+            }
+        }
+    }
+
+    /// The signing team recorded for Apple's own code. A real team id is ten
+    /// upper-case letters and digits, so this can never be one.
+    public static let appleTeam = "apple"
+
+    /// A bundle id rules may match, and the team that signed it (#364).
+    public struct SignedBundle: Hashable, Sendable {
+        public let identifier: String
+        public let team: String
+
+        public init(identifier: String, team: String) {
+            self.identifier = identifier
+            self.team = team
+        }
     }
 
     struct Signed: Equatable {
@@ -118,13 +142,15 @@ public enum CodeSigningIdentity {
 
     enum Resolution: Equatable {
         case noBundle
-        case resolved(String?)
+        case resolved(SignedBundle?)
         case unavailable
 
-        var bundleIdentifier: String? {
-            if case .resolved(let id) = self { return id }
+        var signed: SignedBundle? {
+            if case .resolved(let signed) = self { return signed }
             return nil
         }
+
+        var bundleIdentifier: String? { signed?.identifier }
     }
 
     /// Pure decision, kept apart from the Security calls so it can be tested.
@@ -135,7 +161,7 @@ public enum CodeSigningIdentity {
         case .untrusted:
             return .resolved(nil)
         case .trusted(let own):
-            return .resolved(acceptable(own) ? own.identifier : nil)
+            return .resolved(acceptable(own) ? SignedBundle(identifier: own.identifier, team: own.signer.ruleTeam) : nil)
         }
     }
 

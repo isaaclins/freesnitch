@@ -29,6 +29,13 @@ public enum AppMode: String, Codable, CaseIterable, Sendable {
 public struct Rule: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var processBundleId: String?
+    /// Who signed the app this rule's bundle id was made for (#364): its team
+    /// id, or `CodeSigningIdentity.appleTeam` for Apple's own code. An allow
+    /// or ask rule only matches a process signed by this team, so another
+    /// developer cannot sign a binary with the app's identifier and inherit
+    /// its rules. Nil until known: a rule from before #364, or one written
+    /// by hand, learns it the first time its app is seen.
+    public var processTeamId: String?
     public var processPath: String?
     public var processName: String?
     public var remoteHost: String?
@@ -51,6 +58,7 @@ public struct Rule: Identifiable, Codable, Hashable, Sendable {
     public init(
         id: UUID = UUID(),
         processBundleId: String? = nil,
+        processTeamId: String? = nil,
         processPath: String? = nil,
         processName: String? = nil,
         remoteHost: String? = nil,
@@ -72,6 +80,7 @@ public struct Rule: Identifiable, Codable, Hashable, Sendable {
     ) {
         self.id = id
         self.processBundleId = processBundleId
+        self.processTeamId = processTeamId
         self.processPath = processPath
         self.processName = processName
         self.remoteHost = remoteHost
@@ -115,6 +124,10 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     /// (#351). The only bundle id an allow or ask rule matches, and the one
     /// new rules are written with.
     public var processBundleId: String?
+    /// The team that signed `processBundleId` (#364), or
+    /// `CodeSigningIdentity.appleTeam` for Apple's own code. Nil exactly when
+    /// there is no signed bundle id.
+    public var processTeamId: String?
     /// The bundle id the app's unsigned Info.plist claims, when it differs
     /// from `processBundleId` or there is no signed one. Anyone can write it,
     /// so it can only ever make a deny rule match: claiming another app's id
@@ -150,6 +163,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         processName: String,
         processPath: String,
         processBundleId: String? = nil,
+        processTeamId: String? = nil,
         claimedBundleId: String? = nil,
         localPort: Int = 0,
         remoteHost: String = "",
@@ -173,6 +187,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         self.processName = processName
         self.processPath = processPath
         self.processBundleId = processBundleId
+        self.processTeamId = processTeamId
         self.claimedBundleId = claimedBundleId
         self.localPort = localPort
         self.remoteHost = remoteHost
@@ -460,6 +475,9 @@ public struct AppConstants {
     /// Emitted by the helper when the active profile changes, so a connected
     /// GUI resynchronizes from the helper-owned snapshot instead of guessing.
     public static let profilePolicyChangedLogMessage = "Active profile policy changed; resynchronizing."
+    /// Sent when rules learned the team that signs their app (#364), so the
+    /// GUI hands the extension the policy that carries it.
+    public static let ruleSigningTeamsLearnedLogMessage = "Rules learned the signing team of their app; resynchronizing."
 
     public static let helperKickstartCommand =
         "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
