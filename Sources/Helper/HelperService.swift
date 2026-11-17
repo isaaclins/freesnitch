@@ -836,7 +836,6 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 throw conflict
             }
             if let plan { PSLog.info(PSLog.helper, plan.logSummary) }
-            if let plan { PSLog.info(PSLog.helper, plan.logSummary) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()

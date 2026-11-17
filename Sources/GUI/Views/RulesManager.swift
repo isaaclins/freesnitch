@@ -1359,7 +1359,12 @@ struct RulesManagerView: View {
         if plan.removed.isEmpty {
             lines.append("No rule there is lost: every stored rule in \(profiles.count == 1 ? "that profile" : "those profiles") is in the file.")
         } else {
-            lines.append("\(Self.rulesCount(plan.removed.count)) there \(plan.removed.count == 1 ? "is" : "are") not in the file and will be deleted.")
+            // Name them, the way the table does, so the user sees which
+            // rules go and not only how many.
+            let shown = plan.removed.prefix(5).map { "\(Self.describe($0)) (\(Self.profileLabel($0.profile)))" }
+            let more = plan.removed.count > shown.count ? "\nand \(plan.removed.count - shown.count) more" : ""
+            lines.append("\(Self.rulesCount(plan.removed.count)) there \(plan.removed.count == 1 ? "is" : "are") not in the file and will be deleted:\n"
+                         + shown.joined(separator: "\n") + more)
         }
         if !plan.moved.isEmpty {
             let from = Set(plan.moved.map(\.profile)).sorted().map(Self.profileLabel)

@@ -29,7 +29,7 @@ grep -Fq 'allRulesInEveryProfile' "$RULES_MANAGER" \
 pass "the app's export and import read every profile's rules from the helper"
 
 # The helper's import must go through the plan, never assign the file wholesale.
-if grep -Fq 'draft.rules = rules }' "$HELPER"; then
+if grep -Eq 'draft\.rules[[:space:]]*=[[:space:]]*rules[[:space:]]*\}' "$HELPER"; then
   fail "the helper import still replaces the whole rule table with the file"
 fi
 grep -Fq 'plan = try RuleImportPlan.apply(imported: rules,' "$HELPER" \

@@ -913,16 +913,39 @@ final class HelperClient: NSObject, ObservableObject {
             completion(false, "Could not encode the rule batch within the transport limits.")
             return
         }
-        guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+        let lock = NSLock()
+        var finished = false
+        var timeoutWork: DispatchWorkItem?
+        let finish: (Bool, String?) -> Void = { ok, message in
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            lock.unlock()
+            timeoutWork?.cancel()
+            Task { @MainActor in completion(ok, message) }
+        }
+        // A helper from an older build does not know this request and drops
+        // it without answering, so the import must not wait forever (#247).
+        let work = DispatchWorkItem {
+            finish(false, "The helper did not answer the import within 30 seconds. It may be an older version: run `\(AppConstants.helperKickstartCommand)`, then check the rule list and import again.")
+        }
+        timeoutWork = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: work)
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            finish(false, "Could not import the rules: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+        }) as? HelperProtocol else {
+            finish(false, "The FreeSnitch helper is not connected.")
             return
         }
         guard proxy.replaceRules != nil else {
-            completion(false, "The running helper does not support atomic rule replacement. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(false, "The running helper does not support atomic rule replacement. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
             return
         }
         proxy.replaceRules?(rulesJSON: data, expectedRemovedIDsJSON: removedData) { ok, message in
-            Task { @MainActor in completion(ok, message) }
+            finish(ok, message)
         }
     }
 
