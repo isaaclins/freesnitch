@@ -124,8 +124,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // Turned on outside the app: turn it on as the app's own switch
             // does, so the current rules are saved again and the firewall
             // shows as active once that save went through (#361). A build
-            // without the extension only saves the rules, as before.
-            if hasEmbeddedExtension {
+            // without the extension only saves the rules, as before, and so
+            // does an activation still waiting for approval or running: it
+            // turns the filter on and reports the state itself.
+            if hasEmbeddedExtension && status != .needsApproval && status != .activating {
                 enableFilter(fromSettings: true)
             } else {
                 state?.syncSharedRules()
@@ -375,6 +377,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 // Before the cycle may drop it: a removal of the saved policy
                 // that fails while the filter isn't in use shows no banner (#349).
                 let removalQueued = self.persistenceCycle.queue.peekNewest == SharedRuleBridge.bootSnapshotRemoval
+                // Turned on in System Settings and turned off or removed there
+                // again before this load: what is set there wins, so this
+                // cycle neither turns it back on nor recreates it (#361).
+                if loadError == nil && self.turnOnFromSettings && self.persistenceCycle.enableRequested
+                    && (mgr.providerConfiguration == nil || !mgr.isEnabled) {
+                    self.persistenceCycle.dropEnableRequest()
+                }
                 let decision = self.persistenceCycle.afterLoad(
                     load, loadFailed: loadError != nil,
                     configurationExists: mgr.providerConfiguration != nil,
@@ -420,7 +429,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     self.filterOff.turnedOff(turnOnPending: false)
                     // Removed outside the app before the change notice came:
                     // nothing filters any more (#361).
-                    if self.filterConfigurationActive { self.showNotFiltering() }
+                    if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }
                     return
                 case .stop(.cancelledDuringLoad):
                     self.endPersistenceTurn()
@@ -435,16 +444,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     self.carryOut(next, removal: true)
                     return
                 }
-                // Turned on in System Settings and off there again before
-                // this load: what is set there wins, the save keeps it off and
-                // reports no turn-on (#361).
-                let turnedOffInSettings = save.enable && self.turnOnFromSettings
-                    && mgr.providerConfiguration != nil && !mgr.isEnabled
-                if !save.enable || turnedOffInSettings {
+                if !save.enable {
                     self.noticeFilterOff(mgr)
                 }
 
-                let shouldEnable = save.enable && !turnedOffInSettings
+                let shouldEnable = save.enable
                 let removesBootSnapshot = save.removesSavedPolicy
                 // What the preferences hold, put back on the shared manager if
                 // turning the filter on fails (#345). Every later operation

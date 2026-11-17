@@ -516,16 +516,16 @@ printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
   || fail "turning the filter on in System Settings does not save the current rules again"
 # Turned on there, the app turns it on as its own switch does, so the status
 # says active once the current rules are saved (#361).
-printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension {' \
+printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && status != .needsApproval && status != .activating {' \
   || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
-grep -F 'let shouldEnable = save.enable' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq '&& !turnedOffInSettings' \
-  && grep -A1 -F 'let turnedOffInSettings = save.enable && self.turnOnFromSettings' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq '!mgr.isEnabled' \
+grep -A2 -F 'if loadError == nil && self.turnOnFromSettings && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
+    | tr -d '\n' | grep -Fq '&& (mgr.providerConfiguration == nil || !mgr.isEnabled) {                    self.persistenceCycle.dropEnableRequest()' \
   && grep -Fq 'enableFilter(fromSettings: true)' "$SYSTEM_EXTENSION_MANAGER" \
   || fail "a turn-on that follows System Settings turns the filter back on after it was turned off there again (#361)"
 clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
 printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if filterConfigurationActive && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
   || fail "turning the filter off in System Settings leaves the app saying the firewall is active (#361)"
-grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive { self.showNotFiltering() }' \
+grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' \
   || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"
 printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \
   || fail "finding the filter off leaves an earlier could-not-save banner up"
