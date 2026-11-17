@@ -83,6 +83,24 @@ public enum AppBundleIdentity {
         }
     }
 
+    /// The Info.plist of the app bundle at `appPath`.
+    ///
+    /// A Mac app keeps it in `Contents/Info.plist`. An iPhone or iPad app
+    /// running on an Apple silicon Mac sits inside a wrapper
+    /// (`X.app/Wrapper/X.app/X`) and keeps a shallow iOS bundle, with its
+    /// Info.plist at the bundle root and no `Contents` folder. This is the
+    /// same check CFBundle makes: a `Contents` folder means a Mac bundle.
+    public static func infoPlistPath(forAppPath appPath: String) -> String {
+        let app = appPath as NSString
+        var isDirectory: ObjCBool = false
+        let contents = app.appendingPathComponent("Contents")
+        if !FileManager.default.fileExists(atPath: contents, isDirectory: &isDirectory) || !isDirectory.boolValue {
+            let shallow = app.appendingPathComponent("Info.plist")
+            if FileManager.default.fileExists(atPath: shallow) { return shallow }
+        }
+        return app.appendingPathComponent("Contents/Info.plist")
+    }
+
     /// Reads an app's `Contents/Info.plist` directly and returns its build
     /// identity. An app without a build number is represented by its marketing
     /// version rather than by an invented build number.

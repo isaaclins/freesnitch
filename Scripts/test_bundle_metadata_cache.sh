@@ -189,7 +189,7 @@ xcrun swiftc -O \
   -sdk "$(xcrun --show-sdk-path)" \
   -target arm64-apple-macos13.0 \
   -o "$TMP/build/run" \
-  "$TMP/cache.swift" "$TMP/main.swift"
+  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$TMP/cache.swift" "$TMP/main.swift"
 
 "$TMP/build/run" "$TMP/apps"
 printf 'bundle metadata cache: PASS\n'
