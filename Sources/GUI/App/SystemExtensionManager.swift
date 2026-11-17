@@ -169,9 +169,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// failure paths: an uninstall that stalls because a preferences call
     /// errored would be worse than one that continues and reports.
     private func removeFilterConfiguration(completion: @escaping () -> Void) {
+        unsavableLogged = false
         cancelPendingPersistence()
         filterTurnOffs &+= 1
-        unsavableLogged = false
         enableFilterRequested = false
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
@@ -383,6 +383,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 configuration.filterPackets = false
                 let removesBootSnapshot = snapshotData == SharedRuleBridge.bootSnapshotRemoval
                 let hadBootSnapshot = configuration.vendorConfiguration?[SharedRuleBridge.bootSnapshotVendorConfigurationKey] != nil
+                if removesBootSnapshot && !hadBootSnapshot && !shouldEnable {
+                    // Nothing is saved to remove: every rule edit over the
+                    // limit would otherwise rewrite the preferences unchanged.
+                    self.endPersistenceCycle()
+                    if self.persistenceQueue.hasPending {
+                        self.schedulePersistence(immediate: true)
+                    }
+                    return
+                }
                 if let snapshotData {
                     var vendorConfiguration = configuration.vendorConfiguration ?? [:]
                     if removesBootSnapshot {
@@ -415,7 +424,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                   message: "The filter was turned off while it was being turned on; it stays off.")
                         }
                         if let saveError {
-                            if self.persistenceCancellations == cancellationsAtLoad {
+                            if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
+                                // A removal while the filter isn't in use: no
+                                // banner was shown for it, so none for this.
+                                os_log("Removing the saved boot policy failed: %{public}@", log: self.log, type: .info,
+                                       saveError.sentence)
+                            } else if self.persistenceCancellations == cancellationsAtLoad {
                                 // A failed removal is still about rules that
                                 // can't be kept: keep that reason and banner.
                                 self.recordPersistenceFailure("save", error: saveError,
@@ -547,13 +561,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     }
 
     private func disableFilter() {
+        // Turned back on while still over the limit is a new state: log it.
+        unsavableLogged = false
         cancelPendingPersistence()
         // Turning the filter on and then off before the helper answered must
         // not let that answer turn it back on.
         enableFilterRequested = false
         filterTurnOffs &+= 1
-        // Turned back on while still over the limit is a new state: log it.
-        unsavableLogged = false
         // A save cycle already loading or saving finishes first; this load
         // then sees what it wrote and the off is saved last (#309).
         filterPreferences.run { [weak self] done in
