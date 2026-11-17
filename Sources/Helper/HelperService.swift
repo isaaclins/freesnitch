@@ -881,7 +881,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             _ = try mutatePolicy { draft in
                 var updated = draft.rules
                 if let index = updated.firstIndex(where: { $0.id == rule.id }) {
-                    updated[index] = rule
+                    updated[index] = RuleSigningTeam.keepingLearnedTeam(rule, over: updated[index])
                 } else {
                     updated.append(rule)
                 }
@@ -1177,11 +1177,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             return
         }
         for sighting in taught {
-            PSLog.info(PSLog.helper, "Rules for \(sighting.bundleId) now only allow it when signed by \(RuleSigningTeam.label(sighting.team)), the signer seen at \(sighting.processPath).")
+            PSLog.info(PSLog.helper, "Allow and ask rules for \(sighting.bundleId) now only apply when it is signed by \(RuleSigningTeam.label(sighting.team)), the signer seen at \(sighting.processPath).")
         }
-        do { try applyRulesIfEnforcing() } catch {
-            PSLog.error(PSLog.pf, "the learned signing team could not be applied to the pf anchor: \(error.localizedDescription)")
-        }
+        // pf never sees a process, so it has nothing to reload: the extension
+        // is the only one that matches by team.
         _ = broadcast { client in
             client.notifyLog(level: "info", message: AppConstants.ruleSigningTeamsLearnedLogMessage)
         }

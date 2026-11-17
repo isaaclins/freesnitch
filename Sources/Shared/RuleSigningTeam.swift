@@ -30,9 +30,22 @@ public enum RuleSigningTeam {
         }
     }
 
-    /// True when the rule names an app by bundle id and has no team yet.
+    /// True when an allow or ask rule names an app by bundle id and has no
+    /// team yet. A deny rule matches the id from any team, so it has nothing
+    /// to learn.
     public static func needsTeam(_ rule: Rule) -> Bool {
-        !(rule.processBundleId ?? "").isEmpty && (rule.processTeamId ?? "").isEmpty
+        rule.action != .deny && !(rule.processBundleId ?? "").isEmpty && (rule.processTeamId ?? "").isEmpty
+    }
+
+    /// A rule saved over a stored one with the same id and bundle id keeps the
+    /// team the stored one learned. An edit made from a copy taken before the
+    /// team was learned must not reopen it to trust on first use.
+    public static func keepingLearnedTeam(_ incoming: Rule, over stored: Rule?) -> Rule {
+        guard let stored, (incoming.processTeamId ?? "").isEmpty, !(stored.processTeamId ?? "").isEmpty,
+              incoming.processBundleId == stored.processBundleId else { return incoming }
+        var kept = incoming
+        kept.processTeamId = stored.processTeamId
+        return kept
     }
 
     /// The bundle ids some rule is still waiting to learn a team for.

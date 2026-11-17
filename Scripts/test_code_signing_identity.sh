@@ -613,6 +613,19 @@ let pending = PendingAlertDescriptor(id: UUID(), connection: realChrome, expires
 let answered = try! PendingAlertRuleFactory.rule(for: pending, answer: PendingAlertAnswer(allow: true, scope: .domain, remember: .forever),
                                                  profile: "always")
 expect(answered?.processTeamId == chromeTeam, "a rule made from an alert records the app's team")
+let denyUnbound = Rule(processBundleId: "com.google.Chrome", action: .deny)
+expect(RuleSigningTeam.learn(rules: [denyUnbound], from: [Sighting(bundleId: "com.google.Chrome", team: chromeTeam,
+                                                                   processPath: chromeExe)]) == nil,
+       "a deny rule, which matches every team, learns no team")
+let staleCopy = unboundAllow
+var storedLearned = unboundAllow
+storedLearned.processTeamId = chromeTeam
+expect(RuleSigningTeam.keepingLearnedTeam(staleCopy, over: storedLearned).processTeamId == chromeTeam,
+       "saving a rule from a copy made before its team was learned keeps the learned team")
+var renamed = staleCopy
+renamed.processBundleId = "org.example.other"
+expect(RuleSigningTeam.keepingLearnedTeam(renamed, over: storedLearned).processTeamId == nil,
+       "a rule edited to name another app drops the old app's team")
 expect(RuleSigningTeam.label(nil).hasPrefix("Not known yet") && RuleSigningTeam.label("apple") == "Apple"
        && RuleSigningTeam.label(chromeTeam) == "Team EQHXZ8M8AV", "the Rules list names the signer plainly")
 
