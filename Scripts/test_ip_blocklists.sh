@@ -408,6 +408,7 @@ struct IPBlocklistHarness {
                         && !appPasses.contains { $0.hasPrefix("pass in quick") && $0.contains("203.0.113.60") },
                       "an app's incoming allow must be written without quick, got \(appPasses)")
         checks.expect(appPasses.contains("pass in proto { tcp udp } from 203.0.113.61")
+                        && !appPasses.contains { $0.hasPrefix("pass in quick") && $0.contains("203.0.113.61") }
                         && appPasses.contains("pass out quick proto { tcp udp } to 203.0.113.61"),
                       "an app's allow both ways must keep quick only on its outgoing half, got \(appPasses)")
         checks.expect(appPasses.contains("pass in quick proto { tcp udp } from 203.0.113.62"),
