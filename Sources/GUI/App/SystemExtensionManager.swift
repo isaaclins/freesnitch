@@ -161,11 +161,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func removeFilterConfiguration(completion: @escaping () -> Void) {
         cancelPendingPersistence()
         enableFilterRequested = false
-        filterPreferences.run { done in
-            let mgr = NEFilterManager.shared()
-            mgr.loadFromPreferences { [weak self] error in
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
                 DispatchQueue.main.async {
                     guard let self else { done(); completion(); return }
+                    let mgr = NEFilterManager.shared()
                     if error != nil {
                         self.recordFilterDiagnostic(state: "unknown",
                                                     detail: "Could not read the content filter preferences while removing them.")
@@ -476,11 +476,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         enableFilterRequested = false
         // A save cycle already loading or saving finishes first; this load
         // then sees what it wrote and the off is saved last (#309).
-        filterPreferences.run { done in
-            let mgr = NEFilterManager.shared()
-            mgr.loadFromPreferences { [weak self] error in
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
                 DispatchQueue.main.async {
                     guard let self else { done(); return }
+                    let mgr = NEFilterManager.shared()
                     guard error == nil else {
                         self.recordFilterDiagnostic(state: "unknown", detail: "Could not read the content filter preferences while disabling them.")
                         done()

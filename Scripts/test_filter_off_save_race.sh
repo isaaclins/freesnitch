@@ -172,8 +172,8 @@ printf 'filter off audit: passed on the real tree\n'
 
 SEM=Sources/GUI/App/SystemExtensionManager.swift
 mutate_and_expect_failure disable-unserialized "$SEM" \
-  $'        filterPreferences.run { done in\n            let mgr = NEFilterManager.shared()\n            mgr.loadFromPreferences { [weak self] error in\n                DispatchQueue.main.async {\n                    guard let self else { done(); return }\n                    guard error == nil' \
-  $'        do { let done = {}\n            let mgr = NEFilterManager.shared()\n            mgr.loadFromPreferences { [weak self] error in\n                DispatchQueue.main.async {\n                    guard let self else { done(); return }\n                    guard error == nil'
+  $'        // then sees what it wrote and the off is saved last (#309).\n        filterPreferences.run { [weak self] done in' \
+  $'        // then sees what it wrote and the off is saved last (#309).\n        do { let done = {}'
 mutate_and_expect_failure save-cycle-unserialized "$SEM" \
   'filterPreferences.run { [weak self] done in
             guard let self else { done(); return }
@@ -185,8 +185,16 @@ mutate_and_expect_failure disable-keeps-enable-request "$SEM" \
   'cancelPendingPersistence()'
 mutate_and_expect_failure restart-reenables-off-filter "$SEM" \
   'guard mgr.isEnabled else {' 'guard true else {'
+mutate_and_expect_failure writer-outside-line "$SEM" \
+  '    private func recordFilterDiagnostic(state: String, detail: String) {' \
+  $'    private func sneakyEnable() { NEFilterManager.shared().isEnabled = true }\n\n    private func recordFilterDiagnostic(state: String, detail: String) {'
+mutate_and_expect_failure restart-run-directly "$SEM" \
+  'restartFilterProvider()
+        }' \
+  'runFilterRestart(done: {})
+        }'
 mutate_and_expect_failure remove-unserialized "$SEM" \
-  $'        enableFilterRequested = false\n        filterPreferences.run { done in' \
+  $'        enableFilterRequested = false\n        filterPreferences.run { [weak self] done in' \
   $'        enableFilterRequested = false\n        do { let done = {}'
 
 printf 'filter off vs boot-policy save verification: PASS\n'

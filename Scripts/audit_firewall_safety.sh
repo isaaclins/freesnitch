@@ -412,9 +412,17 @@ for writer in 'private func flushPersistence()' 'private func disableFilter()' \
   printf '%s\n' "$writer_body" | grep -Fq 'filterPreferences.run {' \
     || fail "${writer} changes the content filter preferences without waiting for the other writers"
 done
-if [[ "$(grep -c 'NEFilterManager.shared()' "$SYSTEM_EXTENSION_MANAGER")" -ne 4 ]]; then
-  fail "a new NEFilterManager writer was added outside the serialized ones"
-fi
+outside_writers="$(awk '
+  /^    (private )?func / { fn = $0 }
+  /NEFilterManager\.shared\(\)/ {
+    if (fn !~ /func (disableFilter|removeFilterConfiguration|runPersistenceCycle|runFilterRestart)\(/) print NR
+  }' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -z "$outside_writers" ]] \
+  || fail "NEFilterManager is used outside the serialized writers (line ${outside_writers//$'\n'/, })"
+for runner in 'runPersistenceCycle()' 'runFilterRestart(done:'; do
+  [[ "$(grep -cF "$runner" "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
+    || fail "${runner%%(*} is called from somewhere other than its turn on the preferences line"
+done
 disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$disable_body" | grep -Fq 'enableFilterRequested = false' \
   || fail "turning the filter off leaves an enable request that the helper's answer can still act on"
