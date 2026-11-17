@@ -303,6 +303,10 @@ final class FilterDataProvider: NEFilterDataProvider {
         os_unfair_lock_lock(observationSignalLock)
         observationStopped = true
         os_unfair_lock_unlock(observationSignalLock)
+        // Let a queued live-policy record land before this instance goes
+        // away, so the next start compares against the policy it enforced
+        // last (#213). The write is one small file.
+        watermarkQueue.sync {}
         completionHandler()
     }
 

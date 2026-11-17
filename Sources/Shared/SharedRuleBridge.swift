@@ -69,6 +69,14 @@ public enum SharedRuleBridge {
             pendingData = nil
         }
 
+        /// Drop whatever is queued and invalidate every attempt already taken,
+        /// so a save in flight that fails later cannot be requeued. Used when
+        /// the filter is turned on, off, or removed.
+        public mutating func invalidateAll() {
+            generation += 1
+            pendingData = nil
+        }
+
         /// Put a snapshot whose save failed back in the queue, so the next
         /// flush retries it instead of leaving an older saved policy as the
         /// last word (#213). A request enqueued while that save was in flight

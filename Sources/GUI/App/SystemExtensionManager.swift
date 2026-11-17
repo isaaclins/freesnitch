@@ -357,7 +357,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func cancelPendingPersistence() {
         persistenceWorkItem?.cancel()
         persistenceWorkItem = nil
-        persistenceQueue.discardThrough(persistenceQueue.generation)
+        // Invalidates a save that is already in flight too: if it fails, it
+        // can no longer be put back and retried, so it can neither enable nor
+        // rewrite a filter the user just turned on, off or removed.
+        persistenceQueue.invalidateAll()
         persistenceRetryAttempts = 0
     }
 

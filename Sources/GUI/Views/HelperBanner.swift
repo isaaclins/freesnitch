@@ -28,8 +28,9 @@ struct HelperBanner: View {
             // like a healthy one: this state was computed and rendered nowhere
             // (#131). It stays on screen until it is resolved.
             if let info = BannerInfo(persistenceDegraded: state.filterPersistenceDegraded,
-                                     liveRulesReady: state.filterSnapshotStatus.isReady,
-                                     persistenceMessage: state.filterPersistenceMessage,
+                                     liveRulesReady: state.filterSnapshotStatus.isReady
+                                        && state.filterSnapshotStatus.generation == state.authoritativeSnapshotGeneration
+                                        && state.filterSnapshotStatus.epoch == state.authoritativeSnapshotEpoch,
                                      recoveryMessage: state.filterRecoveryMessage) {
                 banner(info)
             }
@@ -152,7 +153,8 @@ private struct BannerInfo {
     /// The extension accepted the policy but it could not be saved. Until a
     /// save succeeds, the next start refuses saved rules older than the ones
     /// it last enforced and fails open (#213).
-    init?(persistenceDegraded: Bool, liveRulesReady: Bool, persistenceMessage: String?, recoveryMessage: String?) {
+    /// The technical reason stays in the log; the banner says what it means.
+    init?(persistenceDegraded: Bool, liveRulesReady: Bool, recoveryMessage: String?) {
         guard persistenceDegraded || recoveryMessage != nil else { return nil }
         icon = "externaldrive.badge.exclamationmark"
         tint = Color.orange
@@ -161,10 +163,10 @@ private struct BannerInfo {
             : "The network filter needs attention"
         let base = persistenceDegraded
             ? (liveRulesReady
-                ? "The filter is enforcing your current rules, but they could not be saved for the next start. Send Rules Again tries to save them now."
-                : "Your current rules could not be saved for the next start. Send Rules Again tries to save them now.")
+                ? "The filter is using them now. After a restart it would allow everything until FreeSnitch sends them again."
+                : "After a restart the filter may start without them. Send Rules Again tries once more.")
             : ""
-        detail = [base, persistenceMessage, recoveryMessage]
+        detail = [base, recoveryMessage]
             .compactMap { $0?.isEmpty == false ? $0 : nil }
             .joined(separator: " ")
         action = BannerAction(title: "Send Rules Again") { state, _ in state.syncSharedRules() }

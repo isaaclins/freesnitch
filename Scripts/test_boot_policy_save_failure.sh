@@ -102,6 +102,17 @@ expect(!racing.requeueFailed(first), "a failed older save replaced a newer queue
 expect(racing.takeNewest()?.data == newer, "the newer queued policy was lost")
 print("boot save harness: a newer policy queued during the failed save wins")
 
+// 6b. The filter is turned on, off or removed while a save is in flight. When
+//     that save then fails, it must not come back: a retried old snapshot
+//     could otherwise enable the filter or rewrite a removed configuration.
+var cancelled = SharedRuleBridge.NewestWriteWinsQueue()
+cancelled.enqueue(encoded(withDeny))
+let inFlight = cancelled.takeNewest()!
+cancelled.invalidateAll()
+expect(!cancelled.requeueFailed(inFlight), "a save in flight during cancellation was requeued after it failed")
+expect(!cancelled.hasPending, "cancellation left a snapshot queued")
+print("boot save harness: cancelling drops the in-flight save too")
+
 // 7. A restarted helper opens a new session at a lower generation. Its saved
 //    policy outranks the old session's, and an older session's is refused.
 try extensionAcceptsLive(snapshot([], generation: 0, epoch: 4))
@@ -174,6 +185,12 @@ mutate_and_expect_failure drop-failed-save \
 mutate_and_expect_failure load-stale-boot-policy \
   Sources/NetExt/FilterDataProvider.swift \
   'watermark.supersedes(decoded)' 'false'
+mutate_and_expect_failure enable-keeps-retained-save \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'cancelPendingPersistence()\n        enableFilterRequested = true' 'enableFilterRequested = true'
+mutate_and_expect_failure stop-drops-record \
+  Sources/NetExt/FilterDataProvider.swift \
+  'watermarkQueue.sync {}' ''
 mutate_and_expect_failure forget-live-policy \
   Sources/NetExt/FilterDataProvider.swift \
   'if decision == .accepted { recordLiveWatermark(accepted) }' ''

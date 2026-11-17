@@ -376,6 +376,20 @@ require_text "$FILTER" "watermark.supersedes(decoded)" \
   "the extension can load a saved boot policy older than the last live policy it enforced"
 require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
   "the extension does not remember which live policy it last enforced"
+enable_body="$(awk '/private func enableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$enable_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "turning the filter on can save a snapshot kept for a retry instead of the helper's fresh answer"
+disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$disable_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a boot-policy retry can still run after the filter is turned off"
+remove_body="$(awk '/private func removeFilterConfiguration\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$remove_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a boot-policy retry can recreate the filter configuration after uninstall removed it"
+require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
+  "cancelling a boot-policy save does not invalidate a save already in flight"
+stop_body="$(awk '/override func stopFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$FILTER")"
+printf '%s\n' "$stop_body" | grep -Fq 'watermarkQueue.sync {}' \
+  || fail "the extension can stop before its live-policy record is written"
 watermark_check_line="$(grep -nF 'watermark.supersedes(decoded)' "$FILTER" | head -1 | cut -d: -f1 || true)"
 boot_assign_line="$(grep -nF 'snapshotOrigin = .boot' "$FILTER" | head -1 | cut -d: -f1 || true)"
 if [[ -z "$watermark_check_line" || -z "$boot_assign_line" || "$watermark_check_line" -gt "$boot_assign_line" ]]; then
