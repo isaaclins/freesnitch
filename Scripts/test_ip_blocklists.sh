@@ -474,13 +474,21 @@ struct IPBlocklistHarness {
 
         let v6Big = IPBlocklistSet(entries: (0..<4_096).map { String(format: "2001:db8:%x::/48", $0 * 2) })
         var v6Worst = 0
+        var v6Hits = 0
         let v6Probes = ["::1", "2001:db7:ffff::1", "ffff::1"] + (0..<8_192).map { String(format: "2001:db8:%x::1", $0) }
         for text in v6Probes {
             if let probe = IPBlocklistAddress.ipv6(text) {
-                v6Worst = max(v6Worst, v6Big.lookupProbes(ipv6: probe).probes)
+                let result = v6Big.lookupProbes(ipv6: probe)
+                v6Worst = max(v6Worst, result.probes)
+                if result.found { v6Hits += 1 }
+            } else {
+                checks.expect(false, "the IPv6 probe \(text) must parse")
             }
         }
         checks.expect(v6Big.rangeCount == 4_096, "distinct IPv6 /48s must stay distinct ranges, got \(v6Big.rangeCount)")
+        checks.expect(v6Hits == 4_096, "every even IPv6 /48 probe must hit and every odd one miss, got \(v6Hits) hits")
+        checks.expect(v6Worst >= maxSteps(v6Big.rangeCount) - 1,
+                      "an IPv6 lookup over \(v6Big.rangeCount) ranges took only \(v6Worst) steps, so the step counter is not counting")
         checks.expect(v6Worst <= maxSteps(v6Big.rangeCount),
                       "an IPv6 lookup over \(v6Big.rangeCount) ranges took \(v6Worst) steps, more than \(maxSteps(v6Big.rangeCount))")
         checks.note("lookup steps: at most \(tinyWorst) over \(tiny.rangeCount) ranges, at most \(bigWorst) over \(big.rangeCount) ranges (\(String(format: "%.2f", Double(bigTotal) / Double(addresses.count + missesV4.count))) average), at most \(v6Worst) over \(v6Big.rangeCount) IPv6 ranges")
