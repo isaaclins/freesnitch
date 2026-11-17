@@ -804,7 +804,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
-    func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
+    func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
             try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)
             let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
@@ -813,7 +813,29 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 reply(false, reason)
                 return
             }
-            _ = try mutatePolicy { draft in draft.rules = rules }
+            // Bounded by the rule batch limit: one ID per stored rule at most.
+            guard expectedRemovedIDsJSON.count <= RuleTransportBoundary.maximumEncodedRuleBatchBytes else {
+                reply(false, "the list of rules to delete is too large")
+                return
+            }
+            let expectedRemovedIDs = try JSONDecoder().decode([UUID].self, from: expectedRemovedIDsJSON)
+            // Only the profiles the file carries rules for are replaced. A
+            // profile the file does not mention keeps its rules, so a backup
+            // from an older build that held one profile cannot delete the
+            // others (#247). The plan is built from the stored rules inside
+            // the transaction, and every rule it deletes is logged by ID.
+            var plan: RuleImportPlan?
+            do {
+                _ = try mutatePolicy { draft in
+                    plan = try RuleImportPlan.apply(imported: rules,
+                                                    confirmedIDs: Set(expectedRemovedIDs),
+                                                    to: &draft)
+                }
+            } catch let conflict as RuleImportConflict {
+                PSLog.error(PSLog.helper, "rule import refused: \(conflict.localizedDescription)")
+                throw conflict
+            }
+            plan?.logLines.forEach { PSLog.notice(PSLog.helper, $0) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()

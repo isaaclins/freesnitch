@@ -20,8 +20,11 @@ import Foundation
     @objc optional func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void)
     /// Atomic replacement for the GUI import path. Older helpers do not have a
     /// safe replacement operation, so the GUI reports that rather than doing a
-    /// sequence of stale-prone removals.
-    @objc optional func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void)
+    /// sequence of stale-prone removals. `expectedRemovedIDsJSON` is a JSON
+    /// array of the rule IDs the user was told the import deletes or moves
+    /// (`RuleImportPlan.confirmedIDs`); the helper refuses the import when its
+    /// own plan would take away anything else (#247).
+    @objc optional func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void)
     func listRules(profile: String, reply: @escaping (Data) -> Void)
 
     func startMonitoring(reply: @escaping (Bool, String?) -> Void)
