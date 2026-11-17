@@ -292,6 +292,18 @@ mutate_and_expect_failure failed-load-drops-reason \
 mutate_and_expect_failure failed-removal-drops-reason \
   Sources/GUI/App/SystemExtensionManager.swift \
   'unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil' 'unsavable: nil'
+mutate_and_expect_failure removal-giveup-generic-message \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'let message = removal' 'let message = state?.filterPersistenceUnsavable != nil'
+mutate_and_expect_failure removal-giveup-logs-without-filter \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'if removal && state?.filterPersistenceUnsavable == nil {' 'if false {'
+mutate_and_expect_failure removal-retry-not-flagged \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'self.schedulePersistenceRetry(removal: removesBootSnapshot)' 'self.schedulePersistenceRetry(removal: false)'
+mutate_and_expect_failure removal-load-failure-banner \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'let removesBootSnapshot = self.persistenceQueue.peekNewest == SharedRuleBridge.bootSnapshotRemoval' 'let removesBootSnapshot = false'
 mutate_and_expect_failure banner-claims-rules-in-use \
   Sources/GUI/Views/HelperBanner.swift \
   'liveRulesReady ? "The filter is using them now." : nil' '"The filter is using them now."'

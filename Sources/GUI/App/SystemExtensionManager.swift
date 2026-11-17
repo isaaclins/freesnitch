@@ -328,10 +328,18 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 if let loadError {
                     self.endPersistenceCycle()
-                    // While the newest rules are over the limit, the pending
-                    // save is the removal: keep the over-limit banner (#340).
-                    self.recordPersistenceFailure("load", error: loadError,
-                                                  unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil)
+                    let removesBootSnapshot = self.persistenceQueue.peekNewest == SharedRuleBridge.bootSnapshotRemoval
+                    if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
+                        // A removal while the filter isn't in use: no banner
+                        // was shown for it, so none for this (#349).
+                        os_log("Loading the filter configuration to remove the saved boot policy failed: %{public}@",
+                               log: self.log, type: .info, loadError.sentence)
+                    } else {
+                        // While the newest rules are over the limit, the pending
+                        // save is the removal: keep the over-limit banner (#340).
+                        self.recordPersistenceFailure("load", error: loadError,
+                                                      unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil)
+                    }
                     if self.enableFilterRequested {
                         self.fail("filter load: \(loadError.localizedDescription)")
                         let hasNewerSnapshot = self.persistenceQueue.hasNewerWork(since: generationAtLoad)
@@ -345,7 +353,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                         // The snapshot was never taken, so it is still
                         // pending. Leaving the older saved policy as the last
                         // word is the bug in #213: try again.
-                        self.schedulePersistenceRetry()
+                        self.schedulePersistenceRetry(removal: removesBootSnapshot)
                     }
                     return
                 }
@@ -450,7 +458,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // Nothing newer arrived during the save, so
                                 // the saved policy is still older than the one
                                 // being enforced. Keep this one and retry.
-                                self.schedulePersistenceRetry()
+                                self.schedulePersistenceRetry(removal: removesBootSnapshot)
                             }
                         } else {
                             if removesBootSnapshot {
@@ -531,9 +539,18 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         persistenceRetry.reset()
     }
 
-    private func schedulePersistenceRetry() {
+    /// `removal` says the save that failed removes the saved boot policy
+    /// because the rules are over its limit; Send Rules Again can't fix that.
+    private func schedulePersistenceRetry(removal: Bool) {
         guard let delay = persistenceRetry.nextDelay() else {
-            let message = state?.filterPersistenceUnsavable != nil
+            if removal && state?.filterPersistenceUnsavable == nil {
+                // The filter isn't in use, so no banner was shown for this
+                // removal: keep it out of the activity log (#349).
+                os_log("The older saved rules could not be removed after %{public}ld retries. FreeSnitch tries again with the next rule change or when the app restarts.",
+                       log: log, type: .info, persistenceRetry.delays.count)
+                return
+            }
+            let message = removal
                 ? "The older saved rules could still not be removed after \(persistenceRetry.delays.count) retries. "
                     + "FreeSnitch tries again with the next rule change or when the app restarts."
                 : "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
