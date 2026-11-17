@@ -421,6 +421,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
                 let shouldEnable = save.enable
                 let removesBootSnapshot = save.removesSavedPolicy
+                // What the preferences hold, put back on the shared manager if
+                // turning the filter on fails (#345). Every later operation
+                // reloads first, so this is defensive: no path that ever skips
+                // the reload can save the failed attempt's enable.
+                let loadedEnabled = mgr.isEnabled
+                // A copy: the configuration below is changed in place.
+                let loadedConfiguration = mgr.providerConfiguration?.copy() as? NEFilterProviderConfiguration
+                let loadedDescription = mgr.localizedDescription
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
                 configuration.filterPackets = false
@@ -440,6 +448,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
+                        if saveError != nil && shouldEnable {
+                            // Before the next preferences operation may start.
+                            mgr.isEnabled = loadedEnabled
+                            mgr.providerConfiguration = loadedConfiguration
+                            mgr.localizedDescription = loadedDescription
+                        }
                         let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)
                         self.endPersistenceTurn()
                         // Turned off or removed while this enabling save
