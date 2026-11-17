@@ -84,6 +84,10 @@ check(!ok(lockedResult), "a folder the user can't write to reports a failure")
 check(try! fm.contentsOfDirectory(atPath: lockedApps.path).isEmpty, "a failed copy leaves no partial bundle")
 
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
+check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: "/Users/x")
+      && InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Applications/FreeSnitch.app"), home: "/Users/x")
+      && !InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Downloads/FreeSnitch.app"), home: "/Users/x"),
+      "Applications and ~/Applications count as installed, Downloads doesn't")
 
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
@@ -110,7 +114,10 @@ swiftc -O -o "$TMP/run" "$TMP/main.swift" "$TMP/stubs.swift" \
 
 # Static guards: the privileged removal never names FreeSnitch, and the
 # move never deletes the installed copy.
-grep -q 'FreeSnitch' <(awk '/private static let removeDaemon/,/"""$/' "$ROOT/Sources/GUI/App/LegacyPureSnitch.swift" | tail -n +2) \
+script="$(awk '/private static let removeDaemon = """/ { on = 1; next } on && /^    """$/ { exit } on' "$ROOT/Sources/GUI/App/LegacyPureSnitch.swift")"
+printf '%s\n' "$script" | grep -q 'launchctl bootout system/io.isaaclins.puresnitch.helper' \
+  || { echo "install location: FAIL: could not read the PureSnitch removal script" >&2; exit 1; }
+printf '%s\n' "$script" | grep -qi 'freesnitch' \
   && { echo "install location: FAIL: the PureSnitch removal script names FreeSnitch" >&2; exit 1; }
 echo "install location: PASS: the PureSnitch removal script never names FreeSnitch"
 if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination|installed)' "$ROOT/Sources/GUI/App/InstallLocation.swift"; then

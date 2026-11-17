@@ -773,7 +773,8 @@ commit_and_publish() {
 
   # Checksums come from the files being uploaded, so nobody copies a hash by
   # hand into the README or the site again (#370). Check a download with
-  # `shasum -a 256 -c SHA256SUMS.txt` in the folder it was saved to.
+  # `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder
+  # it was saved to.
   local sums="$BUILD_ROOT/SHA256SUMS.txt" sum_file
   : >"$sums"
   for sum_file in "$DMG_PATH" "$ZIP_PATH"; do

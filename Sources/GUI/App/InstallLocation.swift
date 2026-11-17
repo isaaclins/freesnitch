@@ -96,6 +96,13 @@ enum InstallLocation {
         return original.takeRetainedValue() as URL
     }
 
+    /// The same rule as HelperClient.isInApplicationsFolder, for any path.
+    static func isInApplications(_ url: URL, home: String = NSHomeDirectory()) -> Bool {
+        let path = url.resolvingSymlinksInPath().path
+        let userApps = (home as NSString).appendingPathComponent("Applications") + "/"
+        return path.hasPrefix("/Applications/") || path.hasPrefix(userApps)
+    }
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -121,6 +128,14 @@ extension InstallLocation {
             return false
         }
         guard !HelperClient.isInApplicationsFolder else { return false }
+        // Already in Applications but quarantined and put there without
+        // Finder, so macOS runs it translocated. Moving can't help; clearing
+        // the flag on that copy and reopening it does.
+        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original) {
+            clearQuarantine(at: original)
+            relaunch(at: original)
+            return true
+        }
         NSApp.activate(ignoringOtherApps: true)
         guard moveAlert().runModal() == .alertFirstButtonReturn else { return false }
         return moveToApplications()
@@ -139,8 +154,16 @@ extension InstallLocation {
     @discardableResult
     static func moveToApplications() -> Bool {
         let running = Bundle.main.bundleURL
+        // Where the user actually put it, not the translocated mirror.
+        let original = translocatedOriginal(of: running) ?? running
         let applications = URL(fileURLWithPath: "/Applications", isDirectory: true)
-        switch plan(source: running, applications: applications) {
+        let userApplications = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Applications"), isDirectory: true)
+        // A copy in ~/Applications counts as installed too, so the move never
+        // adds a second one.
+        let userPlan = plan(source: running, applications: userApplications)
+        let chosen: Plan
+        if case .existing = userPlan { chosen = userPlan } else { chosen = plan(source: running, applications: applications) }
+        switch chosen {
         case .existing(let installed, let isOlder):
             let alert = NSAlert()
             if isOlder {
@@ -149,7 +172,7 @@ extension InstallLocation {
                 alert.addButton(withTitle: "Show in Finder")
                 alert.addButton(withTitle: "Cancel")
                 if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.activateFileViewerSelecting([running, installed])
+                    NSWorkspace.shared.activateFileViewerSelecting([original, installed])
                 }
                 return false
             }
@@ -170,13 +193,13 @@ extension InstallLocation {
                 alert.addButton(withTitle: "Show in Finder")
                 alert.addButton(withTitle: "Cancel")
                 if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.activateFileViewerSelecting([running])
+                    NSWorkspace.shared.activateFileViewerSelecting([original])
                 }
                 return false
             case .success:
-                // A copy left in Downloads is clutter, and opening it later
-                // lands here again. A disk image can't be changed and is left.
-                let original = translocatedOriginal(of: running) ?? running
+                // A copy left in Downloads (or wherever it was) is clutter, and
+                // opening it later lands here again. A disk image can't be
+                // changed and is left.
                 if !isOnReadOnlyVolume(original) {
                     // Synchronous: the process quits right after this.
                     try? FileManager.default.trashItem(at: original, resultingItemURL: nil)

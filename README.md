@@ -55,7 +55,7 @@
 2. Open FreeSnitch and allow its helper in **System Settings > General > Login Items & Extensions > Allow in the Background**.
 3. When macOS asks, allow the FreeSnitch system extension in System Settings. That is the part that filters per process.
 
-The release page shows the SHA-256 of every file and carries a `SHA256SUMS.txt`, if you want to check a download with `shasum -a 256 -c SHA256SUMS.txt`. Opening it is already checked by macOS, because the app is signed and notarized.
+The release page shows the SHA-256 of every file and carries a `SHA256SUMS.txt`, if you want to check a download with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder you saved it to. Opening it is already checked by macOS, because the app is signed and notarized.
 
 Coming from PureSnitch? FreeSnitch notices an old PureSnitch install when it opens and offers to remove it. The old and new content filters must not run together.
 
