@@ -119,7 +119,59 @@ do {
     print("filter off harness: a save asked for after the off loads the off")
 }
 
-// 4. A sequence that finishes with an error still lets the next one run, and
+// 4. #318: what the enabling save's completion reports. The app's counter
+//    and the real FilterSaveCompletion, driven through the same callbacks.
+do {
+    struct App { var turnOffs = 0; var enableRequested = false; var reported: [FilterSaveCompletion] = [] }
+    func run(_ name: String, saveFails: Bool = false, between: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void,
+             expected: [FilterSaveCompletion], storedEnabled: Bool) {
+        let mgr = FakeFilterManager()
+        let line = FilterPreferencesLine()
+        var app = App()
+        app.enableRequested = true
+        line.run { done in
+            let atLoad = app.turnOffs
+            let enabling = app.enableRequested
+            app.enableRequested = false
+            mgr.loadFromPreferences("save") {
+                mgr.isEnabled = true
+                mgr.saveToPreferences("save") {
+                    done()
+                    app.reported.append(FilterSaveCompletion.decide(
+                        enabling: enabling, turnOffsAtLoad: atLoad, turnOffsNow: app.turnOffs,
+                        enableRequestedNow: app.enableRequested, saveFailed: saveFails))
+                }
+            }
+        }
+        between(&app, mgr, line)
+        mgr.deliverAll()
+        expect(app.reported == expected, "\(name): reported \(app.reported), expected \(expected)")
+        expect(mgr.storedEnabled == storedEnabled, "\(name): stored isEnabled \(mgr.storedEnabled)")
+    }
+    let turnOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
+        app.turnOffs &+= 1   // disableFilter / removeFilterConfiguration
+        app.enableRequested = false
+        line.run { done in turnOff(mgr, done: done) }
+    }
+    run("nothing overtakes", between: { _, _, _ in }, expected: [.active], storedEnabled: true)
+    run("save fails", saveFails: true, between: { _, _, _ in }, expected: [.failed], storedEnabled: true)
+    run("off while loading", between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off while saving", between: { app, mgr, line in
+        mgr.deliver("save load")
+        turnOff(&app, mgr, line)
+    }, expected: [.stayedOff], storedEnabled: false)
+    run("off, then the save fails", saveFails: true, between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off then on again", between: { app, mgr, line in
+        turnOff(&app, mgr, line)
+        app.enableRequested = true // enableFilter: the next cycle reports
+    }, expected: [.awaitReenable], storedEnabled: false)
+    expect(FilterSaveCompletion.decide(enabling: false, turnOffsAtLoad: 0, turnOffsNow: 1,
+                                       enableRequestedNow: false, saveFailed: false) == .none,
+           "a plain policy save reported something about the filter")
+    print("filter off harness: an enabling save overtaken by a turn-off reports the filter off, not active")
+}
+
+// 5. A sequence that finishes with an error still lets the next one run, and
 //    calling done twice does not skip anyone.
 do {
     let line = FilterPreferencesLine()
@@ -197,4 +249,19 @@ mutate_and_expect_failure remove-unserialized "$SEM" \
   $'        enableFilterRequested = false\n        filterPreferences.run { [weak self] done in' \
   $'        enableFilterRequested = false\n        do { let done = {}'
 
+mutate_and_expect_failure overtaken-enable-reports-active "$SEM" \
+  'if completion == .active {
+                                self.filterConfigurationActive = true' \
+  'if shouldEnable {
+                                self.filterConfigurationActive = true'
+mutate_and_expect_failure overtaken-not-checked "$SEM" \
+  'turnOffsNow: self.filterTurnOffs,' 'turnOffsNow: turnOffsAtLoad,'
+mutate_and_expect_failure overtaken-status-kept "$SEM" \
+  'if completion == .stayedOff {' 'if false {'
+mutate_and_expect_failure disable-not-counted "$SEM" \
+  $'        enableFilterRequested = false\n        filterTurnOffs &+= 1\n        // A save cycle' \
+  $'        enableFilterRequested = false\n        // A save cycle'
+mutate_and_expect_failure remove-not-counted "$SEM" \
+  $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        enableFilterRequested = false\n        filterPreferences.run' \
+  $'        cancelPendingPersistence()\n        enableFilterRequested = false\n        filterPreferences.run'
 printf 'filter off vs boot-policy save verification: PASS\n'

@@ -68,6 +68,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Bumped whenever pending saves are cancelled, so a cycle that was
     /// already running can tell its result no longer matters.
     private var persistenceCancellations = 0
+    /// Bumped whenever the filter is turned off or removed, so an enabling
+    /// save that was already running can tell it was overtaken and must not
+    /// report the firewall as active (#318).
+    private var filterTurnOffs = 0
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
@@ -160,6 +164,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// errored would be worse than one that continues and reports.
     private func removeFilterConfiguration(completion: @escaping () -> Void) {
         cancelPendingPersistence()
+        filterTurnOffs &+= 1
         enableFilterRequested = false
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
@@ -282,6 +287,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func runPersistenceCycle() {
         let generationAtLoad = persistenceQueue.generation
         let cancellationsAtLoad = persistenceCancellations
+        let turnOffsAtLoad = filterTurnOffs
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
@@ -363,6 +369,20 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
                         self.endPersistenceCycle()
+                        // Turned off or removed while this enabling save
+                        // was running: the turn-off is saved after it, so
+                        // this save must not report the firewall as on (#318).
+                        let completion = FilterSaveCompletion.decide(enabling: shouldEnable,
+                                                                     turnOffsAtLoad: turnOffsAtLoad,
+                                                                     turnOffsNow: self.filterTurnOffs,
+                                                                     enableRequestedNow: self.enableFilterRequested,
+                                                                     saveFailed: saveError != nil)
+                        if completion == .stayedOff {
+                            self.filterConfigurationActive = false
+                            self.status = .idle
+                            self.state?.appendLog(level: "info",
+                                                  message: "The filter was turned off while it was being turned on; it stays off.")
+                        }
                         if let saveError {
                             if self.persistenceCancellations == cancellationsAtLoad {
                                 self.recordPersistenceFailure("save", error: saveError)
@@ -374,7 +394,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                        saveError.sentence)
                             }
                             if shouldEnable {
-                                self.fail("filter save: \(saveError.localizedDescription)")
+                                if completion == .failed {
+                                    self.fail("filter save: \(saveError.localizedDescription)")
+                                }
                             } else if let pending,
                                       self.persistenceQueue.requeueFailed(pending) {
                                 // Nothing newer arrived during the save, so
@@ -390,13 +412,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                     self.persistenceRetry.reset()
                                     self.state?.clearFilterPersistenceFailure()
                                 }
-                                if shouldEnable || self.filterConfigurationActive {
+                                if completion == .active || self.filterConfigurationActive {
                                     self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                                 }
-                            } else if shouldEnable {
+                            } else if completion == .active {
                                 self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                             }
-                            if shouldEnable {
+                            if completion == .active {
                                 self.filterConfigurationActive = true
                                 self.status = .active
                                 // Deliberately does NOT touch `helperConnected`: the
@@ -474,6 +496,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // Turning the filter on and then off before the helper answered must
         // not let that answer turn it back on.
         enableFilterRequested = false
+        filterTurnOffs &+= 1
         // A save cycle already loading or saving finishes first; this load
         // then sees what it wrote and the off is saved last (#309).
         filterPreferences.run { [weak self] done in
