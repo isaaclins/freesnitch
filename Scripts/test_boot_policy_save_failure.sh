@@ -251,6 +251,15 @@ mutate_and_expect_failure removal-keeps-banner \
 mutate_and_expect_failure no-config-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'// warning no longer applies (#311).\n                    self.state?.clearFilterPersistenceFailure()' '// removed'
+mutate_and_expect_failure off-save-shows-banner \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'if filterKnownOff {' 'if false {'
+mutate_and_expect_failure off-not-noticed \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'self.filterKnownOff = !mgr.isEnabled' 'self.filterKnownOff = false'
+mutate_and_expect_failure enable-stays-off \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'enableFilterRequested = true\n        filterKnownOff = false' 'enableFilterRequested = true'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''
