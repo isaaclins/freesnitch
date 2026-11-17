@@ -279,7 +279,7 @@ mutate_and_expect_failure outside-off-keeps-active-status "$SEM" \
 mutate_and_expect_failure outside-off-hides-approval "$SEM" \
   'if filterConfigurationActive && !persistenceCycle.enableRequested {' 'if true {'
 mutate_and_expect_failure outside-on-stays-not-filtering "$SEM" \
-  $'            if hasEmbeddedExtension && status == .idle {\n                enableFilter(fromSettings: true)' \
+  $'            if hasEmbeddedExtension && settingsTurnOnMayRun {\n                enableFilter(fromSettings: true)' \
   $'            if hasEmbeddedExtension {\n                state?.syncSharedRules()'
 mutate_and_expect_failure outside-on-skips-rules "$SEM" \
   $'            } else {\n                state?.syncSharedRules()\n            }' \
@@ -292,9 +292,13 @@ mutate_and_expect_failure settings-turn-on-overrides-off "$SEM" \
 mutate_and_expect_failure settings-turn-on-not-checked "$SEM" \
   'fromSettings: self.turnOnFromSettings,' 'fromSettings: false,'
 mutate_and_expect_failure settings-turn-on-skips-approval "$SEM" \
-  'if hasEmbeddedExtension && status == .idle {' 'if hasEmbeddedExtension && status != .needsApproval {'
+  '        default: return false' '        default: return true'
 mutate_and_expect_failure settings-turn-on-after-failed-activation "$SEM" \
-  'if hasEmbeddedExtension && status == .idle {' 'if hasEmbeddedExtension && status != .needsApproval && status != .activating {'
+  '        case .failed: return turnOnFromSettings' '        case .failed: return true'
+mutate_and_expect_failure settings-turn-on-failure-sticks "$SEM" \
+  '        case .failed: return turnOnFromSettings' '        case .failed: return false'
+mutate_and_expect_failure activation-failure-counts-as-settings "$SEM" \
+  $'        // turn-on\'s (#383).\n        turnOnFromSettings = false' $'        // turn-on\'s (#383).'
 mutate_and_expect_failure settings-turn-on-not-marked "$SEM" \
   'enableFilter(fromSettings: true)' 'enableFilter()'
 printf 'filter off vs boot-policy save verification: PASS\n'

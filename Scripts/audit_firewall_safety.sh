@@ -516,8 +516,14 @@ printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
   || fail "turning the filter on in System Settings does not save the current rules again"
 # Turned on there, the app turns it on as its own switch does, so the status
 # says active once the current rules are saved (#361).
-printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && status == .idle {' \
+printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && settingsTurnOnMayRun {' \
   || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
+may_run_body="$(awk '/private var settingsTurnOnMayRun: Bool/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$may_run_body" | grep -Fq 'case .idle: return true' \
+  && printf '%s\n' "$may_run_body" | grep -Fq 'case .failed: return turnOnFromSettings' \
+  && printf '%s\n' "$may_run_body" | grep -Fq 'default: return false' \
+  && grep -A3 -F 'status = .activating' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'turnOnFromSettings = false' \
+  || fail "a turn-on from System Settings runs during approval or after a failed activation, or a failed one can't be tried again (#383)"
 grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
     | tr -d '\n' | grep -Eq '!FilterOffState\.turnOnStands\(fromSettings: self\.turnOnFromSettings, +configured: mgr\.providerConfiguration != nil, +enabled: mgr\.isEnabled\) \{ +self\.persistenceCycle\.dropEnableRequest\(\)' \
   && grep -Fq 'enableFilter(fromSettings: true)' "$SYSTEM_EXTENSION_MANAGER" \

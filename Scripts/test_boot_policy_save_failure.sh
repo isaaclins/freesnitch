@@ -808,7 +808,7 @@ mutate_and_expect_failure launch-off-not-read \
   'if hasEmbeddedExtension { refreshFilterOffState() }' ''
 mutate_and_expect_failure settings-on-keeps-old-rules \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'            if hasEmbeddedExtension && status == .idle {\n                enableFilter(fromSettings: true)\n            } else {\n                state?.syncSharedRules()\n            }' ''
+  $'            if hasEmbeddedExtension && settingsTurnOnMayRun {\n                enableFilter(fromSettings: true)\n            } else {\n                state?.syncSharedRules()\n            }' ''
 mutate_and_expect_failure settings-off-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'while it is off.\n            state?.clearFilterPersistenceFailure()' 'while it is off.'

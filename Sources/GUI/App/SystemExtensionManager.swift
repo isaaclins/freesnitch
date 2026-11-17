@@ -129,11 +129,23 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // approval or running turns the filter on and reports the state
             // itself, and after a failed activation the status stays failed
             // until the extension really connects (#383).
-            if hasEmbeddedExtension && status == .idle {
+            if hasEmbeddedExtension && settingsTurnOnMayRun {
                 enableFilter(fromSettings: true)
             } else {
                 state?.syncSharedRules()
             }
+        }
+    }
+
+    /// Shown as not filtering, or an earlier turn-on from System Settings
+    /// failed (the helper gave no rules): turning it on there runs the
+    /// turn-on, so a failed one can be tried again. A failed activation is
+    /// not, it stays failed until the extension connects (#383).
+    private var settingsTurnOnMayRun: Bool {
+        switch status {
+        case .idle: return true
+        case .failed: return turnOnFromSettings
+        default: return false
         }
     }
 
@@ -168,6 +180,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             return
         }
         status = .activating
+        // A failure from here on is the activation's, not a System Settings
+        // turn-on's (#383).
+        turnOnFromSettings = false
         requestKind = .activation
         let request = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
