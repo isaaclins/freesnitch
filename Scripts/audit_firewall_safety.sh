@@ -367,6 +367,42 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "self.state?.clearFilterPersistenceFail
   "persistence degradation is not cleared after a successful save"
 require_text "$SYSTEM_EXTENSION_MANAGER" "if snapshotData != nil" \
   "a successful save does not prove that a boot snapshot was persisted"
+# A failed boot-policy save must not leave an older saved policy as the last
+# word (#213): the app keeps the failed snapshot and retries, and the
+# extension refuses a saved policy older than the last live one it enforced.
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceQueue.requeueFailed(pending)" \
+  "a failed boot-policy save is dropped instead of retried"
+require_text "$FILTER" "watermark.supersedes(decoded)" \
+  "the extension can load a saved boot policy older than the last live policy it enforced"
+require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
+  "the extension does not remember which live policy it last enforced"
+enable_body="$(awk '/private func enableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$enable_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "turning the filter on can save a snapshot kept for a retry instead of the helper's fresh answer"
+disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$disable_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a boot-policy retry can still run after the filter is turned off"
+remove_body="$(awk '/private func removeFilterConfiguration\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$remove_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a boot-policy retry can recreate the filter configuration after uninstall removed it"
+request_body="$(awk '/private func requestPersistedSnapshot\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$request_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a policy that cannot be encoded leaves an older snapshot queued, which a retry then saves in its place"
+printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
+  || fail "removing the filter configuration leaves the could-not-save banner up"
+no_config_block="$(awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$no_config_block" | grep -Fq 'clearFilterPersistenceFailure()' \
+  || fail "a save cycle that finds no filter configuration leaves the could-not-save banner up"
+require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
+  "cancelling a boot-policy save does not invalidate a save already in flight"
+stop_body="$(awk '/override func stopFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$FILTER")"
+printf '%s\n' "$stop_body" | grep -Fq 'watermarkQueue.sync {}' \
+  || fail "the extension can stop before its live-policy record is written"
+watermark_check_line="$(grep -nF 'watermark.supersedes(decoded)' "$FILTER" | head -1 | cut -d: -f1 || true)"
+boot_assign_line="$(grep -nF 'snapshotOrigin = .boot' "$FILTER" | head -1 | cut -d: -f1 || true)"
+if [[ -z "$watermark_check_line" || -z "$boot_assign_line" || "$watermark_check_line" -gt "$boot_assign_line" ]]; then
+  fail "the boot policy is applied before it is checked against the last live policy"
+fi
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"

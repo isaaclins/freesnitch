@@ -180,6 +180,14 @@ final class FilterDataProvider: NEFilterDataProvider {
         "Network extension has not received a rule snapshot from the GUI."
     )
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
+    /// Serial, so watermark writes land in the order the policies were
+    /// accepted. Never on the verdict or XPC reply path (#213).
+    private let watermarkQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.watermark", qos: .utility)
+    /// In this extension's own sandbox container (root-owned, so no user
+    /// process can write it).
+    private let watermarkURL: URL? = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent(SharedRuleBridge.LivePolicyWatermark.fileName)
     private let observationQueue = FlowObservationQueue(capacity: 1024)
     private let observationDrainQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.observations", qos: .utility)
     private let observationSignalLock: UnsafeMutablePointer<os_unfair_lock_s>
@@ -295,6 +303,10 @@ final class FilterDataProvider: NEFilterDataProvider {
         os_unfair_lock_lock(observationSignalLock)
         observationStopped = true
         os_unfair_lock_unlock(observationSignalLock)
+        // Let a queued live-policy record land before this instance goes
+        // away, so the next start compares against the policy it enforced
+        // last (#213). The write is one small file.
+        watermarkQueue.sync {}
         completionHandler()
     }
 
@@ -682,6 +694,20 @@ final class FilterDataProvider: NEFilterDataProvider {
     private func loadBootSnapshot(_ data: Data) {
         do {
             let decoded = try SharedRuleBridge.decodeBootSnapshot(data)
+            // A saved policy older than the last live policy this extension
+            // enforced is one the app failed to replace. It may still hold a
+            // rule the user removed, so it never loads; filtering fails open
+            // until the app sends the current policy (#213).
+            if let watermarkURL,
+               let watermark = SharedRuleBridge.LivePolicyWatermark.read(from: watermarkURL),
+               watermark.supersedes(decoded) {
+                clearBootSnapshot(
+                    "persisted boot policy (session \(decoded.epoch), generation \(decoded.generation)) is older than the last live policy "
+                    + "(session \(watermark.epoch), generation \(watermark.generation)), usually because the app's last save failed, "
+                    + "so it is not loaded and filtering will fail open until the app sends the current rules"
+                )
+                return
+            }
             let received = SharedRuleBridge.applyingBootPolicySafety(decoded)
             if decoded.mode == .silentDeny && received.mode == .alert {
                 PSLog.error(
@@ -724,6 +750,24 @@ final class FilterDataProvider: NEFilterDataProvider {
                 return
             }
             PSLog.error(PSLog.netext, status.message ?? "Network extension persisted boot policy was invalid.")
+        }
+    }
+
+    /// Remembers which policy is now enforced, so a later start can refuse an
+    /// older saved policy (#213). A failed write is logged and leaves the
+    /// previous behaviour: the saved policy loads as before.
+    private func recordLiveWatermark(_ accepted: SharedRuleBridge.Snapshot) {
+        guard let url = watermarkURL else {
+            PSLog.error(PSLog.netext, "live policy watermark has no container location; a failed boot policy save cannot be detected at the next start")
+            return
+        }
+        let watermark = SharedRuleBridge.LivePolicyWatermark(accepted)
+        watermarkQueue.async {
+            do {
+                try watermark.write(to: url)
+            } catch {
+                PSLog.error(PSLog.netext, "live policy watermark write failed: \(error.localizedDescription); a failed boot policy save cannot be detected at the next start")
+            }
         }
     }
 
@@ -806,6 +850,10 @@ final class FilterDataProvider: NEFilterDataProvider {
                 setSnapshotLocked(accepted)
                 snapshotOrigin = .live
                 snapshotStatus = status
+                // Queued (not written) while the lock is held, so records land
+                // in the order the policies were accepted. The write itself
+                // runs on its own queue and never delays this reply.
+                if decision == .accepted { recordLiveWatermark(accepted) }
                 snapshotLock.unlock()
 
                 let allowCount = accepted.rules.filter { $0.action == .allow }.count
