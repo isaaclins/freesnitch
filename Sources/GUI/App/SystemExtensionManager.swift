@@ -886,15 +886,18 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     guard let self else { done(); return }
                     let mgr = NEFilterManager.shared()
                     let configured = mgr.providerConfiguration != nil
+                    let enabled = mgr.isEnabled
                     done()
                     // A newer turn-on reports the state itself.
                     guard !self.persistenceCycle.enableRequested else { return }
                     if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: error != nil,
-                                                            configured: configured, enabled: mgr.isEnabled) {
+                                                            configured: configured, enabled: enabled) {
                         self.fail(message)
                         return
                     }
-                    self.apply(self.filterOff.observed(configured: configured, enabled: mgr.isEnabled, fromOutside: true))
+                    self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))
+                    // Approval or an activation started meanwhile keep their state.
+                    guard self.status != .needsApproval && self.status != .activating else { return }
                     self.showNotFiltering()
                     self.state?.appendLog(level: "info",
                                           message: "Firewall not filtering: the filter was turned off or removed in System Settings.")

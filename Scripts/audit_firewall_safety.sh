@@ -533,8 +533,9 @@ printf '%s\n' "$snapshot_status_body" | grep -A1 -F 'if turnOnFromSettings {' | 
 abandoned_body="$(awk '/private func reportAbandonedSettingsTurnOn\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$abandoned_body" | grep -Fq 'filterPreferences.run {' \
   && printf '%s\n' "$abandoned_body" | grep -Fq 'guard !self.persistenceCycle.enableRequested else { return }' \
-  && printf '%s\n' "$abandoned_body" | tr -d '\n' | grep -Eq 'FilterOffState\.abandonedTurnOnFailed\(fromSettings: true, readFailed: error != nil, +configured: configured, enabled: mgr\.isEnabled\) \{ +self\.fail\(message\) +return +\}' \
-  && printf '%s\n' "$abandoned_body" | grep -A1 -F 'self.apply(self.filterOff.observed(configured: configured, enabled: mgr.isEnabled, fromOutside: true))' | grep -Fq 'self.showNotFiltering()' \
+  && printf '%s\n' "$abandoned_body" | tr -d '\n' | grep -Eq 'FilterOffState\.abandonedTurnOnFailed\(fromSettings: true, readFailed: error != nil, +configured: configured, enabled: enabled\) \{ +self\.fail\(message\) +return +\}' \
+  && printf '%s\n' "$abandoned_body" | grep -Fq 'guard self.status != .needsApproval && self.status != .activating else { return }' \
+  && printf '%s\n' "$abandoned_body" | grep -A3 -F 'self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))' | grep -Fq 'self.showNotFiltering()' \
   || fail "a turn-on from System Settings given up for lack of rules does not check whether the filter is still on there (#382)"
 grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' \
   || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"

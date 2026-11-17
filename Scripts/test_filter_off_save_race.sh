@@ -446,8 +446,12 @@ mutate_and_expect_failure abandoned-settings-turn-on-fails "$SEM" \
 mutate_and_expect_failure abandoned-settings-read-failure-hidden "$SEM" \
   'readFailed: error != nil,' 'readFailed: false,'
 mutate_and_expect_failure abandoned-settings-keeps-status "$SEM" \
-  $'fromOutside: true))\n                    self.showNotFiltering()' \
-  $'fromOutside: true))'
+  $'else { return }\n                    self.showNotFiltering()' \
+  $'else { return }'
+mutate_and_expect_failure abandoned-settings-hides-approval "$SEM" \
+  'guard self.status != .needsApproval && self.status != .activating else { return }
+                    self.showNotFiltering()' \
+  'self.showNotFiltering()'
 mutate_and_expect_failure abandoned-settings-overrides-newer-turn-on "$SEM" \
   $'                    // A newer turn-on reports the state itself.\n                    guard !self.persistenceCycle.enableRequested else { return }\n' \
   $'                    // A newer turn-on reports the state itself.\n'
