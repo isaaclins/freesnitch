@@ -271,6 +271,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
         lines.append("# so an app's address or port deny would block every app on the Mac.")
+        lines.append("# Denies reach this anchor only as block out: pf would read an incoming deny as this Mac's")
+        lines.append("# own address and port, so incoming denies are left to the Network Extension.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
@@ -405,7 +407,7 @@ final class PFManager: @unchecked Sendable {
             // connections that arrive on that local port, DNS replies
             // included. An incoming deny is left to the extension (#298).
             if r.direction == .incoming {
-                return reject("an incoming deny is enforced by the Network Extension filter layer when active and is not emitted to PF, which cannot match the remote port of an incoming connection")
+                return reject("an incoming deny is enforced by the Network Extension filter layer when active and is not emitted to PF, which would read the rule as this Mac's own address and port")
             }
             if let destination,
                let reason = PFHostValidator.protectedDestinationReason(for: destination) {
