@@ -269,6 +269,9 @@ mutate_and_expect_failure late-off-overrides-on \
 mutate_and_expect_failure settings-change-ignored \
   Sources/GUI/App/SystemExtensionManager.swift \
   'forName: .NEFilterConfigurationDidChange' 'forName: .init("unused")'
+mutate_and_expect_failure settings-on-keeps-old-rules \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'again, as turning it on in the app does.\n                        self.state?.syncSharedRules()' 'again, as turning it on in the app does.'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''

@@ -104,10 +104,18 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     guard let self else { done(); return }
                     let mgr = NEFilterManager.shared()
-                    if error == nil, !self.enableFilterRequested {
-                        self.filterKnownOff = mgr.providerConfiguration == nil || !mgr.isEnabled
-                    }
+                    guard error == nil, !self.enableFilterRequested else { done(); return }
+                    let wasOff = self.filterKnownOff
+                    self.filterKnownOff = mgr.providerConfiguration == nil || !mgr.isEnabled
                     done()
+                    if self.filterKnownOff {
+                        // Nothing restarts with these rules while it is off.
+                        self.state?.clearFilterPersistenceFailure()
+                    } else if wasOff {
+                        // Turned on outside the app: save the current rules
+                        // again, as turning it on in the app does.
+                        self.state?.syncSharedRules()
+                    }
                 }
             }
         }

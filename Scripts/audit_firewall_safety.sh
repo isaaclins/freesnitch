@@ -407,6 +407,9 @@ grep -A1 -F 'if shouldEnable {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.fil
   || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
+refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$refresh_body" | grep -Fq 'self.state?.syncSharedRules()' \
+  || fail "turning the filter on in System Settings does not save the current rules again"
 printf '%s\n' "$enable_body" | grep -Fq 'filterKnownOff = false' \
   || fail "turning the filter on keeps treating it as off, so a failed save there stays hidden"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
