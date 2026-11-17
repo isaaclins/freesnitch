@@ -242,7 +242,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.state?.clearFilterPersistenceFailure()
                                 // A turn-on asked for meanwhile waits behind this
                                 // and decides the state, not this late answer.
-                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)
+                                if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {
+                                    self.showNotFiltering()
+                                }
                             }
                             done()
                             completion()
@@ -677,7 +679,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.state?.clearFilterPersistenceFailure()
                                 // A turn-on asked for meanwhile waits behind this
                                 // and decides the state, not this late answer.
-                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)
+                                if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {
+                                    self.showNotFiltering()
+                                }
                             }
                             done()
                         }
@@ -685,6 +689,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// The filter configuration was turned off or removed, so nothing is
+    /// filtering any more. Uninstalling usually gets "finishes after a
+    /// restart" from macOS rather than a completed deactivation, and the
+    /// menu bar and banner must not keep saying the firewall is active until
+    /// then (#335). A build without the extension keeps saying so instead.
+    private func showNotFiltering() {
+        filterConfigurationActive = false
+        if status != .unsupported { status = .idle }
     }
 
     private func recordFilterDiagnostic(state: String, detail: String) {

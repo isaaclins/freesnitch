@@ -453,6 +453,14 @@ grep -A2 -F 'if completion == .active {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 
   || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
 [[ "$(grep -cF 'self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)' "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
   || fail "turning the filter off or removing it does not record the filter as off, or overrides a turn-on asked for meanwhile"
+# Once the configuration is off or removed nothing filters, whatever macOS
+# answers about deactivating the extension; usually "after a restart" (#335).
+[[ "$(grep -A1 -F 'if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {' "$SYSTEM_EXTENSION_MANAGER" | grep -cF 'self.showNotFiltering()')" -eq 2 ]] \
+  || fail "turning the filter off or removing it leaves the app saying the firewall is active"
+not_filtering_body="$(awk '/private func showNotFiltering\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$not_filtering_body" | grep -Fq 'filterConfigurationActive = false' \
+  && printf '%s\n' "$not_filtering_body" | grep -Fq 'status = .idle' \
+  || fail "turning the filter off or removing it does not reset the firewall status"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
 refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"

@@ -264,4 +264,12 @@ mutate_and_expect_failure disable-not-counted "$SEM" \
 mutate_and_expect_failure remove-not-counted "$SEM" \
   $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        enableFilterRequested = false\n        filterPreferences.run' \
   $'        cancelPendingPersistence()\n        enableFilterRequested = false\n        filterPreferences.run'
+mutate_and_expect_failure removal-keeps-active-status "$SEM" \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)'
+mutate_and_expect_failure disable-keeps-active-status "$SEM" \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)'
+mutate_and_expect_failure not-filtering-keeps-status "$SEM" \
+  'if status != .unsupported { status = .idle }' ''
 printf 'filter off vs boot-policy save verification: PASS\n'
