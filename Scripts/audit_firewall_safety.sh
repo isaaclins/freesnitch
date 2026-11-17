@@ -390,6 +390,39 @@ printf '%s\n' "$request_body" | grep -Fq 'cancelPendingPersistence()' \
   || fail "a policy that cannot be encoded leaves an older snapshot queued, which a retry then saves in its place"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.hasNewerWork(since: attempted)" \
   "a boot-policy save put back for a retry also starts an extra immediate cycle, which repeats the give-up message"
+# Rules too big for the boot policy are still enforced live, so turning the
+# filter on goes ahead; the older saved policy is removed so the next start
+# fails open instead of enforcing rules the user has since changed (#320).
+printf '%s\n' "$request_body" | grep -Fq 'persistenceQueue.enqueue(SharedRuleBridge.bootSnapshotRemoval)' \
+  || fail "a policy too big for the boot policy leaves an older saved policy in place for the next start"
+if printf '%s\n' "$request_body" | grep -Eq 'enableFilterRequested = false|fail\('; then
+  fail "a policy too big for the boot policy stops the filter from being turned on"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" \
+  "vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)" \
+  "the boot-policy removal does not take the saved policy out of vendorConfiguration"
+removal_block="$(awk '/if removesBootSnapshot [{]/ && ++n == 2 {a=1} a {print} a && /[}] else if snapshotData != nil/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -n "$removal_block" ]] || fail "the boot-policy save cycle no longer handles a removal on its own"
+if printf '%s\n' "$removal_block" | grep -Fq 'clearFilterPersistenceFailure()'; then
+  fail "removing the saved policy clears the could-not-keep-for-restart banner"
+fi
+# Over the limit, every rule edit fails to encode again; the error is logged
+# once per change of state, also when no filter is configured (#342).
+printf '%s\n' "$request_body" | grep -Fq 'recordPersistenceFailure("encode", error: error, unsavable: reason, writeLog: firstTime)' \
+  || fail "every rule edit over the boot policy limit logs the same error again"
+printf '%s\n' "$request_body" | grep -Fq 'let firstTime = !unsavableLogged' \
+  || fail "the over-limit log-once check is no longer keyed on the state, so a changed rule count logs again"
+printf '%s\n' "$request_body" | grep -Fq 'if filterConfigurationActive || enableFilterRequested {' \
+  || fail "with no per-process filter, every rule edit over the limit flashes the won't-survive-a-restart banner"
+if awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'unsavableLogged'; then
+  fail "a save cycle with no filter configured forgets the over-limit error was logged, so the next edit logs it again"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil" \
+  "a failed preferences load while the removal is queued swaps the over-limit banner for the Send Rules Again one"
+require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil" \
+  "a failed save of the boot-policy removal swaps the over-limit banner for the Send Rules Again one"
+require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
+  "the over-limit banner says the filter is using the rules when the extension does not hold them"
 printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
   || fail "removing the filter configuration leaves the could-not-save banner up"
 no_config_block="$(awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"

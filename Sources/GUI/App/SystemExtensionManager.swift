@@ -54,6 +54,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var filterConfigurationActive = false
     private var persistenceQueue = SharedRuleBridge.NewestWriteWinsQueue()
     private var persistenceInFlight = false
+    /// True once the current rules being too big for the boot policy has been
+    /// written to the logs. Kept here, not in the banner state, and not keyed
+    /// on the reason text (it carries the rule count): every rule edit over
+    /// the limit fails to encode again, and it is logged once per change of
+    /// state, not once per edit (#342).
+    private var unsavableLogged = false
     /// Ends the boot-policy save cycle's turn on `filterPreferences`.
     private var persistenceCycleDone: (() -> Void)?
     /// Every load-then-save on the shared NEFilterManager (boot-policy saves,
@@ -163,6 +169,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// failure paths: an uninstall that stalls because a preferences call
     /// errored would be worse than one that continues and reports.
     private func removeFilterConfiguration(completion: @escaping () -> Void) {
+        unsavableLogged = false
         cancelPendingPersistence()
         filterTurnOffs &+= 1
         enableFilterRequested = false
@@ -238,21 +245,36 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func requestPersistedSnapshot(_ snapshot: SharedRuleBridge.Snapshot) {
         do {
             persistenceQueue.enqueue(try SharedRuleBridge.encodeBootSnapshot(snapshot))
+            unsavableLogged = false
             persistenceRetry.reset()
             schedulePersistence(immediate: enableFilterRequested)
         } catch {
-            // This policy cannot be saved (for example it is over the boot
-            // policy size limit). An older snapshot still queued for a retry
-            // must not be saved instead and clear the warning: drop it, and
-            // invalidate a save in flight.
+            // This policy cannot be kept for the next start (for example it is
+            // over the boot policy's rule limit), but the extension enforces it
+            // live all the same (#320). An older snapshot still queued for a
+            // retry must not be saved instead and clear the warning: drop it,
+            // and invalidate a save in flight.
             cancelPendingPersistence()
-            recordPersistenceFailure("encode", error: error)
-            if enableFilterRequested {
-                // Activation waits for this policy and it will never arrive
-                // in a savable form: say so instead of waiting forever.
-                enableFilterRequested = false
-                fail("filter snapshot could not be saved: \(error.localizedDescription)")
+            // Remove the saved policy instead of leaving an older one behind:
+            // the next start then fails open until this app sends the live
+            // rules, and never enforces rules the user has since changed.
+            // Turning the filter on goes ahead with the live policy.
+            persistenceQueue.enqueue(SharedRuleBridge.bootSnapshotRemoval)
+            let reason = snapshot.rules.count > SharedRuleBridge.maximumBootSnapshotRuleCount
+                ? "There are \(snapshot.rules.count) rules and at most \(SharedRuleBridge.maximumBootSnapshotRuleCount) can be kept for the next start."
+                : "They could not be saved for the next start."
+            // Without the per-process filter there is nothing to keep for a
+            // restart: no banner and no log (it would only flash, #342). The
+            // removal still runs, so an installed but disabled filter never
+            // starts with older rules.
+            if filterConfigurationActive || enableFilterRequested {
+                // Each rule edit over the limit lands here again: the banner
+                // follows every edit, the logs only the change of state.
+                let firstTime = !unsavableLogged
+                unsavableLogged = true
+                recordPersistenceFailure("encode", error: error, unsavable: reason, writeLog: firstTime)
             }
+            schedulePersistence(immediate: enableFilterRequested)
         }
     }
 
@@ -306,7 +328,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 if let loadError {
                     self.endPersistenceCycle()
-                    self.recordPersistenceFailure("load", error: loadError)
+                    // While the newest rules are over the limit, the pending
+                    // save is the removal: keep the over-limit banner (#340).
+                    self.recordPersistenceFailure("load", error: loadError,
+                                                  unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil)
                     if self.enableFilterRequested {
                         self.fail("filter load: \(loadError.localizedDescription)")
                         let hasNewerSnapshot = self.persistenceQueue.hasNewerWork(since: generationAtLoad)
@@ -356,9 +381,24 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
                 configuration.filterPackets = false
+                let removesBootSnapshot = snapshotData == SharedRuleBridge.bootSnapshotRemoval
+                let hadBootSnapshot = configuration.vendorConfiguration?[SharedRuleBridge.bootSnapshotVendorConfigurationKey] != nil
+                if removesBootSnapshot && !hadBootSnapshot && !shouldEnable {
+                    // Nothing is saved to remove: every rule edit over the
+                    // limit would otherwise rewrite the preferences unchanged.
+                    self.endPersistenceCycle()
+                    if self.persistenceQueue.hasPending {
+                        self.schedulePersistence(immediate: true)
+                    }
+                    return
+                }
                 if let snapshotData {
                     var vendorConfiguration = configuration.vendorConfiguration ?? [:]
-                    vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] = snapshotData
+                    if removesBootSnapshot {
+                        vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)
+                    } else {
+                        vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] = snapshotData
+                    }
                     configuration.vendorConfiguration = vendorConfiguration
                 }
                 mgr.providerConfiguration = configuration
@@ -384,8 +424,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                   message: "The filter was turned off while it was being turned on; it stays off.")
                         }
                         if let saveError {
-                            if self.persistenceCancellations == cancellationsAtLoad {
-                                self.recordPersistenceFailure("save", error: saveError)
+                            if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
+                                // A removal while the filter isn't in use: no
+                                // banner was shown for it, so none for this.
+                                os_log("Removing the saved boot policy failed: %{public}@", log: self.log, type: .info,
+                                       saveError.sentence)
+                            } else if self.persistenceCancellations == cancellationsAtLoad {
+                                // A failed removal is still about rules that
+                                // can't be kept: keep that reason and banner.
+                                self.recordPersistenceFailure("save", error: saveError,
+                                                              unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil)
                             } else {
                                 // The filter was turned on, off or removed
                                 // meanwhile; this save no longer matters and
@@ -405,7 +453,22 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.schedulePersistenceRetry()
                             }
                         } else {
-                            if snapshotData != nil {
+                            if removesBootSnapshot {
+                                // The live rules could not be kept for the next
+                                // start; the warning stays until a policy that
+                                // can be kept is saved.
+                                self.persistenceRetry.reset()
+                                let reason = self.state?.filterPersistenceUnsavable ?? "The current rules could not be saved for the next start."
+                                if hadBootSnapshot {
+                                    let message = "Removed the saved rules for the next start. \(reason) "
+                                        + "After a restart the per-process filter lets every connection through until FreeSnitch sends the current rules."
+                                    self.state?.appendLog(level: "info", message: message)
+                                    os_log("%{public}@", log: self.log, type: .info, message)
+                                }
+                                if completion == .active || self.filterConfigurationActive {
+                                    self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
+                                }
+                            } else if snapshotData != nil {
                                 // Only a save of the newest policy clears the
                                 // warning; an older one finishing late does not.
                                 if let pending, !self.persistenceQueue.hasNewerWork(since: pending.generation) {
@@ -415,8 +478,6 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 if completion == .active || self.filterConfigurationActive {
                                     self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                                 }
-                            } else if completion == .active {
-                                self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                             }
                             if completion == .active {
                                 self.filterConfigurationActive = true
@@ -472,8 +533,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func schedulePersistenceRetry() {
         guard let delay = persistenceRetry.nextDelay() else {
-            let message = "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
-                + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
+            let message = state?.filterPersistenceUnsavable != nil
+                ? "The older saved rules could still not be removed after \(persistenceRetry.delays.count) retries. "
+                    + "FreeSnitch tries again with the next rule change or when the app restarts."
+                : "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
+                    + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
             state?.appendLog(level: "error", message: message)
             os_log("%{public}@", log: log, type: .error, message)
             return
@@ -483,15 +547,22 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         schedulePersistence(immediate: false, after: delay)
     }
 
-    private func recordPersistenceFailure(_ operation: String, error: Error) {
+    /// `unsavable` says why the current rules can never be kept for the next
+    /// start; a retry or Send Rules Again cannot fix that (#320).
+    private func recordPersistenceFailure(_ operation: String, error: Error, unsavable: String? = nil,
+                                          writeLog: Bool = true) {
         let detail = "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. "
-            + "If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones."
+            + (unsavable == nil
+                ? "If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones."
+                : "FreeSnitch removes the saved policy, so after a restart the filter allows everything until this app sends the current rules.")
         recordFilterDiagnostic(state: "degraded", detail: detail)
-        state?.recordFilterPersistenceFailure(detail)
-        os_log("%{public}@", log: log, type: .error, detail)
+        state?.recordFilterPersistenceFailure(detail, unsavable: unsavable, writeLog: writeLog)
+        if writeLog { os_log("%{public}@", log: log, type: .error, detail) }
     }
 
     private func disableFilter() {
+        // Turned back on while still over the limit is a new state: log it.
+        unsavableLogged = false
         cancelPendingPersistence()
         // Turning the filter on and then off before the helper answered must
         // not let that answer turn it back on.
