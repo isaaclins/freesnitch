@@ -148,21 +148,21 @@ do {
         expect(app.reported == expected, "\(name): reported \(app.reported), expected \(expected)")
         expect(mgr.storedEnabled == storedEnabled, "\(name): stored isEnabled \(mgr.storedEnabled)")
     }
-    let turnOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
+    let userTurnsOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
         app.turnOffs &+= 1   // disableFilter / removeFilterConfiguration
         app.enableRequested = false
         line.run { done in turnOff(mgr, done: done) }
     }
     run("nothing overtakes", between: { _, _, _ in }, expected: [.active], storedEnabled: true)
     run("save fails", saveFails: true, between: { _, _, _ in }, expected: [.failed], storedEnabled: true)
-    run("off while loading", between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off while loading", between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off while saving", between: { app, mgr, line in
         mgr.deliver("save load")
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
     }, expected: [.stayedOff], storedEnabled: false)
-    run("off, then the save fails", saveFails: true, between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off, then the save fails", saveFails: true, between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off then on again", between: { app, mgr, line in
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
         app.enableRequested = true // enableFilter: the next cycle reports
     }, expected: [.awaitReenable], storedEnabled: false)
     expect(FilterSaveCompletion.decide(enabling: false, turnOffsAtLoad: 0, turnOffsNow: 1,
