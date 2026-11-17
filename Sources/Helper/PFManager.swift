@@ -271,9 +271,9 @@ final class PFManager: @unchecked Sendable {
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
         lines.append("# so an app's address or port deny would block every app on the Mac.")
-        lines.append("# Denies reach this anchor only as block out: pf would read an incoming deny as this Mac's")
-        lines.append("# own address and port, so incoming denies are left to the Network Extension.")
-        lines.append("# An incoming allow names the remote peer, so it is written as pass in ... from that peer.")
+        lines.append("# A deny blocks only new TCP connections (flags S/SA), so replies pass. Incoming UDP is")
+        lines.append("# blocked only for a deny in both directions; pf cannot tell an incoming datagram from a reply.")
+        lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
@@ -401,15 +401,6 @@ final class PFManager: @unchecked Sendable {
         }
 
         if verb == "block" {
-            // pf reads `in ... to X port N` as this Mac's own address and
-            // port, while the rule names the remote side, as the matcher and
-            // the Network Extension read it. pf keeps no state for a block,
-            // so such a line would also drop replies to this Mac's own
-            // connections that arrive on that local port, DNS replies
-            // included. An incoming deny is left to the extension (#298).
-            if r.direction == .incoming {
-                return reject("an incoming deny is enforced by the Network Extension filter layer when active and is not emitted to PF, which would read the rule as this Mac's own address and port")
-            }
             if let destination,
                let reason = PFHostValidator.protectedDestinationReason(for: destination) {
                 return reject("blocking \(destination) is unsafe: \(reason)")
@@ -453,16 +444,32 @@ final class PFManager: @unchecked Sendable {
             }
             return passes
         }
-        // Only the outgoing half of a deny reaches pf, see above. A block
-        // keeps no state, so `block out` alone would also drop this Mac's
-        // replies to an incoming connection whose client used the denied
-        // port as its source port. For TCP, `flags S/SA` limits the block to
-        // the SYN that opens a new outgoing connection, so those replies
-        // pass. UDP has no such marker; there the line stays as it was.
-        return [
-            "block out quick proto tcp" + target + " flags S/SA",
-            "block out quick proto udp" + target
-        ]
+        // A deny names the remote side, as the matcher and the Network
+        // Extension read it: `to` it going out, `from` it coming in. A
+        // `block in ... to X port N` would name this Mac's own address and
+        // port instead (#298).
+        //
+        // A block keeps no state, so each half must not catch the replies
+        // of the other direction's connections. For TCP, `flags S/SA` limits
+        // a block to the SYN that opens a new connection, so replies pass.
+        // UDP has no such marker: its outgoing half is written for every
+        // deny that covers outgoing traffic, and its incoming half only when
+        // the deny covers both directions, where the replies it catches
+        // belong to connections the outgoing half already blocks. An
+        // incoming-only deny of UDP is left to the extension.
+        let source = " from" + host
+        var lines: [String] = []
+        if r.direction != .incoming {
+            lines.append("block out quick proto tcp" + target + " flags S/SA")
+            lines.append("block out quick proto udp" + target)
+        }
+        if r.direction != .outgoing {
+            lines.append("block in quick proto tcp" + source + " flags S/SA")
+        }
+        if r.direction == .any {
+            lines.append("block in quick proto udp" + source)
+        }
+        return lines
     }
 
     private func reportRejected(rule: Rule, reason: String) {
