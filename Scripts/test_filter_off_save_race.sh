@@ -171,7 +171,7 @@ do {
     print("filter off harness: an enabling save overtaken by a turn-off reports the filter off, not active")
 }
 
-// 6. #361: the filter is turned on in System Settings, the app turns it on
+// 5. #361: the filter is turned on in System Settings, the app turns it on
 //    with the current rules, and the user turns it off or removes it there
 //    again before that save cycle loads. The real save cycle and the real
 //    turn-on rule, driven through the fake manager.
@@ -241,7 +241,7 @@ do {
     print("filter off harness: turned on and off again in System Settings, what is set there wins")
 }
 
-// 5. A sequence that finishes with an error still lets the next one run, and
+// 6. A sequence that finishes with an error still lets the next one run, and
 //    calling done twice does not skip anyone.
 do {
     let line = FilterPreferencesLine()
