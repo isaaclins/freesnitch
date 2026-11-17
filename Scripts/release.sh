@@ -322,13 +322,34 @@ require_homebrew_tap_access() {
   esac
 }
 
-# Point the Homebrew cask at this release. The checksum is the one GitHub
+# Prints the version a cask file points at, or fails when it has no
+# MAJOR.MINOR.PATCH version line.
+cask_version() {
+  sed -nE 's/^  version "((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))"$/\1/p' "$1" | \
+    awk 'NR == 1 { print; found = 1 } END { exit !found }'
+}
+
+# True when MAJOR.MINOR.PATCH version $1 is lower than version $2.
+version_is_older() {
+  local a b i
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  for i in 0 1 2; do
+    (( 10#${a[i]} < 10#${b[i]} )) && return 0
+    (( 10#${a[i]} > 10#${b[i]} )) && return 1
+  done
+  return 1
+}
+
+# Point the Homebrew cask at this release. A version lower than the one the
+# cask already has is refused, so a typo cannot send every brew install back
+# to an old release. The checksum is the one GitHub
 # reports for the published disk image, because that file is what brew
 # downloads and verifies, and in a real release it must also match the disk
 # image built above. Returns non-zero without touching the tap when anything
 # does not add up.
 update_homebrew_tap() {
-  local digest sha work cask status=0
+  local digest sha work cask current status=0
   digest="$(gh release view "v${VERSION}" --repo "$REPOSITORY" --json assets \
     --jq ".assets[] | select(.name == \"${DMG_NAME}\") | .digest" 2>/dev/null || true)"
   sha="${digest#sha256:}"
@@ -352,6 +373,12 @@ update_homebrew_tap() {
   cask="$work/tap/$HOMEBREW_CASK_PATH"
   if ! gh repo clone "$HOMEBREW_TAP_REPOSITORY" "$work/tap" -- --quiet --depth 1; then
     printf 'Could not clone %s.\n' "$HOMEBREW_TAP_REPOSITORY" >&2
+    status=1
+  elif ! current="$(cask_version "$cask")"; then
+    printf 'Could not read the current version from %s.\n' "$HOMEBREW_CASK_PATH" >&2
+    status=1
+  elif version_is_older "$VERSION" "$current"; then
+    printf 'The Homebrew cask already points at FreeSnitch %s, which is newer than %s; refusing to move it back.\n' "$current" "$VERSION" >&2
     status=1
   else
     sed -E \
