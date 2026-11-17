@@ -22,6 +22,43 @@ jobs:
       - name: Audit fail-open firewall invariants
         run: bash Scripts/audit_firewall_safety.sh
 
+  list-harnesses:
+    name: List test harnesses
+    runs-on: ubuntu-latest
+    outputs:
+      harnesses: ${{ steps.list.outputs.harnesses }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Every Scripts/test_*.sh runs, so a new harness is covered the day it
+      # lands. An empty list would make the matrix pass vacuously, so fail.
+      - name: List Scripts/test_*.sh
+        id: list
+        run: |
+          harnesses="$(find Scripts -maxdepth 1 -name 'test_*.sh' -print | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          echo "$harnesses"
+          [ "$harnesses" != "[]" ] || { echo 'ERROR: no Scripts/test_*.sh found.'; exit 1; }
+          echo "harnesses=$harnesses" >> "$GITHUB_OUTPUT"
+
+  harness:
+    name: Harness ${{ matrix.script }}
+    needs: list-harnesses
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        script: ${{ fromJSON(needs.list-harnesses.outputs.harnesses) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # The harnesses compile the shipping sources with swiftc and run them
+      # as the runner user. None of them needs root: privileged tools are
+      # stubbed, and pfctl is only ever asked to parse (-n), never to load.
+      - name: Run ${{ matrix.script }}
+        run: bash "${{ matrix.script }}"
+
   monitor-build:
     name: Build monitor flavour
     runs-on: macos-26
