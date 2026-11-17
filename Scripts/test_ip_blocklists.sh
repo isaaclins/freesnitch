@@ -306,6 +306,8 @@ struct IPBlocklistHarness {
         checks.expect(infrastructure.contains("pass out quick proto { tcp udp } to any port 550\n")
                         && !infrastructure.contains("from any port 550"),
                       "a port-only allow in both directions must be written as its outgoing half only")
+        checks.expect(refusedPorts.contains { $0.contains("incoming half of an allow with only a port") },
+                      "a port-only allow in both directions must report that its incoming half stays out of pf, got \(refusedPorts)")
         // An incoming deny names the remote side, so pf gets `from`, never
         // `in ... to`, which would be this Mac's own port. Its TCP half only
         // stops new connections, and its UDP half is left to the extension,

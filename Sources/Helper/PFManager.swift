@@ -449,8 +449,12 @@ final class PFManager: @unchecked Sendable {
             if r.direction != .incoming {
                 passes.append("pass out quick proto { tcp udp }" + target)
             }
-            if r.direction != .outgoing && destination != nil {
-                passes.append("pass in quick proto { tcp udp } from" + host)
+            if r.direction != .outgoing {
+                if destination != nil {
+                    passes.append("pass in quick proto { tcp udp } from" + host)
+                } else {
+                    onRejected?(r, "the incoming half of an allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port; the outgoing half is")
+                }
             }
             return passes
         }
