@@ -390,6 +390,22 @@ printf '%s\n' "$request_body" | grep -Fq 'cancelPendingPersistence()' \
   || fail "a policy that cannot be encoded leaves an older snapshot queued, which a retry then saves in its place"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.hasNewerWork(since: attempted)" \
   "a boot-policy save put back for a retry also starts an extra immediate cycle, which repeats the give-up message"
+# Rules too big for the boot policy are still enforced live, so turning the
+# filter on goes ahead; the older saved policy is removed so the next start
+# fails open instead of enforcing rules the user has since changed (#320).
+printf '%s\n' "$request_body" | grep -Fq 'persistenceQueue.enqueue(SharedRuleBridge.bootSnapshotRemoval)' \
+  || fail "a policy too big for the boot policy leaves an older saved policy in place for the next start"
+if printf '%s\n' "$request_body" | grep -Eq 'enableFilterRequested = false|fail\('; then
+  fail "a policy too big for the boot policy stops the filter from being turned on"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" \
+  "vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)" \
+  "the boot-policy removal does not take the saved policy out of vendorConfiguration"
+removal_block="$(awk '/if removesBootSnapshot [{]/ && ++n == 2 {a=1} a {print} a && /[}] else if snapshotData != nil/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -n "$removal_block" ]] || fail "the boot-policy save cycle no longer handles a removal on its own"
+if printf '%s\n' "$removal_block" | grep -Fq 'clearFilterPersistenceFailure()'; then
+  fail "removing the saved policy clears the could-not-keep-for-restart banner"
+fi
 printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
   || fail "removing the filter configuration leaves the could-not-save banner up"
 no_config_block="$(awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
