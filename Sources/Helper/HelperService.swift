@@ -804,6 +804,15 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
+    /// An app from before #300 is still running against this newer helper,
+    /// usually because the helper updated and the app was not reopened yet.
+    /// Its import cannot say which deletions the user confirmed, so refuse it
+    /// and write nothing (#344).
+    func legacyReplaceRules(rulesJSON _: Data, reply: @escaping (Bool, String?) -> Void) {
+        PSLog.notice(PSLog.helper, "rule import refused: request from an app older than this helper; nothing was imported")
+        reply(false, HelperBridge.legacyImportRefusal)
+    }
+
     func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
             try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)
