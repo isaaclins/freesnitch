@@ -506,6 +506,8 @@ printf '%s\n' "$not_filtering_body" | grep -Fq 'filterConfigurationActive = fals
 # as a failure or written back from the stale load (#368).
 require_text "$SYSTEM_EXTENSION_MANAGER" "NEFilterManagerError.configurationStale.rawValue" \
   "a save refused because the filter changed in System Settings is not recognised (#368)"
+require_text "$SYSTEM_EXTENSION_MANAGER" "let changedOutside = Self.changedOutside(saveError)" \
+  "a rule save does not tell a save refused after a change in System Settings from other failures (#368)"
 require_text "$SYSTEM_EXTENSION_MANAGER" "changedOutside: changedOutside)" \
   "a save refused because the filter changed in System Settings is reported as a failure instead of saved again (#368)"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
