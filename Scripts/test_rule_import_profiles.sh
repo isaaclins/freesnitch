@@ -34,9 +34,9 @@ if grep -Eq 'draft\.rules[[:space:]]*=[[:space:]]*rules[[:space:]]*\}' "$HELPER"
 fi
 grep -Fq 'plan = try RuleImportPlan.apply(imported: rules,' "$HELPER" \
   || fail "the helper import does not apply RuleImportPlan"
-grep -Fq 'expectedRemovedIDs: Set(expectedRemovedIDs),' "$HELPER" \
+grep -Fq 'confirmedIDs: Set(expectedRemovedIDs),' "$HELPER" \
   || fail "the helper import does not check the deletions the user confirmed"
-grep -Fq 'expectedRemovedIDs: expectedRemovedIDs' "$RULES_MANAGER" \
+grep -Fq 'expectedRemovedIDs: plan?.confirmedIDs ?? []' "$RULES_MANAGER" \
   || fail "the app does not send the deletions it showed in the dialog"
 grep -Fq 'PSLog.info(PSLog.helper, plan.logSummary)' "$HELPER" \
   || fail "the helper import does not log what it removed and kept"
@@ -69,7 +69,7 @@ func helperImport(_ store: RuleStore, _ fileRules: [Rule], confirmed: RuleImport
     var plan: RuleImportPlan?
     _ = try store.mutatePolicy { draft in
         plan = try RuleImportPlan.apply(imported: fileRules,
-                                        expectedRemovedIDs: Set(confirmed.removed.map(\.id)),
+                                        confirmedIDs: Set(confirmed.confirmedIDs),
                                         to: &draft)
     }
     return plan!
@@ -119,6 +119,8 @@ check("a home rule missing from the file is removed",
       !labels(store.allRules(profile: nil)).contains("home:extra-home.example"))
 check("the plan names exactly the removed rule", lossPlan.removed.map(\.id) == [extraHome.id])
 check("the log line names the removed rule's ID", lossPlan.logSummary.contains(extraHome.id.uuidString))
+check("the log line names the removed rule the way a person reads it",
+      lossPlan.logSummary.contains("deny curl to extra-home.example in home"))
 check("Office still survives", labels(store.allRules(profile: nil)).contains("Office:office.example"))
 
 // 4. The stored rules change while the dialog is open: a rule allowed from an
@@ -136,6 +138,21 @@ let reviewed = try importConfirmed(store, oldImport)
 check("reviewing again shows the new rule as deleted, and then imports",
       reviewed.removed.map(\.id) == [allowedMeanwhile.id])
 
+// 4b. Same count, different rule: one rule added and the one the user saw
+//     deleted removed meanwhile. A count check would pass; the ID check refuses.
+let extraA = rule("a.example", "home")
+_ = try store.mutatePolicy { $0.rules.append(extraA) }
+let shownA = dialogPlan(store, oldImport)
+let extraB = rule("b.example", "home")
+_ = try store.mutatePolicy { draft in
+    draft.rules.removeAll { $0.id == extraA.id }
+    draft.rules.append(extraB)
+}
+var refusedSwap = false
+do { try helperImport(store, oldImport, confirmed: shownA) } catch is RuleImportConflict { refusedSwap = true }
+check("a different rule to delete, same count, is refused", refusedSwap)
+_ = try importConfirmed(store, oldImport)
+
 // 5. A file whose rule moved profile, by ID, replaces the stored copy once.
 var moved = office
 moved.profile = "home"
@@ -143,8 +160,26 @@ let movePlan = RuleImportPlan(current: store.allRules(profile: nil), imported: [
 check("a rule moved to another profile is not kept twice",
       movePlan.resulting.filter { $0.id == office.id }.count == 1
       && movePlan.resulting.first { $0.id == office.id }?.profile == "home")
+// A move the user did not see is refused like a deletion.
+let staleMove = RuleImportPlan(current: [always, home], imported: [moved])
+var refusedMove = false
+_ = try store.mutatePolicy { $0.rules = [always, office, home] }
+do {
+    _ = try store.mutatePolicy { draft in
+        _ = try RuleImportPlan.apply(imported: [moved], confirmedIDs: Set(staleMove.confirmedIDs), to: &draft)
+    }
+} catch is RuleImportConflict { refusedMove = true }
+check("a move the user was not shown is refused", refusedMove)
+var refusedDuplicate = false
+do {
+    _ = try store.mutatePolicy { draft in
+        _ = try RuleImportPlan.apply(imported: [home, home], confirmedIDs: [], to: &draft)
+    }
+} catch is RuleExportError { refusedDuplicate = true }
+check("duplicate IDs in an import are refused", refusedDuplicate)
 check("a rule moved out of a profile the file does not mention is reported",
-      movePlan.moved.map(\.id) == [office.id] && movePlan.logSummary.contains("(from Office)"))
+      movePlan.moved.map(\.id) == [office.id] && movePlan.logSummary.contains("from Office")
+      && movePlan.confirmedIDs.contains(office.id))
 
 // 6. A file with no rules changes nothing.
 let emptyPlan = RuleImportPlan(current: store.allRules(profile: nil), imported: [])

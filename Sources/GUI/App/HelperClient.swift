@@ -930,7 +930,7 @@ final class HelperClient: NSObject, ObservableObject {
         // A helper from an older build does not know this request and drops
         // it without answering, so the import must not wait forever (#247).
         let work = DispatchWorkItem {
-            finish(false, "The helper did not answer the import within 30 seconds. It may be an older version: run `\(AppConstants.helperKickstartCommand)`, then check the rule list and import again.")
+            finish(false, "The helper did not answer the import within 30 seconds. The import may still have finished, so check the rule list before importing again. If nothing changed, the helper may be an older version: run `\(AppConstants.helperKickstartCommand)`, then retry.")
         }
         timeoutWork = work
         DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: work)

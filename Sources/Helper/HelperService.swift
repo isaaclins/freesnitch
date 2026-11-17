@@ -828,7 +828,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             do {
                 _ = try mutatePolicy { draft in
                     plan = try RuleImportPlan.apply(imported: rules,
-                                                    expectedRemovedIDs: Set(expectedRemovedIDs),
+                                                    confirmedIDs: Set(expectedRemovedIDs),
                                                     to: &draft)
                 }
             } catch let conflict as RuleImportConflict {

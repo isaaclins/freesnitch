@@ -353,18 +353,29 @@ public struct RuleImportPlan: Sendable {
         resulting = kept + imported
     }
 
-    /// The import the helper runs inside its policy transaction. The app shows
-    /// the user which rules the import deletes and sends those IDs along. If
-    /// the stored rules changed since (an alert answered while the dialog was
-    /// open, a CLI edit), the deletions differ and the import is refused, so
-    /// it can never delete a rule the user was not shown.
+    /// Every rule the import takes out of a profile: deleted or moved away.
+    /// The app shows these to the user and sends exactly these IDs with the
+    /// import, so the helper can check it is doing what was confirmed.
+    public var confirmedIDs: [UUID] {
+        (removed + moved).map(\.id)
+    }
+
+    /// The import the helper runs inside its policy transaction. If the stored
+    /// rules changed since the user confirmed (an alert answered while the
+    /// dialog was open, a CLI edit), the rules it would delete or move differ
+    /// from `confirmedIDs` and the import is refused, so it can never take
+    /// away a rule the user was not shown.
     public static func apply(imported: [Rule],
-                             expectedRemovedIDs: Set<UUID>,
+                             confirmedIDs: Set<UUID>,
                              to draft: inout RuleStore.PolicyDraft) throws -> RuleImportPlan {
+        // The app's file reader refuses duplicate IDs; a direct caller could
+        // send them, and then the plan and the stored table would disagree.
+        guard Set(imported.map(\.id)).count == imported.count else {
+            throw RuleExportError.duplicateRuleID("in the imported rules")
+        }
         let plan = RuleImportPlan(current: draft.rules, imported: imported)
-        let removedIDs = Set(plan.removed.map(\.id))
-        guard removedIDs == expectedRemovedIDs else {
-            throw RuleImportConflict(expected: expectedRemovedIDs.count, actual: removedIDs.count)
+        guard Set(plan.confirmedIDs) == confirmedIDs else {
+            throw RuleImportConflict()
         }
         try RuleTransportBoundary.validate(rules: plan.resulting)
         draft.rules = plan.resulting
@@ -378,11 +389,20 @@ public struct RuleImportPlan: Sendable {
             .sorted { $0.profile < $1.profile }
     }
 
-    /// One line for the log, naming every rule the import deletes.
+    /// A rule the way a person reads it: what it does, to which app and
+    /// destination. The ID is kept so the log line can be matched exactly.
+    public static func describe(_ rule: Rule) -> String {
+        let process = rule.processName ?? rule.processBundleId ?? rule.processPath ?? "any process"
+        var destination = rule.remoteHost ?? rule.remoteIP ?? "any destination"
+        if let port = rule.remotePort { destination += ":\(port)" }
+        return "\(rule.action.rawValue) \(process) to \(destination)"
+    }
+
+    /// One line for the log, naming every rule the import deletes or moves.
     public var logSummary: String {
         let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
-        let removedIDs = removed.map { "\($0.id.uuidString) (\($0.profile))" }.joined(separator: ", ")
-        let movedIDs = moved.map { "\($0.id.uuidString) (from \($0.profile))" }.joined(separator: ", ")
+        let removedIDs = removed.map { "\(Self.describe($0)) in \($0.profile) \($0.id.uuidString)" }.joined(separator: ", ")
+        let movedIDs = moved.map { "\(Self.describe($0)) from \($0.profile) \($0.id.uuidString)" }.joined(separator: ", ")
         return "rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
             + "\(removed.count) stored rules removed [\(removedIDs)]; "
             + "\(moved.count) rules moved to another profile [\(movedIDs)]; "
@@ -392,10 +412,9 @@ public struct RuleImportPlan: Sendable {
 
 /// The stored rules changed between the confirmation and the import.
 public struct RuleImportConflict: Error, LocalizedError, Equatable {
-    public let expected: Int
-    public let actual: Int
+    public init() {}
 
     public var errorDescription: String? {
-        "The rules changed while the import was waiting for confirmation: it would now delete \(actual) rules instead of the \(expected) you confirmed. Nothing was imported. Import the file again to review the current changes."
+        "The rules changed while the import was waiting for confirmation, so it would no longer delete or move exactly the rules you confirmed. Nothing was imported. Import the file again to review the current changes."
     }
 }

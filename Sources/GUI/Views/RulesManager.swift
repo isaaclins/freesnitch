@@ -1300,6 +1300,10 @@ struct RulesManagerView: View {
             // Decode and validate the whole batch before the confirmation
             // dialog appears: an import is all-or-nothing.
             let imported = try RuleExportCodec.decode(data).rules
+            guard !imported.isEmpty else {
+                showError("Nothing to import", "The file contains no rules, so nothing was changed.")
+                return
+            }
             // The dialog has to say what happens to every profile's rules,
             // not only the active profile's, so read them all first (#247).
             state.helper.allRulesInEveryProfile { current, message in
@@ -1325,8 +1329,7 @@ struct RulesManagerView: View {
         let plan = pendingImportPlan
         pendingImportRules.removeAll()
         pendingImportPlan = nil
-        let expectedRemovedIDs = plan?.removed.map(\.id) ?? []
-        state.helper.replaceRules(rules, expectedRemovedIDs: expectedRemovedIDs) { ok, message in
+        state.helper.replaceRules(rules, expectedRemovedIDs: plan?.confirmedIDs ?? []) { ok, message in
             guard ok else {
                 let detail = message ?? "The helper rejected the import and did not say why."
                 state.appendLog(level: "error", message: "rule import failed: \(detail)")
@@ -1351,9 +1354,6 @@ struct RulesManagerView: View {
         guard let plan = pendingImportPlan else {
             return "Importing \(pendingImportRules.count) rules."
         }
-        guard !plan.replacedProfiles.isEmpty else {
-            return "The file contains no rules, so importing it changes nothing."
-        }
         let profiles = plan.replacedProfiles.map(Self.profileLabel)
         var lines = ["Importing \(Self.rulesCount(pendingImportRules.count)) replaces the rules in \(Self.list(profiles))."]
         if plan.removed.isEmpty {
@@ -1361,14 +1361,16 @@ struct RulesManagerView: View {
         } else {
             // Name them, the way the table does, so the user sees which
             // rules go and not only how many.
-            let shown = plan.removed.prefix(5).map { "\(Self.describe($0)) (\(Self.profileLabel($0.profile)))" }
-            let more = plan.removed.count > shown.count ? "\nand \(plan.removed.count - shown.count) more" : ""
+            let shown = plan.removed.prefix(10).map { "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)))" }
+            let more = plan.removed.count > shown.count ? "\nand \(plan.removed.count - shown.count) more, all named in the log" : ""
             lines.append("\(Self.rulesCount(plan.removed.count)) there \(plan.removed.count == 1 ? "is" : "are") not in the file and will be deleted:\n"
                          + shown.joined(separator: "\n") + more)
         }
         if !plan.moved.isEmpty {
-            let from = Set(plan.moved.map(\.profile)).sorted().map(Self.profileLabel)
-            lines.append("\(Self.rulesCount(plan.moved.count)) from \(Self.list(from)) \(plan.moved.count == 1 ? "moves" : "move") to the profile the file puts \(plan.moved.count == 1 ? "it" : "them") in.")
+            let moves = plan.moved.prefix(10).map { "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)))" }
+            let more = plan.moved.count > moves.count ? "\nand \(plan.moved.count - moves.count) more, all named in the log" : ""
+            lines.append("\(Self.rulesCount(plan.moved.count)) \(plan.moved.count == 1 ? "leaves its" : "leave their") profile for the one the file puts \(plan.moved.count == 1 ? "it" : "them") in:\n"
+                         + moves.joined(separator: "\n") + more)
         }
         if !plan.kept.isEmpty {
             let kept = plan.keptByProfile.map { "\(Self.profileLabel($0.profile)) (\($0.count))" }
