@@ -41,6 +41,17 @@ firewall project from `project-netext.yml`, builds both architectures, signs,
 notarizes, Gatekeeper-assesses, creates the Sparkle appcast, and only then
 commits, tags, pushes, and creates the GitHub Release.
 
+Once the GitHub Release exists, it also bumps the version and SHA-256 of the
+FreeSnitch cask in [isaaclins/homebrew-tap](https://github.com/isaaclins/homebrew-tap),
+using the checksum GitHub reports for the published disk image. The script
+checks that it can push there before it publishes anything. If the bump fails
+after the release is out, the release stays as it is and the script prints the
+command that finishes it:
+
+```sh
+Scripts/release.sh --update-tap VERSION
+```
+
 Use these non-publishing checks before a real release:
 
 ```sh
