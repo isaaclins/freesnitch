@@ -308,6 +308,16 @@ struct IPBlocklistHarness {
         }
         checks.expect(!portOnlyPasses.contains("udp } port"),
                       "no pass line may carry a bare port, which pf refuses")
+        // An ask rule pf can't express is left to the extension quietly: ask
+        // rules never reached pf before, so they must not start logging an
+        // error on every render. An allow rule still reports its skip.
+        var askSkips: [String] = []
+        _ = pf.renderAnchor(rules: [
+            Rule(remoteHost: "ask.example.com", action: .ask, scope: .domain),
+            Rule(remoteHost: "allow.example.com", action: .allow, scope: .domain)
+        ]) { rule, _ in askSkips.append(rule.remoteHost ?? "") }
+        checks.expect(askSkips == ["allow.example.com"],
+                      "only the allow rule's skip is reported, got \(askSkips)")
 
         // A user's deny can never take DHCP or DHCPv6 away, whatever the
         // direction (issue #186). The refusal is reported, not silent.

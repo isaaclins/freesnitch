@@ -287,7 +287,11 @@ final class PFManager: @unchecked Sendable {
 
         for rule in renderedRules {
             let verb = rule.action == .deny ? "block" : "pass"
-            if let line = pfLine(rule: rule, verb: verb, onRejected: onRejected) {
+            // An ask rule pf can't express (a hostname, an app with no address)
+            // is expected and left to the extension, so it isn't reported as
+            // an error on every render.
+            let report = rule.action == .ask ? nil : onRejected
+            if let line = pfLine(rule: rule, verb: verb, onRejected: report) {
                 lines.append(line)
             }
         }
