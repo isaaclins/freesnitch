@@ -335,6 +335,8 @@ public struct RuleImportPlan: Sendable {
     /// Stored rules the file also carries, by ID, under a different profile.
     /// They leave their old profile, so the dialog and the log name them.
     public let moved: [Rule]
+    /// The profile each moved rule goes to, by ID.
+    public let movedTo: [UUID: String]
     /// The complete rule table after the import: the kept rules, then the file's rules.
     public let resulting: [Rule]
 
@@ -354,6 +356,8 @@ public struct RuleImportPlan: Sendable {
         moved = current.filter { stored in
             importedProfileByID[stored.id].map { $0 != stored.profile } ?? false
         }
+        movedTo = Dictionary(moved.map { ($0.id, importedProfileByID[$0.id] ?? $0.profile) },
+                             uniquingKeysWith: { first, _ in first })
         resulting = kept + imported
     }
 
@@ -393,7 +397,7 @@ public struct RuleImportPlan: Sendable {
         return ["rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
                 + "\(removed.count) removed, \(moved.count) moved to another profile, \(self.kept.count) kept in other profiles [\(kept)]"]
             + removed.map { "rule import removed: \(Self.describe($0)) in \($0.profile) (\($0.id.uuidString))" }
-            + moved.map { "rule import moved: \(Self.describe($0)) from \($0.profile) (\($0.id.uuidString))" }
+            + moved.map { "rule import moved: \(Self.describe($0)) from \($0.profile) to \(movedTo[$0.id] ?? "?") (\($0.id.uuidString))" }
     }
 
     /// Kept rules counted per profile, sorted by profile name.
@@ -410,17 +414,6 @@ public struct RuleImportPlan: Sendable {
         var destination = rule.remoteHost ?? rule.remoteIP ?? "any destination"
         if let port = rule.remotePort { destination += ":\(port)" }
         return "\(rule.action.rawValue) \(process) to \(destination)"
-    }
-
-    /// One line for the log, naming every rule the import deletes or moves.
-    public var logSummary: String {
-        let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
-        let removedIDs = removed.map { "\(Self.describe($0)) in \($0.profile) \($0.id.uuidString)" }.joined(separator: ", ")
-        let movedIDs = moved.map { "\(Self.describe($0)) from \($0.profile) \($0.id.uuidString)" }.joined(separator: ", ")
-        return "rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
-            + "\(removed.count) stored rules removed [\(removedIDs)]; "
-            + "\(moved.count) rules moved to another profile [\(movedIDs)]; "
-            + "\(self.kept.count) rules in other profiles kept [\(kept)]"
     }
 }
 

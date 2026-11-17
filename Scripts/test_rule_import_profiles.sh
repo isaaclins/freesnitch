@@ -126,9 +126,9 @@ let lossPlan = try importConfirmed(store, oldImport)
 check("a home rule missing from the file is removed",
       !labels(store.allRules(profile: nil)).contains("home:extra-home.example"))
 check("the plan names exactly the removed rule", lossPlan.removed.map(\.id) == [extraHome.id])
-check("the log line names the removed rule's ID", lossPlan.logSummary.contains(extraHome.id.uuidString))
+check("the log line names the removed rule's ID", lossPlan.logLines.joined().contains(extraHome.id.uuidString))
 check("the log line names the removed rule the way a person reads it",
-      lossPlan.logSummary.contains("deny curl to extra-home.example in home"))
+      lossPlan.logLines.joined().contains("deny curl to extra-home.example in home"))
 check("the log keeps one line per removed rule",
       lossPlan.logLines.contains { $0.hasPrefix("rule import removed: deny curl to extra-home.example in home") })
 check("Always is listed first among replaced profiles",
@@ -190,7 +190,7 @@ do {
 } catch is RuleExportError { refusedDuplicate = true }
 check("duplicate IDs in an import are refused", refusedDuplicate)
 check("a rule moved out of a profile the file does not mention is reported",
-      movePlan.moved.map(\.id) == [office.id] && movePlan.logSummary.contains("from Office")
+      movePlan.moved.map(\.id) == [office.id] && movePlan.logLines.contains { $0.contains("from Office to home") }
       && movePlan.confirmedIDs.contains(office.id))
 
 // 6. A file with no rules changes nothing.

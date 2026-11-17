@@ -1358,7 +1358,7 @@ struct RulesManagerView: View {
         let profiles = plan.replacedProfiles.map(Self.profileLabel)
         var lines = ["Importing \(Self.rulesCount(pendingImportRules.count)) replaces the rules in \(Self.list(profiles))."]
         if plan.removed.isEmpty {
-            lines.append("No rule there is lost: every stored rule in \(profiles.count == 1 ? "that profile" : "those profiles") is in the file.")
+            lines.append("No rule there is deleted: every stored rule in \(profiles.count == 1 ? "that profile" : "those profiles") is in the file, and the file's copy replaces it.")
         } else {
             // Name them, the way the table does, so the user sees which
             // rules go and not only how many.
@@ -1368,10 +1368,20 @@ struct RulesManagerView: View {
                          + shown.joined(separator: "\n") + more)
         }
         if !plan.moved.isEmpty {
-            let moves = plan.moved.prefix(10).map { "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)))" }
+            let moves = plan.moved.prefix(10).map {
+                "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)) → \(Self.profileLabel(plan.movedTo[$0.id] ?? $0.profile)))"
+            }
             let more = plan.moved.count > moves.count ? "\nand \(plan.moved.count - moves.count) more, all named in the log" : ""
-            lines.append("\(Self.rulesCount(plan.moved.count)) \(plan.moved.count == 1 ? "leaves its" : "leave their") profile for the one the file puts \(plan.moved.count == 1 ? "it" : "them") in:\n"
+            lines.append("\(Self.rulesCount(plan.moved.count)) \(plan.moved.count == 1 ? "moves" : "move") to another profile:\n"
                          + moves.joined(separator: "\n") + more)
+        }
+        // A backup restored on another Mac can name profiles that don't exist
+        // here. Their rules are stored but apply nowhere until a profile with
+        // that name is created, so say so instead of implying they are live.
+        let existing = Set(profileClient.profiles.map(\.name)).union([Profile.alwaysName])
+        let missing = plan.replacedProfiles.filter { !existing.contains($0) }
+        if !missing.isEmpty, !profileClient.profiles.isEmpty {
+            lines.append("There is no profile named \(Self.list(missing)) on this Mac. \(missing.count == 1 ? "Its" : "Their") rules are imported but apply nowhere until you create a profile with that name.")
         }
         if !plan.kept.isEmpty {
             let kept = plan.keptByProfile.map { "\(Self.profileLabel($0.profile)) (\($0.count))" }
