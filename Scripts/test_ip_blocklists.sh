@@ -325,8 +325,8 @@ struct IPBlocklistHarness {
         checks.expect(blocks(bothWays, "to 203.0.113.41 port 8080")
                         && blocks(bothWays, "to any port 8081"),
                       "a deny in both directions must block going out")
-        // Both ways means incoming connections from that address too, which
-        // a SYN-only outgoing line no longer stops by dropping replies.
+        // Both ways means new incoming connections from the remote side too,
+        // blocked by their own line rather than only by dropped replies.
         for remote in ["from 203.0.113.41 port 8080", "from any port 8081"] {
             checks.expect(bothWays.contains("block in quick proto tcp \(remote) flags S/SA\n")
                             && bothWays.contains("block in quick proto udp \(remote)\n"),
