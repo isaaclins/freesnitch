@@ -580,12 +580,24 @@ public final class PendingAlertRegistry: @unchecked Sendable {
     private var history: [UUID: (outcome: HistoryOutcome, at: Date)] = [:]
     private var historyOrder: [UUID] = []
     private let lock = NSLock()
-    /// Expiry runs on its own utility queue. It must never share a queue with
-    /// XPC handling, because an expiry that waits behind a request is the same
-    /// hang it exists to break.
-    private let expiryQueue = DispatchQueue(label: "io.isaaclins.freesnitch.pending-alert-expiry", qos: .utility)
+    /// Runs `fire` once, `after` seconds from now.
+    public typealias ExpiryScheduler = (_ after: TimeInterval, _ fire: @escaping () -> Void) -> Void
+    private let scheduleExpiry: ExpiryScheduler
 
-    public init() {}
+    /// By default expiry runs on its own utility queue. It must never share a
+    /// queue with XPC handling, because an expiry that waits behind a request
+    /// is the same hang it exists to break. A test passes its own scheduler so
+    /// it can fire an expiry when it chooses instead of waiting for real time.
+    public init(scheduleExpiry: ExpiryScheduler? = nil) {
+        if let scheduleExpiry {
+            self.scheduleExpiry = scheduleExpiry
+        } else {
+            let expiryQueue = DispatchQueue(label: "io.isaaclins.freesnitch.pending-alert-expiry", qos: .utility)
+            self.scheduleExpiry = { after, fire in
+                expiryQueue.asyncAfter(deadline: .now() + after, execute: fire)
+            }
+        }
+    }
 
     /// Number of alerts currently answerable. Test seam and diagnostics.
     public var count: Int {
@@ -628,7 +640,7 @@ public final class PendingAlertRegistry: @unchecked Sendable {
         lock.unlock()
 
         let budget = deadline.timeIntervalSince(now)
-        expiryQueue.asyncAfter(deadline: .now() + budget) { [weak self] in
+        scheduleExpiry(budget) { [weak self] in
             self?.expire(id: clamped.id)
         }
         return .registered
