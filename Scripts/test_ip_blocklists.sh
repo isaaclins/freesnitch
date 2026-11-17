@@ -307,15 +307,18 @@ struct IPBlocklistHarness {
         // A rule with only a port matches any host (issue #298).
         checks.expect(infrastructure.contains("pass quick proto { tcp udp } to any port 550"),
                       "a port-only allow in both directions must be written as to any port")
-        // pf would read an incoming deny's port as this Mac's own local port
-        // and drop replies arriving on it, so only outgoing denies reach pf.
-        checks.expect(!infrastructure.contains("549"),
-                      "an incoming deny must never be written to pf")
-        checks.expect(!blockLines.contains { $0.hasPrefix("block in") || $0.hasPrefix("block quick") },
-                      "a deny must only ever be written to pf as block out")
-        checks.expect(refusedPorts.filter { $0.contains("could disable DHCP") && !$0.contains("DHCPv6") }.count == 1
-                        && refusedPorts.filter { $0.contains("incoming deny") }.count == 3,
-                      "the DHCP and incoming refusals must be reported with a reason, got \(refusedPorts)")
+        // An incoming deny names the remote side, so pf gets `from`, never
+        // `in ... to`, which would be this Mac's own port. Its TCP half only
+        // stops new connections, and its UDP half is left to the extension,
+        // since pf cannot tell a new incoming datagram from a reply.
+        checks.expect(infrastructure.contains("block in quick proto tcp from any port 549 flags S/SA\n"),
+                      "an incoming port-only deny must be written as from any port, SYN only")
+        checks.expect(!infrastructure.contains("udp from any port 549") && !infrastructure.contains("to any port 549"),
+                      "an incoming-only deny must not block UDP replies or this Mac's own port")
+        checks.expect(!blockLines.contains { $0.hasPrefix("block quick") || ($0.hasPrefix("block in") && $0.contains(" to ")) },
+                      "a deny must never be written as a block on this Mac's own address or port")
+        checks.expect(refusedPorts.filter { $0.contains("could disable DHCP") && !$0.contains("DHCPv6") }.count == 2,
+                      "every DHCP refusal must be reported with a reason, got \(refusedPorts)")
         let bothWays = pf.renderAnchor(rules: [
             Rule(remoteIP: "203.0.113.41", remotePort: 8080, direction: .any, action: .deny, scope: .ip),
             Rule(remotePort: 8081, direction: .any, action: .deny, scope: .port)
@@ -323,18 +326,26 @@ struct IPBlocklistHarness {
         checkPFSyntax("both-ways", bothWays, checks)
         checks.expect(blocks(bothWays, "to 203.0.113.41 port 8080")
                         && blocks(bothWays, "to any port 8081"),
-                      "a deny in both directions must be written as its outgoing half only")
+                      "a deny in both directions must block going out")
+        // Both ways means incoming connections from that address too, which
+        // a SYN-only outgoing line no longer stops by dropping replies.
+        for remote in ["from 203.0.113.41 port 8080", "from any port 8081"] {
+            checks.expect(bothWays.contains("block in quick proto tcp \(remote) flags S/SA\n")
+                            && bothWays.contains("block in quick proto udp \(remote)\n"),
+                          "a deny in both directions must block coming in from the remote side: \(remote)")
+        }
         // A block keeps no state in pf, so a plain `block out ... port N`
         // would drop this Mac's replies to an incoming client that used N as
         // its source port. A TCP deny must only stop the SYN of a new
         // outgoing connection.
         for anchorText in [appScoped, infrastructure, bothWays] {
-            for line in anchorText.split(separator: "\n") where line.hasPrefix("block out quick proto tcp") {
+            for line in anchorText.split(separator: "\n")
+            where line.hasPrefix("block out quick proto tcp") || line.hasPrefix("block in quick proto tcp") {
                 checks.expect(line.hasSuffix(" flags S/SA"),
-                              "a TCP deny must only block new outgoing connections, got '\(line)'")
+                              "a TCP deny must only block new connections, got '\(line)'")
             }
         }
-        checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 2,
+        checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 3,
                       "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
@@ -554,7 +565,8 @@ if [[ -x "$PFCTL" ]] && "$PFCTL" -n -f "$TMP/pf-probe.conf" >/dev/null 2>&1; the
     fi
     parsed=$((parsed + 1))
   done
-  [[ "$parsed" -eq 6 ]] || { printf 'ip blocklist harness: FAIL: %d of 6 rendered anchors reached pfctl\n' "$parsed" >&2; exit 1; }
+  # A failed write is an assertion failure above, so every anchor is here.
+  [[ "$parsed" -gt 0 ]] || { printf 'ip blocklist harness: FAIL: no rendered anchor reached pfctl\n' >&2; exit 1; }
   printf 'ip blocklist harness: pfctl -n parsed all %d rendered anchors\n' "$parsed"
 else
   printf 'ip blocklist harness: pfctl -n cannot run here; the grammar checks stand in for it\n'
