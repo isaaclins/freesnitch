@@ -566,6 +566,11 @@ if [[ -x "$PFCTL" ]] && "$PFCTL" -n -f "$TMP/pf-probe.conf" >/dev/null 2>&1; the
   # A failed write is an assertion failure above, so every anchor is here.
   [[ "$parsed" -gt 0 ]] || { printf 'ip blocklist harness: FAIL: no rendered anchor reached pfctl\n' >&2; exit 1; }
   printf 'ip blocklist harness: pfctl -n parsed all %d rendered anchors\n' "$parsed"
+elif [[ "${CI:-}" == "true" ]]; then
+  # CI runs on macOS, where pfctl -n must work: a runner that cannot run it
+  # must not turn the parse check into a silent pass.
+  printf 'ip blocklist harness: FAIL: pfctl -n cannot run on this CI runner, so no anchor was parsed\n' >&2
+  exit 1
 else
   printf 'ip blocklist harness: pfctl -n cannot run here; the grammar checks stand in for it\n'
 fi
