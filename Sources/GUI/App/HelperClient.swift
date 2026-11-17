@@ -925,6 +925,50 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
+    /// Every stored rule in every profile, for a backup or to show what an
+    /// import changes. `state.rules` holds only the active profile's layers,
+    /// so a backup made from it left the other profiles out (#247). Unlike
+    /// `listRules`, a failure is reported instead of arriving as an empty
+    /// list, which would export an empty file or understate an import.
+    func allRulesInEveryProfile(completion: @MainActor @escaping ([Rule]?, String?) -> Void) {
+        let lock = NSLock()
+        var finished = false
+        var timeoutWork: DispatchWorkItem?
+        let finish: ([Rule]?, String?) -> Void = { rules, error in
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            lock.unlock()
+            timeoutWork?.cancel()
+            Task { @MainActor in completion(rules, error) }
+        }
+        let retry = "Run `\(AppConstants.helperKickstartCommand)`, then retry."
+        let work = DispatchWorkItem {
+            finish(nil, "The helper did not return the rules within 5 seconds. \(retry)")
+        }
+        timeoutWork = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
+
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            finish(nil, "Could not read the rules: \(error.sentence) \(retry)")
+        }) as? HelperProtocol else {
+            finish(nil, "The FreeSnitch helper is not connected. \(retry)")
+            return
+        }
+        // An empty profile name asks for every profile.
+        proxy.listRules(profile: "") { data in
+            do {
+                try RuleTransportBoundary.validateRuleBatchBytes(data)
+                finish(try FreeSnitchWireCodec.decode([Rule].self, from: data), nil)
+            } catch {
+                finish(nil, "The helper returned rules that could not be read: \(error.sentence) \(retry)")
+            }
+        }
+    }
+
     func listRules(profile: String = "", completion: @MainActor @escaping ([Rule]) -> Void) {
         remote?.listRules(profile: profile) { data in
             let rules = (try? FreeSnitchWireCodec.decode([Rule].self, from: data)) ?? []

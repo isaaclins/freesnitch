@@ -315,3 +315,50 @@ public enum RuleExportCodec {
         return joined.isEmpty ? "the top level" : "`\(joined)`"
     }
 }
+
+/// What importing a rule file does to the rules already stored (#247).
+///
+/// An import replaces the rules of the profiles the file carries rules for,
+/// and only those. A profile the file says nothing about was not given, so its
+/// rules are kept. A backup made while one profile was active therefore can no
+/// longer wipe the other profiles' rules. The helper applies this plan inside
+/// its transaction, and the app shows the same plan before the user confirms,
+/// so what the dialog promises is what the helper does.
+public struct RuleImportPlan: Sendable {
+    /// Profiles the file carries rules for, sorted. Their stored rules are replaced.
+    public let replacedProfiles: [String]
+    /// Stored rules in a replaced profile that the file does not contain.
+    /// These are the only rules an import deletes.
+    public let removed: [Rule]
+    /// Stored rules in profiles the file does not mention. They stay as they are.
+    public let kept: [Rule]
+    /// The complete rule table after the import: the kept rules, then the file's rules.
+    public let resulting: [Rule]
+
+    public init(current: [Rule], imported: [Rule]) {
+        let profiles = Set(imported.map(\.profile))
+        let importedIDs = Set(imported.map(\.id))
+        replacedProfiles = profiles.sorted()
+        // A stored rule the file also carries, by ID, is replaced by the
+        // file's copy wherever it lived, so it is neither kept nor lost.
+        kept = current.filter { !profiles.contains($0.profile) && !importedIDs.contains($0.id) }
+        removed = current.filter { profiles.contains($0.profile) && !importedIDs.contains($0.id) }
+        resulting = kept + imported
+    }
+
+    /// Kept rules counted per profile, sorted by profile name.
+    public var keptByProfile: [(profile: String, count: Int)] {
+        Dictionary(grouping: kept, by: \.profile)
+            .map { (profile: $0.key, count: $0.value.count) }
+            .sorted { $0.profile < $1.profile }
+    }
+
+    /// One line for the log, naming every rule the import deletes.
+    public var logSummary: String {
+        let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
+        let removedIDs = removed.map { "\($0.id.uuidString) (\($0.profile))" }.joined(separator: ", ")
+        return "rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
+            + "\(removed.count) stored rules removed [\(removedIDs)]; "
+            + "\(self.kept.count) rules in other profiles kept [\(kept)]"
+    }
+}

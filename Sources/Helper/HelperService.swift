@@ -813,7 +813,19 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 reply(false, reason)
                 return
             }
-            _ = try mutatePolicy { draft in draft.rules = rules }
+            // Only the profiles the file carries rules for are replaced. A
+            // profile the file does not mention keeps its rules, so a backup
+            // from an older build that held one profile cannot delete the
+            // others (#247). The plan is built from the stored rules inside
+            // the transaction, and every rule it deletes is logged by ID.
+            var plan: RuleImportPlan?
+            _ = try mutatePolicy { draft in
+                let importPlan = RuleImportPlan(current: draft.rules, imported: rules)
+                try RuleTransportBoundary.validate(rules: importPlan.resulting)
+                draft.rules = importPlan.resulting
+                plan = importPlan
+            }
+            if let plan { PSLog.info(PSLog.helper, plan.logSummary) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()

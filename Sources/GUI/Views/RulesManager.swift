@@ -27,6 +27,8 @@ struct RulesManagerView: View {
     @State private var showingExporter = false
     @State private var exportDocument = RuleJSONDocument(rules: [])
     @State private var pendingImportRules: [Rule] = []
+    /// What the pending import does to every profile's stored rules (#247).
+    @State private var pendingImportPlan: RuleImportPlan?
     @State private var showingImportConfirmation = false
     @State private var pendingRemovalIDs: Set<UUID> = []
     @State private var showingRemoveConfirmation = false
@@ -167,9 +169,12 @@ struct RulesManagerView: View {
             Button("Replace Rules", role: .destructive) {
                 replaceRules(with: pendingImportRules)
             }
-            Button("Cancel", role: .cancel) { pendingImportRules.removeAll() }
+            Button("Cancel", role: .cancel) {
+                pendingImportRules.removeAll()
+                pendingImportPlan = nil
+            }
         } message: {
-            Text("Importing \(pendingImportRules.count) rules will replace the \(state.rules.count) rules currently in FreeSnitch.")
+            Text(importConfirmationMessage)
         }
         // Every removal comes through here, from the table, the context menu
         // and the inspector alike. A single rule used to go straight through
@@ -1294,8 +1299,19 @@ struct RulesManagerView: View {
             let data = try Data(contentsOf: url)
             // Decode and validate the whole batch before the confirmation
             // dialog appears: an import is all-or-nothing.
-            pendingImportRules = try RuleExportCodec.decode(data).rules
-            showingImportConfirmation = true
+            let imported = try RuleExportCodec.decode(data).rules
+            // The dialog has to say what happens to every profile's rules,
+            // not only the active profile's, so read them all first (#247).
+            state.helper.allRulesInEveryProfile { current, message in
+                guard let current else {
+                    showError("Could not import the rules",
+                              message ?? "The helper did not return the current rules, so nothing was imported.")
+                    return
+                }
+                pendingImportRules = imported
+                pendingImportPlan = RuleImportPlan(current: current, imported: imported)
+                showingImportConfirmation = true
+            }
         } catch let error as RuleExportError {
             pendingImportRules.removeAll()
             showError("\(error.errorDescription ?? "The rule file could not be imported.") \(error.remediation)")
@@ -1306,21 +1322,76 @@ struct RulesManagerView: View {
     }
 
     private func replaceRules(with rules: [Rule]) {
+        let plan = pendingImportPlan
         pendingImportRules.removeAll()
+        pendingImportPlan = nil
         let existingRules = state.rules
         state.helper.replaceRules(rules, existing: existingRules) { ok, message in
             guard ok else {
                 showError("Could not import the rules", message ?? "The helper rejected the import and did not say why.")
                 return
             }
+            if let plan { state.appendLog(level: "info", message: plan.logSummary) }
             state.refreshRules()
             clearSelection()
         }
     }
 
+    /// Names what the import replaces, what it deletes and what it keeps, so
+    /// no rule disappears without the user having read that it would (#247).
+    private var importConfirmationMessage: String {
+        guard let plan = pendingImportPlan else {
+            return "Importing \(pendingImportRules.count) rules."
+        }
+        guard !plan.replacedProfiles.isEmpty else {
+            return "The file contains no rules, so importing it changes nothing."
+        }
+        let profiles = plan.replacedProfiles.map(Self.profileLabel)
+        var lines = ["Importing \(Self.rulesCount(pendingImportRules.count)) replaces the rules in \(Self.list(profiles))."]
+        if plan.removed.isEmpty {
+            lines.append("No rule there is lost: every stored rule in \(profiles.count == 1 ? "that profile" : "those profiles") is in the file.")
+        } else {
+            lines.append("\(Self.rulesCount(plan.removed.count)) there \(plan.removed.count == 1 ? "is" : "are") not in the file and will be deleted.")
+        }
+        if !plan.kept.isEmpty {
+            let kept = plan.keptByProfile.map { "\(Self.profileLabel($0.profile)) (\($0.count))" }
+            lines.append("The file has no rules for \(Self.list(kept)), so \(plan.kept.count == 1 ? "that rule stays" : "those \(plan.kept.count) rules stay") as \(plan.kept.count == 1 ? "it is" : "they are").")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+
+    private static func profileLabel(_ name: String) -> String {
+        name == Profile.alwaysName ? "Always" : name
+    }
+
+    private static func rulesCount(_ count: Int) -> String {
+        count == 1 ? "1 rule" : "\(count) rules"
+    }
+
+    private static func list(_ items: [String]) -> String {
+        switch items.count {
+        case 0: return ""
+        case 1: return items[0]
+        default: return items.dropLast().joined(separator: ", ") + " and " + items[items.count - 1]
+        }
+    }
+
+    /// A backup holds every profile's rules. `state.rules` is only the active
+    /// profile's layers, so exporting it dropped the others (#247).
     private func exportRules() {
-        exportDocument = RuleJSONDocument(rules: state.rules)
-        showingExporter = true
+        guard state.helperConnected else {
+            showError("Approve the FreeSnitch helper before exporting rules.")
+            return
+        }
+        state.helper.allRulesInEveryProfile { rules, message in
+            guard let rules else {
+                showError("Could not export the rules",
+                          message ?? "The helper did not return the rules, so nothing was exported.")
+                return
+            }
+            exportDocument = RuleJSONDocument(rules: rules)
+            showingExporter = true
+        }
     }
 
     /// The refusal is shown here, where the checkbox is, rather than only as a
