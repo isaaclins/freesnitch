@@ -233,7 +233,7 @@ mutate_and_expect_failure save-cycle-unserialized "$SEM" \
   'do { let done = {}
             self.persistenceCycleDone = done'
 mutate_and_expect_failure disable-keeps-enable-request "$SEM" \
-  $'cancelPendingPersistence()\n        // Turning the filter on and then off before the helper answered must\n        // not let that answer turn it back on.\n        enableFilterRequested = false' \
+  $'cancelPendingPersistence()\n        // Turning the filter on and then off before the helper answered must\n        // not let that answer turn it back on.\n        persistenceCycle.dropEnableRequest()' \
   'cancelPendingPersistence()'
 mutate_and_expect_failure restart-reenables-off-filter "$SEM" \
   'guard mgr.isEnabled else {' 'guard true else {'
@@ -246,8 +246,8 @@ mutate_and_expect_failure restart-run-directly "$SEM" \
   'runFilterRestart(done: {})
         }'
 mutate_and_expect_failure remove-unserialized "$SEM" \
-  $'        enableFilterRequested = false\n        filterPreferences.run { [weak self] done in' \
-  $'        enableFilterRequested = false\n        do { let done = {}'
+  $'        persistenceCycle.dropEnableRequest()\n        filterPreferences.run { [weak self] done in' \
+  $'        persistenceCycle.dropEnableRequest()\n        do { let done = {}'
 
 mutate_and_expect_failure overtaken-enable-reports-active "$SEM" \
   'if completion == .active {
@@ -259,17 +259,17 @@ mutate_and_expect_failure overtaken-not-checked "$SEM" \
 mutate_and_expect_failure overtaken-status-kept "$SEM" \
   'if completion == .stayedOff {' 'if false {'
 mutate_and_expect_failure disable-not-counted "$SEM" \
-  $'        enableFilterRequested = false\n        filterTurnOffs &+= 1\n        // A save cycle' \
-  $'        enableFilterRequested = false\n        // A save cycle'
+  $'        persistenceCycle.dropEnableRequest()\n        filterTurnOffs &+= 1\n        // A save cycle' \
+  $'        persistenceCycle.dropEnableRequest()\n        // A save cycle'
 mutate_and_expect_failure remove-not-counted "$SEM" \
-  $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        enableFilterRequested = false\n        filterPreferences.run' \
-  $'        cancelPendingPersistence()\n        enableFilterRequested = false\n        filterPreferences.run'
+  $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        persistenceCycle.dropEnableRequest()\n        filterPreferences.run' \
+  $'        cancelPendingPersistence()\n        persistenceCycle.dropEnableRequest()\n        filterPreferences.run'
 mutate_and_expect_failure removal-keeps-active-status "$SEM" \
-  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {\n                                    self.showNotFiltering()\n                                }' \
-  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)'
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
 mutate_and_expect_failure disable-keeps-active-status "$SEM" \
-  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested) {\n                                    self.showNotFiltering()\n                                }' \
-  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)'
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
 mutate_and_expect_failure not-filtering-keeps-status "$SEM" \
   'if status != .unsupported { status = .idle }' ''
 printf 'filter off vs boot-policy save verification: PASS\n'
