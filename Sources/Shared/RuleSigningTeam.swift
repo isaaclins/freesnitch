@@ -63,7 +63,7 @@ public enum RuleSigningTeam {
 
     /// What the Rules list shows for a rule's team.
     public static func label(_ team: String?) -> String {
-        guard let team, !team.isEmpty else { return "Not known yet (learned the next time the app connects)" }
+        guard let team, !team.isEmpty else { return "Not known yet" }
         return team == CodeSigningIdentity.appleTeam ? "Apple" : "Team \(team)"
     }
 }
