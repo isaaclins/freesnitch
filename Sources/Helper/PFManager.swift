@@ -422,7 +422,10 @@ final class PFManager: @unchecked Sendable {
             line += r.direction == .incoming ? " in" : " out"
         }
         line += " quick proto { tcp udp }"
-        if let destination { line += " to \(destination)" }
+        // pf only takes `port` after a host (pf.conf(5), `hosts`): a bare
+        // `port 8443` is a syntax error that makes pfctl refuse the whole
+        // anchor (issue #298), so a port-only rule matches `to any`.
+        line += " to \(destination ?? "any")"
         if let port { line += " port \(port)" }
         return line
     }
