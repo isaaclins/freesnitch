@@ -59,6 +59,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Automatic retries of a failed boot-policy save (#213). Bounded and
     /// spaced; reset by a successful save or a newer policy.
     private var persistenceRetry = SharedRuleBridge.RetrySchedule()
+    /// Bumped whenever pending saves are cancelled, so a cycle that was
+    /// already running can tell its result no longer matters.
+    private var persistenceCancellations = 0
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
@@ -167,6 +170,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 } else {
                     self.recordFilterDiagnostic(state: "removed",
                                                 detail: "The content filter configuration was removed.")
+                    // No filter is left to save rules for, so a warning
+                    // about an earlier failed save no longer applies (#311).
+                    DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }
                 }
                 completion()
             }
@@ -221,6 +227,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // invalidate a save in flight.
             cancelPendingPersistence()
             recordPersistenceFailure("encode", error: error)
+            if enableFilterRequested {
+                // Activation waits for this policy and it will never arrive
+                // in a savable form: say so instead of waiting forever.
+                enableFilterRequested = false
+                fail("filter snapshot could not be saved: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -244,10 +256,23 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         guard persistenceQueue.hasPending else { return }
         persistenceInFlight = true
         let generationAtLoad = persistenceQueue.generation
+        let cancellationsAtLoad = persistenceCancellations
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
                 guard let self else { return }
+                if let loadError, self.persistenceCancellations != cancellationsAtLoad {
+                    // The filter was turned on, off or removed meanwhile; this
+                    // load no longer matters and must not raise a warning or
+                    // fail an activation that has not run yet.
+                    self.persistenceInFlight = false
+                    os_log("A cancelled boot policy load failed: %{public}@", log: self.log, type: .info,
+                           loadError.sentence)
+                    if self.persistenceQueue.hasPending || self.enableFilterRequested {
+                        self.schedulePersistence(immediate: true)
+                    }
+                    return
+                }
                 if let loadError {
                     self.persistenceInFlight = false
                     self.recordPersistenceFailure("load", error: loadError)
@@ -282,6 +307,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // uninstall). A boot policy save must not create one.
                     self.persistenceInFlight = false
                     self.persistenceQueue.discardThrough(self.persistenceQueue.generation)
+                    // Nothing to save rules for, so an earlier save-failure
+                    // warning no longer applies (#311).
+                    self.state?.clearFilterPersistenceFailure()
                     return
                 }
                 let pending = self.persistenceQueue.takeNewest()
@@ -311,7 +339,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         self.persistenceInFlight = false
                         if let saveError {
-                            self.recordPersistenceFailure("save", error: saveError)
+                            if self.persistenceCancellations == cancellationsAtLoad {
+                                self.recordPersistenceFailure("save", error: saveError)
+                            } else {
+                                // The filter was turned on, off or removed
+                                // meanwhile; this save no longer matters and
+                                // must not bring the warning back.
+                                os_log("A cancelled boot policy save failed: %{public}@", log: self.log, type: .info,
+                                       saveError.sentence)
+                            }
                             if shouldEnable {
                                 self.fail("filter save: \(saveError.localizedDescription)")
                             } else if let pending,
@@ -368,6 +404,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// turned on (only a fresh helper answer may be saved then), turned off,
     /// or removed, so a late retry can neither enable nor recreate it.
     private func cancelPendingPersistence() {
+        persistenceCancellations &+= 1
         persistenceWorkItem?.cancel()
         persistenceWorkItem = nil
         // Invalidates a save that is already in flight too: if it fails, it
@@ -413,6 +450,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     self.recordFilterDiagnostic(state: "unknown", detail: "The content filter could not be disabled: \(saveError.sentence)")
                 } else {
                     self.recordFilterDiagnostic(state: "installed-disabled", detail: "The content filter configuration is installed but disabled.")
+                    // With the filter off there is nothing to restart with
+                    // these rules; turning it on saves the current ones again.
+                    DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }
                 }
             }
         }
