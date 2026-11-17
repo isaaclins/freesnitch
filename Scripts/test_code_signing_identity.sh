@@ -626,6 +626,16 @@ var renamed = staleCopy
 renamed.processBundleId = "org.example.other"
 expect(RuleSigningTeam.keepingLearnedTeam(renamed, over: storedLearned).processTeamId == nil,
        "a rule edited to name another app drops the old app's team")
+expect(RuleSigningTeam.isWellFormed(chromeTeam) && RuleSigningTeam.isWellFormed(CodeSigningIdentity.appleTeam)
+       && !RuleSigningTeam.isWellFormed("eqhxz8m8av") && !RuleSigningTeam.isWellFormed("EQHXZ8M8A"),
+       "a team id must look like one Apple issues")
+expect((try? RuleTransportBoundary.validate(rule: Rule(processBundleId: "com.google.Chrome", processTeamId: "chrome team",
+                                                         action: .allow))) == nil,
+       "a rule with a malformed team is refused instead of silently never matching")
+var importDraft = RuleStore.PolicyDraft(mode: .alert, rules: [storedLearned])
+_ = try! RuleImportPlan.apply(imported: [staleCopy], confirmedIDs: [], to: &importDraft)
+expect(importDraft.rules.first?.processTeamId == chromeTeam,
+       "importing a backup made before the team was learned keeps the learned team")
 expect(RuleSigningTeam.label(nil).hasPrefix("Not known yet") && RuleSigningTeam.label("apple") == "Apple"
        && RuleSigningTeam.label(chromeTeam) == "Team EQHXZ8M8AV", "the Rules list names the signer plainly")
 

@@ -106,6 +106,14 @@ public enum RuleTransportBoundary {
     public static func validate(rule: Rule) throws {
         try validateLength(rule.processBundleId, field: "processBundleId", maximum: maximumProcessBundleIDBytes)
         try validateLength(rule.processTeamId, field: "processTeamId", maximum: maximumTeamIdLength)
+        // A malformed team could never match, so the rule would silently
+        // never apply (#364). Same check as `RuleSigningTeam.isWellFormed`,
+        // kept here so this file stands alone.
+        if let team = rule.processTeamId, !team.isEmpty, team != "apple",
+           !(team.utf8.count == 10 && team.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) })) {
+            throw ValidationError.invalidField(field: "processTeamId",
+                                               reason: "expected a ten-character Apple team id or \"apple\"")
+        }
         try validateLength(rule.processPath, field: "processPath", maximum: maximumProcessPathBytes)
         try validateLength(rule.processName, field: "processName", maximum: maximumProcessNameBytes)
         try validateLength(rule.remoteHost, field: "remoteHost", maximum: maximumRemoteHostBytes)

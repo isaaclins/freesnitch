@@ -137,6 +137,7 @@ final class MonitorTreeController: ObservableObject {
     func apply(_ action: RuleAction,
                to target: MonitorRuleTarget,
                processName: String?,
+               teamID: String? = nil,
                state: AppState) {
         guard state.helperConnected else {
             errorMessage = "Approve the FreeSnitch helper before deciding anything here. Rules are stored by the helper, not by this window."
@@ -145,6 +146,7 @@ final class MonitorTreeController: ObservableObject {
         let existing = decisions.rule(for: target)
         guard let rule = MonitorRuleDraft.rule(for: target,
                                                processName: processName,
+                                               teamID: teamID,
                                                action: action,
                                                profile: state.activeProfile,
                                                existing: existing) else {

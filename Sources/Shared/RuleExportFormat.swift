@@ -382,6 +382,10 @@ public struct RuleImportPlan: Sendable {
         guard Set(imported.map(\.id)).count == imported.count else {
             throw RuleExportError.duplicateRuleID("in the imported rules")
         }
+        // A backup from before #364 carries no teams. Rules it brings back
+        // keep the team their stored copy already learned.
+        let stored = Dictionary(draft.rules.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let imported = imported.map { RuleSigningTeam.keepingLearnedTeam($0, over: stored[$0.id]) }
         let plan = RuleImportPlan(current: draft.rules, imported: imported)
         guard Set(plan.confirmedIDs) == confirmedIDs else {
             throw RuleImportConflict()
