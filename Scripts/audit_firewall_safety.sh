@@ -403,6 +403,23 @@ boot_assign_line="$(grep -nF 'snapshotOrigin = .boot' "$FILTER" | head -1 | cut 
 if [[ -z "$watermark_check_line" || -z "$boot_assign_line" || "$watermark_check_line" -gt "$boot_assign_line" ]]; then
   fail "the boot policy is applied before it is checked against the last live policy"
 fi
+# Every load-then-save on NEFilterManager.shared() runs one at a time, so a
+# boot-policy save cannot write the filter back on after the user turned it
+# off (#309).
+for writer in 'private func flushPersistence()' 'private func disableFilter()' \
+              'private func removeFilterConfiguration(' 'private func restartFilterProvider()'; do
+  writer_body="$(awk -v w="$writer" 'index($0, w) {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+  printf '%s\n' "$writer_body" | grep -Fq 'filterPreferences.run {' \
+    || fail "${writer} changes the content filter preferences without waiting for the other writers"
+done
+if [[ "$(grep -c 'NEFilterManager.shared()' "$SYSTEM_EXTENSION_MANAGER")" -ne 4 ]]; then
+  fail "a new NEFilterManager writer was added outside the serialized ones"
+fi
+disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$disable_body" | grep -Fq 'enableFilterRequested = false' \
+  || fail "turning the filter off leaves an enable request that the helper's answer can still act on"
+require_text "$SYSTEM_EXTENSION_MANAGER" "guard mgr.isEnabled else {" \
+  "a filter restart can turn the filter back on after the user turned it off"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"

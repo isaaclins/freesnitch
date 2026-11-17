@@ -54,6 +54,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var filterConfigurationActive = false
     private var persistenceQueue = SharedRuleBridge.NewestWriteWinsQueue()
     private var persistenceInFlight = false
+    /// Ends the boot-policy save cycle's turn on `filterPreferences`.
+    private var persistenceCycleDone: (() -> Void)?
+    /// Every load-then-save on the shared NEFilterManager (boot-policy saves,
+    /// turning the filter off, removing it, restarting it) waits here for the
+    /// one before it, so the last thing asked for is what gets saved (#309).
+    private let filterPreferences = FilterPreferencesLine()
     private var persistenceWorkItem: DispatchWorkItem?
     private var enableFilterRequested = false
     /// Automatic retries of a failed boot-policy save (#213). Bounded and
@@ -154,27 +160,36 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// errored would be worse than one that continues and reports.
     private func removeFilterConfiguration(completion: @escaping () -> Void) {
         cancelPendingPersistence()
-        let mgr = NEFilterManager.shared()
-        mgr.loadFromPreferences { [weak self] error in
-            guard let self else { completion(); return }
-            if error != nil {
-                self.recordFilterDiagnostic(state: "unknown",
-                                            detail: "Could not read the content filter preferences while removing them.")
-                completion()
-                return
-            }
-            mgr.removeFromPreferences { removeError in
-                if let removeError {
-                    self.recordFilterDiagnostic(state: "unknown",
-                                                detail: "The content filter configuration could not be removed: \(removeError.sentence)")
-                } else {
-                    self.recordFilterDiagnostic(state: "removed",
-                                                detail: "The content filter configuration was removed.")
-                    // No filter is left to save rules for, so a warning
-                    // about an earlier failed save no longer applies (#311).
-                    DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }
+        enableFilterRequested = false
+        filterPreferences.run { done in
+            let mgr = NEFilterManager.shared()
+            mgr.loadFromPreferences { [weak self] error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); completion(); return }
+                    if error != nil {
+                        self.recordFilterDiagnostic(state: "unknown",
+                                                    detail: "Could not read the content filter preferences while removing them.")
+                        done()
+                        completion()
+                        return
+                    }
+                    mgr.removeFromPreferences { removeError in
+                        DispatchQueue.main.async {
+                            if let removeError {
+                                self.recordFilterDiagnostic(state: "unknown",
+                                                            detail: "The content filter configuration could not be removed: \(removeError.sentence)")
+                            } else {
+                                self.recordFilterDiagnostic(state: "removed",
+                                                            detail: "The content filter configuration was removed.")
+                                // No filter is left to save rules for, so a warning
+                                // about an earlier failed save no longer applies (#311).
+                                self.state?.clearFilterPersistenceFailure()
+                            }
+                            done()
+                            completion()
+                        }
+                    }
                 }
-                completion()
             }
         }
     }
@@ -256,6 +271,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // is a fetch failure, not permission to persist stale GUI state.
         guard persistenceQueue.hasPending else { return }
         persistenceInFlight = true
+        // Waits for a turn-off, removal or restart that was asked for earlier
+        // to finish saving, and makes one asked for later wait for this cycle.
+        filterPreferences.run { [weak self] done in
+            guard let self else { done(); return }
+            self.persistenceCycleDone = done
+            self.runPersistenceCycle()
+        }
+    }
+
+    private func runPersistenceCycle() {
         let generationAtLoad = persistenceQueue.generation
         let cancellationsAtLoad = persistenceCancellations
         let mgr = NEFilterManager.shared()
@@ -266,7 +291,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // The filter was turned on, off or removed meanwhile; this
                     // load no longer matters and must not raise a warning or
                     // fail an activation that has not run yet.
-                    self.persistenceInFlight = false
+                    self.endPersistenceCycle()
                     os_log("A cancelled boot policy load failed: %{public}@", log: self.log, type: .info,
                            loadError.sentence)
                     if self.persistenceQueue.hasPending || self.enableFilterRequested {
@@ -275,7 +300,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     return
                 }
                 if let loadError {
-                    self.persistenceInFlight = false
+                    self.endPersistenceCycle()
                     self.recordPersistenceFailure("load", error: loadError)
                     if self.enableFilterRequested {
                         self.fail("filter load: \(loadError.localizedDescription)")
@@ -300,13 +325,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // The filter was turned on while this cycle was loading,
                     // which cleared the queue. Only the helper's fresh answer
                     // may enable it; its arrival starts the next cycle.
-                    self.persistenceInFlight = false
+                    self.endPersistenceCycle()
                     return
                 }
                 if !shouldEnable && mgr.providerConfiguration == nil {
                     // No filter is configured (never enabled, or removed for
                     // uninstall). A boot policy save must not create one.
-                    self.persistenceInFlight = false
+                    self.endPersistenceCycle()
                     self.persistenceQueue.discardThrough(self.persistenceQueue.generation)
                     // Nothing to save rules for, so an earlier save-failure
                     // warning no longer applies (#311).
@@ -319,7 +344,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // Turned off or removed while this cycle was loading:
                     // there is nothing to save, and writing the configuration
                     // loaded before would race that change.
-                    self.persistenceInFlight = false
+                    self.endPersistenceCycle()
                     return
                 }
                 self.enableFilterRequested = false
@@ -338,7 +363,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
-                        self.persistenceInFlight = false
+                        self.endPersistenceCycle()
                         var retryScheduled = false
                         if let saveError {
                             if self.persistenceCancellations == cancellationsAtLoad {
@@ -398,6 +423,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// The boot-policy save cycle is over: the next preferences operation may
+    /// run, and a new cycle may start.
+    private func endPersistenceCycle() {
+        persistenceInFlight = false
+        let done = persistenceCycleDone
+        persistenceCycleDone = nil
+        done?()
+    }
+
     /// Drops a queued or scheduled boot-policy save. Used when the filter is
     /// turned on (only a fresh helper answer may be saved then), turned off,
     /// or removed, so a late retry can neither enable nor recreate it.
@@ -437,22 +471,35 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func disableFilter() {
         cancelPendingPersistence()
-        let mgr = NEFilterManager.shared()
-        mgr.loadFromPreferences { [weak self] error in
-            guard let self else { return }
-            guard error == nil else {
-                self.recordFilterDiagnostic(state: "unknown", detail: "Could not read the content filter preferences while disabling them.")
-                return
-            }
-            mgr.isEnabled = false
-            mgr.saveToPreferences { saveError in
-                if let saveError {
-                    self.recordFilterDiagnostic(state: "unknown", detail: "The content filter could not be disabled: \(saveError.sentence)")
-                } else {
-                    self.recordFilterDiagnostic(state: "installed-disabled", detail: "The content filter configuration is installed but disabled.")
-                    // With the filter off there is nothing to restart with
-                    // these rules; turning it on saves the current ones again.
-                    DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }
+        // Turning the filter on and then off before the helper answered must
+        // not let that answer turn it back on.
+        enableFilterRequested = false
+        // A save cycle already loading or saving finishes first; this load
+        // then sees what it wrote and the off is saved last (#309).
+        filterPreferences.run { done in
+            let mgr = NEFilterManager.shared()
+            mgr.loadFromPreferences { [weak self] error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); return }
+                    guard error == nil else {
+                        self.recordFilterDiagnostic(state: "unknown", detail: "Could not read the content filter preferences while disabling them.")
+                        done()
+                        return
+                    }
+                    mgr.isEnabled = false
+                    mgr.saveToPreferences { saveError in
+                        DispatchQueue.main.async {
+                            if let saveError {
+                                self.recordFilterDiagnostic(state: "unknown", detail: "The content filter could not be disabled: \(saveError.sentence)")
+                            } else {
+                                self.recordFilterDiagnostic(state: "installed-disabled", detail: "The content filter configuration is installed but disabled.")
+                                // With the filter off there is nothing to restart with
+                                // these rules; turning it on saves the current ones again.
+                                self.state?.clearFilterPersistenceFailure()
+                            }
+                            done()
+                        }
+                    }
                 }
             }
         }
@@ -508,19 +555,36 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func restartFilterProvider() {
         guard !filterRestartInFlight else { return }
         filterRestartInFlight = true
+        // Waits for any earlier preferences operation, so a turn-off asked for
+        // before the restart is loaded below, and one asked for after it is
+        // saved after the restart's own saves (#309).
+        filterPreferences.run { [weak self] done in
+            guard let self else { done(); return }
+            self.runFilterRestart(done: done)
+        }
+    }
+
+    private func runFilterRestart(done: @escaping () -> Void) {
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self else { done(); return }
                 if let loadError {
-                    self.finishFilterRestart(failure: "read", error: loadError)
+                    self.finishFilterRestart(failure: "read", error: loadError, done: done)
+                    return
+                }
+                guard mgr.isEnabled else {
+                    // The filter was turned off (or removed) while the restart
+                    // waited. Restarting it would turn it back on.
+                    self.filterRestartInFlight = false
+                    done()
                     return
                 }
                 mgr.isEnabled = false
                 mgr.saveToPreferences { stopError in
                     DispatchQueue.main.async {
                         if let stopError {
-                            self.finishFilterRestart(failure: "stop", error: stopError)
+                            self.finishFilterRestart(failure: "stop", error: stopError, done: done)
                             return
                         }
                         mgr.localizedDescription = "FreeSnitch"
@@ -528,12 +592,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                         mgr.saveToPreferences { startError in
                             DispatchQueue.main.async {
                                 if let startError {
-                                    self.finishFilterRestart(failure: "start", error: startError)
+                                    self.finishFilterRestart(failure: "start", error: startError, done: done)
                                     return
                                 }
                                 self.filterRestartInFlight = false
                                 self.recordFilterDiagnostic(state: "installed-enabled",
                                                             detail: "The content filter was restarted to clear a rejected policy snapshot.")
+                                done()
                                 // The restarted provider holds no policy, so
                                 // the helper's snapshot is delivered again
                                 // through the ordinary authoritative path.
@@ -546,13 +611,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
-    private func finishFilterRestart(failure operation: String, error: Error) {
+    private func finishFilterRestart(failure operation: String, error: Error, done: () -> Void) {
         filterRestartInFlight = false
         let detail = "The network extension filter could not be restarted (\(operation): \(error.localizedDescription)). "
             + SharedRuleBridge.snapshotRecoveryExhaustedRemediation
         recordFilterDiagnostic(state: "degraded", detail: detail)
         state?.recordFilterRecovery(detail)
         os_log("%{public}@", log: log, type: .error, detail)
+        done()
     }
 
     private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
