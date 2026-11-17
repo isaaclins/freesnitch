@@ -42,8 +42,9 @@ enum LegacyPureSnitch {
         case failed(String)
     }
 
-    /// Blocks on the authorization prompt; call it off the main thread.
-    static func remove(_ found: Found) -> Outcome {
+    /// Stops the old helper. Blocks on the authorization prompt; call it off
+    /// the main thread.
+    static func removeHelper(_ found: Found) -> Outcome {
         if found.daemon {
             guard let script = NSAppleScript(source: removeDaemon) else {
                 return .failed("The removal could not be prepared.")
@@ -56,16 +57,24 @@ enum LegacyPureSnitch {
                                ?? "The old PureSnitch helper could not be removed.")
             }
         }
-        if found.app {
-            // The Trash, not rm: moving an app that hosts a system extension
-            // to the Trash is what makes macOS remove that extension too.
-            do {
-                try FileManager.default.trashItem(at: app, resultingItemURL: nil)
-            } catch {
-                return .failed("PureSnitch could not be moved to the Trash: \(error.localizedDescription) Drag PureSnitch from Applications to the Trash in Finder.")
+        return .removed
+    }
+
+    /// Hands PureSnitch.app to Finder's Trash, the same way
+    /// PrivilegedUninstall.trashApplicationBundle does: moving an app that
+    /// hosts a system extension to the Trash through Finder is what makes
+    /// macOS remove that extension too. A plain file move or rm doesn't.
+    @MainActor
+    static func trashApp(completion: @escaping (Outcome) -> Void) {
+        NSWorkspace.shared.recycle([app]) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    completion(.failed("PureSnitch could not be moved to the Trash: \(error.localizedDescription) Drag PureSnitch from Applications to the Trash in Finder."))
+                } else {
+                    completion(.removed)
+                }
             }
         }
-        return .removed
     }
 
     /// Asks at launch when an old install is present. Shown on every launch
@@ -89,8 +98,11 @@ enum LegacyPureSnitch {
         guard alert.runModal() == .alertFirstButtonReturn, !demoPreview else { return }
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let outcome = remove(found)
-            DispatchQueue.main.async { report(outcome) }
+            let helper = removeHelper(found)
+            DispatchQueue.main.async {
+                guard helper == .removed, found.app else { return report(helper) }
+                trashApp(completion: report)
+            }
         }
     }
 

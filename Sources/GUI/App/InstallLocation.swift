@@ -69,13 +69,18 @@ enum InstallLocation {
         }
     }
 
-    static func clearQuarantine(at root: URL) {
+    /// Returns whether the bundle itself is free of the flag afterwards,
+    /// which is what decides whether macOS translocates it.
+    @discardableResult
+    static func clearQuarantine(at root: URL) -> Bool {
         let attribute = "com.apple.quarantine"
         removexattr(root.path, attribute, XATTR_NOFOLLOW)
-        guard let walker = FileManager.default.enumerator(atPath: root.path) else { return }
-        for case let relative as String in walker {
-            removexattr(root.appendingPathComponent(relative).path, attribute, XATTR_NOFOLLOW)
+        if let walker = FileManager.default.enumerator(atPath: root.path) {
+            for case let relative as String in walker {
+                removexattr(root.appendingPathComponent(relative).path, attribute, XATTR_NOFOLLOW)
+            }
         }
+        return getxattr(root.path, attribute, nil, 0, 0, XATTR_NOFOLLOW) < 0
     }
 
     /// Where the bundle really is when macOS runs it translocated, so the
@@ -131,8 +136,12 @@ extension InstallLocation {
         // Already in Applications but quarantined and put there without
         // Finder, so macOS runs it translocated. Moving can't help; clearing
         // the flag on that copy and reopening it does.
-        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original) {
-            clearQuarantine(at: original)
+        // Only when the flag really went: a bundle this user can't change
+        // (installed by another account or with sudo) would otherwise reopen
+        // translocated and land here again, forever. Then the prompt below
+        // explains instead.
+        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original),
+           clearQuarantine(at: original) {
             relaunch(at: original)
             return true
         }

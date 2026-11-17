@@ -58,6 +58,18 @@ check(fm.fileExists(atPath: destination.appendingPathComponent("Contents/MacOS/F
 check(!quarantined(destination.path) && !quarantined(destination.appendingPathComponent("Contents/MacOS/FreeSnitch").path),
       "the copy carries no quarantine flag, on the bundle or inside it")
 check(quarantined(source.path), "the original is left as it was until the app trashes it")
+
+// A bundle whose flag can't be removed (owned by someone else) must say so,
+// or a translocated copy in Applications would relaunch itself forever.
+let locked = work.appendingPathComponent("Locked.app", isDirectory: true)
+makeBundle(at: locked, build: "35")
+_ = flag.withCString { setxattr(locked.path, "com.apple.quarantine", $0, strlen($0), 0, XATTR_NOFOLLOW) }
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+let lockedCleared = InstallLocation.clearQuarantine(at: locked)
+let writable = access(locked.path, W_OK) == 0  // root can still write
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+check(writable || !lockedCleared, "clearing reports failure when the flag stays")
+check(InstallLocation.clearQuarantine(at: locked), "clearing reports success once the flag is gone")
 check(try! fm.contentsOfDirectory(atPath: apps.path) == ["FreeSnitch.app"], "no staging leftovers in Applications")
 
 // Something already installed is never replaced or deleted.
