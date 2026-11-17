@@ -424,7 +424,16 @@ final class PFManager: @unchecked Sendable {
             line += r.direction == .incoming ? " in" : " out"
         }
         line += " quick proto { tcp udp }"
-        if let destination { line += " to \(destination)" }
+        if let destination {
+            line += " to \(destination)"
+        } else if verb == "pass" {
+            // pf only takes a port after a host, so a bare `port N` is refused
+            // and the whole anchor fails to load. Ask rules reach pf as passes,
+            // and the CLI's `rules add --port N` makes an ask rule, so a pass
+            // names `any`. A pass only ever blocks less. Port-only blocks are
+            // issue #298.
+            line += " to any"
+        }
         if let port { line += " port \(port)" }
         return line
     }

@@ -295,6 +295,19 @@ struct IPBlocklistHarness {
                       "only the ask rule may pass 198.51.100.9; a disabled allow must not reach pf")
         checks.expect(passAt != nil && blockAt != nil && passAt! < blockAt!,
                       "a higher-priority ask rule must pass ahead of the deny, since the matcher stops at it and the extension asks")
+        // `freesnitch rules add --port N` makes a port-only ask rule. pf only
+        // takes a port after a host, so its pass line must name `any`, or pf
+        // refuses the line and the whole anchor fails to load.
+        let portOnlyPasses = pf.renderAnchor(rules: [
+            Rule(remotePort: 8444, action: .ask, scope: .port),
+            Rule(remotePort: 8445, action: .allow, scope: .port)
+        ])
+        for port in [8444, 8445] {
+            checks.expect(portOnlyPasses.contains("pass out quick proto { tcp udp } to any port \(port)"),
+                          "a port-only pass for \(port) must name `to any`, the only form pf accepts")
+        }
+        checks.expect(!portOnlyPasses.contains("udp } port"),
+                      "no pass line may carry a bare port, which pf refuses")
 
         // A user's deny can never take DHCP or DHCPv6 away, whatever the
         // direction (issue #186). The refusal is reported, not silent.
@@ -316,7 +329,7 @@ struct IPBlocklistHarness {
         }
         checks.expect(!infrastructure.contains("203.0.113.40"),
                       "a deny on port 547 must never be written to pf, even with an address")
-        checks.expect(infrastructure.contains("pass out quick proto { tcp udp } port 547"),
+        checks.expect(infrastructure.contains("pass out quick proto { tcp udp } to any port 547"),
                       "an allow on a DHCPv6 port must still be written, since a pass can only block less")
         checks.expect(infrastructure.contains("block out quick proto { tcp udp } port 548"),
                       "a deny on an ordinary port next to DHCPv6 must still be written")
