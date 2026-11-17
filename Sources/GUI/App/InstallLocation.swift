@@ -138,12 +138,24 @@ extension InstallLocation {
         // the flag on that copy and reopening it does.
         // Only when the flag really went: a bundle this user can't change
         // (installed by another account or with sudo) would otherwise reopen
-        // translocated and land here again, forever. Then the prompt below
-        // explains instead.
-        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original),
-           clearQuarantine(at: original) {
-            relaunch(at: original)
-            return true
+        // translocated and land here again, forever.
+        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original) {
+            if clearQuarantine(at: original) {
+                relaunch(at: original)
+                return true
+            }
+            // Moving would only offer to open this same copy again.
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "macOS is running FreeSnitch from a temporary copy"
+            alert.informativeText = "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it, so macOS won't let it install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+            alert.addButton(withTitle: "Show in Finder")
+            alert.addButton(withTitle: "Not Now")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.activateFileViewerSelecting([original])
+            }
+            return false
         }
         NSApp.activate(ignoringOtherApps: true)
         guard moveAlert().runModal() == .alertFirstButtonReturn else { return false }
