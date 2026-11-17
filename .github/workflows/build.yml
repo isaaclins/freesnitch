@@ -32,6 +32,7 @@ jobs:
   harness:
     name: Test harnesses (group ${{ matrix.group }} of 4)
     runs-on: macos-26
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -49,8 +50,8 @@ jobs:
         run: command -v rg >/dev/null || brew install ripgrep
 
       # Every Scripts/test_*.sh runs, so a new harness is covered the day it
-      # lands. They are split over four macOS jobs (one per check, not one
-      # per harness) to keep the queue short on shared runners. Each group
+      # lands. They are split over four macOS jobs instead of one per
+      # harness to keep the queue short on shared runners. Each group
       # runs all of its harnesses and lists every one that failed.
       #
       # The harnesses compile the shipping sources with swiftc and run them
@@ -91,7 +92,7 @@ jobs:
   harnesses:
     name: Test harnesses
     needs: harness
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every harness to pass
