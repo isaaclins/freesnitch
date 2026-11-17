@@ -266,7 +266,7 @@ final class PFManager: @unchecked Sendable {
     ) -> String {
         var lines: [String] = []
         lines.append("# FreeSnitch pf anchor - auto-generated. Do not edit.")
-        lines.append("# Hostname rules are intentionally not emitted to pf.")
+        lines.append("# Hostname rules are intentionally not emitted to pf, nor are denies that name a hostname and an address.")
         lines.append("# The Network Extension filter evaluates them when active, avoiding pf's one-time DNS resolution.")
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
@@ -373,6 +373,15 @@ final class PFManager: @unchecked Sendable {
             }
             guard kind != .hostname else {
                 return reject("hostname destination '\(rawIP)' is enforced by the Network Extension filter layer when active and is not emitted to PF")
+            }
+            // The matcher needs both the name and the address to fit, but pf
+            // only sees the address. A block line would stop every name on
+            // that address, which is more than the user asked, so the deny
+            // stays with the Network Extension (issue #302). A pass line can
+            // only block less, and keeps an address feed from blocking what
+            // the user allowed, so an allow still goes out as the address.
+            if verb == "block", let rawHost = r.remoteHost, !rawHost.isEmpty {
+                return reject("deny rule names hostname '\(rawHost)' as well as '\(rawIP)'; pf cannot check the name, so the Network Extension filter enforces it when active")
             }
             destination = rawIP
         } else if let rawHost = r.remoteHost, !rawHost.isEmpty {
