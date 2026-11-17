@@ -804,7 +804,16 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
-    func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {
+    /// An app from before #300 is still running against this newer helper,
+    /// usually because the helper updated and the app was not reopened yet.
+    /// Its import cannot say which deletions the user confirmed, so refuse it
+    /// and write nothing (#344).
+    func legacyReplaceRules(rulesJSON _: Data, reply: @escaping (Bool, String?) -> Void) {
+        PSLog.notice(PSLog.helper, "rule import refused: request from an app older than this helper; nothing was imported")
+        reply(false, HelperBridge.legacyImportRefusal)
+    }
+
+    func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void) {
         do {
             try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)
             let rules = try FreeSnitchWireCodec.decode([Rule].self, from: rulesJSON)
@@ -813,7 +822,29 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 reply(false, reason)
                 return
             }
-            _ = try mutatePolicy { draft in draft.rules = rules }
+            // Bounded by the rule batch limit: one ID per stored rule at most.
+            guard expectedRemovedIDsJSON.count <= RuleTransportBoundary.maximumEncodedRuleBatchBytes else {
+                reply(false, "the list of rules to delete is too large")
+                return
+            }
+            let expectedRemovedIDs = try JSONDecoder().decode([UUID].self, from: expectedRemovedIDsJSON)
+            // Only the profiles the file carries rules for are replaced. A
+            // profile the file does not mention keeps its rules, so a backup
+            // from an older build that held one profile cannot delete the
+            // others (#247). The plan is built from the stored rules inside
+            // the transaction, and every rule it deletes is logged by ID.
+            var plan: RuleImportPlan?
+            do {
+                _ = try mutatePolicy { draft in
+                    plan = try RuleImportPlan.apply(imported: rules,
+                                                    confirmedIDs: Set(expectedRemovedIDs),
+                                                    to: &draft)
+                }
+            } catch let conflict as RuleImportConflict {
+                PSLog.error(PSLog.helper, "rule import refused: \(conflict.localizedDescription)")
+                throw conflict
+            }
+            plan?.logLines.forEach { PSLog.notice(PSLog.helper, $0) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()

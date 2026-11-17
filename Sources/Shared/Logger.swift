@@ -10,6 +10,10 @@ public enum PSLog {
     public static let netext = OSLog(subsystem: AppConstants.bundleIdGUI, category: "netext")
 
     public static func info(_ log: OSLog, _ msg: String) { os_log("%{public}@", log: log, type: .info, msg) }
+    /// Default level: written to the log store, unlike `info`, so it is still
+    /// there after a restart. For records a user may need later, such as which
+    /// rules an import deleted (#247).
+    public static func notice(_ log: OSLog, _ msg: String) { os_log("%{public}@", log: log, type: .default, msg) }
     public static func error(_ log: OSLog, _ msg: String) { os_log("%{public}@", log: log, type: .error, msg) }
     public static func debug(_ log: OSLog, _ msg: String) { os_log("%{public}@", log: log, type: .debug, msg) }
 }
