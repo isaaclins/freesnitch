@@ -443,29 +443,44 @@ public struct IPBlocklistSet: Sendable {
     }
 
     public func contains(ipv4 address: UInt32) -> Bool {
-        var low = 0
-        var high = v4Starts.count - 1
-        var candidate = -1
-        while low <= high {
-            let mid = (low + high) / 2
-            if v4Starts[mid] <= address {
-                candidate = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
-        }
-        guard candidate >= 0 else { return false }
-        return address <= v4Ends[candidate]
+        var probes = 0
+        return Self.search(v4Starts, v4Ends, for: address, probes: &probes)
     }
 
     public func contains(ipv6 address: IPv6Value) -> Bool {
+        var probes = 0
+        return Self.search(v6Starts, v6Ends, for: address, probes: &probes)
+    }
+
+    /// How many range comparisons one lookup makes. Tests use this to prove
+    /// the search is logarithmic without relying on wall-clock time.
+    func lookupProbes(ipv4 address: UInt32) -> (found: Bool, probes: Int) {
+        var probes = 0
+        let found = Self.search(v4Starts, v4Ends, for: address, probes: &probes)
+        return (found, probes)
+    }
+
+    func lookupProbes(ipv6 address: IPv6Value) -> (found: Bool, probes: Int) {
+        var probes = 0
+        let found = Self.search(v6Starts, v6Ends, for: address, probes: &probes)
+        return (found, probes)
+    }
+
+    /// Binary search for the last range starting at or below `address`.
+    @inline(__always)
+    private static func search<Value: Comparable>(
+        _ starts: ContiguousArray<Value>,
+        _ ends: ContiguousArray<Value>,
+        for address: Value,
+        probes: inout Int
+    ) -> Bool {
         var low = 0
-        var high = v6Starts.count - 1
+        var high = starts.count - 1
         var candidate = -1
         while low <= high {
+            probes += 1
             let mid = (low + high) / 2
-            if v6Starts[mid] <= address {
+            if starts[mid] <= address {
                 candidate = mid
                 low = mid + 1
             } else {
@@ -473,7 +488,7 @@ public struct IPBlocklistSet: Sendable {
             }
         }
         guard candidate >= 0 else { return false }
-        return address <= v6Ends[candidate]
+        return address <= ends[candidate]
     }
 
     /// Entries for the pf anchor table, bounded independently of the in-memory
