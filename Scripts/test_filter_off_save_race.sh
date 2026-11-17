@@ -279,11 +279,15 @@ mutate_and_expect_failure outside-off-keeps-active-status "$SEM" \
 mutate_and_expect_failure outside-off-hides-approval "$SEM" \
   'if filterConfigurationActive && !persistenceCycle.enableRequested {' 'if true {'
 mutate_and_expect_failure outside-on-stays-not-filtering "$SEM" \
-  $'            if hasEmbeddedExtension {\n                enableFilter()' \
+  $'            if hasEmbeddedExtension {\n                enableFilter(fromSettings: true)' \
   $'            if hasEmbeddedExtension {\n                state?.syncSharedRules()'
 mutate_and_expect_failure outside-on-skips-rules "$SEM" \
   $'            } else {\n                state?.syncSharedRules()\n            }' \
   $'            } else {\n            }'
 mutate_and_expect_failure outside-removal-keeps-active-status "$SEM" \
   'if self.filterConfigurationActive { self.showNotFiltering() }' ''
+mutate_and_expect_failure settings-turn-on-forces-enable "$SEM" \
+  'let shouldEnable = save.enable && !turnedOffInSettings' 'let shouldEnable = save.enable'
+mutate_and_expect_failure settings-turn-on-not-marked "$SEM" \
+  'enableFilter(fromSettings: true)' 'enableFilter()'
 printf 'filter off vs boot-policy save verification: PASS\n'

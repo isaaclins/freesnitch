@@ -77,6 +77,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// save that was already running can tell it was overtaken and must not
     /// report the firewall as active (#318).
     private var filterTurnOffs = 0
+    /// The pending turn-on follows the filter being turned on in System
+    /// Settings, so it must not turn it on against a later turn-off there.
+    private var turnOnFromSettings = false
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
@@ -123,7 +126,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // shows as active once that save went through (#361). A build
             // without the extension only saves the rules, as before.
             if hasEmbeddedExtension {
-                enableFilter()
+                enableFilter(fromSettings: true)
             } else {
                 state?.syncSharedRules()
             }
@@ -286,7 +289,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     // MARK: - Content filter configuration
 
-    private func enableFilter() {
+    private func enableFilter(fromSettings: Bool = false) {
+        turnOnFromSettings = fromSettings
         // A snapshot kept for a retry is never the policy activation saves:
         // only the helper's fresh answer below may enable the filter.
         dropScheduledSave()
@@ -431,11 +435,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     self.carryOut(next, removal: true)
                     return
                 }
-                if !save.enable {
+                // Turned on in System Settings and off there again before
+                // this load: what is set there wins, the save keeps it off and
+                // reports no turn-on (#361).
+                let turnedOffInSettings = save.enable && self.turnOnFromSettings
+                    && mgr.providerConfiguration != nil && !mgr.isEnabled
+                if !save.enable || turnedOffInSettings {
                     self.noticeFilterOff(mgr)
                 }
 
-                let shouldEnable = save.enable
+                let shouldEnable = save.enable && !turnedOffInSettings
                 let removesBootSnapshot = save.removesSavedPolicy
                 // What the preferences hold, put back on the shared manager if
                 // turning the filter on fails (#345). Every later operation
