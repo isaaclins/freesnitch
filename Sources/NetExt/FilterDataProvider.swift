@@ -699,7 +699,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                watermark.supersedes(decoded) {
                 clearBootSnapshot(
                     "persisted boot policy (session \(decoded.epoch), generation \(decoded.generation)) is older than the last live policy "
-                    + "(session \(watermark.epoch), generation \(watermark.generation)); the app's last save did not complete, "
+                    + "(session \(watermark.epoch), generation \(watermark.generation)), usually because the app's last save failed, "
                     + "so it is not loaded and filtering will fail open until the app sends the current rules"
                 )
                 return
@@ -846,6 +846,10 @@ final class FilterDataProvider: NEFilterDataProvider {
                 setSnapshotLocked(accepted)
                 snapshotOrigin = .live
                 snapshotStatus = status
+                // Queued (not written) while the lock is held, so records land
+                // in the order the policies were accepted. The write itself
+                // runs on its own queue and never delays this reply.
+                if decision == .accepted { recordLiveWatermark(accepted) }
                 snapshotLock.unlock()
 
                 let allowCount = accepted.rules.filter { $0.action == .allow }.count
@@ -857,9 +861,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                            + "\(accepted.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))\(idempotentNote)")
                 // Persistence is owned by the GUI through NEFilterManager. A
                 // live XPC update changes only this in-memory policy and never
-                // waits on disk, XPC, or another transport. The watermark is
-                // written afterwards on its own queue.
-                if decision == .accepted { recordLiveWatermark(accepted) }
+                // waits on disk, XPC, or another transport.
                 return status
             case .rejectedOlder(let currentGeneration), .rejectedConflict(let currentGeneration):
                 let status = SharedRuleBridge.SnapshotStatus.invalid(

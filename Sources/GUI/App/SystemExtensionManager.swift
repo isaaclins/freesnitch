@@ -353,7 +353,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func recordPersistenceFailure(_ operation: String, error: Error) {
         let detail = "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. "
-            + "If the filter restarts before a save succeeds, it will not use older saved rules and will allow everything until this app sends the current ones."
+            + "If the filter restarts before a save succeeds, it does not load saved rules older than the ones it last enforced, and allows everything until this app sends the current ones."
         recordFilterDiagnostic(state: "degraded", detail: detail)
         state?.recordFilterPersistenceFailure(detail)
         os_log("%{public}@", log: log, type: .error, detail)

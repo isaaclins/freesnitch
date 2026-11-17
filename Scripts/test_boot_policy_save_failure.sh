@@ -4,9 +4,11 @@
 #
 # Before the fix the failed snapshot was dropped and the extension loaded the
 # older saved policy at its next start, so the removed deny rule came back.
-# The checks below run that sequence against the shared queue and the
-# extension's live-policy watermark, then prove the audit catches each half of
-# the fix being taken out.
+# The checks below run that sequence against the real shared queue and
+# live-policy watermark types, with the extension's start-up check mirrored in
+# the harness (the extension itself cannot run here), then prove the audit
+# catches each part of the fix being taken out. The app's retry scheduling
+# needs NEFilterManager and is not exercised here.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
