@@ -88,8 +88,8 @@ public enum AppBundleIdentity {
     /// A Mac app keeps it in `Contents/Info.plist`. An iPhone or iPad app
     /// running on an Apple silicon Mac sits inside a wrapper
     /// (`X.app/Wrapper/X.app/X`) and keeps a shallow iOS bundle, with its
-    /// Info.plist at the bundle root and no `Contents` folder. This is the
-    /// same check CFBundle makes: a `Contents` folder means a Mac bundle.
+    /// Info.plist at the bundle root and no `Contents` folder. A bundle with a
+    /// `Contents` folder is always read as a Mac bundle.
     public static func infoPlistPath(forAppPath appPath: String) -> String {
         let app = appPath as NSString
         var isDirectory: ObjCBool = false
