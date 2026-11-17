@@ -80,11 +80,9 @@ func checkPFSyntax(_ name: String, _ anchor: String, _ checks: Checks) {
     }
 }
 
-/// A user's deny reaches pf as two lines: TCP limited to the SYN that opens
-/// a new outgoing connection, so replies to incoming connections pass, and UDP.
+/// The outgoing half of a user's deny.
 func blocks(_ anchor: String, _ target: String) -> Bool {
-    anchor.contains("block out quick proto tcp \(target) flags S/SA\n")
-        && anchor.contains("block out quick proto udp \(target)\n")
+    anchor.contains("block out quick proto { tcp udp } \(target)\n")
 }
 
 func generatedEntries(_ count: Int) -> [String] {
@@ -308,6 +306,8 @@ struct IPBlocklistHarness {
         checks.expect(infrastructure.contains("pass out quick proto { tcp udp } to any port 550\n")
                         && !infrastructure.contains("from any port 550"),
                       "a port-only allow in both directions must be written as its outgoing half only")
+        checks.expect(refusedPorts.contains { $0.contains("incoming half of an allow with only a port") },
+                      "a port-only allow in both directions must report that its incoming half stays out of pf, got \(refusedPorts)")
         // An incoming deny names the remote side, so pf gets `from`, never
         // `in ... to`, which would be this Mac's own port. Its TCP half only
         // stops new connections, and its UDP half is left to the extension,
@@ -335,17 +335,17 @@ struct IPBlocklistHarness {
                             && bothWays.contains("block in quick proto udp \(remote)\n"),
                           "a deny in both directions must block coming in from the remote side: \(remote)")
         }
-        // A block keeps no state in pf, so a plain `block out ... port N`
-        // would drop this Mac's replies to an incoming client that used N as
-        // its source port. A TCP deny must only stop the SYN of a new
-        // outgoing connection.
+        // A block keeps no state in pf, so an incoming TCP line without
+        // `flags S/SA` would drop the replies to this Mac's own connections.
         for anchorText in [appScoped, infrastructure, bothWays] {
-            for line in anchorText.split(separator: "\n")
-            where line.hasPrefix("block out quick proto tcp") || line.hasPrefix("block in quick proto tcp") {
-                checks.expect(line.hasSuffix(" flags S/SA"),
-                              "a TCP deny must only block new connections, got '\(line)'")
+            for line in anchorText.split(separator: "\n") where line.hasPrefix("block in") {
+                checks.expect(line.hasPrefix("block in quick proto tcp from ") && line.hasSuffix(" flags S/SA")
+                                || line.hasPrefix("block in quick proto udp from "),
+                              "an incoming deny must only block new TCP connections from the remote side, got '\(line)'")
             }
         }
+        checks.expect(!infrastructure.contains("block in quick proto udp"),
+                      "only a deny in both directions may block incoming UDP, which pf cannot tell from a reply")
         checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 3,
                       "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
 
