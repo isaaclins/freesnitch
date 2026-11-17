@@ -111,7 +111,19 @@ expect(extensionStart(saved: encoded(snapshot([denyTracker], generation: 9, epoc
        "an older helper session's saved policy loaded over the newer live one")
 print("boot save harness: ordering is (session, generation), as for live snapshots")
 
-// 8. No record, or an unreadable one, never refuses anything: the saved
+// 8. A helper restart opens a new session for the same rules. If the re-save
+//    of that session does not land, the older saved policy with identical
+//    content is still current and loads.
+try extensionAcceptsLive(snapshot([denyTracker], generation: 10, epoch: 7))
+expect(extensionStart(saved: encoded(snapshot([denyTracker], generation: 10, epoch: 6))) != nil,
+       "an older saved policy with the same rules was refused after a helper restart")
+//    A record written before the digest existed decides by order alone.
+try SharedRuleBridge.LivePolicyWatermark(epoch: 7, generation: 10).write(to: watermarkURL)
+expect(extensionStart(saved: encoded(snapshot([denyTracker], generation: 10, epoch: 6))) == nil,
+       "a record without a content digest did not refuse an older saved policy")
+print("boot save harness: identical rules from an older session still load")
+
+// 9. No record, or an unreadable one, never refuses anything: the saved
 //    policy loads exactly as before this change.
 try FileManager.default.removeItem(at: watermarkURL)
 expect(extensionStart(saved: encoded(withDeny)) != nil,

@@ -183,8 +183,8 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// Serial, so watermark writes land in the order the policies were
     /// accepted. Never on the verdict or XPC reply path (#213).
     private let watermarkQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.watermark", qos: .utility)
-    /// In this extension's own sandbox container, which only the extension
-    /// (running as root) can write.
+    /// In this extension's own sandbox container (root-owned, so no user
+    /// process can write it).
     private let watermarkURL: URL? = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
         .appendingPathComponent(SharedRuleBridge.LivePolicyWatermark.fileName)

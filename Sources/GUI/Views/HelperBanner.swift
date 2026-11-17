@@ -28,6 +28,7 @@ struct HelperBanner: View {
             // like a healthy one: this state was computed and rendered nowhere
             // (#131). It stays on screen until it is resolved.
             if let info = BannerInfo(persistenceDegraded: state.filterPersistenceDegraded,
+                                     liveRulesReady: state.filterSnapshotStatus.isReady,
                                      persistenceMessage: state.filterPersistenceMessage,
                                      recoveryMessage: state.filterRecoveryMessage) {
                 banner(info)
@@ -151,7 +152,7 @@ private struct BannerInfo {
     /// The extension accepted the policy but it could not be saved. Until a
     /// save succeeds, the next start refuses saved rules older than the ones
     /// it last enforced and fails open (#213).
-    init?(persistenceDegraded: Bool, persistenceMessage: String?, recoveryMessage: String?) {
+    init?(persistenceDegraded: Bool, liveRulesReady: Bool, persistenceMessage: String?, recoveryMessage: String?) {
         guard persistenceDegraded || recoveryMessage != nil else { return nil }
         icon = "externaldrive.badge.exclamationmark"
         tint = Color.orange
@@ -159,7 +160,9 @@ private struct BannerInfo {
             ? "FreeSnitch could not save the current rules"
             : "The network filter needs attention"
         let base = persistenceDegraded
-            ? "The filter is enforcing your current rules, but they could not be saved for the next start. Send Rules Again tries to save them now."
+            ? (liveRulesReady
+                ? "The filter is enforcing your current rules, but they could not be saved for the next start. Send Rules Again tries to save them now."
+                : "Your current rules could not be saved for the next start. Send Rules Again tries to save them now.")
             : ""
         detail = [base, persistenceMessage, recoveryMessage]
             .compactMap { $0?.isEmpty == false ? $0 : nil }

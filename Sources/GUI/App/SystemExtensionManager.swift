@@ -151,6 +151,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// failure paths: an uninstall that stalls because a preferences call
     /// errored would be worse than one that continues and reports.
     private func removeFilterConfiguration(completion: @escaping () -> Void) {
+        cancelPendingPersistence()
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] error in
             guard let self else { completion(); return }
@@ -195,6 +196,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     // MARK: - Content filter configuration
 
     private func enableFilter() {
+        // A snapshot kept for a retry is never the policy activation saves:
+        // only the helper's fresh answer below may enable the filter.
+        cancelPendingPersistence()
         enableFilterRequested = true
         // AppState fetches the helper-owned snapshot and invokes the
         // persistence callback only after it has updated its display cache.
@@ -266,9 +270,23 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     return
                 }
 
+                let shouldEnable = self.enableFilterRequested
+                if shouldEnable && !self.persistenceQueue.hasPending {
+                    // The filter was turned on while this cycle was loading,
+                    // which cleared the queue. Only the helper's fresh answer
+                    // may enable it; its arrival starts the next cycle.
+                    self.persistenceInFlight = false
+                    return
+                }
+                if !shouldEnable && mgr.providerConfiguration == nil {
+                    // No filter is configured (never enabled, or removed for
+                    // uninstall). A boot policy save must not create one.
+                    self.persistenceInFlight = false
+                    self.persistenceQueue.discardThrough(self.persistenceQueue.generation)
+                    return
+                }
                 let pending = self.persistenceQueue.takeNewest()
                 let snapshotData = pending?.data
-                let shouldEnable = self.enableFilterRequested
                 self.enableFilterRequested = false
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
@@ -333,6 +351,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// Drops a queued or scheduled boot-policy save. Used when the filter is
+    /// turned on (only a fresh helper answer may be saved then), turned off,
+    /// or removed, so a late retry can neither enable nor recreate it.
+    private func cancelPendingPersistence() {
+        persistenceWorkItem?.cancel()
+        persistenceWorkItem = nil
+        persistenceQueue.discardThrough(persistenceQueue.generation)
+        persistenceRetryAttempts = 0
+    }
+
     @discardableResult
     private func schedulePersistenceRetry() -> Bool {
         let delays = Self.persistenceRetryDelays
@@ -345,7 +373,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         let delay = delays[persistenceRetryAttempts]
         persistenceRetryAttempts += 1
-        os_log("Retrying the boot policy save in %{public}.0f s (attempt %{public}d)", log: log, type: .info,
+        os_log("Retrying the boot policy save in %{public}.0f s (attempt %{public}ld)", log: log, type: .info,
                delay, persistenceRetryAttempts)
         schedulePersistence(immediate: true, after: delay)
         return true
@@ -353,13 +381,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func recordPersistenceFailure(_ operation: String, error: Error) {
         let detail = "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. "
-            + "If the filter restarts before a save succeeds, it does not load saved rules older than the ones it last enforced, and allows everything until this app sends the current ones."
+            + "If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones."
         recordFilterDiagnostic(state: "degraded", detail: detail)
         state?.recordFilterPersistenceFailure(detail)
         os_log("%{public}@", log: log, type: .error, detail)
     }
 
     private func disableFilter() {
+        cancelPendingPersistence()
         let mgr = NEFilterManager.shared()
         mgr.loadFromPreferences { [weak self] error in
             guard let self else { return }

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The rule snapshot exchanged between the GUI and the Network System
@@ -96,22 +97,46 @@ public enum SharedRuleBridge {
 
         public var epoch: UInt64
         public var generation: UInt64
+        /// SHA-256 of the policy content (mode and rules). A helper restart
+        /// opens a new session for the same rules, so an older saved policy
+        /// with identical content is current, not stale. Missing in a record
+        /// that could not compute it; then the order alone decides.
+        public var contentDigest: String?
 
-        public init(epoch: UInt64, generation: UInt64) {
+        public init(epoch: UInt64, generation: UInt64, contentDigest: String? = nil) {
             self.epoch = epoch
             self.generation = generation
+            self.contentDigest = contentDigest
         }
 
         public init(_ snapshot: Snapshot) {
-            self.init(epoch: snapshot.epoch, generation: snapshot.generation)
+            self.init(epoch: snapshot.epoch, generation: snapshot.generation,
+                      contentDigest: Self.digest(of: snapshot))
         }
 
         /// True when a saved boot policy is older than the policy this record
         /// describes, by the same (session, generation) order the live gate
-        /// uses. Only ever used to refuse a policy, never to load one.
+        /// uses, and its content differs. Only ever used to refuse a policy,
+        /// never to load one.
         public func supersedes(_ boot: Snapshot) -> Bool {
-            if boot.epoch != epoch { return boot.epoch < epoch }
-            return boot.generation < generation
+            let older = boot.epoch != epoch ? boot.epoch < epoch : boot.generation < generation
+            guard older else { return false }
+            if let contentDigest, let bootDigest = Self.digest(of: boot), contentDigest == bootDigest {
+                return false
+            }
+            return true
+        }
+
+        private struct Content: Encodable {
+            let mode: AppMode
+            let rules: [Rule]
+        }
+
+        public static func digest(of snapshot: Snapshot) -> String? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(Content(mode: snapshot.mode, rules: snapshot.rules)) else { return nil }
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
 
         public static func read(from url: URL) -> LivePolicyWatermark? {
