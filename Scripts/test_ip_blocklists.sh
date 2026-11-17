@@ -474,8 +474,9 @@ struct IPBlocklistHarness {
 
         let v6Big = IPBlocklistSet(entries: (0..<4_096).map { String(format: "2001:db8:%x::/48", $0 * 2) })
         var v6Worst = 0
-        for index in 0..<8_192 {
-            if let probe = IPBlocklistAddress.ipv6(String(format: "2001:db8:%x::1", index)) {
+        let v6Probes = ["::1", "2001:db7:ffff::1", "ffff::1"] + (0..<8_192).map { String(format: "2001:db8:%x::1", $0) }
+        for text in v6Probes {
+            if let probe = IPBlocklistAddress.ipv6(text) {
                 v6Worst = max(v6Worst, v6Big.lookupProbes(ipv6: probe).probes)
             }
         }
