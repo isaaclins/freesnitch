@@ -14,20 +14,29 @@ import Foundation
 /// Every operation must call its `done` handler exactly once, on the main
 /// queue, after its final save has completed or it gave up. Not thread safe:
 /// use it from the main queue only.
+///
+/// A closed line runs nothing. The app closes it in demo mode, so a demo
+/// running on a Mac where FreeSnitch is installed never reads or saves the
+/// real content filter configuration (#388).
 final class FilterPreferencesLine {
     typealias Operation = (_ done: @escaping () -> Void) -> Void
 
+    private let closed: Bool
     private var running = false
     private var waiting: [Operation] = []
 
-    init() {}
+    init(closed: Bool = false) {
+        self.closed = closed
+    }
 
     /// True while an operation runs or waits.
     var isBusy: Bool { running || !waiting.isEmpty }
 
     /// Runs `operation` now if nothing else is running, otherwise after every
     /// operation queued before it has finished.
+    /// On a closed line, `operation` is dropped without being run.
     func run(_ operation: @escaping Operation) {
+        guard !closed else { return }
         waiting.append(operation)
         startNextIfIdle()
     }

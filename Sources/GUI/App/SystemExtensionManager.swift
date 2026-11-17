@@ -66,7 +66,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Every load-then-save on the shared NEFilterManager (boot-policy saves,
     /// turning the filter off, removing it, restarting it) waits here for the
     /// one before it, so the last thing asked for is what gets saved (#309).
-    private let filterPreferences = FilterPreferencesLine()
+    /// Closed in demo mode: the demo never touches the real filter (#388).
+    private let filterPreferences: FilterPreferencesLine
+    /// `FREESNITCH_DEMO=1`: sample data only. Nothing here reads or saves the
+    /// content filter configuration or submits a system extension request, so
+    /// a demo on a Mac where FreeSnitch is installed leaves it alone (#388).
+    private let demo: Bool
     private var persistenceWorkItem: DispatchWorkItem?
     /// Whether the filter is turned off (by the app, or in System Settings) or
     /// has no configuration, as last seen. A failed boot-policy save then has no
@@ -89,8 +94,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var snapshotRecovery = FilterRestartRecovery()
     private var filterRestartInFlight = false
 
-    init(state: AppState) {
+    init(state: AppState, demo: Bool = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1") {
         self.state = state
+        self.demo = demo
+        self.filterPreferences = FilterPreferencesLine(closed: demo)
         super.init()
         state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
             self?.recordSnapshotStatus(snapshotStatus)
@@ -98,6 +105,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
             self?.requestPersistedSnapshot(snapshot)
         }
+        // The demo shows sample data: what System Settings does to the real
+        // filter is none of its business, and reacting to it could save the
+        // demo's rules into the real filter (#388).
+        guard !demo else { return }
         // The filter can be turned on or off in System Settings too. Without
         // this, a failure before the next save cycle's load (an encode over
         // the size limit, or a failed load) would go by a stale answer (#321).
@@ -172,7 +183,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// False in demo mode, so the demo treats this build like the monitor-only
+    /// one and never submits a system extension request (#388).
     private var hasEmbeddedExtension: Bool {
+        guard !demo else { return false }
         let dir = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/SystemExtensions")
         guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return false }
         return urls.contains { $0.pathExtension == "systemextension" }

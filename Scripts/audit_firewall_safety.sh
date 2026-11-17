@@ -512,7 +512,7 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "changedOutside: changedOutside)" \
   "a save refused because the filter changed in System Settings is reported as a failure instead of saved again (#368)"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
-init_body="$(awk '/^    init\(state: AppState\) [{]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$init_body" | grep -Fq 'if hasEmbeddedExtension { refreshFilterOffState() }' \
   || fail "the app does not read at launch whether the filter is off, so an early save failure can raise the banner (#348)"
 refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
@@ -585,6 +585,20 @@ outside_writers="$(awk '
   }' "$SYSTEM_EXTENSION_MANAGER")"
 [[ -z "$outside_writers" ]] \
   || fail "NEFilterManager is used outside the serialized writers (line ${outside_writers//$'\n'/, })"
+# Demo mode shows sample data and must leave the real content filter alone,
+# also on a Mac where FreeSnitch is installed (#388): the preferences line is
+# closed, System Settings changes are not followed, and no system extension
+# request is submitted.
+grep -Fq 'filterPreferences = FilterPreferencesLine(closed: demo)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "demo mode can read or save the real content filter configuration"
+grep -Fq 'guard !closed else { return }' "$ROOT/Sources/Shared/FilterPreferencesLine.swift" \
+  || fail "a closed filter preferences line still runs operations"
+init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$init_body" | awk '/guard !demo else [{] return [}]/ { g = 1 } /NEFilterConfigurationDidChange/ { ok = g; exit } END { exit !ok }' \
+  || fail "demo mode follows filter changes made in System Settings"
+embedded_body="$(awk '/private var hasEmbeddedExtension: Bool/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$embedded_body" | grep -Fq 'guard !demo else { return false }' \
+  || fail "demo mode can submit system extension requests"
 for runner in 'runPersistenceCycle()' 'runFilterRestart(done:'; do
   [[ "$(grep -cF "$runner" "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
     || fail "${runner%%(*} is called from somewhere other than its turn on the preferences line"

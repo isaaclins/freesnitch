@@ -330,6 +330,22 @@ do {
     expect(!line.isBusy, "the line is busy with nothing left to run")
     print("filter off harness: sequences run one at a time, in order, and never stall")
 }
+
+// 6. #388: demo mode closes the line. Turning the filter on in System Settings
+//    then asks for a read and a save of the current rules; neither may reach
+//    the real preferences.
+do {
+    let mgr = FakeFilterManager()
+    let line = FilterPreferencesLine(closed: true)
+    var ran = 0
+    line.run { done in ran += 1; mgr.loadFromPreferences("demo read") { done() } }
+    line.run { done in ran += 1; enablingSave(mgr, done: done) }
+    line.run { done in ran += 1; turnOff(mgr, done: done) }
+    expect(ran == 0 && mgr.callbacks.isEmpty, "a closed line ran \(ran) operation(s) on the filter preferences")
+    expect(!mgr.storedEnabled, "a closed line saved the filter on")
+    expect(!line.isBusy, "a closed line holds operations it will never run")
+    print("filter off harness: a closed line (demo mode) never reads or saves the filter preferences")
+}
 SWIFT
   swiftc "$ROOT"/Sources/Shared/*.swift "$dir/main.swift" -lsqlite3 -o "$dir/harness"
   "$dir/harness"
@@ -399,6 +415,16 @@ mutate_and_expect_failure overtaken-enable-reports-active "$SEM" \
                                 self.filterConfigurationActive = true'
 mutate_and_expect_failure overtaken-not-checked "$SEM" \
   'turnOffsNow: self.filterTurnOffs,' 'turnOffsNow: turnOffsAtLoad,'
+mutate_and_expect_failure demo-line-open "$SEM" \
+  'FilterPreferencesLine(closed: demo)' 'FilterPreferencesLine()'
+mutate_and_expect_failure demo-follows-system-settings "$SEM" \
+  $'        guard !demo else { return }\n        // The filter can be turned on or off' \
+  $'        // The filter can be turned on or off'
+mutate_and_expect_failure demo-submits-extension-requests "$SEM" \
+  $'    private var hasEmbeddedExtension: Bool {\n        guard !demo else { return false }' \
+  $'    private var hasEmbeddedExtension: Bool {'
+mutate_and_expect_failure demo-line-runs-anyway Sources/Shared/FilterPreferencesLine.swift \
+  '        guard !closed else { return }' ''
 mutate_and_expect_failure overtaken-status-kept "$SEM" \
   'if completion == .stayedOff {' 'if false {'
 mutate_and_expect_failure disable-not-counted "$SEM" \
