@@ -726,9 +726,11 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
     }
 
     /// True when an enabled rule already covers this destination for this app,
-    /// so Insights should not offer it again. An address is compared the way
-    /// the matcher compares it: one IPv6 address in any spelling, a range that
-    /// contains it, and an address or range typed into the hostname field.
+    /// so Insights should not offer it again. A name is compared the way the
+    /// matcher compares it, wildcard and suffix rules included (#332). An
+    /// address is compared the way the matcher compares it too: one IPv6
+    /// address in any spelling, a range that contains it, and an address or
+    /// range typed into the hostname field.
     /// A rule only covers the proposal when it would match every outgoing
     /// connection the proposal stands for: no port restriction, a direction of
     /// outgoing or any, and not expired at `now` (#331).
@@ -743,7 +745,14 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
             if let port = rule.remotePort, port != 0 { return false }
             let destinationMatches: Bool
             if let domain {
-                destinationMatches = rule.remoteHost?.lowercased() == domain.lowercased()
+                // Same comparison as the matcher, so a wildcard (*.example.com)
+                // or suffix (.example.com) rule covers api.example.com. Case is
+                // ignored, because DNS names are.
+                if let host = rule.remoteHost, !host.isEmpty {
+                    destinationMatches = matcher.hostMatches(pattern: host.lowercased(), host: domain.lowercased())
+                } else {
+                    destinationMatches = false
+                }
             } else if let remoteIP, !remoteIP.isEmpty {
                 let ruleAddress = (rule.remoteIP ?? "").isEmpty ? rule.addressInHostField : rule.remoteIP
                 if let ruleAddress {
