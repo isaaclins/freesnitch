@@ -294,7 +294,10 @@ struct SettingsView: View {
         case .enabled: return state.helperConnected ? "Connected" : "Approved, connecting…"
         case .requiresApproval: return "Waiting for your approval"
         case .notRegistered, .unknown: return "Not installed"
-        case .wrongLocation: return "Move FreeSnitch to /Applications"
+        case .wrongLocation:
+            return InstallLocation.stuckInstalledCopy == nil
+                ? "Move FreeSnitch to /Applications"
+                : "macOS runs it from a temporary copy; put it into /Applications again"
         case .notFound: return "Registration record missing"
         case .failed(let m): return "Failed: \(m)"
         }

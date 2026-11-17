@@ -117,6 +117,24 @@ check(InstallLocation.translocatedInstalledCopy(original: URL(fileURLWithPath: N
       && InstallLocation.translocatedInstalledCopy(original: nil) == nil,
       "a copy translocated from Downloads, or not translocated, still gets the move")
 
+// The relaunch hands the marker to the new copy, and only the marker. A fake
+// "open" records what it gets; pid 0x7fffffff isn't running, so no wait.
+let fakeOpen = work.appendingPathComponent("fake-open")
+let openLog = work.appendingPathComponent("open.log")
+try! "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"\(openLog.path)\"\n".write(to: fakeOpen, atomically: true, encoding: .utf8)
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeOpen.path)
+func runRelaunch(_ arguments: [String]) -> [String] {
+    let sh = Process()
+    sh.executableURL = URL(fileURLWithPath: "/bin/sh")
+    sh.arguments = InstallLocation.relaunchScript(pid: Int32.max, app: URL(fileURLWithPath: "/Applications/Free Snitch.app"),
+                                                  arguments: arguments, open: fakeOpen.path)
+    try! sh.run(); sh.waitUntilExit()
+    return (try! String(contentsOf: openLog, encoding: .utf8)).split(separator: "\n").map(String.init)
+}
+check(runRelaunch([again]) == ["/Applications/Free Snitch.app", "--args", again],
+      "the reopened copy receives exactly the marker, and a path with a space survives")
+check(runRelaunch([]) == ["/Applications/Free Snitch.app"], "a plain relaunch passes no arguments")
+
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
 let none = LegacyPureSnitch.detect { asked.append($0); return false }

@@ -128,6 +128,15 @@ enum InstallLocation {
         return original
     }
 
+    /// The /bin/sh arguments that wait for `pid` to exit and then open `app`,
+    /// handing `arguments` to the new copy. The path and the arguments go in
+    /// as positional values, never into the script text.
+    static func relaunchScript(pid: Int32, app: URL, arguments: [String], open: String = "/usr/bin/open") -> [String] {
+        let openApp = arguments.isEmpty ? "\"$open\" \"$app\"" : "\"$open\" \"$app\" --args \"$@\""
+        return ["-c", "pid=\"$1\"; app=\"$2\"; open=\"$3\"; shift 3; while /bin/kill -0 \"$pid\" 2>/dev/null; do /bin/sleep 0.2; done; \(openApp)",
+                "sh", String(pid), app.path, open] + arguments
+    }
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -191,7 +200,7 @@ extension InstallLocation {
         let why = flagCleared
             ? "macOS still runs the copy in Applications from a temporary location"
             : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
-        alert.informativeText = "\(why), so macOS won't let it install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+        alert.informativeText = "\(why), so it can't install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
         alert.addButton(withTitle: "Show in Finder")
         alert.addButton(withTitle: "Not Now")
         if alert.runModal() == .alertFirstButtonReturn, showInFinder {
@@ -279,10 +288,7 @@ extension InstallLocation {
     private static func relaunch(at app: URL, arguments: [String] = []) {
         let waiter = Process()
         waiter.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // Whatever follows the pid and the path is handed on to the new copy.
-        let openApp = arguments.isEmpty ? "/usr/bin/open \"$app\"" : "/usr/bin/open \"$app\" --args \"$@\""
-        waiter.arguments = ["-c", "pid=\"$1\"; app=\"$2\"; shift 2; while /bin/kill -0 \"$pid\" 2>/dev/null; do /bin/sleep 0.2; done; \(openApp)",
-                            "sh", String(ProcessInfo.processInfo.processIdentifier), app.path] + arguments
+        waiter.arguments = relaunchScript(pid: ProcessInfo.processInfo.processIdentifier, app: app, arguments: arguments)
         try? waiter.run()
         NSApp.terminate(nil)
     }

@@ -363,7 +363,9 @@ final class HelperClient: NSObject, ObservableObject {
                 case .notRegistered, .notFound:
                     self.repairState = .manualRequired("SMAppService did not leave a usable registration record. Do not run the kickstart command yet; run the helper recheck again and report the registration state.")
                 case .wrongLocation:
-                    self.repairState = .manualRequired("Move FreeSnitch to /Applications before retrying helper registration.")
+                    self.repairState = .manualRequired(InstallLocation.stuckInstalledCopy == nil
+                        ? "Move FreeSnitch to /Applications before retrying helper registration."
+                        : "macOS runs FreeSnitch from a temporary copy. Move it from Applications to the Trash in Finder, drag it in again from the disk image, then retry helper registration.")
                 case .failed(let message):
                     self.repairState = .manualRequired("Helper registration failed: \(message)")
                 case .unknown:
