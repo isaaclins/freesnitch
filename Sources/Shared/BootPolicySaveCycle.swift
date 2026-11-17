@@ -135,6 +135,7 @@ extension SharedRuleBridge {
         public mutating func queueRemoval() {
             cancel()
             queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)
+            changedOutsideRetried = false
         }
 
         /// The user turns the filter on. A snapshot kept for a retry is never

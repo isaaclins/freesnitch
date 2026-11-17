@@ -476,15 +476,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                   message: "The filter was turned off while it was being turned on; it stays off.")
                         }
                         if let saveError {
-                            if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
+                            if changedOutside && result.runAgainNow {
+                                // Saved again below onto what the user set.
+                                os_log("The filter settings changed outside FreeSnitch during a boot policy save; saving the rules again onto them: %{public}@",
+                                       log: self.log, type: .info, saveError.sentence)
+                            } else if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
                                 // A removal while the filter isn't in use: no
                                 // banner was shown for it, so none for this.
                                 os_log("Removing the saved boot policy failed: %{public}@", log: self.log, type: .info,
                                        saveError.sentence)
-                            } else if changedOutside && result.runAgainNow {
-                                // Saved again below onto what the user set.
-                                os_log("The filter settings changed outside FreeSnitch during a boot policy save; saving the rules again onto them: %{public}@",
-                                       log: self.log, type: .info, saveError.sentence)
                             } else if result.reportFailure {
                                 // A failed removal is still about rules that
                                 // can't be kept: keep that reason and banner.

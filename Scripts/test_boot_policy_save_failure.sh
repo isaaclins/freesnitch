@@ -673,7 +673,7 @@ func runAppCycle(_ cycle: inout Cycle, _ prefs: inout Preferences,
     var loaded = prefs.load()
     let plan = savePlan(cycle.afterLoad(at, loadFailed: false, configurationExists: true,
                                         hasSavedPolicy: loaded.policy != nil), "the rule save did not run")
-    if let data = plan.pending?.data { loaded.policy = data }
+    if let data = plan.pending?.data { loaded.policy = plan.removesSavedPolicy ? nil : data }
     if plan.enable { loaded.enabled = true }
     between(&prefs)
     let refused = prefs.save(loaded)
@@ -711,6 +711,20 @@ enableRefused.enqueue(policyB)
 let enableStale = runAppCycle(&enableRefused, &enablePrefs) { $0.version += 1 }!
 expect(enableStale.failActivation && !enableStale.activated && !enablePrefs.enabled,
        "a turn-on refused as stale was not reported as a failed activation")
+//      Over the limit the newest save is the removal of the saved policy:
+//      after two refusals of an older policy, it gets its own immediate save
+//      again when System Settings changes during it.
+var removalRefused = Cycle()
+var removalPrefs = Preferences()
+removalRefused.enqueue(policyB)
+_ = runAppCycle(&removalRefused, &removalPrefs) { $0.version += 1 }
+_ = runAppCycle(&removalRefused, &removalPrefs) { $0.version += 1 }
+removalRefused.queueRemoval()
+let removalStale = runAppCycle(&removalRefused, &removalPrefs) { $0.turnOffInSystemSettings() }!
+expect(removalStale.runAgainNow && !removalStale.reportFailure && removalStale.next == .none,
+       "a removal refused after a change in System Settings was not saved again right away")
+_ = runAppCycle(&removalRefused, &removalPrefs)
+expect(!removalPrefs.enabled && removalPrefs.policy == nil, "the removal was not saved onto the turn-off in System Settings")
 print("boot save harness: cycle: a turn-off in System Settings during a rule save stays off and the rules are saved onto it")
 SWIFT
   swiftc "$root"/Sources/Shared/*.swift "$dir/main.swift" -lsqlite3 -o "$dir/harness"
@@ -936,6 +950,8 @@ mutate_cycle_and_expect_harness_failure stale-save-reported \
   'if saveFailed && changedOutside && !save.enable && !changedOutsideRetried' 'if false && changedOutside && !save.enable && !changedOutsideRetried'
 mutate_cycle_and_expect_harness_failure stale-save-loops \
   $'&& cancellations == save.load.cancellations {\n                changedOutsideRetried = true' '&& cancellations == save.load.cancellations {'
+mutate_cycle_and_expect_harness_failure stale-removal-keeps-used-retry \
+  $'queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)\n            changedOutsideRetried = false' 'queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)'
 mutate_cycle_and_expect_harness_failure stale-save-not-requeued \
   'if let pending = save.pending { queue.requeueFailed(pending) }' ''
 mutate_and_expect_failure settings-off-overwritten \
