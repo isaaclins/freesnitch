@@ -454,13 +454,13 @@ public struct IPBlocklistSet: Sendable {
 
     /// How many range comparisons one lookup makes. Tests use this to prove
     /// the search is logarithmic without relying on wall-clock time.
-    public func lookupProbes(ipv4 address: UInt32) -> (found: Bool, probes: Int) {
+    func lookupProbes(ipv4 address: UInt32) -> (found: Bool, probes: Int) {
         var probes = 0
         let found = Self.search(v4Starts, v4Ends, for: address, probes: &probes)
         return (found, probes)
     }
 
-    public func lookupProbes(ipv6 address: IPv6Value) -> (found: Bool, probes: Int) {
+    func lookupProbes(ipv6 address: IPv6Value) -> (found: Bool, probes: Int) {
         var probes = 0
         let found = Self.search(v6Starts, v6Ends, for: address, probes: &probes)
         return (found, probes)
