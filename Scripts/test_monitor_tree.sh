@@ -47,7 +47,7 @@ done
 model_imports="$(grep -E '^import ' "$MODEL" | sort | tr '\n' ' ' | sed 's/ $//')"
 [[ "$model_imports" == "import Foundation" ]] \
   || fail "the grouping model imports more than Foundation ($model_imports); grouping must stay off the view layer"
-for symbol in NSImage 'AppState\.' 'HelperClient(' '@MainActor' ': View'; do
+for symbol in NSImage 'AppState\.' 'HelperClient\(' '@MainActor' ': View'; do
   if grep -nE "$symbol" "$MODEL" >/dev/null; then
     fail "the grouping model uses $symbol; grouping must stay off the view layer"
   fi
