@@ -273,6 +273,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("# so an app's address or port deny would block every app on the Mac.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
+        lines.append("# A pass for a rule in either direction is written as pass out, so it never skips a block")
+        lines.append("# that /etc/pf.conf has for incoming traffic.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
@@ -417,9 +419,20 @@ final class PFManager: @unchecked Sendable {
             }
         }
 
+        // A line with no direction matches both ways. Every line here is
+        // quick, so a `pass` with no direction would also stop pf at incoming
+        // traffic for that address or port and skip any block that
+        // /etc/pf.conf, or anything loaded after this anchor, has for it
+        // (issue #303). The passes exist so the address feed, which blocks
+        // outgoing traffic only, never takes what the user allowed, so an
+        // any-direction pass is written outgoing only. Every deny is written
+        // ahead of every pass, so a pass never had a deny of this anchor to
+        // skip. A block keeps its old shape.
         var line = verb
-        if r.direction != .any {
-            line += r.direction == .incoming ? " in" : " out"
+        switch r.direction {
+        case .incoming: line += " in"
+        case .outgoing: line += " out"
+        case .any: if verb == "pass" { line += " out" }
         }
         line += " quick proto { tcp udp }"
         if let destination { line += " to \(destination)" }

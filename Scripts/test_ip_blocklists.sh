@@ -245,6 +245,31 @@ struct IPBlocklistHarness {
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
 
+        // Every line is quick, so a pass with no direction would also stop pf
+        // at incoming traffic and skip any block /etc/pf.conf has for it
+        // (issue #303). An allow in either direction is written outgoing
+        // only; an incoming allow and every deny keep their direction.
+        let directions = pf.renderAnchor(rules: [
+            Rule(remoteIP: "198.51.100.40", direction: .any, action: .allow, scope: .ip),
+            Rule(remotePort: 9443, direction: .any, action: .allow, scope: .port),
+            Rule(remoteIP: "198.51.100.41", direction: .outgoing, action: .allow, scope: .ip),
+            Rule(remoteIP: "198.51.100.42", direction: .incoming, action: .allow, scope: .ip),
+            Rule(remoteIP: "198.51.100.43", direction: .any, action: .deny, scope: .ip)
+        ], ipBlocklist: hostile, resolverAddresses: resolvers)
+        let directionLines = directions.split(separator: "\n").map(String.init)
+        checks.expect(!directionLines.contains { $0.hasPrefix("pass quick") },
+                      "no pass line may be written without a direction, or it also matches incoming traffic")
+        checks.expect(directions.contains("pass out quick proto { tcp udp } to 198.51.100.40"),
+                      "an allow in either direction must be written as pass out")
+        checks.expect(directions.contains("pass out quick proto { tcp udp } port 9443"),
+                      "a port allow in either direction must be written as pass out")
+        checks.expect(directions.contains("pass out quick proto { tcp udp } to 198.51.100.41"),
+                      "an outgoing allow must still be written as pass out")
+        checks.expect(directions.contains("pass in quick proto { tcp udp } to 198.51.100.42"),
+                      "an incoming allow must keep its direction")
+        checks.expect(directions.contains("block quick proto { tcp udp } to 198.51.100.43"),
+                      "a deny in either direction must keep blocking both ways")
+
         // A user's deny can never take DHCP or DHCPv6 away, whatever the
         // direction (issue #186). The refusal is reported, not silent.
         var refusedPorts: [String] = []
