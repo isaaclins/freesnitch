@@ -173,7 +173,7 @@ if [[ ! "$CURRENT_BUILD" =~ ^[1-9][0-9]*$ ]]; then
   die "current project build is not a positive integer: $CURRENT_BUILD"
 fi
 
-if [[ -z "$BUILD_NUMBER" ]]; then
+if [[ -z "$BUILD_NUMBER" && "$MODE" != "update-tap" ]]; then
   BUILD_NUMBER="$((CURRENT_BUILD + 1))"
   printf 'No build supplied, using current project build plus one: %s\n' "$BUILD_NUMBER"
 fi
