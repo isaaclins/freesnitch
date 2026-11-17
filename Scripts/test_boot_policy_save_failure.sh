@@ -266,6 +266,9 @@ mutate_and_expect_failure off-branch-falls-through \
 mutate_and_expect_failure late-off-overrides-on \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'if shouldEnable {\n                                self.filterKnownOff = false' 'if shouldEnable {'
+mutate_and_expect_failure settings-change-ignored \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'forName: .NEFilterConfigurationDidChange' 'forName: .init("unused")'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''

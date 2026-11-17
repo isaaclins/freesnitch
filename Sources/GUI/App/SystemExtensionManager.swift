@@ -87,6 +87,30 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
             self?.requestPersistedSnapshot(snapshot)
         }
+        // The filter can be turned on or off in System Settings too. Without
+        // this, a failure before the next save cycle's load (an encode over
+        // the size limit, or a failed load) would go by a stale answer (#321).
+        NotificationCenter.default.addObserver(forName: .NEFilterConfigurationDidChange,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshFilterOffState() }
+        }
+    }
+
+    /// Reads whether the filter is on, in its turn on the preferences line,
+    /// so `filterKnownOff` follows changes made outside the app. It only reads.
+    private func refreshFilterOffState() {
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); return }
+                    let mgr = NEFilterManager.shared()
+                    if error == nil, !self.enableFilterRequested {
+                        self.filterKnownOff = mgr.providerConfiguration == nil || !mgr.isEnabled
+                    }
+                    done()
+                }
+            }
+        }
     }
 
     private var hasEmbeddedExtension: Bool {

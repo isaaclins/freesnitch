@@ -405,6 +405,8 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "self.filterKnownOff = !mgr.isEnabled" 
   "a save cycle does not notice the filter is off, so its failure raises the could-not-save banner"
 grep -A1 -F 'if shouldEnable {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterKnownOff = false' \
   || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
+require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
+  "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
 printf '%s\n' "$enable_body" | grep -Fq 'filterKnownOff = false' \
   || fail "turning the filter on keeps treating it as off, so a failed save there stays hidden"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
@@ -421,7 +423,8 @@ fi
 # boot-policy save cannot write the filter back on after the user turned it
 # off (#309).
 for writer in 'private func flushPersistence()' 'private func disableFilter()' \
-              'private func removeFilterConfiguration(' 'private func restartFilterProvider()'; do
+              'private func removeFilterConfiguration(' 'private func restartFilterProvider()' \
+              'private func refreshFilterOffState()'; do
   writer_body="$(awk -v w="$writer" 'index($0, w) {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
   printf '%s\n' "$writer_body" | grep -Fq 'filterPreferences.run {' \
     || fail "${writer} changes the content filter preferences without waiting for the other writers"
@@ -429,7 +432,7 @@ done
 outside_writers="$(awk '
   /^    (private )?func / { fn = $0 }
   /NEFilterManager\.shared\(\)/ {
-    if (fn !~ /func (disableFilter|removeFilterConfiguration|runPersistenceCycle|runFilterRestart)\(/) print NR
+    if (fn !~ /func (disableFilter|removeFilterConfiguration|runPersistenceCycle|runFilterRestart|refreshFilterOffState)\(/) print NR
   }' "$SYSTEM_EXTENSION_MANAGER")"
 [[ -z "$outside_writers" ]] \
   || fail "NEFilterManager is used outside the serialized writers (line ${outside_writers//$'\n'/, })"
