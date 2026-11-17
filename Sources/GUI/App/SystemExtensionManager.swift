@@ -125,9 +125,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // does, so the current rules are saved again and the firewall
             // shows as active once that save went through (#361). A build
             // without the extension only saves the rules, as before, and so
-            // does an activation still waiting for approval or running: it
-            // turns the filter on and reports the state itself.
-            if hasEmbeddedExtension && status != .needsApproval && status != .activating {
+            // does any state but "not filtering": an activation waiting for
+            // approval or running turns the filter on and reports the state
+            // itself, and after a failed activation the status stays failed
+            // until the extension really connects (#383).
+            if hasEmbeddedExtension && status == .idle {
                 enableFilter(fromSettings: true)
             } else {
                 state?.syncSharedRules()

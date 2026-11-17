@@ -516,7 +516,7 @@ printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
   || fail "turning the filter on in System Settings does not save the current rules again"
 # Turned on there, the app turns it on as its own switch does, so the status
 # says active once the current rules are saved (#361).
-printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && status != .needsApproval && status != .activating {' \
+printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && status == .idle {' \
   || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
 grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
     | tr -d '\n' | grep -Eq '!FilterOffState\.turnOnStands\(fromSettings: self\.turnOnFromSettings, +configured: mgr\.providerConfiguration != nil, +enabled: mgr\.isEnabled\) \{ +self\.persistenceCycle\.dropEnableRequest\(\)' \
