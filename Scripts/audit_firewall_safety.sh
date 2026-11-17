@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
 BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
+SAVE_CYCLE="$ROOT/Sources/Shared/BootPolicySaveCycle.swift"
 RULE_STORE="$ROOT/Sources/Shared/RuleStore.swift"
 HELPER_PROTOCOL="$ROOT/Sources/Shared/HelperProtocol.swift"
 IPC="$ROOT/Sources/Shared/IPCConnection.swift"
@@ -361,23 +362,34 @@ require_text "$BRIDGE" "applyingBootPolicySafety" \
   "stale silent-deny boot policy downgrade is missing"
 require_text "$BRIDGE" "NewestWriteWinsQueue" \
   "persisted snapshot coalescing seam is missing"
-require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.takeNewest()" \
-  "the GUI does not take the newest persisted snapshot"
+# The save cycle's decisions live in BootPolicySaveCycle, which
+# Scripts/test_boot_policy_save_failure.sh runs branch by branch (#310). These
+# gates keep the app wired to it.
+require_text "$SAVE_CYCLE" "let pending = queue.takeNewest()" \
+  "the save cycle does not take the newest persisted snapshot"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterLoad(" \
+  "the GUI does not let the save cycle decide what happens after loading the preferences"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)" \
+  "the GUI does not let the save cycle decide what happens after a save"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if result.clearWarning {" \
+  "persistence degradation is not cleared after a successful save"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.state?.clearFilterPersistenceFailure()" \
   "persistence degradation is not cleared after a successful save"
-require_text "$SYSTEM_EXTENSION_MANAGER" "if snapshotData != nil" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "if let snapshotData = save.pending?.data" \
   "a successful save does not prove that a boot snapshot was persisted"
 # A failed boot-policy save must not leave an older saved policy as the last
 # word (#213): the app keeps the failed snapshot and retries, and the
 # extension refuses a saved policy older than the last live one it enforced.
-require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceQueue.requeueFailed(pending)" \
+require_text "$SAVE_CYCLE" "queue.requeueFailed(pending)" \
   "a failed boot-policy save is dropped instead of retried"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.carryOut(result.next, removal: removesBootSnapshot)" \
+  "the GUI does not schedule the retry of a failed boot-policy save"
 require_text "$FILTER" "watermark.supersedes(decoded)" \
   "the extension can load a saved boot policy older than the last live policy it enforced"
 require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
   "the extension does not remember which live policy it last enforced"
 enable_body="$(awk '/private func enableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$enable_body" | grep -Fq 'cancelPendingPersistence()' \
+printf '%s\n' "$enable_body" | grep -Fq 'persistenceCycle.requestEnable()' \
   || fail "turning the filter on can save a snapshot kept for a retry instead of the helper's fresh answer"
 disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$disable_body" | grep -Fq 'cancelPendingPersistence()' \
@@ -385,23 +397,26 @@ printf '%s\n' "$disable_body" | grep -Fq 'cancelPendingPersistence()' \
 remove_body="$(awk '/private func removeFilterConfiguration\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$remove_body" | grep -Fq 'cancelPendingPersistence()' \
   || fail "a boot-policy retry can recreate the filter configuration after uninstall removed it"
+cancel_body="$(awk '/private func cancelPendingPersistence\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$cancel_body" | grep -Fq 'persistenceCycle.cancel()' \
+  || fail "cancelling a boot-policy save does not invalidate a save already in flight"
 request_body="$(awk '/private func requestPersistedSnapshot\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$request_body" | grep -Fq 'cancelPendingPersistence()' \
-  || fail "a policy that cannot be encoded leaves an older snapshot queued, which a retry then saves in its place"
-require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.hasNewerWork(since: attempted)" \
+require_text "$SAVE_CYCLE" "queue.hasNewerWork(since: attempted)" \
   "a boot-policy save put back for a retry also starts an extra immediate cycle, which repeats the give-up message"
 # Rules too big for the boot policy are still enforced live, so turning the
 # filter on goes ahead; the older saved policy is removed so the next start
 # fails open instead of enforcing rules the user has since changed (#320).
-printf '%s\n' "$request_body" | grep -Fq 'persistenceQueue.enqueue(SharedRuleBridge.bootSnapshotRemoval)' \
+printf '%s\n' "$request_body" | grep -Fq 'persistenceCycle.queueRemoval()' \
   || fail "a policy too big for the boot policy leaves an older saved policy in place for the next start"
-if printf '%s\n' "$request_body" | grep -Eq 'enableFilterRequested = false|fail\('; then
+require_text "$SAVE_CYCLE" "queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)" \
+  "a policy too big for the boot policy leaves an older saved policy in place for the next start"
+if printf '%s\n' "$request_body" | grep -Eq 'dropEnableRequest|abandonEnableIfIdle|fail\('; then
   fail "a policy too big for the boot policy stops the filter from being turned on"
 fi
 require_text "$SYSTEM_EXTENSION_MANAGER" \
   "vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)" \
   "the boot-policy removal does not take the saved policy out of vendorConfiguration"
-removal_block="$(awk '/if removesBootSnapshot [{]/ && ++n == 2 {a=1} a {print} a && /[}] else if snapshotData != nil/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+removal_block="$(awk '/if result.removedSavedPolicy [{]/ {a=1} a {print} a && /[}] else if result.savedPolicy/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 [[ -n "$removal_block" ]] || fail "the boot-policy save cycle no longer handles a removal on its own"
 if printf '%s\n' "$removal_block" | grep -Fq 'clearFilterPersistenceFailure()'; then
   fail "removing the saved policy clears the could-not-keep-for-restart banner"
@@ -412,22 +427,24 @@ printf '%s\n' "$request_body" | grep -Fq 'recordPersistenceFailure("encode", err
   || fail "every rule edit over the boot policy limit logs the same error again"
 printf '%s\n' "$request_body" | grep -Fq 'let firstTime = !unsavableLogged' \
   || fail "the over-limit log-once check is no longer keyed on the state, so a changed rule count logs again"
-printf '%s\n' "$request_body" | grep -Fq 'if filterConfigurationActive || enableFilterRequested {' \
+printf '%s\n' "$request_body" | grep -Fq 'if filterConfigurationActive || persistenceCycle.enableRequested {' \
   || fail "with no per-process filter, every rule edit over the limit flashes the won't-survive-a-restart banner"
-if awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'unsavableLogged'; then
+no_config_block="$(awk '/case .stop\(.noConfiguration\):/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -n "$no_config_block" ]] || fail "the save cycle no longer handles a missing filter configuration on its own"
+if printf '%s\n' "$no_config_block" | grep -Fq 'unsavableLogged'; then
   fail "a save cycle with no filter configured forgets the over-limit error was logged, so the next edit logs it again"
 fi
 # A removal that gives up never suggests Send Rules Again, and one while the
 # filter isn't in use (no banner shown) leaves the activity log alone (#349).
-giveup_body="$(awk '/private func schedulePersistenceRetry\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+giveup_body="$(awk '/private func carryOut\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$giveup_body" | grep -Fq 'let message = removal' \
   || fail "a boot-policy removal that gives up logs the generic Send Rules Again error"
 printf '%s\n' "$giveup_body" | grep -Fq 'if removal && state?.filterPersistenceUnsavable == nil {' \
   || fail "a boot-policy removal while the filter isn't in use writes an error to the activity log when it gives up"
-if grep -F 'self.schedulePersistenceRetry(' "$SYSTEM_EXTENSION_MANAGER" | grep -Fvq 'schedulePersistenceRetry(removal: removesBootSnapshot)'; then
+if grep -F 'self.carryOut(' "$SYSTEM_EXTENSION_MANAGER" | grep -Fvq 'removal: '; then
   fail "a boot-policy retry no longer says whether the failed save was a removal"
 fi
-require_text "$SYSTEM_EXTENSION_MANAGER" "let removesBootSnapshot = self.persistenceQueue.peekNewest == SharedRuleBridge.bootSnapshotRemoval" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "let removalQueued = self.persistenceCycle.queue.peekNewest == SharedRuleBridge.bootSnapshotRemoval" \
   "a failed load before a removal while the filter isn't in use raises a banner"
 require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil" \
   "a failed preferences load while the removal is queued swaps the over-limit banner for the Send Rules Again one"
@@ -445,11 +462,12 @@ for problem_case in datedInFuture other; do
     fail "a boot policy that can't be kept because of $problem_case tells the user to remove rules"
   fi
 done
+require_text "$SYSTEM_EXTENSION_MANAGER" "if result.reportFailure {" \
+  "a save the user cancelled by turning the filter on, off or removing it can bring the warning back"
 require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
   "the over-limit banner says the filter is using the rules when the extension does not hold them"
 printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
   || fail "removing the filter configuration leaves the could-not-save banner up"
-no_config_block="$(awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$no_config_block" | grep -Fq 'clearFilterPersistenceFailure()' \
   || fail "a save cycle that finds no filter configuration leaves the could-not-save banner up"
 # With the filter off nothing restarts with the saved rules, so a failed
@@ -463,7 +481,7 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "self.apply(self.filterOff.observed(con
   "a save cycle does not notice the filter is off, so its failure raises the could-not-save banner"
 grep -A2 -F 'if completion == .active {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterOff.turnedOn()' \
   || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
-[[ "$(grep -cF 'self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)' "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
+[[ "$(grep -cF 'self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)' "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
   || fail "turning the filter off or removing it does not record the filter as off, or overrides a turn-on asked for meanwhile"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
@@ -478,8 +496,6 @@ printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state
   || fail "finding the filter off leaves an earlier could-not-save banner up"
 printf '%s\n' "$enable_body" | grep -Fq 'filterOff.turnedOn()' \
   || fail "turning the filter on keeps treating it as off, so a failed save there stays hidden"
-require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
-  "cancelling a boot-policy save does not invalidate a save already in flight"
 stop_body="$(awk '/override func stopFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$FILTER")"
 printf '%s\n' "$stop_body" | grep -Fq 'watermarkQueue.sync {}' \
   || fail "the extension can stop before its live-policy record is written"
@@ -510,7 +526,7 @@ for runner in 'runPersistenceCycle()' 'runFilterRestart(done:'; do
     || fail "${runner%%(*} is called from somewhere other than its turn on the preferences line"
 done
 disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$disable_body" | grep -Fq 'enableFilterRequested = false' \
+printf '%s\n' "$disable_body" | grep -Fq 'persistenceCycle.dropEnableRequest()' \
   || fail "turning the filter off leaves an enable request that the helper's answer can still act on"
 require_text "$SYSTEM_EXTENSION_MANAGER" "guard mgr.isEnabled else {" \
   "a filter restart can turn the filter back on after the user turned it off"

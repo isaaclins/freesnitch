@@ -37,7 +37,7 @@ public enum SharedRuleBridge {
     /// may take only the newest pending payload after a load completes; any
     /// request arriving during a save remains visible as newer work.
     public struct NewestWriteWinsQueue: Sendable {
-        public struct Pending: Sendable {
+        public struct Pending: Equatable, Sendable {
             public let generation: Int
             public let data: Data
         }
