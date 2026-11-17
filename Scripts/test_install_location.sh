@@ -101,6 +101,22 @@ check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeS
       && !InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Downloads/FreeSnitch.app"), home: "/Users/x"),
       "Applications and ~/Applications count as installed, Downloads doesn't")
 
+// #375: an Applications copy that macOS still translocates reopens itself at
+// most once per launch chain, and is never offered as a "move".
+let again = InstallLocation.reopenedAfterClearingArgument
+check(InstallLocation.shouldReopenAfterClearing(cleared: true, arguments: ["/x/FreeSnitch"]),
+      "a cleared flag reopens the installed copy once")
+check(!InstallLocation.shouldReopenAfterClearing(cleared: true, arguments: ["/x/FreeSnitch", again]),
+      "the reopened copy, still translocated, explains instead of reopening again")
+check(!InstallLocation.shouldReopenAfterClearing(cleared: false, arguments: ["/x/FreeSnitch"]),
+      "a flag that can't be cleared explains instead of reopening")
+check(InstallLocation.translocatedInstalledCopy(original: URL(fileURLWithPath: "/Applications/FreeSnitch.app"))
+        == URL(fileURLWithPath: "/Applications/FreeSnitch.app"),
+      "a translocated copy whose original is in Applications counts as stuck, so no move is offered")
+check(InstallLocation.translocatedInstalledCopy(original: URL(fileURLWithPath: NSHomeDirectory() + "/Downloads/FreeSnitch.app")) == nil
+      && InstallLocation.translocatedInstalledCopy(original: nil) == nil,
+      "a copy translocated from Downloads, or not translocated, still gets the move")
+
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
 let none = LegacyPureSnitch.detect { asked.append($0); return false }

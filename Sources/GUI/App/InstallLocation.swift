@@ -108,6 +108,26 @@ enum InstallLocation {
         return path.hasPrefix("/Applications/") || path.hasPrefix(userApps)
     }
 
+    /// Passed to the copy FreeSnitch reopens after clearing the flag on its
+    /// own Applications copy (#375). If macOS still translocates that copy,
+    /// the reopened app sees this and explains instead of reopening again, so
+    /// the automatic reopen happens at most once per launch.
+    static let reopenedAfterClearingArgument = "--freesnitch-reopened-after-clearing-quarantine"
+
+    /// Whether to reopen the Applications copy after clearing its flag: only
+    /// when the flag really went and this launch isn't already that reopen.
+    static func shouldReopenAfterClearing(cleared: Bool, arguments: [String]) -> Bool {
+        cleared && !arguments.contains(reopenedAfterClearingArgument)
+    }
+
+    /// The copy in Applications that macOS is running translocated, when
+    /// there is one. Moving can't help that copy: it is already installed,
+    /// and every "move" would only offer to open it again (#375).
+    static func translocatedInstalledCopy(original: URL?) -> URL? {
+        guard let original, isInApplications(original) else { return nil }
+        return original
+    }
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -124,42 +144,59 @@ extension InstallLocation {
     /// reopen from Applications, so the caller must start nothing else.
     @discardableResult
     static func offerMoveAtLaunch() -> Bool {
-        // The demo never moves anything; FREESNITCH_DEMO_WINDOW=move only
-        // shows the question so it can be reviewed.
+        // The demo never moves anything; FREESNITCH_DEMO_WINDOW=move or
+        // =stuck only shows the question so it can be reviewed.
         if isDemo {
-            guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "move" else { return false }
-            NSApp.activate(ignoringOtherApps: true)
-            _ = moveAlert().runModal()
+            switch ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] {
+            case "move":
+                NSApp.activate(ignoringOtherApps: true)
+                _ = moveAlert().runModal()
+            case "stuck":
+                explainStuckInstalledCopy(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), flagCleared: false, showInFinder: false)
+            default: break
+            }
             return false
         }
         guard !HelperClient.isInApplicationsFolder else { return false }
         // Already in Applications but quarantined and put there without
         // Finder, so macOS runs it translocated. Moving can't help; clearing
-        // the flag on that copy and reopening it does.
-        // Only when the flag really went: a bundle this user can't change
-        // (installed by another account or with sudo) would otherwise reopen
-        // translocated and land here again, forever.
-        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original) {
-            if clearQuarantine(at: original) {
-                relaunch(at: original)
+        // the flag on that copy and reopening it does, once. A bundle this
+        // user can't change (installed by another account or with sudo), or
+        // one macOS translocates even without the flag, would otherwise
+        // reopen and land here again, forever.
+        if let installed = stuckInstalledCopy {
+            let cleared = clearQuarantine(at: installed)
+            if shouldReopenAfterClearing(cleared: cleared, arguments: CommandLine.arguments) {
+                relaunch(at: installed, arguments: [reopenedAfterClearingArgument])
                 return true
             }
-            // Moving would only offer to open this same copy again.
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "macOS is running FreeSnitch from a temporary copy"
-            alert.informativeText = "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it, so macOS won't let it install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
-            alert.addButton(withTitle: "Show in Finder")
-            alert.addButton(withTitle: "Not Now")
-            if alert.runModal() == .alertFirstButtonReturn {
-                NSWorkspace.shared.activateFileViewerSelecting([original])
-            }
+            explainStuckInstalledCopy(installed, flagCleared: cleared)
             return false
         }
         NSApp.activate(ignoringOtherApps: true)
         guard moveAlert().runModal() == .alertFirstButtonReturn else { return false }
         return moveToApplications()
+    }
+
+    /// The installed copy macOS keeps running from a temporary location,
+    /// worked out once: the running bundle doesn't change.
+    static let stuckInstalledCopy: URL? = translocatedInstalledCopy(original: translocatedOriginal(of: Bundle.main.bundleURL))
+
+    /// Says what the user has to do in Finder, since FreeSnitch can't.
+    static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool, showInFinder: Bool = true) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "macOS is running FreeSnitch from a temporary copy"
+        let why = flagCleared
+            ? "macOS still runs the copy in Applications from a temporary location"
+            : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
+        alert.informativeText = "\(why), so macOS won't let it install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+        alert.addButton(withTitle: "Show in Finder")
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn, showInFinder {
+            NSWorkspace.shared.activateFileViewerSelecting([installed])
+        }
     }
 
     private static func moveAlert() -> NSAlert {
@@ -174,6 +211,11 @@ extension InstallLocation {
     /// Does the move, or says what's in the way. Also the banner's button.
     @discardableResult
     static func moveToApplications() -> Bool {
+        // Opening the installed copy would only run this same copy again.
+        if let installed = stuckInstalledCopy {
+            explainStuckInstalledCopy(installed, flagCleared: clearQuarantine(at: installed))
+            return false
+        }
         let running = Bundle.main.bundleURL
         // Where the user actually put it, not the translocated mirror.
         let original = translocatedOriginal(of: running) ?? running
@@ -234,11 +276,13 @@ extension InstallLocation {
     /// Opens `app` once this process has exited, so two copies never run at
     /// once, then quits. The path goes in as an argument, never into the
     /// script text.
-    private static func relaunch(at app: URL) {
+    private static func relaunch(at app: URL, arguments: [String] = []) {
         let waiter = Process()
         waiter.executableURL = URL(fileURLWithPath: "/bin/sh")
-        waiter.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
-                            "sh", String(ProcessInfo.processInfo.processIdentifier), app.path]
+        // Whatever follows the pid and the path is handed on to the new copy.
+        let openApp = arguments.isEmpty ? "/usr/bin/open \"$app\"" : "/usr/bin/open \"$app\" --args \"$@\""
+        waiter.arguments = ["-c", "pid=\"$1\"; app=\"$2\"; shift 2; while /bin/kill -0 \"$pid\" 2>/dev/null; do /bin/sleep 0.2; done; \(openApp)",
+                            "sh", String(ProcessInfo.processInfo.processIdentifier), app.path] + arguments
         try? waiter.run()
         NSApp.terminate(nil)
     }
