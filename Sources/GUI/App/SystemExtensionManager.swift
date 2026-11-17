@@ -855,7 +855,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {
-            fail("filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")")
+            let message = "filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")"
+            if turnOnFromSettings {
+                reportAbandonedSettingsTurnOn(message)
+            } else {
+                fail(message)
+            }
             return
         }
         guard filterConfigurationActive else { return }
@@ -865,6 +870,37 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         let detail = snapshotStatus.message ?? "no snapshot has been received"
         status = .failed("filter snapshot unavailable: \(detail)")
+    }
+
+    /// The helper gave no rules for a turn-on that followed the filter being
+    /// turned on in System Settings. Changes made there are not read while a
+    /// turn-on is pending, so it may have been turned off or removed there
+    /// again meanwhile: then the filter is off as the user set it, and the
+    /// app says not filtering instead of a failed turn-on (#382). Read in its
+    /// turn on the preferences line, so it sees every earlier save.
+    private func reportAbandonedSettingsTurnOn(_ message: String) {
+        turnOnFromSettings = false
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); return }
+                    let mgr = NEFilterManager.shared()
+                    let configured = mgr.providerConfiguration != nil
+                    done()
+                    // A newer turn-on reports the state itself.
+                    guard !self.persistenceCycle.enableRequested else { return }
+                    if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: error != nil,
+                                                            configured: configured, enabled: mgr.isEnabled) {
+                        self.fail(message)
+                        return
+                    }
+                    self.apply(self.filterOff.observed(configured: configured, enabled: mgr.isEnabled, fromOutside: true))
+                    self.showNotFiltering()
+                    self.state?.appendLog(level: "info",
+                                          message: "Firewall not filtering: the filter was turned off in System Settings.")
+                }
+            }
+        }
     }
 
     private func fail(_ message: String) {

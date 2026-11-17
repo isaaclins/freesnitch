@@ -525,6 +525,17 @@ grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYS
 clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
 printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if filterConfigurationActive && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
   || fail "turning the filter off in System Settings leaves the app saying the firewall is active (#361)"
+# A turn-on from System Settings that the helper gave no rules for: turned
+# off there again meanwhile, that is not a failed turn-on (#382).
+snapshot_status_body="$(awk '/private func recordSnapshotStatus\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$snapshot_status_body" | grep -A1 -F 'if turnOnFromSettings {' | grep -Fq 'reportAbandonedSettingsTurnOn(message)' \
+  || fail "a turn-on from System Settings that was turned off there again reports a failed turn-on (#382)"
+abandoned_body="$(awk '/private func reportAbandonedSettingsTurnOn\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$abandoned_body" | grep -Fq 'filterPreferences.run {' \
+  && printf '%s\n' "$abandoned_body" | grep -Fq 'guard !self.persistenceCycle.enableRequested else { return }' \
+  && printf '%s\n' "$abandoned_body" | tr -d '\n' | grep -Eq 'FilterOffState\.abandonedTurnOnFailed\(fromSettings: true, readFailed: error != nil, +configured: configured, enabled: mgr\.isEnabled\) \{ +self\.fail\(message\) +return +\}' \
+  && printf '%s\n' "$abandoned_body" | grep -A1 -F 'self.apply(self.filterOff.observed(configured: configured, enabled: mgr.isEnabled, fromOutside: true))' | grep -Fq 'self.showNotFiltering()' \
+  || fail "a turn-on from System Settings given up for lack of rules does not check whether the filter is still on there (#382)"
 grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' \
   || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"
 printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \
@@ -544,7 +555,7 @@ fi
 # off (#309).
 for writer in 'private func flushPersistence()' 'private func disableFilter()' \
               'private func removeFilterConfiguration(' 'private func restartFilterProvider()' \
-              'private func refreshFilterOffState()'; do
+              'private func refreshFilterOffState()' 'private func reportAbandonedSettingsTurnOn('; do
   writer_body="$(awk -v w="$writer" 'index($0, w) {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
   printf '%s\n' "$writer_body" | grep -Fq 'filterPreferences.run {' \
     || fail "${writer} changes the content filter preferences without waiting for the other writers"
@@ -552,7 +563,7 @@ done
 outside_writers="$(awk '
   /^    (private )?func / { fn = $0 }
   /NEFilterManager\.shared\(\)/ {
-    if (fn !~ /func (disableFilter|removeFilterConfiguration|runPersistenceCycle|runFilterRestart|refreshFilterOffState)\(/) print NR
+    if (fn !~ /func (disableFilter|removeFilterConfiguration|runPersistenceCycle|runFilterRestart|refreshFilterOffState|reportAbandonedSettingsTurnOn)\(/) print NR
   }' "$SYSTEM_EXTENSION_MANAGER")"
 [[ -z "$outside_writers" ]] \
   || fail "NEFilterManager is used outside the serialized writers (line ${outside_writers//$'\n'/, })"
