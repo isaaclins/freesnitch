@@ -230,12 +230,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// manager is the sole persistence owner. Saves are serialized because
     /// NEFilterManager's load/save callbacks are asynchronous, and a newer
     /// request always remains pending until the older save completes.
-    private func requestPersistedSnapshot(_ snapshot: SharedRuleBridge.Snapshot,
-                                          immediate: Bool = false) {
+    private func requestPersistedSnapshot(_ snapshot: SharedRuleBridge.Snapshot) {
         do {
             persistenceQueue.enqueue(try SharedRuleBridge.encodeBootSnapshot(snapshot))
             persistenceRetry.reset()
-            schedulePersistence(immediate: immediate || enableFilterRequested)
+            schedulePersistence(immediate: enableFilterRequested)
         } catch {
             // This policy cannot be saved (for example it is over the boot
             // policy size limit). An older snapshot still queued for a retry
@@ -364,7 +363,6 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
                         self.endPersistenceCycle()
-                        var retryScheduled = false
                         if let saveError {
                             if self.persistenceCancellations == cancellationsAtLoad {
                                 self.recordPersistenceFailure("save", error: saveError)
@@ -382,7 +380,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // Nothing newer arrived during the save, so
                                 // the saved policy is still older than the one
                                 // being enforced. Keep this one and retry.
-                                retryScheduled = self.schedulePersistenceRetry()
+                                self.schedulePersistenceRetry()
                             }
                         } else {
                             if snapshotData != nil {
@@ -411,10 +409,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                         // A request that arrived while load/save was in flight
                         // cannot be folded into the completed system write.
                         // Start another serialized cycle for that newer data.
-                        // A spaced retry already owns the requeued snapshot;
-                        // only an enable request may jump ahead of it.
+                        // Measured from the snapshot this cycle took, not from
+                        // the load: one that arrived during the load was taken
+                        // here already. A requeued snapshot is not newer, so a
+                        // spaced retry (or the give-up after the last one)
+                        // keeps it; only an enable request may jump ahead.
+                        let attempted = pending?.generation ?? generationAtLoad
                         if self.enableFilterRequested
-                            || (!retryScheduled && self.persistenceQueue.hasNewerWork(since: generationAtLoad)) {
+                            || self.persistenceQueue.hasNewerWork(since: attempted) {
                             self.schedulePersistence(immediate: true)
                         }
                     }
@@ -446,19 +448,17 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         persistenceRetry.reset()
     }
 
-    @discardableResult
-    private func schedulePersistenceRetry() -> Bool {
+    private func schedulePersistenceRetry() {
         guard let delay = persistenceRetry.nextDelay() else {
             let message = "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
                 + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
             state?.appendLog(level: "error", message: message)
             os_log("%{public}@", log: log, type: .error, message)
-            return false
+            return
         }
         os_log("Retrying the boot policy save in %{public}.0f s (attempt %{public}ld)", log: log, type: .info,
                delay, persistenceRetry.attempts)
         schedulePersistence(immediate: false, after: delay)
-        return true
     }
 
     private func recordPersistenceFailure(_ operation: String, error: Error) {

@@ -141,6 +141,23 @@ schedule.reset()
 expect(schedule.nextDelay() == 5, "a newer policy does not restart the retries")
 print("boot save harness: retries are 5 s, 30 s, 120 s, then stop until something changes")
 
+// 6e. A snapshot that arrived while the preferences were loading is the one
+//     the cycle takes. When its save fails and is put back, it is not newer
+//     work: the spaced retry (or, after the last one, the single give-up
+//     message) owns it, and no extra immediate cycle starts. Measuring from
+//     the load instead would start one (#312).
+var midLoad = SharedRuleBridge.NewestWriteWinsQueue()
+midLoad.enqueue(encoded(withDeny))
+let generationAtLoad = midLoad.generation
+midLoad.enqueue(encoded(withoutDeny)) // arrives during loadFromPreferences
+let takenMidLoad = midLoad.takeNewest()!
+expect(midLoad.requeueFailed(takenMidLoad), "the snapshot taken after the load was not kept for a retry")
+expect(!midLoad.hasNewerWork(since: takenMidLoad.generation),
+       "a requeued snapshot counts as newer work and starts an extra save cycle")
+expect(midLoad.hasNewerWork(since: generationAtLoad),
+       "this case does not reproduce the cycle measured from the load")
+print("boot save harness: a failed save taken mid-load is retried once, not twice")
+
 // 7. A restarted helper opens a new session at a lower generation. Its saved
 //    policy outranks the old session's, and an older session's is refused.
 try extensionAcceptsLive(snapshot([], generation: 0, epoch: 4))
@@ -225,6 +242,9 @@ mutate_and_expect_failure enable-keeps-retained-save \
 mutate_and_expect_failure encode-failure-keeps-older \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'cancelPendingPersistence()\n            recordPersistenceFailure("encode", error: error)' 'recordPersistenceFailure("encode", error: error)'
+mutate_and_expect_failure extra-cycle-after-requeue \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'hasNewerWork(since: attempted)' 'hasNewerWork(since: generationAtLoad)'
 mutate_and_expect_failure removal-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()' 'no longer applies (#311).'
