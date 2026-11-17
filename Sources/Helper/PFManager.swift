@@ -273,6 +273,7 @@ final class PFManager: @unchecked Sendable {
         lines.append("# so an app's address or port deny would block every app on the Mac.")
         lines.append("# Denies reach this anchor only as block out: pf would read an incoming deny as this Mac's")
         lines.append("# own address and port, so incoming denies are left to the Network Extension.")
+        lines.append("# An incoming allow names the remote peer, so it is written as pass in ... from that peer.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
@@ -431,15 +432,26 @@ final class PFManager: @unchecked Sendable {
         // pf only takes `port` after a host (pf.conf(5), `hosts`): a bare
         // `port 8443` is a syntax error that makes pfctl refuse the whole
         // anchor (issue #298), so a port-only rule matches `to any`.
-        var target = " to \(destination ?? "any")"
-        if let port { target += " port \(port)" }
+        var host = " \(destination ?? "any")"
+        if let port { host += " port \(port)" }
+        let target = " to" + host
 
         guard verb == "block" else {
-            var line = verb
-            if r.direction != .any {
-                line += r.direction == .incoming ? " in" : " out"
+            // The rule names the remote side, as the matcher and the Network
+            // Extension read it. For an incoming connection that is where the
+            // packet comes from, so pf gets `pass in ... from X port N`;
+            // `pass in ... to X port N` would name this Mac's own address
+            // and port (#301). The pass keeps state, so this Mac's replies to
+            // an allowed incoming peer also pass the address feed below. A
+            // rule for both directions is written as both halves.
+            var passes: [String] = []
+            if r.direction != .incoming {
+                passes.append("pass out quick proto { tcp udp }" + target)
             }
-            return [line + " quick proto { tcp udp }" + target]
+            if r.direction != .outgoing {
+                passes.append("pass in quick proto { tcp udp } from" + host)
+            }
+            return passes
         }
         // Only the outgoing half of a deny reaches pf, see above. A block
         // keeps no state, so `block out` alone would also drop this Mac's

@@ -305,8 +305,9 @@ struct IPBlocklistHarness {
         checks.expect(blocks(infrastructure, "to any port 548"),
                       "a deny on an ordinary port next to DHCPv6 must still be written")
         // A rule with only a port matches any host (issue #298).
-        checks.expect(infrastructure.contains("pass quick proto { tcp udp } to any port 550"),
-                      "a port-only allow in both directions must be written as to any port")
+        checks.expect(infrastructure.contains("pass out quick proto { tcp udp } to any port 550\n")
+                        && infrastructure.contains("pass in quick proto { tcp udp } from any port 550\n"),
+                      "a port-only allow in both directions must be written as its outgoing and incoming halves")
         // pf would read an incoming deny's port as this Mac's own local port
         // and drop replies arriving on it, so only outgoing denies reach pf.
         checks.expect(!infrastructure.contains("549"),
@@ -336,6 +337,41 @@ struct IPBlocklistHarness {
         }
         checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 2,
                       "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
+
+        // An allow names the remote peer, as the matcher and the Network
+        // Extension read remoteIP and remotePort. For an incoming connection
+        // that peer is where the packet comes from, so pf must get `from`;
+        // `pass in ... to X port N` would name this Mac's own address and
+        // port, letting anything in on that local port past the system's own
+        // pf.conf (#301). An address in a feed that the user allowed incoming
+        // must still pass, so its replies are not dropped by the feed.
+        let peerFeed = IPBlocklistSet(entries: ["203.0.113.50"])
+        let incomingAllows = pf.renderAnchor(rules: [
+            Rule(remoteIP: "203.0.113.50", remotePort: 51000, direction: .incoming, action: .allow, scope: .ip),
+            Rule(remotePort: 51001, direction: .incoming, action: .allow, scope: .port),
+            Rule(remoteIP: "203.0.113.51", direction: .any, action: .allow, scope: .ip),
+            Rule(remoteIP: "203.0.113.52", remotePort: 51002, direction: .outgoing, action: .allow, scope: .ip)
+        ], ipBlocklist: peerFeed, resolverAddresses: resolvers)
+        checkPFSyntax("incoming-allows", incomingAllows, checks)
+        let passLines = incomingAllows.split(separator: "\n").map(String.init).filter { $0.hasPrefix("pass") }
+        checks.expect(passLines.contains("pass in quick proto { tcp udp } from 203.0.113.50 port 51000"),
+                      "an incoming allow with an address and port must be written as from the remote peer")
+        checks.expect(passLines.contains("pass in quick proto { tcp udp } from any port 51001"),
+                      "a port-only incoming allow must be written as from any port")
+        checks.expect(passLines.contains("pass out quick proto { tcp udp } to 203.0.113.51")
+                        && passLines.contains("pass in quick proto { tcp udp } from 203.0.113.51"),
+                      "an allow in both directions must be written as both halves")
+        checks.expect(passLines.contains("pass out quick proto { tcp udp } to 203.0.113.52 port 51002")
+                        && !incomingAllows.contains("from 203.0.113.52"),
+                      "an outgoing allow must stay to the remote peer and nothing else")
+        checks.expect(!passLines.contains { $0.hasPrefix("pass in") && $0.contains(" to ") },
+                      "an incoming allow must never name this Mac's own side with to")
+        checks.expect(!passLines.contains { $0.hasPrefix("pass quick") },
+                      "an allow must always name its direction, so to and from mean the remote peer")
+        let peerPass = incomingAllows.range(of: "from 203.0.113.50 port 51000")?.lowerBound
+        let peerFeedBlock = incomingAllows.range(of: "to <freesnitch_ipblock>")?.lowerBound
+        checks.expect(peerPass != nil && peerFeedBlock != nil && peerPass! < peerFeedBlock!,
+                      "an incoming allow must precede the feed block, so the feed cannot block what the user allowed")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again
@@ -554,7 +590,7 @@ if [[ -x "$PFCTL" ]] && "$PFCTL" -n -f "$TMP/pf-probe.conf" >/dev/null 2>&1; the
     fi
     parsed=$((parsed + 1))
   done
-  [[ "$parsed" -eq 6 ]] || { printf 'ip blocklist harness: FAIL: %d of 6 rendered anchors reached pfctl\n' "$parsed" >&2; exit 1; }
+  [[ "$parsed" -eq 7 ]] || { printf 'ip blocklist harness: FAIL: %d of 7 rendered anchors reached pfctl\n' "$parsed" >&2; exit 1; }
   printf 'ip blocklist harness: pfctl -n parsed all %d rendered anchors\n' "$parsed"
 else
   printf 'ip blocklist harness: pfctl -n cannot run here; the grammar checks stand in for it\n'
