@@ -388,6 +388,11 @@ printf '%s\n' "$remove_body" | grep -Fq 'cancelPendingPersistence()' \
 request_body="$(awk '/private func requestPersistedSnapshot\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$request_body" | grep -Fq 'cancelPendingPersistence()' \
   || fail "a policy that cannot be encoded leaves an older snapshot queued, which a retry then saves in its place"
+printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
+  || fail "removing the filter configuration leaves the could-not-save banner up"
+no_config_block="$(awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$no_config_block" | grep -Fq 'clearFilterPersistenceFailure()' \
+  || fail "a save cycle that finds no filter configuration leaves the could-not-save banner up"
 require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.invalidateAll()" \
   "cancelling a boot-policy save does not invalidate a save already in flight"
 stop_body="$(awk '/override func stopFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$FILTER")"

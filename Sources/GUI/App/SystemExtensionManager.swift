@@ -167,6 +167,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 } else {
                     self.recordFilterDiagnostic(state: "removed",
                                                 detail: "The content filter configuration was removed.")
+                    // No filter is left to save rules for, so a warning
+                    // about an earlier failed save no longer applies (#311).
+                    DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }
                 }
                 completion()
             }
@@ -287,6 +290,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // uninstall). A boot policy save must not create one.
                     self.persistenceInFlight = false
                     self.persistenceQueue.discardThrough(self.persistenceQueue.generation)
+                    // Nothing to save rules for, so an earlier save-failure
+                    // warning no longer applies (#311).
+                    self.state?.clearFilterPersistenceFailure()
                     return
                 }
                 let pending = self.persistenceQueue.takeNewest()

@@ -225,6 +225,12 @@ mutate_and_expect_failure enable-keeps-retained-save \
 mutate_and_expect_failure encode-failure-keeps-older \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'cancelPendingPersistence()\n            recordPersistenceFailure("encode", error: error)' 'recordPersistenceFailure("encode", error: error)'
+mutate_and_expect_failure removal-keeps-banner \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'DispatchQueue.main.async { self.state?.clearFilterPersistenceFailure() }' ''
+mutate_and_expect_failure no-config-keeps-banner \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'// warning no longer applies (#311).\n                    self.state?.clearFilterPersistenceFailure()' '// removed'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''
