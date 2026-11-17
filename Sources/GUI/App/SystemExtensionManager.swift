@@ -228,9 +228,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // invalidate a save in flight.
             cancelPendingPersistence()
             recordPersistenceFailure("encode", error: error)
-            if immediate {
-                enableFilterRequested = true
-                schedulePersistence(immediate: true)
+            if enableFilterRequested {
+                // Activation waits for this policy and it will never arrive
+                // in a savable form: say so instead of waiting forever.
+                enableFilterRequested = false
+                fail("filter snapshot could not be saved: \(error.localizedDescription)")
             }
         }
     }
@@ -260,6 +262,18 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         mgr.loadFromPreferences { [weak self] loadError in
             DispatchQueue.main.async {
                 guard let self else { return }
+                if let loadError, self.persistenceCancellations != cancellationsAtLoad {
+                    // The filter was turned on, off or removed meanwhile; this
+                    // load no longer matters and must not raise a warning or
+                    // fail an activation that has not run yet.
+                    self.persistenceInFlight = false
+                    os_log("A cancelled boot policy load failed: %{public}@", log: self.log, type: .info,
+                           loadError.sentence)
+                    if self.persistenceQueue.hasPending || self.enableFilterRequested {
+                        self.schedulePersistence(immediate: true)
+                    }
+                    return
+                }
                 if let loadError {
                     self.persistenceInFlight = false
                     self.recordPersistenceFailure("load", error: loadError)
