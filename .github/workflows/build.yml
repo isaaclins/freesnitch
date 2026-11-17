@@ -29,33 +29,15 @@ jobs:
       - name: Audit fail-open firewall invariants
         run: bash Scripts/audit_firewall_safety.sh
 
-  list-harnesses:
-    name: List test harnesses
-    runs-on: ubuntu-latest
-    outputs:
-      harnesses: ${{ steps.list.outputs.harnesses }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      # Every Scripts/test_*.sh runs, so a new harness is covered the day it
-      # lands. An empty list would make the matrix pass vacuously, so fail.
-      - name: List Scripts/test_*.sh
-        id: list
-        run: |
-          harnesses="$(find Scripts -maxdepth 1 -name 'test_*.sh' -print | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')"
-          echo "$harnesses"
-          [ "$harnesses" != "[]" ] || { echo 'ERROR: no Scripts/test_*.sh found.'; exit 1; }
-          echo "harnesses=$harnesses" >> "$GITHUB_OUTPUT"
-
   harness:
-    name: Harness ${{ matrix.script }}
-    needs: list-harnesses
+    name: Test harnesses (group ${{ matrix.group }} of 4)
     runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
-        script: ${{ fromJSON(needs.list-harnesses.outputs.harnesses) }}
+        group: [1, 2, 3, 4]
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -66,16 +48,46 @@ jobs:
       - name: Install ripgrep
         run: command -v rg >/dev/null || brew install ripgrep
 
+      # Every Scripts/test_*.sh runs, so a new harness is covered the day it
+      # lands. They are split over four macOS jobs (one per check, not one
+      # per harness) to keep the queue short on shared runners. Each group
+      # runs all of its harnesses and lists every one that failed.
+      #
       # The harnesses compile the shipping sources with swiftc and run them
       # as the runner user. None of them needs root: privileged tools are
       # stubbed, and pfctl is only ever asked to parse (-n), never to load.
-      - name: Run ${{ matrix.script }}
+      - name: Run this group's harnesses
         env:
-          SCRIPT: ${{ matrix.script }}
-        run: bash "$SCRIPT"
+          GROUP: ${{ matrix.group }}
+          GROUP_COUNT: 4
+        run: |
+          scripts=()
+          while IFS= read -r f; do scripts+=("$f"); done < <(find Scripts -maxdepth 1 -name 'test_*.sh' -print | sort)
+          if [ "${#scripts[@]}" -eq 0 ]; then echo 'ERROR: no Scripts/test_*.sh found.'; exit 1; fi
+          failed=()
+          ran=0
+          for i in "${!scripts[@]}"; do
+            [ $(( i % GROUP_COUNT + 1 )) -eq "$GROUP" ] || continue
+            f="${scripts[$i]}"
+            ran=$((ran + 1))
+            echo "::group::$f"
+            if bash "$f"; then status=0; else status=$?; fi
+            echo "::endgroup::"
+            if [ "$status" -eq 0 ]; then
+              echo "PASS $f"
+            else
+              echo "::error file=$f::$f failed (exit $status)"
+              failed+=("$f")
+            fi
+          done
+          echo "group $GROUP ran $ran of ${#scripts[@]} harnesses"
+          if [ "${#failed[@]}" -gt 0 ]; then
+            printf 'FAILED: %s\n' "${failed[@]}"
+            exit 1
+          fi
 
-  # One stable check name for the whole matrix, so branch protection can
-  # require it without listing each harness.
+  # One stable check name for every harness group, so branch protection can
+  # require it without listing the groups.
   harnesses:
     name: Test harnesses
     needs: harness
