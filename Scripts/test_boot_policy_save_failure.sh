@@ -132,6 +132,29 @@ expect(tooBig.hasNewerWork(since: retainedA.generation),
        "a late save of the older snapshot would count as the newest and clear the warning")
 print("boot save harness: an unsaveable newer policy is never replaced by an older retry")
 
+// 6c-2. The same over-limit policy is enforced live, so turning the filter on
+//     goes ahead (#320). The app queues a removal in its place: the save takes
+//     the older saved policy out of the preferences, and the next start fails
+//     open until the app sends the live rules again, instead of enforcing the
+//     older policy's deny rules.
+tooBig.enqueue(SharedRuleBridge.bootSnapshotRemoval)
+expect(tooBig.hasPending, "turning the filter on would wait forever: nothing is queued to save")
+let removal = tooBig.takeNewest()!
+expect(removal.data == SharedRuleBridge.bootSnapshotRemoval && removal.data != encoded(withDeny),
+       "the removal cannot be told apart from a real saved policy")
+var vendorConfiguration: [String: Any] = [SharedRuleBridge.bootSnapshotVendorConfigurationKey: encoded(withDeny)]
+// What the app's save cycle does with a removal (mirrored here: the cycle
+// needs NEFilterManager; the audit checks and mutations guard the real code):
+vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)
+// What the extension does at start when the key is missing:
+let savedAtStart = vendorConfiguration[SharedRuleBridge.bootSnapshotVendorConfigurationKey] as? Data
+expect(savedAtStart.flatMap(extensionStart(saved:)) == nil,
+       "after a removal the next start still enforces the older saved policy")
+// A failed removal save is retried like any other.
+expect(tooBig.requeueFailed(removal) && tooBig.takeNewest()?.data == SharedRuleBridge.bootSnapshotRemoval,
+       "a failed removal save is not retried")
+print("boot save harness: an over-limit policy turns on live and removes the older saved policy")
+
 // 6d. Retries are spaced, bounded, and start over after a newer policy.
 var schedule = SharedRuleBridge.RetrySchedule()
 expect(schedule.nextDelay() == 5 && schedule.nextDelay() == 30 && schedule.nextDelay() == 120,
@@ -275,10 +298,37 @@ mutate_and_expect_failure enable-keeps-retained-save \
   $'cancelPendingPersistence()\n        enableFilterRequested = true' 'enableFilterRequested = true'
 mutate_and_expect_failure encode-failure-keeps-older \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'cancelPendingPersistence()\n            recordPersistenceFailure("encode", error: error)' 'recordPersistenceFailure("encode", error: error)'
+  $'cancelPendingPersistence()\n            // Remove the saved policy' '// Remove the saved policy'
 mutate_and_expect_failure extra-cycle-after-requeue \
   Sources/GUI/App/SystemExtensionManager.swift \
   'hasNewerWork(since: attempted)' 'hasNewerWork(since: generationAtLoad)'
+mutate_and_expect_failure over-limit-keeps-older-saved-policy \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'persistenceQueue.enqueue(SharedRuleBridge.bootSnapshotRemoval)' ''
+mutate_and_expect_failure over-limit-stops-activation \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'recordPersistenceFailure("encode", error: error, unsavable: reason, writeLog: firstTime)' $'recordPersistenceFailure("encode", error: error, unsavable: reason, writeLog: firstTime)\n            if enableFilterRequested { enableFilterRequested = false; fail("filter snapshot could not be saved") }'
+mutate_and_expect_failure removal-clears-unsavable-banner \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'// can be kept is saved.\n                                self.persistenceRetry.reset()' $'// can be kept is saved.\n                                self.state?.clearFilterPersistenceFailure()'
+mutate_and_expect_failure over-limit-logs-every-edit \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'unsavable: reason, writeLog: firstTime)' 'unsavable: reason)'
+mutate_and_expect_failure over-limit-log-keyed-on-count \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'let firstTime = !unsavableLogged' 'let firstTime = state?.filterPersistenceUnsavable != reason'
+mutate_and_expect_failure over-limit-banner-without-filter \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'if filterConfigurationActive || enableFilterRequested {' 'if true {'
+mutate_and_expect_failure failed-load-drops-reason \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil' 'unsavable: nil'
+mutate_and_expect_failure failed-removal-drops-reason \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil' 'unsavable: nil'
+mutate_and_expect_failure banner-claims-rules-in-use \
+  Sources/GUI/Views/HelperBanner.swift \
+  'liveRulesReady ? "The filter is using them now." : nil' '"The filter is using them now."'
 mutate_and_expect_failure removal-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()' 'no longer applies (#311).'
@@ -290,7 +340,7 @@ mutate_and_expect_failure off-save-shows-banner \
   'if !filterOff.saveFailureShowsBanner {' 'if false {'
 mutate_and_expect_failure off-branch-falls-through \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'os_log("%{public}@", log: log, type: .error, offDetail)\n            return' 'os_log("%{public}@", log: log, type: .error, offDetail)'
+  $'offDetail)\n            }\n            return' 'offDetail)\n            }'
 mutate_and_expect_failure off-not-noticed \
   Sources/GUI/App/SystemExtensionManager.swift \
   'self.apply(self.filterOff.observed(configured: true, enabled: mgr.isEnabled,' 'self.apply(self.filterOff.observed(configured: true, enabled: true,'

@@ -12,6 +12,11 @@ public enum SharedRuleBridge {
     public static let bootSnapshotVersion = 1
     /// Stable key in NEFilterProviderConfiguration.vendorConfiguration.
     public static let bootSnapshotVendorConfigurationKey = "io.isaaclins.freesnitch.bootSnapshot"
+    /// Queued in place of a boot snapshot when the live policy cannot be
+    /// kept for the next start: saving it removes the saved policy, so the
+    /// next start fails open instead of enforcing older rules (#320). No real
+    /// encoded snapshot is empty.
+    public static let bootSnapshotRemoval = Data()
     /// Keep provider preferences bounded because they are persisted by the
     /// system, not streamed like the live XPC payload.
     public static let maximumBootSnapshotEncodedBytes = RuleTransportBoundary.maximumEncodedBootSnapshotBytes
