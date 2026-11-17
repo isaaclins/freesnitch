@@ -15,7 +15,7 @@
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
-#      and lookup cost does not scale with the number of entries.
+#      and a lookup takes at most log2(n) + 1 search steps, counted, not timed.
 #   6. A feed of more than 100k entries loads and answers within a sane time.
 set -euo pipefail
 
@@ -444,19 +444,45 @@ struct IPBlocklistHarness {
         checks.expect(typedGrowth < 64 * 1024,
                       "50k typed lookups grew the heap by \(typedGrowth) bytes, so the lookup path is allocating")
 
-        // Lookup cost must not scale with the set. Same probes, 12 entries
-        // against 120k entries.
+        // Lookup cost must not scale with the set. Counted in binary-search
+        // steps, not wall-clock time, so a busy machine cannot fail it
+        // (issue #326). A bounded search over n ranges takes at most
+        // floor(log2(n)) + 1 steps, whatever the probe.
+        func maxSteps(_ count: Int) -> Int {
+            count <= 0 ? 0 : (Int.bitWidth - count.leadingZeroBitCount)
+        }
         let tiny = IPBlocklistSet(entries: generatedEntries(12))
-        let tinyStart = Date()
-        for address in addresses { _ = tiny.contains(ipv4: address) }
-        let tinySeconds = Date().timeIntervalSince(tinyStart)
-        let bigStart = Date()
-        for address in addresses { _ = big.contains(ipv4: address) }
-        let bigSeconds = Date().timeIntervalSince(bigStart)
-        let ratio = tinySeconds > 0 ? bigSeconds / tinySeconds : 0
-        checks.expect(ratio < 12,
-                      String(format: "a 10000x larger set cost %.1fx more per lookup, which is not a bounded search", ratio))
-        checks.note(String(format: "50000 typed lookups: %.4fs over 12 entries, %.4fs over 120000 entries", tinySeconds, bigSeconds))
+        let missesV4: [UInt32] = [0, 1, 0x2100_0000 - 1, UInt32.max, 0x2100_0080, 0x2300_0000]
+        var tinyWorst = 0
+        var bigWorst = 0
+        var bigTotal = 0
+        var stepHits = 0
+        for address in addresses + missesV4 {
+            tinyWorst = max(tinyWorst, tiny.lookupProbes(ipv4: address).probes)
+            let result = big.lookupProbes(ipv4: address)
+            bigWorst = max(bigWorst, result.probes)
+            bigTotal += result.probes
+            if result.found { stepHits += 1 }
+        }
+        checks.expect(stepHits == 50_000, "the counting lookup must agree with the plain one, got \(stepHits)")
+        checks.expect(tinyWorst <= maxSteps(tiny.rangeCount),
+                      "a lookup over \(tiny.rangeCount) ranges took \(tinyWorst) steps, more than \(maxSteps(tiny.rangeCount))")
+        checks.expect(bigWorst <= maxSteps(big.rangeCount),
+                      "a lookup over \(big.rangeCount) ranges took \(bigWorst) steps, more than \(maxSteps(big.rangeCount)), which is not a bounded search")
+        checks.expect(bigWorst >= maxSteps(big.rangeCount) - 1,
+                      "a lookup over \(big.rangeCount) ranges took only \(bigWorst) steps, so the step counter is not counting")
+
+        let v6Big = IPBlocklistSet(entries: (0..<4_096).map { String(format: "2001:db8:%x::/48", $0 * 2) })
+        var v6Worst = 0
+        for index in 0..<8_192 {
+            if let probe = IPBlocklistAddress.ipv6(String(format: "2001:db8:%x::1", index)) {
+                v6Worst = max(v6Worst, v6Big.lookupProbes(ipv6: probe).probes)
+            }
+        }
+        checks.expect(v6Big.rangeCount == 4_096, "distinct IPv6 /48s must stay distinct ranges, got \(v6Big.rangeCount)")
+        checks.expect(v6Worst <= maxSteps(v6Big.rangeCount),
+                      "an IPv6 lookup over \(v6Big.rangeCount) ranges took \(v6Worst) steps, more than \(maxSteps(v6Big.rangeCount))")
+        checks.note("lookup steps: at most \(tinyWorst) over \(tiny.rangeCount) ranges, at most \(bigWorst) over \(big.rangeCount) ranges (\(String(format: "%.2f", Double(bigTotal) / Double(addresses.count + missesV4.count))) average), at most \(v6Worst) over \(v6Big.rangeCount) IPv6 ranges")
 
         checks.finish("real sources")
     }
