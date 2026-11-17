@@ -154,7 +154,9 @@ private struct BannerInfo {
     /// The extension accepted the policy but it could not be saved. Until a
     /// save succeeds, the next start refuses saved rules older than the ones
     /// it last enforced and fails open (#213).
-    /// The technical reason stays in the log; the banner says what it means.
+    /// The technical reason stays in the log; the banner says what it means,
+    /// except for an encode failure with no known cause, whose error text is
+    /// the only thing it can say (#341).
     /// `unsavableReason` is set when the current rules can never be kept for
     /// the next start (#320): sending them again cannot help, so the banner
     /// says what a restart does instead and offers no retry.
