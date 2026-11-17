@@ -104,6 +104,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshFilterOffState() }
         }
+        // The filter may have been left off. Read it once at launch, so a
+        // failure before the first save cycle's load (an encode over the size
+        // limit, or a failed load) follows the same rule as later ones (#348).
+        if hasEmbeddedExtension { refreshFilterOffState() }
     }
 
     private func apply(_ change: FilterOffState.Change) {
