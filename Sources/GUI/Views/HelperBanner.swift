@@ -164,7 +164,7 @@ private struct BannerInfo {
         let base = persistenceDegraded
             ? (liveRulesReady
                 ? "The filter is using them now, but after a restart it may not have them until FreeSnitch sends them again."
-                : "After a restart the filter may start without them. Send Rules Again tries once more.")
+                : "After a restart the filter may use older saved rules until FreeSnitch sends them again.")
             : ""
         detail = [base, recoveryMessage]
             .compactMap { $0?.isEmpty == false ? $0 : nil }

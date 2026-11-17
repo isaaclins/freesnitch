@@ -383,7 +383,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         os_log("Retrying the boot policy save in %{public}.0f s (attempt %{public}ld)", log: log, type: .info,
                delay, persistenceRetry.attempts)
-        schedulePersistence(immediate: true, after: delay)
+        schedulePersistence(immediate: false, after: delay)
         return true
     }
 

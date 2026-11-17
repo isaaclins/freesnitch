@@ -160,6 +160,12 @@ expect(extensionStart(saved: encoded(snapshot([denyTracker], generation: 10, epo
 try SharedRuleBridge.LivePolicyWatermark(epoch: 7, generation: 10).write(to: watermarkURL)
 expect(extensionStart(saved: encoded(snapshot([denyTracker], generation: 10, epoch: 6))) == nil,
        "a record without a content digest did not refuse an older saved policy")
+var usedRule = denyTracker
+usedRule.hitCount = 42
+usedRule.lastUsedAt = saved
+try extensionAcceptsLive(snapshot([usedRule], generation: 10, epoch: 8))
+expect(extensionStart(saved: encoded(snapshot([denyTracker], generation: 10, epoch: 7))) != nil,
+       "rules that differ only in usage counters were treated as a different policy")
 print("boot save harness: identical rules from an older session still load")
 
 // 9. No record, or an unreadable one, never refuses anything: the saved

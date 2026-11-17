@@ -165,7 +165,15 @@ public enum SharedRuleBridge {
         public static func digest(of snapshot: Snapshot) -> String? {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
-            guard let data = try? encoder.encode(Content(mode: snapshot.mode, rules: snapshot.rules)) else { return nil }
+            // Usage counters change without changing what a rule matches, so
+            // they are not part of the policy content.
+            let rules = snapshot.rules.map { rule -> Rule in
+                var policyOnly = rule
+                policyOnly.hitCount = 0
+                policyOnly.lastUsedAt = nil
+                return policyOnly
+            }
+            guard let data = try? encoder.encode(Content(mode: snapshot.mode, rules: rules)) else { return nil }
             return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
 
