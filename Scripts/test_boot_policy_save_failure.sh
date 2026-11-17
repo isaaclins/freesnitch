@@ -275,8 +275,14 @@ expect(off.observed(configured: true, enabled: true, fromOutside: false) == .non
        "a save cycle that finds the filter on asks for a second save")
 //     A turn-off that finishes after a turn-on was asked for does not win.
 off.turnedOn()
-off.turnedOff(turnOnPending: true)
+expect(!off.turnedOff(turnOnPending: true),
+       "a late turn-off reports the firewall as not filtering while a turn-on is pending (#335)")
 expect(off.saveFailureShowsBanner, "a late turn-off overrode the turn-on asked for after it")
+//     #335: a turn-off or removal with nothing pending says the firewall is
+//     not filtering, whatever macOS answers about the extension afterwards.
+expect(off.turnedOff(turnOnPending: false),
+       "a finished turn-off or removal leaves the firewall shown as filtering")
+off.turnedOn()
 //     No configuration at all counts as off.
 expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
        "a removed filter configuration is not treated as off")

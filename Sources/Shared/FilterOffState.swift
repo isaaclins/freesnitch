@@ -33,10 +33,14 @@ public struct FilterOffState: Equatable, Sendable {
     }
 
     /// The app turned the filter off or removed its configuration. A turn-on
-    /// asked for meanwhile waits behind this and decides the state.
-    public mutating func turnedOff(turnOnPending: Bool) {
-        guard !turnOnPending else { return }
+    /// asked for meanwhile waits behind this and decides the state. Returns
+    /// whether the filter now counts as off, so the app stops showing it as
+    /// filtering whatever macOS later answers about the extension (#335).
+    @discardableResult
+    public mutating func turnedOff(turnOnPending: Bool) -> Bool {
+        guard !turnOnPending else { return false }
         isOff = true
+        return true
     }
 
     /// The filter preferences were read. `fromOutside` is true when the read
