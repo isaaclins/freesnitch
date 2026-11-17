@@ -315,3 +315,113 @@ public enum RuleExportCodec {
         return joined.isEmpty ? "the top level" : "`\(joined)`"
     }
 }
+
+/// What importing a rule file does to the rules already stored (#247).
+///
+/// An import replaces the rules of the profiles the file carries rules for,
+/// and only those. A profile the file says nothing about was not given, so its
+/// rules are kept. A backup made while one profile was active therefore can no
+/// longer wipe the other profiles' rules. The helper applies this plan inside
+/// its transaction, and the app shows the same plan before the user confirms,
+/// so what the dialog promises is what the helper does.
+public struct RuleImportPlan: Sendable {
+    /// Profiles the file carries rules for, sorted. Their stored rules are replaced.
+    public let replacedProfiles: [String]
+    /// Stored rules in a replaced profile that the file does not contain.
+    /// These are the only rules an import deletes.
+    public let removed: [Rule]
+    /// Stored rules in profiles the file does not mention. They stay as they are.
+    public let kept: [Rule]
+    /// Stored rules the file also carries, by ID, under a different profile.
+    /// They leave their old profile, so the dialog and the log name them.
+    public let moved: [Rule]
+    /// The profile each moved rule goes to, by ID.
+    public let movedTo: [UUID: String]
+    /// The complete rule table after the import: the kept rules, then the file's rules.
+    public let resulting: [Rule]
+
+    public init(current: [Rule], imported: [Rule]) {
+        let profiles = Set(imported.map(\.profile))
+        let importedIDs = Set(imported.map(\.id))
+        // Always first, as the Rules window lists it, then the rest by name.
+        replacedProfiles = profiles.sorted { lhs, rhs in
+            if lhs == Profile.alwaysName || rhs == Profile.alwaysName { return lhs == Profile.alwaysName && rhs != Profile.alwaysName }
+            return lhs < rhs
+        }
+        // A stored rule the file also carries, by ID, is replaced by the
+        // file's copy wherever it lived, so it is neither kept nor lost.
+        kept = current.filter { !profiles.contains($0.profile) && !importedIDs.contains($0.id) }
+        removed = current.filter { profiles.contains($0.profile) && !importedIDs.contains($0.id) }
+        let importedProfileByID = Dictionary(imported.map { ($0.id, $0.profile) }, uniquingKeysWith: { first, _ in first })
+        moved = current.filter { stored in
+            importedProfileByID[stored.id].map { $0 != stored.profile } ?? false
+        }
+        movedTo = Dictionary(moved.map { ($0.id, importedProfileByID[$0.id] ?? $0.profile) },
+                             uniquingKeysWith: { first, _ in first })
+        resulting = kept + imported
+    }
+
+    /// Every rule the import takes out of a profile: deleted or moved away.
+    /// The app shows these to the user and sends exactly these IDs with the
+    /// import, so the helper can check it is doing what was confirmed.
+    public var confirmedIDs: [UUID] {
+        (removed + moved).map(\.id)
+    }
+
+    /// The import the helper runs inside its policy transaction. If the stored
+    /// rules changed since the user confirmed (an alert answered while the
+    /// dialog was open, a CLI edit), the rules it would delete or move differ
+    /// from `confirmedIDs` and the import is refused, so it can never take
+    /// away a rule the user was not shown.
+    public static func apply(imported: [Rule],
+                             confirmedIDs: Set<UUID>,
+                             to draft: inout RuleStore.PolicyDraft) throws -> RuleImportPlan {
+        // The app's file reader refuses duplicate IDs; a direct caller could
+        // send them, and then the plan and the stored table would disagree.
+        guard Set(imported.map(\.id)).count == imported.count else {
+            throw RuleExportError.duplicateRuleID("in the imported rules")
+        }
+        let plan = RuleImportPlan(current: draft.rules, imported: imported)
+        guard Set(plan.confirmedIDs) == confirmedIDs else {
+            throw RuleImportConflict()
+        }
+        try RuleTransportBoundary.validate(rules: plan.resulting)
+        draft.rules = plan.resulting
+        return plan
+    }
+
+    /// What the log keeps of an import: the summary, then one line per rule it
+    /// deleted or moved, so a large import is not one line the log truncates.
+    public var logLines: [String] {
+        let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
+        return ["rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
+                + "\(removed.count) removed, \(moved.count) moved to another profile, \(self.kept.count) kept in other profiles [\(kept)]"]
+            + removed.map { "rule import removed: \(Self.describe($0)) in \($0.profile) (\($0.id.uuidString))" }
+            + moved.map { "rule import moved: \(Self.describe($0)) from \($0.profile) to \(movedTo[$0.id] ?? "?") (\($0.id.uuidString))" }
+    }
+
+    /// Kept rules counted per profile, sorted by profile name.
+    public var keptByProfile: [(profile: String, count: Int)] {
+        Dictionary(grouping: kept, by: \.profile)
+            .map { (profile: $0.key, count: $0.value.count) }
+            .sorted { $0.profile < $1.profile }
+    }
+
+    /// A rule the way a person reads it: what it does, to which app and
+    /// destination. The ID is kept so the log line can be matched exactly.
+    public static func describe(_ rule: Rule) -> String {
+        let process = rule.processName ?? rule.processBundleId ?? rule.processPath ?? "any process"
+        var destination = rule.remoteHost ?? rule.remoteIP ?? "any destination"
+        if let port = rule.remotePort { destination += ":\(port)" }
+        return "\(rule.action.rawValue) \(process) to \(destination)"
+    }
+}
+
+/// The stored rules changed between the confirmation and the import.
+public struct RuleImportConflict: Error, LocalizedError, Equatable {
+    public init() {}
+
+    public var errorDescription: String? {
+        "The rules changed while the import was waiting for confirmation, so it would no longer delete or move exactly the rules you confirmed. Nothing was imported. Import the file again to review the current changes."
+    }
+}
