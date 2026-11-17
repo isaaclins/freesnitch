@@ -909,6 +909,8 @@ commit_and_publish() {
 }
 
 if [[ "$MODE" == "update-tap" ]]; then
+  (( ${#POSITIONALS[@]} == 1 )) && [[ -z "$BUILD_NUMBER" && -z "$NOTES_INPUT" ]] || \
+    die "--update-tap takes only VERSION"
   [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
     die "release version must be MAJOR.MINOR.PATCH without leading zeroes: $VERSION"
   require_command gh

@@ -53,6 +53,8 @@ Or install it with [Homebrew](https://brew.sh):
 brew install --cask isaaclins/tap/freesnitch
 ```
 
+FreeSnitch keeps updating itself, so a plain `brew upgrade` skips it; `brew upgrade --greedy` moves the Homebrew copy along too.
+
 - macOS 13 or later, one universal build for Apple Silicon and Intel.
 - Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
 - Later versions arrive through the built-in Sparkle updater.
