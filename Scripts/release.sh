@@ -770,22 +770,6 @@ write_checksums() {
 commit_and_publish() {
   local notes_destination="$ROOT/docs/release-notes/v${VERSION}.md"
   local tag="v${VERSION}"
-  mkdir -p "$(dirname "$notes_destination")"
-  cp "$NOTES_INPUT" "$notes_destination"
-  cp "$BUILD_ROOT/appcast.xml" "$ROOT/docs/appcast.xml"
-
-  local staged_files unexpected
-  git add -- "${VERSIONED_TRACKED_PATHS[@]}" "$ROOT/docs/appcast.xml" "$notes_destination"
-  git diff --cached --check
-  staged_files="$(git diff --cached --name-only)"
-  unexpected="$(printf '%s\n' "$staged_files" | grep -Ev '^(project\.yml|Sources/GUI/Info\.plist|Sources/NetExt/Info\.plist|docs/appcast\.xml|docs/release-notes/v[0-9]+\.[0-9]+\.[0-9]+\.md)$' || true)"
-  [[ -z "$unexpected" ]] || die "release staged unexpected files:\n$unexpected"
-  git diff --cached --quiet && die "release has no staged version, appcast, or notes changes"
-
-  git commit -m "chore(release): FreeSnitch ${VERSION}"
-  git tag -a "$tag" -m "FreeSnitch $VERSION"
-  git push origin main
-  git push origin "$tag"
 
   # Sparkle names deltas by BUILD number, not marketing version:
   # FreeSnitch32-31.delta patches build 31 up to build 32. Globbing these
@@ -797,7 +781,6 @@ commit_and_publish() {
     [[ -f "$delta" ]] || continue
     assets+=("$delta")
   done
-
   assets+=("$SUMS_PATH")
 
   # Every enclosure the new appcast item advertises must be in the upload set.
@@ -814,6 +797,25 @@ commit_and_publish() {
   done < <(grep -o "releases/download/${tag}/[^\"]*" "$BUILD_ROOT/appcast.xml" | sed 's#.*/##' | sort -u)
   (( ${#missing[@]} == 0 )) || \
     die "appcast advertises files that are not being uploaded: ${missing[*]}"
+  # This runs before anything is copied, committed, tagged or pushed, so a
+  # mismatch leaves the tree for the version trap to restore (#376).
+
+  mkdir -p "$(dirname "$notes_destination")"
+  cp "$NOTES_INPUT" "$notes_destination"
+  cp "$BUILD_ROOT/appcast.xml" "$ROOT/docs/appcast.xml"
+
+  local staged_files unexpected
+  git add -- "${VERSIONED_TRACKED_PATHS[@]}" "$ROOT/docs/appcast.xml" "$notes_destination"
+  git diff --cached --check
+  staged_files="$(git diff --cached --name-only)"
+  unexpected="$(printf '%s\n' "$staged_files" | grep -Ev '^(project\.yml|Sources/GUI/Info\.plist|Sources/NetExt/Info\.plist|docs/appcast\.xml|docs/release-notes/v[0-9]+\.[0-9]+\.[0-9]+\.md)$' || true)"
+  [[ -z "$unexpected" ]] || die "release staged unexpected files:\n$unexpected"
+  git diff --cached --quiet && die "release has no staged version, appcast, or notes changes"
+
+  git commit -m "chore(release): FreeSnitch ${VERSION}"
+  git tag -a "$tag" -m "FreeSnitch $VERSION"
+  git push origin main
+  git push origin "$tag"
 
   gh release create "$tag" "${assets[@]}" \
     --repo "$REPOSITORY" \

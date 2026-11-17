@@ -53,19 +53,21 @@ run_tail() {
   printf 'notes\n' >"$case_dir/notes.md"
   ${2:-true} "$case_dir"
   : >"$case_dir/calls.log"
-  (
-    set -euo pipefail
-    export PATH="$case_dir/bin:$PATH"
-    ROOT="$case_dir/repo" BUILD_ROOT="$case_dir/build/release" APPCAST_ARCHIVES="$case_dir/archives"
-    VERSION=9.9.9 BUILD_NUMBER=99 REPOSITORY=example/freesnitch FEED_URL=https://example.invalid/appcast.xml
-    NOTES_INPUT="$case_dir/notes.md" VERSIONED_TRACKED_PATHS=(project.yml)
-    DMG_PATH="$BUILD_ROOT/FreeSnitch-9.9.9.dmg" ZIP_PATH="$APPCAST_ARCHIVES/FreeSnitch-9.9.9.zip"
-    SUMS_PATH="$BUILD_ROOT/SHA256SUMS.txt"
-    # shellcheck disable=SC1091
-    source "$WORK/functions.sh"
-    write_checksums
-    commit_and_publish
-  ) >"$case_dir/out.log" 2>&1
+  # A separate bash process, so its set -e holds even though the caller tests
+  # the result with `if`.
+  cat >"$case_dir/tail.sh" <<TAIL
+set -euo pipefail
+export PATH="$case_dir/bin:\$PATH"
+ROOT="$case_dir/repo" BUILD_ROOT="$case_dir/build/release" APPCAST_ARCHIVES="$case_dir/archives"
+VERSION=9.9.9 BUILD_NUMBER=99 REPOSITORY=example/freesnitch FEED_URL=https://example.invalid/appcast.xml
+NOTES_INPUT="$case_dir/notes.md" VERSIONED_TRACKED_PATHS=(project.yml)
+DMG_PATH="\$BUILD_ROOT/FreeSnitch-9.9.9.dmg" ZIP_PATH="\$APPCAST_ARCHIVES/FreeSnitch-9.9.9.zip"
+SUMS_PATH="\$BUILD_ROOT/SHA256SUMS.txt"
+source "$WORK/functions.sh"
+write_checksums
+commit_and_publish
+TAIL
+  bash "$case_dir/tail.sh" >"$case_dir/out.log" 2>&1
 }
 
 # 1. Normal release: both files listed, sums verify, and the file is uploaded.
@@ -96,6 +98,21 @@ if run_tail missing-zip missing_zip; then
 fi
 grep -Eq '^git (commit|tag|push)|^gh release' "$WORK/missing-zip/calls.log" && \
   fail "release committed, tagged or pushed without the zip: $(cat "$WORK/missing-zip/calls.log")"
+
+# 4. The appcast advertises a delta that isn't being uploaded: stop before the
+#    appcast or notes are copied into the tree and before any git or gh call.
+ghost_delta() {
+  printf '<rss><enclosure url="https://github.com/example/freesnitch/releases/download/v9.9.9/FreeSnitch99-98.delta"/></rss>\n' \
+    >"$1/build/release/appcast.xml"
+}
+if run_tail ghost-delta ghost_delta; then
+  fail "release continued although the appcast advertises a file that isn't uploaded"
+fi
+grep -q 'appcast advertises files that are not being uploaded: FreeSnitch99-98.delta' "$WORK/ghost-delta/out.log" || \
+  fail "appcast mismatch was not the reason the release stopped: $(cat "$WORK/ghost-delta/out.log")"
+[[ -s "$WORK/ghost-delta/calls.log" ]] && \
+  fail "release ran git or gh before the appcast check: $(cat "$WORK/ghost-delta/calls.log")"
+[[ -e "$WORK/ghost-delta/repo/docs/appcast.xml" ]] && fail "appcast was copied into the tree before the check"
 
 if (( failures > 0 )); then
   printf '%d release checksum check(s) failed.\n' "$failures" >&2
