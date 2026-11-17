@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression gate for #373: `release.sh --update-tap VERSION` must never move
-# the Homebrew cask back to an older version.
+# the Homebrew cask back to an older version, and never write a checksum it
+# could not read from the release.
 #
 # Runs the real release.sh against a stub `gh` and a local bare git repository
 # that stands in for isaaclins/homebrew-tap. Nothing here talks to GitHub.
@@ -25,7 +26,7 @@ cat >"$WORK/bin/gh" <<EOF
 #!/usr/bin/env bash
 case "\$1 \$2" in
   "repo view") echo WRITE ;;
-  "release view") echo "sha256:$NEW_SHA" ;;
+  "release view") [[ -f "$WORK/digest" ]] && cat "$WORK/digest" || echo "sha256:$NEW_SHA" ;;
   "repo clone") git clone --quiet "$WORK/tap.git" "\$4" ;;
   *) echo "unexpected gh call: \$*" >&2; exit 1 ;;
 esac
@@ -86,6 +87,20 @@ before="$(git -C "$WORK/tap.git" rev-parse main)"
 run_update "1.1.0" || fail "--update-tap 1.1.0 at 1.1.0 failed: $(cat "$WORK/out")"
 grep -Fq "already points at FreeSnitch 1.1.0." "$WORK/out" || fail "same version was not reported as a no-op: $(cat "$WORK/out")"
 [[ "$(git -C "$WORK/tap.git" rev-parse main)" == "$before" ]] || fail "same version pushed a commit"
+
+# A digest GitHub didn't report, or one that isn't a SHA-256, is refused and
+# leaves the tap alone.
+for digest in "" "sha256:not-a-checksum" "sha512:$NEW_SHA$NEW_SHA" "sha256:${NEW_SHA:0:63}"; do
+  reset_tap "1.0.0"
+  before="$(git -C "$WORK/tap.git" rev-parse main)"
+  printf '%s\n' "$digest" > "$WORK/digest"
+  if run_update "1.1.0"; then
+    fail "--update-tap succeeded with digest '$digest'"
+  fi
+  grep -Fq "Could not read the SHA-256" "$WORK/out" || fail "digest '$digest' was not reported: $(cat "$WORK/out")"
+  [[ "$(git -C "$WORK/tap.git" rev-parse main)" == "$before" ]] || fail "digest '$digest' changed the tap"
+done
+rm -f "$WORK/digest"
 
 if (( failures > 0 )); then
   printf '%d update-tap check(s) failed.\n' "$failures" >&2
