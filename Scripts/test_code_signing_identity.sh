@@ -636,6 +636,8 @@ var importDraft = RuleStore.PolicyDraft(mode: .alert, rules: [storedLearned])
 _ = try! RuleImportPlan.apply(imported: [staleCopy], confirmedIDs: [], to: &importDraft)
 expect(importDraft.rules.first?.processTeamId == chromeTeam,
        "importing a backup made before the team was learned keeps the learned team")
+expect(RuleTransportBoundary.isWellFormedTeamId(CodeSigningIdentity.appleTeam),
+       "the transport check and the Apple signer agree on its spelling")
 expect(RuleSigningTeam.label(nil).hasPrefix("Not known yet") && RuleSigningTeam.label("apple") == "Apple"
        && RuleSigningTeam.label(chromeTeam) == "Team EQHXZ8M8AV", "the Rules list names the signer plainly")
 

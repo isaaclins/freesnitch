@@ -379,6 +379,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func republishActivePolicy() {
         policyQueue.sync {
             let state = store.activePolicyState()
+            teamlessBundleIds = nil
+            fruitlessSightings.removeAll()
             adoptLocked(state)
             dns.applyPolicy(mode: state.mode, rules: state.rules)
         }
@@ -777,7 +779,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func mergedRules(_ incoming: [Rule], into existing: inout [Rule]) {
         for rule in incoming {
             if let index = existing.firstIndex(where: { $0.id == rule.id }) {
-                existing[index] = rule
+                // A backup from before #364 must not wipe a learned team.
+                existing[index] = RuleSigningTeam.keepingLearnedTeam(rule, over: existing[index])
             } else {
                 existing.append(rule)
             }

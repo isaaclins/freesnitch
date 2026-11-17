@@ -78,7 +78,7 @@ public enum RuleSigningTeam {
     /// the Apple signer. Anything else could never match, so a rule carrying
     /// it is refused instead of silently never applying.
     public static func isWellFormed(_ team: String) -> Bool {
-        (try? RuleTransportBoundary.validate(rule: Rule(processTeamId: team, remoteHost: "example.com"))) != nil
+        RuleTransportBoundary.isWellFormedTeamId(team)
     }
 
     /// What the Rules list shows for a rule's team.
