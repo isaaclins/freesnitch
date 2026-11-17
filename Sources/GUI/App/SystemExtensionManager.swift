@@ -121,7 +121,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 showNotFiltering()
             }
         case .saveCurrentRules:
-            // Turned on outside the app: turn it on as the app's own switch
+            // Turned on outside the app: turn it on as activation at launch
             // does, so the current rules are saved again and the firewall
             // shows as active once that save went through (#361). A build
             // without the extension only saves the rules, as before, and so
@@ -380,8 +380,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 // Turned on in System Settings and turned off or removed there
                 // again before this load: what is set there wins, so this
                 // cycle neither turns it back on nor recreates it (#361).
-                if loadError == nil && self.turnOnFromSettings && self.persistenceCycle.enableRequested
-                    && (mgr.providerConfiguration == nil || !mgr.isEnabled) {
+                if loadError == nil && self.persistenceCycle.enableRequested
+                    && !FilterOffState.turnOnStands(fromSettings: self.turnOnFromSettings,
+                                                    configured: mgr.providerConfiguration != nil,
+                                                    enabled: mgr.isEnabled) {
                     self.persistenceCycle.dropEnableRequest()
                 }
                 let decision = self.persistenceCycle.afterLoad(

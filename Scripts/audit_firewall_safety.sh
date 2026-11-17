@@ -518,8 +518,8 @@ printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
 # says active once the current rules are saved (#361).
 printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && status != .needsApproval && status != .activating {' \
   || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
-grep -A2 -F 'if loadError == nil && self.turnOnFromSettings && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
-    | tr -d '\n' | grep -Fq '&& (mgr.providerConfiguration == nil || !mgr.isEnabled) {                    self.persistenceCycle.dropEnableRequest()' \
+grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
+    | tr -d '\n' | grep -Eq '!FilterOffState\.turnOnStands\(fromSettings: self\.turnOnFromSettings, +configured: mgr\.providerConfiguration != nil, +enabled: mgr\.isEnabled\) \{ +self\.persistenceCycle\.dropEnableRequest\(\)' \
   && grep -Fq 'enableFilter(fromSettings: true)' "$SYSTEM_EXTENSION_MANAGER" \
   || fail "a turn-on that follows System Settings turns the filter back on after it was turned off there again (#361)"
 clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
