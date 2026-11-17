@@ -53,11 +53,30 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # Several harnesses filter with ripgrep. Install it explicitly rather
+      # than rely on the runner image: without it one harness would hide its
+      # own compile errors.
+      - name: Install ripgrep
+        run: command -v rg >/dev/null || brew install ripgrep
+
       # The harnesses compile the shipping sources with swiftc and run them
       # as the runner user. None of them needs root: privileged tools are
       # stubbed, and pfctl is only ever asked to parse (-n), never to load.
       - name: Run ${{ matrix.script }}
         run: bash "${{ matrix.script }}"
+
+  # One stable check name for the whole matrix, so branch protection can
+  # require it without listing each harness.
+  harnesses:
+    name: Test harnesses
+    needs: harness
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every harness to pass
+        run: |
+          echo "harness matrix result: ${{ needs.harness.result }}"
+          [ "${{ needs.harness.result }}" = success ]
 
   monitor-build:
     name: Build monitor flavour
