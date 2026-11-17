@@ -273,7 +273,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("# so an app's address or port deny would block every app on the Mac.")
         lines.append("# A deny blocks only new TCP connections (flags S/SA), so replies pass. Incoming UDP is")
         lines.append("# blocked only for a deny in both directions; pf cannot tell an incoming datagram from a reply.")
-        lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it.")
+        lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it. An incoming allow")
+        lines.append("# with only a port is left to the Network Extension; from any port N would open every local port.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
@@ -435,11 +436,20 @@ final class PFManager: @unchecked Sendable {
             // and port (#301). The pass keeps state, so this Mac's replies to
             // an allowed incoming peer also pass the address feed below. A
             // rule for both directions is written as both halves.
+            //
+            // An incoming half needs an address. With only a port it would
+            // be `pass in ... from any port N`: anyone who picks N as their
+            // source port could reach every port on this Mac, for every app,
+            // past the blocks in /etc/pf.conf. That half is left to the
+            // Network Extension, which sees the process.
+            if r.direction == .incoming && destination == nil {
+                return reject("an incoming allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port")
+            }
             var passes: [String] = []
             if r.direction != .incoming {
                 passes.append("pass out quick proto { tcp udp }" + target)
             }
-            if r.direction != .outgoing {
+            if r.direction != .outgoing && destination != nil {
                 passes.append("pass in quick proto { tcp udp } from" + host)
             }
             return passes
