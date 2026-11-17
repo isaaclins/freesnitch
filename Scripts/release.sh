@@ -16,9 +16,14 @@ APP_BUNDLE_ID="io.isaaclins.freesnitch"
 NETEXT_BUNDLE_ID="io.isaaclins.freesnitch.netext"
 NETEXT_BUNDLE_NAME="io.isaaclins.freesnitch.netext.systemextension"
 HELPER_LABEL="io.isaaclins.freesnitch.helper"
-APP_PROFILE_NAME="FreeSnitch App DeveloperID 2026"
-NETEXT_PROFILE_NAME="FreeSnitch NetExt DeveloperID 2026"
+APP_PROFILE_NAME="FreeSnitch App DeveloperID 2026-11"
+NETEXT_PROFILE_NAME="FreeSnitch NetExt DeveloperID 2026-11"
 NOTARY_PROFILE="${NOTARY_PROFILE:-puresnitch-dev}"
+# Optional keychain that holds the notarytool profile when it is not in the
+# default keychain.
+NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
+NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+[[ -z "$NOTARY_KEYCHAIN" ]] || NOTARY_ARGS+=(--keychain "$NOTARY_KEYCHAIN")
 SPARKLE_VERSION="2.10.1"
 SPARKLE_ACCOUNT="puresnitch"
 FEED_URL="https://isaaclins.com/freesnitch/appcast.xml"
@@ -278,7 +283,7 @@ require_release_tooling() {
   codesigning_identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
   grep -Fq "\"$SIGN_ID\"" <<<"$codesigning_identities" || \
     die "Developer ID identity is not installed: $SIGN_ID"
-  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || \
+  xcrun notarytool history "${NOTARY_ARGS[@]}" >/dev/null 2>&1 || \
     die "notarytool keychain profile is unavailable: $NOTARY_PROFILE"
 
   local app_profile netext_profile
@@ -527,7 +532,7 @@ notarize_app() {
   printf 'Notarizing the app...\n'
   rm -f "$NOTARIZE_APP_ZIP"
   ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$NOTARIZE_APP_ZIP"
-  xcrun notarytool submit "$NOTARIZE_APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$NOTARIZE_APP_ZIP" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$APP_BUNDLE"
   xcrun stapler validate "$APP_BUNDLE"
   spctl --assess --verbose=4 --type execute "$APP_BUNDLE"
@@ -541,7 +546,7 @@ make_and_notarize_dmg() {
   ln -s /Applications "$stage/Applications"
   hdiutil create -volname "FreeSnitch $VERSION" -srcfolder "$stage" -ov -format UDZO "$DMG_PATH"
   codesign --force --timestamp --sign "$SIGN_ID" "$DMG_PATH"
-  xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
   spctl --assess --verbose=4 --type open --context context:primary-signature "$DMG_PATH"
