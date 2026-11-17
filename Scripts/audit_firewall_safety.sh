@@ -404,7 +404,7 @@ printf '%s\n' "$failure_body" | awk '/if !filterOff.saveFailureShowsBanner/ {g=1
   || fail "a boot-policy save that fails while the filter is off still raises the could-not-save banner"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.apply(self.filterOff.observed(configured: true, enabled: mgr.isEnabled," \
   "a save cycle does not notice the filter is off, so its failure raises the could-not-save banner"
-grep -A1 -F 'if shouldEnable {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterOff.turnedOn()' \
+grep -A2 -F 'if completion == .active {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterOff.turnedOn()' \
   || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
 [[ "$(grep -cF 'self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)' "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
   || fail "turning the filter off or removing it does not record the filter as off, or overrides a turn-on asked for meanwhile"
@@ -457,6 +457,19 @@ printf '%s\n' "$disable_body" | grep -Fq 'enableFilterRequested = false' \
   || fail "turning the filter off leaves an enable request that the helper's answer can still act on"
 require_text "$SYSTEM_EXTENSION_MANAGER" "guard mgr.isEnabled else {" \
   "a filter restart can turn the filter back on after the user turned it off"
+# An enabling save that the user overtook by turning the filter off must not
+# report the firewall as active once it finishes (#318).
+printf '%s\n' "$disable_body" | grep -Fq 'filterTurnOffs &+= 1' \
+  || fail "an enabling save that finishes after the filter was turned off still reports it active"
+printf '%s\n' "$remove_body" | grep -Fq 'filterTurnOffs &+= 1' \
+  || fail "an enabling save that finishes after the filter was removed still reports it active"
+active_guard="$(grep -B1 -F 'self.filterConfigurationActive = true' "$SYSTEM_EXTENSION_MANAGER" | head -1)"
+printf '%s\n' "$active_guard" | grep -Fq 'if completion == .active {' \
+  || fail "an enabling save overtaken by a turn-off still marks the filter active"
+require_text "$SYSTEM_EXTENSION_MANAGER" "turnOffsNow: self.filterTurnOffs," \
+  "the enabling save's completion does not check whether the filter was turned off meanwhile"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if completion == .stayedOff {" \
+  "an enabling save overtaken by a turn-off leaves the status as it was"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"

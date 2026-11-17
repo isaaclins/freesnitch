@@ -299,7 +299,7 @@ mutate_and_expect_failure enable-stays-off \
   $'enableFilterRequested = true\n        filterOff.turnedOn()' 'enableFilterRequested = true'
 mutate_and_expect_failure late-off-overrides-on \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'if shouldEnable {\n                                self.filterOff.turnedOn()' 'if shouldEnable {'
+  $'self.filterConfigurationActive = true\n                                self.filterOff.turnedOn()' 'self.filterConfigurationActive = true'
 mutate_and_expect_failure off-ignores-pending-on \
   Sources/GUI/App/SystemExtensionManager.swift \
   'self.filterOff.turnedOff(turnOnPending: self.enableFilterRequested)' 'self.filterOff.turnedOff(turnOnPending: false)'
