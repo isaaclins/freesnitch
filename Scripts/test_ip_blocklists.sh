@@ -80,6 +80,13 @@ func checkPFSyntax(_ name: String, _ anchor: String, _ checks: Checks) {
     }
 }
 
+/// A user's deny reaches pf as two lines: TCP limited to the SYN that opens
+/// a new outgoing connection, so replies to incoming connections pass, and UDP.
+func blocks(_ anchor: String, _ target: String) -> Bool {
+    anchor.contains("block out quick proto tcp \(target) flags S/SA\n")
+        && anchor.contains("block out quick proto udp \(target)\n")
+}
+
 func generatedEntries(_ count: Int) -> [String] {
     // Distinct, non-adjacent /25 networks, so nothing merges and the range
     // count really is the entry count. 33.0.0.0 and up is ordinary public
@@ -260,11 +267,11 @@ struct IPBlocklistHarness {
         }
         checks.expect(appScoped.contains("pass out quick proto { tcp udp } to 198.51.100.21"),
                       "an app's allow rule must still reach pf, so the feed cannot block what the user allowed")
-        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.20"),
+        checks.expect(blocks(appScoped, "to 198.51.100.20"),
                       "a name alone identifies no app for the matcher, so pf must treat the rule as every app's too")
-        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.31"),
+        checks.expect(blocks(appScoped, "to 198.51.100.31"),
                       "empty app fields are no app, as in the matcher")
-        checks.expect(appScoped.contains("block out quick proto { tcp udp } to any port 8443"),
+        checks.expect(blocks(appScoped, "to any port 8443"),
                       "a rule with no app must still be written to pf")
         let allowIndex = appScoped.range(of: "to 198.51.100.21")?.lowerBound
         let feedIndex = appScoped.range(of: "to <freesnitch_ipblock>")?.lowerBound
@@ -288,14 +295,14 @@ struct IPBlocklistHarness {
         checkPFSyntax("infrastructure", infrastructure, checks)
         let blockLines = infrastructure.split(separator: "\n").filter { $0.hasPrefix("block") }
         for port in [67, 68, 546] {
-            checks.expect(!blockLines.contains { $0.hasSuffix(" port \(port)") },
+            checks.expect(!blockLines.contains { $0.split(separator: " ").map(String.init).contains("\(port)") },
                           "a deny on port \(port) must never be written to pf")
         }
         checks.expect(!infrastructure.contains("203.0.113.40"),
                       "a deny on port 547 must never be written to pf, even with an address")
         checks.expect(infrastructure.contains("pass out quick proto { tcp udp } to any port 547"),
                       "an allow on a DHCPv6 port must still be written, since a pass can only block less")
-        checks.expect(infrastructure.contains("block out quick proto { tcp udp } to any port 548"),
+        checks.expect(blocks(infrastructure, "to any port 548"),
                       "a deny on an ordinary port next to DHCPv6 must still be written")
         // A rule with only a port matches any host (issue #298).
         checks.expect(infrastructure.contains("pass quick proto { tcp udp } to any port 550"),
@@ -314,9 +321,19 @@ struct IPBlocklistHarness {
             Rule(remotePort: 8081, direction: .any, action: .deny, scope: .port)
         ])
         checkPFSyntax("both-ways", bothWays, checks)
-        checks.expect(bothWays.contains("block out quick proto { tcp udp } to 203.0.113.41 port 8080")
-                        && bothWays.contains("block out quick proto { tcp udp } to any port 8081"),
+        checks.expect(blocks(bothWays, "to 203.0.113.41 port 8080")
+                        && blocks(bothWays, "to any port 8081"),
                       "a deny in both directions must be written as its outgoing half only")
+        // A block keeps no state in pf, so a plain `block out ... port N`
+        // would drop this Mac's replies to an incoming client that used N as
+        // its source port. A TCP deny must only stop the SYN of a new
+        // outgoing connection.
+        for anchorText in [appScoped, infrastructure, bothWays] {
+            for line in anchorText.split(separator: "\n") where line.hasPrefix("block out quick proto tcp") {
+                checks.expect(line.hasSuffix(" flags S/SA"),
+                              "a TCP deny must only block new outgoing connections, got '\(line)'")
+            }
+        }
         checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 2,
                       "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
 
@@ -341,7 +358,7 @@ struct IPBlocklistHarness {
         checkPFSyntax("expiring", expiring, checks)
         checks.expect(!expiring.contains("203.0.113.5"), "an expired temporary deny must leave the pf anchor")
         checks.expect(!expiring.contains("203.0.113.6"), "an expired temporary allow must leave the pf anchor")
-        checks.expect(expiring.contains("block out quick proto { tcp udp } to 203.0.113.7"),
+        checks.expect(blocks(expiring, "to 203.0.113.7"),
                       "a temporary deny that has not expired must stay in the anchor")
         checks.expect(expiring.contains("to 203.0.113.8"),
                       "a rule still applies at the instant it expires, as in the matcher")

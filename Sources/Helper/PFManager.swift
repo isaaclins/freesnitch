@@ -283,13 +283,13 @@ final class PFManager: @unchecked Sendable {
         let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
 
         for rule in denyRules {
-            if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
-                lines.append(line)
+            if let ruleLines = pfLines(rule: rule, verb: "block", onRejected: onRejected) {
+                lines.append(contentsOf: ruleLines)
             }
         }
         for rule in allowRules {
-            if let line = pfLine(rule: rule, verb: "pass", onRejected: onRejected) {
-                lines.append(line)
+            if let ruleLines = pfLines(rule: rule, verb: "pass", onRejected: onRejected) {
+                lines.append(contentsOf: ruleLines)
             }
         }
 
@@ -358,12 +358,12 @@ final class PFManager: @unchecked Sendable {
         return lines
     }
 
-    private func pfLine(
+    private func pfLines(
         rule r: Rule,
         verb: String,
         onRejected: ((Rule, String) -> Void)?
-    ) -> String? {
-        func reject(_ reason: String) -> String? {
+    ) -> [String]? {
+        func reject(_ reason: String) -> [String]? {
             onRejected?(r, reason)
             return nil
         }
@@ -428,20 +428,29 @@ final class PFManager: @unchecked Sendable {
             }
         }
 
-        var line = verb
-        if verb == "block" {
-            // Only the outgoing half of a deny reaches pf, see above.
-            line += " out"
-        } else if r.direction != .any {
-            line += r.direction == .incoming ? " in" : " out"
-        }
-        line += " quick proto { tcp udp }"
         // pf only takes `port` after a host (pf.conf(5), `hosts`): a bare
         // `port 8443` is a syntax error that makes pfctl refuse the whole
         // anchor (issue #298), so a port-only rule matches `to any`.
-        line += " to \(destination ?? "any")"
-        if let port { line += " port \(port)" }
-        return line
+        var target = " to \(destination ?? "any")"
+        if let port { target += " port \(port)" }
+
+        guard verb == "block" else {
+            var line = verb
+            if r.direction != .any {
+                line += r.direction == .incoming ? " in" : " out"
+            }
+            return [line + " quick proto { tcp udp }" + target]
+        }
+        // Only the outgoing half of a deny reaches pf, see above. A block
+        // keeps no state, so `block out` alone would also drop this Mac's
+        // replies to an incoming connection whose client used the denied
+        // port as its source port. For TCP, `flags S/SA` limits the block to
+        // the SYN that opens a new outgoing connection, so those replies
+        // pass. UDP has no such marker; there the line stays as it was.
+        return [
+            "block out quick proto tcp" + target + " flags S/SA",
+            "block out quick proto udp" + target
+        ]
     }
 
     private func reportRejected(rule: Rule, reason: String) {
