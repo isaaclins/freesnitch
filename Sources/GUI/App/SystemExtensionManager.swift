@@ -455,7 +455,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                             mgr.providerConfiguration = loadedConfiguration
                             mgr.localizedDescription = loadedDescription
                         }
-                        let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)
+                        // Turned on or off in System Settings after the load:
+                        // the system refused to write back what was loaded (#368).
+                        let changedOutside = Self.changedOutside(saveError)
+                        let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil,
+                                                                     changedOutside: changedOutside)
                         self.endPersistenceTurn()
                         // Turned off or removed while this enabling save
                         // was running: the turn-off is saved after it, so
@@ -477,6 +481,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // banner was shown for it, so none for this.
                                 os_log("Removing the saved boot policy failed: %{public}@", log: self.log, type: .info,
                                        saveError.sentence)
+                            } else if changedOutside && result.runAgainNow {
+                                // Saved again below onto what the user set.
+                                os_log("The filter settings changed outside FreeSnitch during a boot policy save; saving the rules again onto them: %{public}@",
+                                       log: self.log, type: .info, saveError.sentence)
                             } else if result.reportFailure {
                                 // A failed removal is still about rules that
                                 // can't be kept: keep that reason and banner.
@@ -537,6 +545,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// The system refused a save because the filter preferences changed after
+    /// they were loaded, for example the filter was turned on or off in System
+    /// Settings (#368).
+    static func changedOutside(_ error: Error?) -> Bool {
+        error.map { ($0 as NSError).domain == NEFilterErrorDomain && ($0 as NSError).code == NEFilterManagerError.configurationStale.rawValue } ?? false
     }
 
     /// The save cycle's turn on `filterPreferences` is over: the next
