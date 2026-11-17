@@ -695,7 +695,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// filtering any more. Uninstalling usually gets "finishes after a
     /// restart" from macOS rather than a completed deactivation, and the
     /// menu bar and banner must not keep saying the firewall is active until
-    /// then (#335). A build without the extension keeps saying so instead.
+    /// then (#335). A build without the extension stays "unsupported".
     private func showNotFiltering() {
         filterConfigurationActive = false
         if status != .unsupported { status = .idle }
