@@ -107,10 +107,22 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case .clearBanner:
             // Nothing restarts with these rules while it is off.
             state?.clearFilterPersistenceFailure()
+            // Turned off or removed in System Settings: nothing filters, so
+            // stop saying the firewall is active (#361). Only a firewall shown
+            // as on changes; approval or a turn-on in progress keep their state.
+            if filterConfigurationActive && !persistenceCycle.enableRequested {
+                showNotFiltering()
+            }
         case .saveCurrentRules:
-            // Turned on outside the app: save the current rules again, as
-            // turning it on in the app does.
-            state?.syncSharedRules()
+            // Turned on outside the app: turn it on as the app's own switch
+            // does, so the current rules are saved again and the firewall
+            // shows as active once that save went through (#361). A build
+            // without the extension only saves the rules, as before.
+            if hasEmbeddedExtension {
+                enableFilter()
+            } else {
+                state?.syncSharedRules()
+            }
         }
     }
 
@@ -399,6 +411,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // warning no longer applies (#311).
                     self.state?.clearFilterPersistenceFailure()
                     self.filterOff.turnedOff(turnOnPending: false)
+                    // Removed outside the app before the change notice came:
+                    // nothing filters any more (#361).
+                    if self.filterConfigurationActive { self.showNotFiltering() }
                     return
                 case .stop(.cancelledDuringLoad):
                     self.endPersistenceTurn()

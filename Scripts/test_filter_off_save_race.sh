@@ -272,4 +272,18 @@ mutate_and_expect_failure disable-keeps-active-status "$SEM" \
   $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
 mutate_and_expect_failure not-filtering-keeps-status "$SEM" \
   'if status != .unsupported { status = .idle }' ''
+mutate_and_expect_failure outside-off-keeps-active-status "$SEM" \
+  'if filterConfigurationActive && !persistenceCycle.enableRequested {
+                showNotFiltering()
+            }' ''
+mutate_and_expect_failure outside-off-hides-approval "$SEM" \
+  'if filterConfigurationActive && !persistenceCycle.enableRequested {' 'if true {'
+mutate_and_expect_failure outside-on-stays-not-filtering "$SEM" \
+  $'            if hasEmbeddedExtension {\n                enableFilter()' \
+  $'            if hasEmbeddedExtension {\n                state?.syncSharedRules()'
+mutate_and_expect_failure outside-on-skips-rules "$SEM" \
+  $'            } else {\n                state?.syncSharedRules()\n            }' \
+  $'            } else {\n            }'
+mutate_and_expect_failure outside-removal-keeps-active-status "$SEM" \
+  'if self.filterConfigurationActive { self.showNotFiltering() }' ''
 printf 'filter off vs boot-policy save verification: PASS\n'

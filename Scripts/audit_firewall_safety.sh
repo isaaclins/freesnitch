@@ -486,8 +486,18 @@ printf '%s\n' "$refresh_body" | grep -Fq 'fromOutside: true' \
   && printf '%s\n' "$refresh_body" | grep -Fq 'self.apply(change)' \
   || fail "turning the filter on in System Settings does not save the current rules again"
 apply_body="$(awk '/private func apply\(_ change: FilterOffState.Change\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$apply_body" | grep -A3 -F 'case .saveCurrentRules:' | grep -Fq 'state?.syncSharedRules()' \
+save_current_body="$(printf '%s\n' "$apply_body" | awk '/case \.saveCurrentRules:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
+printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
   || fail "turning the filter on in System Settings does not save the current rules again"
+# Turned on there, the app turns it on as its own switch does, so the status
+# says active once the current rules are saved (#361).
+printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter()' | grep -Fq 'if hasEmbeddedExtension {' \
+  || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
+clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
+printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if filterConfigurationActive && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
+  || fail "turning the filter off in System Settings leaves the app saying the firewall is active (#361)"
+grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive { self.showNotFiltering() }' \
+  || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"
 printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \
   || fail "finding the filter off leaves an earlier could-not-save banner up"
 printf '%s\n' "$enable_body" | grep -Fq 'filterOff.turnedOn()' \

@@ -696,7 +696,7 @@ mutate_and_expect_failure settings-change-ignored \
   'forName: .NEFilterConfigurationDidChange' 'forName: .init("unused")'
 mutate_and_expect_failure settings-on-keeps-old-rules \
   Sources/GUI/App/SystemExtensionManager.swift \
-  $'turning it on in the app does.\n            state?.syncSharedRules()' 'turning it on in the app does.'
+  $'            if hasEmbeddedExtension {\n                enableFilter()\n            } else {\n                state?.syncSharedRules()\n            }' ''
 mutate_and_expect_failure settings-off-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'while it is off.\n            state?.clearFilterPersistenceFailure()' 'while it is off.'
