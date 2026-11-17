@@ -98,6 +98,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshFilterOffState() }
         }
+        // The filter may have been left off. Read it once at launch, so a
+        // failure before the first save cycle's load (an encode over the size
+        // limit, or a failed load) follows the same rule as later ones (#348).
+        if hasEmbeddedExtension { refreshFilterOffState() }
     }
 
     private func apply(_ change: FilterOffState.Change) {
@@ -315,9 +319,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // goes ahead with the live policy.
             dropScheduledSave()
             persistenceCycle.queueRemoval()
-            let reason = snapshot.rules.count > SharedRuleBridge.maximumBootSnapshotRuleCount
-                ? "There are \(snapshot.rules.count) rules and at most \(SharedRuleBridge.maximumBootSnapshotRuleCount) can be kept for the next start."
-                : "They could not be saved for the next start."
+            let reason = Self.unsavableReason(SharedRuleBridge.BootSnapshotProblem(error, ruleCount: snapshot.rules.count),
+                                              error: error)
             // Without the per-process filter there is nothing to keep for a
             // restart: no banner and no log (it would only flash, #342). The
             // removal still runs, so an installed but disabled filter never
@@ -434,6 +437,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
                 let shouldEnable = save.enable
                 let removesBootSnapshot = save.removesSavedPolicy
+                // What the preferences hold, put back on the shared manager if
+                // turning the filter on fails (#345). Every later operation
+                // reloads first, so this is defensive: no path that ever skips
+                // the reload can save the failed attempt's enable.
+                let loadedEnabled = mgr.isEnabled
+                // A copy: the configuration below is changed in place.
+                let loadedConfiguration = mgr.providerConfiguration?.copy() as? NEFilterProviderConfiguration
+                let loadedDescription = mgr.localizedDescription
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
                 configuration.filterPackets = false
@@ -453,6 +464,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
+                        if saveError != nil && shouldEnable {
+                            // Before the next preferences operation may start.
+                            mgr.isEnabled = loadedEnabled
+                            mgr.providerConfiguration = loadedConfiguration
+                            mgr.localizedDescription = loadedDescription
+                        }
                         let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)
                         self.endPersistenceTurn()
                         // Turned off or removed while this enabling save
@@ -600,7 +617,26 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
-    /// `unsavable` says why the current rules can never be kept for the next
+    /// What the banner says about rules that could not be kept for the next
+    /// start. Only a size or count problem is solved by removing rules; for
+    /// anything else it says what happened instead (#341).
+    static func unsavableReason(_ problem: SharedRuleBridge.BootSnapshotProblem, error: Error) -> String {
+        switch problem {
+        case .tooManyRules(let count, let maximum):
+            return "There are \(count) rules and at most \(maximum) can be kept for the next start. "
+                + "Remove some rules to keep them across restarts."
+        case .tooLarge(_, let maximumBytes):
+            return "The rules take up more than the \(maximumBytes / 1024) KB that can be kept for the next start. "
+                + "Remove some rules or shorten long notes to keep them across restarts."
+        case .datedInFuture:
+            return "They are dated later than the Mac's clock, which happens when the clock is set back. "
+                + "This fixes itself the next time the rules are saved, for example with the next rule change."
+        case .other:
+            return "They could not be saved for the next start: \(error.sentence)"
+        }
+    }
+
+    /// `unsavable` says why the current rules can't be kept for the next
     /// start; a retry or Send Rules Again cannot fix that (#320).
     private func recordPersistenceFailure(_ operation: String, error: Error, unsavable: String? = nil,
                                           writeLog: Bool = true) {

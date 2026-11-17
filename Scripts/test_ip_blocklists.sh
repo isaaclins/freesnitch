@@ -16,7 +16,10 @@
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
 #      and a lookup takes at most floor(log2(n)) + 1 search steps, counted, not timed.
-#   6. A feed of more than 100k entries loads and answers within a sane time.
+#   6. A feed of more than 100k entries loads fully and answers correctly. The
+#      load and lookup times are printed, and only checked against a limit when
+#      FREESNITCH_BENCH=1 is set, so a busy machine cannot fail the harness
+#      (issue #356). Lookup cost is already bounded by the counted steps in 5.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -392,6 +395,9 @@ struct IPBlocklistHarness {
                       "an address feed must never appear in the domain blocklist table")
 
         // 8. Size and time. A feed of this size is ordinary for this data.
+        // Wall-clock limits only apply in the opt-in benchmark (issue #356):
+        // timing depends on the machine's load, not on the code.
+        let benchmark = ProcessInfo.processInfo.environment["FREESNITCH_BENCH"] == "1"
         let bigEntries = generatedEntries(120_000)
         let buildStart = Date()
         let big = IPBlocklistSet(entries: bigEntries)
@@ -399,7 +405,9 @@ struct IPBlocklistHarness {
         checks.expect(big.acceptedEntryCount == 120_000, "the large feed must load fully, got \(big.acceptedEntryCount)")
         checks.expect(big.rangeCount == 120_000, "non-adjacent networks must stay distinct ranges, got \(big.rangeCount)")
         checks.expect(!big.truncated, "120k entries is below the bound and must not be truncated")
-        checks.expect(buildSeconds < 20, "loading 120k entries took \(buildSeconds)s, which is not a sane load time")
+        if benchmark {
+            checks.expect(buildSeconds < 20, "loading 120k entries took \(buildSeconds)s, which is not a sane load time")
+        }
         checks.note(String(format: "loaded 120000 entries in %.3fs", buildSeconds))
 
         var hits = 0
@@ -415,7 +423,9 @@ struct IPBlocklistHarness {
         let lookupSeconds = Date().timeIntervalSince(lookupStart)
         checks.expect(hits == 100_000, "every address inside a /25 must hit, got \(hits)")
         checks.expect(misses == 100_000, "every address outside a /25 must miss, got \(misses)")
-        checks.expect(lookupSeconds < 5, "200k lookups took \(lookupSeconds)s, which is not a sane lookup time")
+        if benchmark {
+            checks.expect(lookupSeconds < 5, "200k lookups took \(lookupSeconds)s, which is not a sane lookup time")
+        }
         checks.note(String(format: "200000 string lookups in %.3fs", lookupSeconds))
 
         // Bounded: the ceiling truncates instead of growing without limit.
