@@ -80,8 +80,14 @@ The anchor file is rewritten by the helper from `Rule[]` whenever rules change:
 set block-policy drop
 set skip on lo0
 block out quick proto { tcp udp } to 198.51.100.0/24
+block in quick proto tcp from 198.51.100.0/24 flags S/SA
+block in quick proto udp from 198.51.100.0/24
+block out quick proto { tcp udp } to any port 8443
 pass out quick proto { tcp udp } to 1.1.1.1 port 443
+pass in quick proto { tcp udp } from 203.0.113.9 port 51413
 ```
+
+A rule names the remote side, so a deny's incoming half is written `from` it. That half blocks only new TCP connections (`flags S/SA`), and incoming UDP only for a deny in both directions, since a block keeps no state and must not drop replies to the Mac's own connections. A rule with only a port is written `to any port N`: pf refuses a bare `port`, and one refused line makes it refuse the whole anchor. An allow is written the same way per direction: `pass out ... to` the peer, `pass in ... from` it, both for a rule in both directions, never without a direction, since every line is `quick`. An incoming allow with only a port stays with the Network Extension.
 
 `pfctl -E` enables pf, `pfctl -a puresnitch -f <file>` reloads our anchor.
 

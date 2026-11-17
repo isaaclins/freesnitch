@@ -271,8 +271,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
         lines.append("# so an app's address or port deny would block every app on the Mac.")
-        lines.append("# A deny blocks only new TCP connections (flags S/SA), so replies pass. Incoming UDP is")
-        lines.append("# blocked only for a deny in both directions; pf cannot tell an incoming datagram from a reply.")
+        lines.append("# A deny's incoming half names the remote side (from) and stops only new TCP connections")
+        lines.append("# (flags S/SA). Incoming UDP is blocked only by a deny in both directions.")
         lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it. An incoming allow")
         lines.append("# with only a port is left to the Network Extension; from any port N would open every local port.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
@@ -459,19 +459,20 @@ final class PFManager: @unchecked Sendable {
         // `block in ... to X port N` would name this Mac's own address and
         // port instead (#298).
         //
-        // A block keeps no state, so each half must not catch the replies
-        // of the other direction's connections. For TCP, `flags S/SA` limits
-        // a block to the SYN that opens a new connection, so replies pass.
-        // UDP has no such marker: its outgoing half is written for every
-        // deny that covers outgoing traffic, and its incoming half only when
-        // the deny covers both directions, where the replies it catches
-        // belong to connections the outgoing half already blocks. An
-        // incoming-only deny of UDP is left to the extension.
+        // The outgoing half blocks every packet, so blocking an address
+        // also cuts a connection to it that is already open; the Network
+        // Extension only judges new connections. A block keeps no state, so
+        // the incoming half must not catch replies to this Mac's own
+        // connections: for TCP, `flags S/SA` limits it to the SYN that opens
+        // a new incoming connection. UDP has no such marker, so its incoming
+        // half is written only when the deny covers both directions, where
+        // the replies it catches belong to connections the outgoing half
+        // already blocks. An incoming-only deny of UDP is left to the
+        // extension.
         let source = " from" + host
         var lines: [String] = []
         if r.direction != .incoming {
-            lines.append("block out quick proto tcp" + target + " flags S/SA")
-            lines.append("block out quick proto udp" + target)
+            lines.append("block out quick proto { tcp udp }" + target)
         }
         if r.direction != .outgoing {
             lines.append("block in quick proto tcp" + source + " flags S/SA")
