@@ -271,7 +271,7 @@ final class PFManager: @unchecked Sendable {
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
         lines.append("# so an app's address or port deny would block every app on the Mac.")
-        lines.append("# Allow and ask rules are emitted even when they name an app, so the address feeds below,")
+        lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("# Rules are written in priority order, the order the Network Extension consults them.")
         lines.append("set block-policy drop")
@@ -287,11 +287,7 @@ final class PFManager: @unchecked Sendable {
 
         for rule in renderedRules {
             let verb = rule.action == .deny ? "block" : "pass"
-            // An ask rule pf can't express (a hostname, an app with no address)
-            // is expected and left to the extension, so it isn't reported as
-            // an error on every render.
-            let report = rule.action == .ask ? nil : onRejected
-            if let line = pfLine(rule: rule, verb: verb, onRejected: report) {
+            if let line = pfLine(rule: rule, verb: verb, onRejected: onRejected) {
                 lines.append(line)
             }
         }
@@ -314,13 +310,16 @@ final class PFManager: @unchecked Sendable {
     }
 
     /// Which rules the anchor renders at all: every allow, and the denies that
-    /// do not name an app (issue #155). An ask rule is rendered as a pass: the
-    /// matcher stops at it and the extension asks, and allows when nobody can
-    /// answer, so a lower-priority deny behind it must not block in pf.
+    /// do not name an app (issue #155). Ask rules stay out: the address feeds
+    /// live only in pf, after the user's rules, so an ask rule written as a
+    /// pass would turn the feeds off for its whole address or port, for every
+    /// app (issue #181). A lower-priority deny behind an ask rule still blocks
+    /// in pf.
     static func reachesPF(_ rule: Rule) -> Bool {
         switch rule.action {
-        case .allow, .ask: return true
+        case .allow: return true
         case .deny: return !namesAnApp(rule)
+        case .ask: return false
         }
     }
 
@@ -432,10 +431,9 @@ final class PFManager: @unchecked Sendable {
             line += " to \(destination)"
         } else if verb == "pass" {
             // pf only takes a port after a host, so a bare `port N` is refused
-            // and the whole anchor fails to load. Ask rules reach pf as passes,
-            // and the CLI's `rules add --port N` makes an ask rule, so a pass
-            // names `any`. A pass only ever blocks less. Port-only blocks are
-            // issue #298.
+            // and the whole anchor fails to load, so a port-only allow names
+            // `any`. A pass only ever blocks less. Port-only blocks are issue
+            // #298.
             line += " to any"
         }
         if let port { line += " port \(port)" }

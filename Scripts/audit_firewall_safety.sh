@@ -1243,8 +1243,10 @@ printf '%s\n' "$anchor_body" | grep -Fq 'let renderedRules = liveRules.filter { 
 reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
 printf '%s\n' "$reaches_body" | grep -Fq 'case .deny: return !namesAnApp(rule)' \
   || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
-printf '%s\n' "$reaches_body" | grep -Fq 'case .allow, .ask: return true' \
-  || fail "the pf anchor no longer renders every live allow and ask rule, so pf could block what the matcher does not deny"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .allow: return true' \
+  || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .ask: return false' \
+  || fail "the pf anchor renders ask rules as passes, which turns the address feeds off for their whole address or port"
 if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
   fail "the pf anchor renders the unfiltered rule set somewhere"
 fi

@@ -284,40 +284,33 @@ struct IPBlocklistHarness {
             checks.expect(pfFirst == matcherSays,
                           "with equal priorities pf must pick what the matcher picks, got pf \(String(describing: pfFirst)) and matcher \(matcherSays)")
         }
-        let disabledFirst = pf.renderAnchor(rules: [
+        // Ask rules stay out of pf. The address feeds live only in pf, after
+        // the user's rules, so an ask written as a pass would turn the feeds
+        // off for its whole address or port, for every app (issue #181).
+        // A disabled allow stays out too, and the deny is still written.
+        let askAndDisabled = pf.renderAnchor(rules: [
             Rule(remoteIP: "198.51.100.9", action: .allow, scope: .ip, priority: 900, enabled: false),
             Rule(remoteIP: "198.51.100.9", action: .ask, scope: .ip, priority: 800),
+            Rule(remotePort: 8444, action: .ask, scope: .port),
             Rule(remoteIP: "198.51.100.9", action: .deny, scope: .ip)
         ])
-        let passAt = position("pass out quick proto { tcp udp } to 198.51.100.9", in: disabledFirst)
-        let blockAt = position("block out quick proto { tcp udp } to 198.51.100.9", in: disabledFirst)
-        checks.expect(disabledFirst.components(separatedBy: "pass out quick proto { tcp udp } to 198.51.100.9").count == 2,
-                      "only the ask rule may pass 198.51.100.9; a disabled allow must not reach pf")
-        checks.expect(passAt != nil && blockAt != nil && passAt! < blockAt!,
-                      "a higher-priority ask rule must pass ahead of the deny, since the matcher stops at it and the extension asks")
-        // `freesnitch rules add --port N` makes a port-only ask rule. pf only
-        // takes a port after a host, so its pass line must name `any`, or pf
-        // refuses the line and the whole anchor fails to load.
-        let portOnlyPasses = pf.renderAnchor(rules: [
-            Rule(remotePort: 8444, action: .ask, scope: .port),
-            Rule(remotePort: 8445, action: .allow, scope: .port)
-        ])
-        for port in [8444, 8445] {
-            checks.expect(portOnlyPasses.contains("pass out quick proto { tcp udp } to any port \(port)"),
-                          "a port-only pass for \(port) must name `to any`, the only form pf accepts")
-        }
-        checks.expect(!portOnlyPasses.contains("udp } port"),
+        checks.expect(!askAndDisabled.contains("pass out quick proto { tcp udp } to 198.51.100.9"),
+                      "neither an ask rule nor a disabled allow may pass 198.51.100.9 in pf")
+        checks.expect(!askAndDisabled.contains("8444"),
+                      "a port-only ask rule must not reach pf, where it would pass the whole port past the feeds")
+        checks.expect(askAndDisabled.contains("block out quick proto { tcp udp } to 198.51.100.9"),
+                      "the deny behind the ask rule is still written")
+        let feedSet = IPBlocklistSet(entries: ["198.51.100.0/24"])
+        let askedFeed = pf.renderAnchor(rules: [Rule(remotePort: 443, action: .ask, scope: .port)], ipBlocklist: feedSet)
+        checks.expect(!askedFeed.contains("port 443") && askedFeed.contains("<freesnitch_ipblock>"),
+                      "an ask rule on a port must leave the address feed blocking that port")
+        // pf only takes a port after a host, so a port-only allow must name
+        // `any`, or pf refuses the line and the whole anchor fails to load.
+        let portOnlyPass = pf.renderAnchor(rules: [Rule(remotePort: 8445, action: .allow, scope: .port)])
+        checks.expect(portOnlyPass.contains("pass out quick proto { tcp udp } to any port 8445"),
+                      "a port-only allow must name `to any`, the only form pf accepts")
+        checks.expect(!portOnlyPass.contains("udp } port"),
                       "no pass line may carry a bare port, which pf refuses")
-        // An ask rule pf can't express is left to the extension quietly: ask
-        // rules never reached pf before, so they must not start logging an
-        // error on every render. An allow rule still reports its skip.
-        var askSkips: [String] = []
-        _ = pf.renderAnchor(rules: [
-            Rule(remoteHost: "ask.example.com", action: .ask, scope: .domain),
-            Rule(remoteHost: "allow.example.com", action: .allow, scope: .domain)
-        ]) { rule, _ in askSkips.append(rule.remoteHost ?? "") }
-        checks.expect(askSkips == ["allow.example.com"],
-                      "only the allow rule's skip is reported, got \(askSkips)")
 
         // A user's deny can never take DHCP or DHCPv6 away, whatever the
         // direction (issue #186). The refusal is reported, not silent.
