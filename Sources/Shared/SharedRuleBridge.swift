@@ -461,17 +461,56 @@ public enum SharedRuleBridge {
         }
         try RuleTransportBoundary.validateBounds(rules: stored.snapshot.rules)
         guard stored.snapshot.rules.count <= maximumBootSnapshotRuleCount else {
-            throw validationError("Boot snapshot contains too many rules.")
+            throw validationError("Boot snapshot contains too many rules.", code: BootSnapshotProblem.tooManyRulesCode)
         }
         guard stored.snapshot.updatedAt <= now else {
-            throw validationError("Boot snapshot is dated in the future.")
+            throw validationError("Boot snapshot is dated in the future.", code: BootSnapshotProblem.datedInFutureCode)
         }
     }
 
-    private static func validationError(_ message: String) -> NSError {
+    /// Why `encodeBootSnapshot` refused a policy. Only the rule count and the
+    /// encoded size are fixed by removing rules; a snapshot dated later than
+    /// the clock (the clock was set back) is fine again once the rules are
+    /// saved with the current time (#341).
+    public enum BootSnapshotProblem: Equatable, Sendable {
+        case tooManyRules(count: Int, maximum: Int)
+        case tooLarge(bytes: Int, maximumBytes: Int)
+        case datedInFuture
+        case other
+
+        fileprivate static let tooManyRulesCode = 2
+        fileprivate static let datedInFutureCode = 3
+
+        public init(_ error: Error, ruleCount: Int) {
+            switch error as? RuleTransportBoundary.ValidationError {
+            case .oversized(.bootSnapshot, let bytes, let maximum)?:
+                self = .tooLarge(bytes: bytes, maximumBytes: maximum)
+                return
+            case .tooManyRules?:
+                self = .tooManyRules(count: ruleCount, maximum: SharedRuleBridge.maximumBootSnapshotRuleCount)
+                return
+            default:
+                break
+            }
+            let ns = error as NSError
+            guard ns.domain == SharedRuleBridge.errorDomain else { self = .other; return }
+            switch ns.code {
+            case Self.tooManyRulesCode:
+                self = .tooManyRules(count: ruleCount, maximum: SharedRuleBridge.maximumBootSnapshotRuleCount)
+            case Self.datedInFutureCode:
+                self = .datedInFuture
+            default:
+                self = .other
+            }
+        }
+    }
+
+    private static let errorDomain = "SharedRuleBridge"
+
+    private static func validationError(_ message: String, code: Int = 1) -> NSError {
         NSError(
-            domain: "SharedRuleBridge",
-            code: 1,
+            domain: errorDomain,
+            code: code,
             userInfo: [NSLocalizedDescriptionKey: message]
         )
     }
