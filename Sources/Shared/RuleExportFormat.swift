@@ -332,6 +332,9 @@ public struct RuleImportPlan: Sendable {
     public let removed: [Rule]
     /// Stored rules in profiles the file does not mention. They stay as they are.
     public let kept: [Rule]
+    /// Stored rules the file also carries, by ID, under a different profile.
+    /// They leave their old profile, so the dialog and the log name them.
+    public let moved: [Rule]
     /// The complete rule table after the import: the kept rules, then the file's rules.
     public let resulting: [Rule]
 
@@ -343,7 +346,29 @@ public struct RuleImportPlan: Sendable {
         // file's copy wherever it lived, so it is neither kept nor lost.
         kept = current.filter { !profiles.contains($0.profile) && !importedIDs.contains($0.id) }
         removed = current.filter { profiles.contains($0.profile) && !importedIDs.contains($0.id) }
+        let importedProfileByID = Dictionary(imported.map { ($0.id, $0.profile) }, uniquingKeysWith: { first, _ in first })
+        moved = current.filter { stored in
+            importedProfileByID[stored.id].map { $0 != stored.profile } ?? false
+        }
         resulting = kept + imported
+    }
+
+    /// The import the helper runs inside its policy transaction. The app shows
+    /// the user which rules the import deletes and sends those IDs along. If
+    /// the stored rules changed since (an alert answered while the dialog was
+    /// open, a CLI edit), the deletions differ and the import is refused, so
+    /// it can never delete a rule the user was not shown.
+    public static func apply(imported: [Rule],
+                             expectedRemovedIDs: Set<UUID>,
+                             to draft: inout RuleStore.PolicyDraft) throws -> RuleImportPlan {
+        let plan = RuleImportPlan(current: draft.rules, imported: imported)
+        let removedIDs = Set(plan.removed.map(\.id))
+        guard removedIDs == expectedRemovedIDs else {
+            throw RuleImportConflict(expected: expectedRemovedIDs.count, actual: removedIDs.count)
+        }
+        try RuleTransportBoundary.validate(rules: plan.resulting)
+        draft.rules = plan.resulting
+        return plan
     }
 
     /// Kept rules counted per profile, sorted by profile name.
@@ -357,8 +382,20 @@ public struct RuleImportPlan: Sendable {
     public var logSummary: String {
         let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
         let removedIDs = removed.map { "\($0.id.uuidString) (\($0.profile))" }.joined(separator: ", ")
+        let movedIDs = moved.map { "\($0.id.uuidString) (from \($0.profile))" }.joined(separator: ", ")
         return "rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
             + "\(removed.count) stored rules removed [\(removedIDs)]; "
+            + "\(moved.count) rules moved to another profile [\(movedIDs)]; "
             + "\(self.kept.count) rules in other profiles kept [\(kept)]"
+    }
+}
+
+/// The stored rules changed between the confirmation and the import.
+public struct RuleImportConflict: Error, LocalizedError, Equatable {
+    public let expected: Int
+    public let actual: Int
+
+    public var errorDescription: String? {
+        "The rules changed while the import was waiting for confirmation: it would now delete \(actual) rules instead of the \(expected) you confirmed. Nothing was imported. Import the file again to review the current changes."
     }
 }

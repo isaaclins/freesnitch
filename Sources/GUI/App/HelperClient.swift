@@ -906,9 +906,10 @@ final class HelperClient: NSObject, ObservableObject {
     /// Replaces the helper's stored rules in one transaction. There is no
     /// fallback to cached GUI rules or to a sequence of removals.
     func replaceRules(_ rules: [Rule],
-                      existing _: [Rule],
+                      expectedRemovedIDs: [UUID],
                       completion: @MainActor @escaping (Bool, String?) -> Void) {
-        guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules) else {
+        guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules),
+              let removedData = try? JSONEncoder().encode(expectedRemovedIDs) else {
             completion(false, "Could not encode the rule batch within the transport limits.")
             return
         }
@@ -920,7 +921,7 @@ final class HelperClient: NSObject, ObservableObject {
             completion(false, "The running helper does not support atomic rule replacement. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
             return
         }
-        proxy.replaceRules?(rulesJSON: data) { ok, message in
+        proxy.replaceRules?(rulesJSON: data, expectedRemovedIDsJSON: removedData) { ok, message in
             Task { @MainActor in completion(ok, message) }
         }
     }

@@ -163,10 +163,10 @@ struct RulesManagerView: View {
                 showError("Could not export the rules", error.localizedDescription)
             }
         }
-        .confirmationDialog("Replace all rules?",
+        .confirmationDialog("Import rules?",
                             isPresented: $showingImportConfirmation,
                             titleVisibility: .visible) {
-            Button("Replace Rules", role: .destructive) {
+            Button("Import Rules", role: .destructive) {
                 replaceRules(with: pendingImportRules)
             }
             Button("Cancel", role: .cancel) {
@@ -1325,10 +1325,18 @@ struct RulesManagerView: View {
         let plan = pendingImportPlan
         pendingImportRules.removeAll()
         pendingImportPlan = nil
-        let existingRules = state.rules
-        state.helper.replaceRules(rules, existing: existingRules) { ok, message in
+        let expectedRemovedIDs = plan?.removed.map(\.id) ?? []
+        state.helper.replaceRules(rules, expectedRemovedIDs: expectedRemovedIDs) { ok, message in
             guard ok else {
-                showError("Could not import the rules", message ?? "The helper rejected the import and did not say why.")
+                let detail = message ?? "The helper rejected the import and did not say why."
+                state.appendLog(level: "error", message: "rule import failed: \(detail)")
+                // "rules saved but the firewall refused" means the import was
+                // committed, deletions included, so log what it changed.
+                if detail.hasPrefix("rules saved"), let plan {
+                    state.appendLog(level: "info", message: plan.logSummary)
+                }
+                state.refreshRules()
+                showError("Could not import the rules", detail)
                 return
             }
             if let plan { state.appendLog(level: "info", message: plan.logSummary) }
@@ -1352,6 +1360,10 @@ struct RulesManagerView: View {
             lines.append("No rule there is lost: every stored rule in \(profiles.count == 1 ? "that profile" : "those profiles") is in the file.")
         } else {
             lines.append("\(Self.rulesCount(plan.removed.count)) there \(plan.removed.count == 1 ? "is" : "are") not in the file and will be deleted.")
+        }
+        if !plan.moved.isEmpty {
+            let from = Set(plan.moved.map(\.profile)).sorted().map(Self.profileLabel)
+            lines.append("\(Self.rulesCount(plan.moved.count)) from \(Self.list(from)) \(plan.moved.count == 1 ? "moves" : "move") to the profile the file puts \(plan.moved.count == 1 ? "it" : "them") in.")
         }
         if !plan.kept.isEmpty {
             let kept = plan.keptByProfile.map { "\(Self.profileLabel($0.profile)) (\($0.count))" }

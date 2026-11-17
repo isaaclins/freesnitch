@@ -32,8 +32,12 @@ pass "the app's export and import read every profile's rules from the helper"
 if grep -Fq 'draft.rules = rules }' "$HELPER"; then
   fail "the helper import still replaces the whole rule table with the file"
 fi
-grep -Fq 'RuleImportPlan(current: draft.rules, imported: rules)' "$HELPER" \
+grep -Fq 'plan = try RuleImportPlan.apply(imported: rules,' "$HELPER" \
   || fail "the helper import does not apply RuleImportPlan"
+grep -Fq 'expectedRemovedIDs: Set(expectedRemovedIDs),' "$HELPER" \
+  || fail "the helper import does not check the deletions the user confirmed"
+grep -Fq 'expectedRemovedIDs: expectedRemovedIDs' "$RULES_MANAGER" \
+  || fail "the app does not send the deletions it showed in the dialog"
 grep -Fq 'PSLog.info(PSLog.helper, plan.logSummary)' "$HELPER" \
   || fail "the helper import does not log what it removed and kept"
 pass "the helper import applies RuleImportPlan and logs it"
@@ -54,15 +58,24 @@ func rule(_ host: String, _ profile: String) -> Rule {
 func labels(_ rules: [Rule]) -> [String] {
     rules.map { "\($0.profile):\($0.remoteHost ?? "")" }.sorted()
 }
-/// What the helper's replaceRules does inside its transaction.
-func helperImport(_ store: RuleStore, _ fileRules: [Rule]) throws -> RuleImportPlan {
+/// The app's side: build the plan the dialog shows from every stored rule.
+func dialogPlan(_ store: RuleStore, _ fileRules: [Rule]) -> RuleImportPlan {
+    RuleImportPlan(current: store.allRules(profile: nil), imported: fileRules)
+}
+/// The helper's side: the same call replaceRules makes inside its transaction,
+/// with the deletions the dialog showed.
+@discardableResult
+func helperImport(_ store: RuleStore, _ fileRules: [Rule], confirmed: RuleImportPlan) throws -> RuleImportPlan {
     var plan: RuleImportPlan?
     _ = try store.mutatePolicy { draft in
-        let p = RuleImportPlan(current: draft.rules, imported: fileRules)
-        draft.rules = p.resulting
-        plan = p
+        plan = try RuleImportPlan.apply(imported: fileRules,
+                                        expectedRemovedIDs: Set(confirmed.removed.map(\.id)),
+                                        to: &draft)
     }
     return plan!
+}
+func importConfirmed(_ store: RuleStore, _ fileRules: [Rule]) throws -> RuleImportPlan {
+    try helperImport(store, fileRules, confirmed: dialogPlan(store, fileRules))
 }
 
 let path = CommandLine.arguments[1]
@@ -81,7 +94,7 @@ check("setup: rules in Always, Office and home, home active",
 let fullFile = try RuleExportCodec.encode(store.allRules(profile: nil))
 let fullImport = try RuleExportCodec.decode(fullFile).rules
 check("export carries the inactive profile's rule", labels(fullImport).contains("Office:office.example"))
-let roundTrip = try helperImport(store, fullImport)
+let roundTrip = try importConfirmed(store, fullImport)
 check("export then import keeps every rule", labels(store.allRules(profile: nil)) == everything)
 check("a full round trip deletes nothing", roundTrip.removed.isEmpty)
 
@@ -90,7 +103,7 @@ check("a full round trip deletes nothing", roundTrip.removed.isEmpty)
 let oldFile = try RuleExportCodec.encode(store.activePolicyState().rules)
 let oldImport = try RuleExportCodec.decode(oldFile).rules
 check("an older backup lacks Office (the #247 file)", !labels(oldImport).contains("Office:office.example"))
-let oldPlan = try helperImport(store, oldImport)
+let oldPlan = try importConfirmed(store, oldImport)
 check("importing an older backup keeps the Office rule",
       labels(store.allRules(profile: nil)).contains("Office:office.example"))
 check("the plan reports the Office rule as kept",
@@ -101,22 +114,39 @@ check("the plan reports nothing removed", oldPlan.removed.isEmpty)
 //    plan names it, so the dialog and the log can say so.
 let extraHome = rule("extra-home.example", "home")
 _ = try store.mutatePolicy { $0.rules.append(extraHome) }
-let lossPlan = try helperImport(store, oldImport)
+let lossPlan = try importConfirmed(store, oldImport)
 check("a home rule missing from the file is removed",
       !labels(store.allRules(profile: nil)).contains("home:extra-home.example"))
 check("the plan names exactly the removed rule", lossPlan.removed.map(\.id) == [extraHome.id])
 check("the log line names the removed rule's ID", lossPlan.logSummary.contains(extraHome.id.uuidString))
 check("Office still survives", labels(store.allRules(profile: nil)).contains("Office:office.example"))
 
-// 4. A file whose rule moved profile, by ID, replaces the stored copy once.
+// 4. The stored rules change while the dialog is open: a rule allowed from an
+//    alert lands in home. The helper's deletions no longer match what the
+//    user confirmed, so it refuses and nothing changes.
+let shown = dialogPlan(store, oldImport)
+let allowedMeanwhile = rule("allowed-meanwhile.example", "home")
+_ = try store.mutatePolicy { $0.rules.append(allowedMeanwhile) }
+let beforeStale = labels(store.allRules(profile: nil))
+var refused = false
+do { try helperImport(store, oldImport, confirmed: shown) } catch is RuleImportConflict { refused = true }
+check("an import confirmed against older rules is refused", refused)
+check("the refused import changed nothing", labels(store.allRules(profile: nil)) == beforeStale)
+let reviewed = try importConfirmed(store, oldImport)
+check("reviewing again shows the new rule as deleted, and then imports",
+      reviewed.removed.map(\.id) == [allowedMeanwhile.id])
+
+// 5. A file whose rule moved profile, by ID, replaces the stored copy once.
 var moved = office
 moved.profile = "home"
 let movePlan = RuleImportPlan(current: store.allRules(profile: nil), imported: [moved])
 check("a rule moved to another profile is not kept twice",
       movePlan.resulting.filter { $0.id == office.id }.count == 1
       && movePlan.resulting.first { $0.id == office.id }?.profile == "home")
+check("a rule moved out of a profile the file does not mention is reported",
+      movePlan.moved.map(\.id) == [office.id] && movePlan.logSummary.contains("(from Office)"))
 
-// 5. A file with no rules changes nothing.
+// 6. A file with no rules changes nothing.
 let emptyPlan = RuleImportPlan(current: store.allRules(profile: nil), imported: [])
 check("an empty file deletes nothing", emptyPlan.removed.isEmpty
       && emptyPlan.resulting.count == store.allRules(profile: nil).count)
