@@ -102,6 +102,6 @@ xcrun swiftc -O \
     -target arm64-apple-macos13.0 \
     -o "$WORK/harness" \
     "$WORK/main.swift" "${SHARED[@]}" \
-    -lsqlite3 2>&1 | rg -v 'warning:' || true
+    -lsqlite3
 
 "$WORK/harness" "$ROOT/Sources/GUI/ViewModels/AppState.swift"
