@@ -46,7 +46,8 @@ extension SharedRuleBridge {
         /// What `afterLoad` decided.
         public enum AfterLoad: Equatable, Sendable {
             /// The preferences could not be loaded. `failActivation` when the
-            /// user was turning the filter on.
+            /// user was turning the filter on; the enable request is then
+            /// over, and the queued work is retried as a plain save (#345).
             case loadFailed(failActivation: Bool, next: Next)
             /// The load failed, but the filter was turned on, off or removed
             /// meanwhile: it no longer matters, raise no warning and fail no
@@ -91,7 +92,8 @@ extension SharedRuleBridge {
             /// The filter was turned on.
             public var activated = false
             /// What happens to a failed save: `.retry`, `.retriesUsedUp`, or
-            /// `.none` when it was not kept (activation, or newer work won).
+            /// `.none` when it was not kept (cancelled, or newer work won).
+            /// A failed turn-on is kept too and retried without enabling.
             public var next = Next.none
             /// Start another cycle right away (newer work, or an enable
             /// request arrived during this one). Replaces a scheduled retry.
@@ -186,17 +188,19 @@ extension SharedRuleBridge {
                 if cancellations != load.cancellations {
                     return .cancelledLoadFailed(next: queue.hasPending || enableRequested ? .now : .none)
                 }
-                if enableRequested {
-                    let hasNewer = queue.hasNewerWork(since: generationAtLoad)
-                    queue.discardThrough(generationAtLoad)
-                    return .loadFailed(failActivation: true, next: hasNewer ? .now : .none)
-                }
+                // Turning the filter on failed. The request ends here, so the
+                // retry below or a later rule change saves without turning the
+                // filter on; only the user does that.
+                let failActivation = enableRequested
+                enableRequested = false
                 if queue.hasNewerWork(since: generationAtLoad) {
-                    return .loadFailed(failActivation: false, next: .now)
+                    return .loadFailed(failActivation: failActivation, next: .now)
                 }
-                // The snapshot was never taken, so it is still queued. Leaving
-                // the older saved policy as the last word is #213: retry.
-                return .loadFailed(failActivation: false, next: nextRetry())
+                // The snapshot (or the removal of an older saved policy, #320)
+                // was never taken, so it is still queued, also when turning
+                // the filter on failed. Leaving the older saved policy as the
+                // last word is #213 and #345: retry.
+                return .loadFailed(failActivation: failActivation, next: nextRetry())
             }
 
             let enable = enableRequested
@@ -229,9 +233,11 @@ extension SharedRuleBridge {
             var result = AfterSave()
             if saveFailed {
                 result.reportFailure = cancellations == save.load.cancellations
-                if save.enable {
-                    result.failActivation = true
-                } else if let pending = save.pending, queue.requeueFailed(pending) {
+                result.failActivation = save.enable
+                // Also after a failed turn-on (#345): the enable request was
+                // cleared when this cycle loaded, so the retry saves the
+                // policy (or the removal) and never turns the filter on.
+                if let pending = save.pending, queue.requeueFailed(pending) {
                     // Nothing newer arrived during the save, so the saved
                     // policy is still older than the one being enforced.
                     result.next = nextRetry()

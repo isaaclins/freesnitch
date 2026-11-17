@@ -384,6 +384,16 @@ require_text "$SAVE_CYCLE" "queue.requeueFailed(pending)" \
   "a failed boot-policy save is dropped instead of retried"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.carryOut(result.next, removal: removesBootSnapshot)" \
   "the GUI does not schedule the retry of a failed boot-policy save"
+# A failed save while turning the filter on puts the loaded state back on the
+# shared manager before the next preferences operation may start (#345).
+save_turn_block="$(awk '/mgr.saveToPreferences [{] saveError in/ && !n++ {a=1} a {print} a && /self.endPersistenceTurn[(][)]/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$save_turn_block" | grep -Fq 'if saveError != nil && shouldEnable {' \
+  || fail "a failed save while turning the filter on does not put the loaded filter state back before the next preferences operation"
+for restore in 'mgr.isEnabled = loadedEnabled' 'mgr.providerConfiguration = loadedConfiguration' \
+               'mgr.localizedDescription = loadedDescription'; do
+  printf '%s\n' "$save_turn_block" | grep -Fq "$restore" \
+    || fail "a failed save while turning the filter on leaves the enable in memory, where the retry could save it"
+done
 require_text "$FILTER" "watermark.supersedes(decoded)" \
   "the extension can load a saved boot policy older than the last live policy it enforced"
 require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
@@ -481,6 +491,9 @@ printf '%s\n' "$not_filtering_body" | grep -Fq 'filterConfigurationActive = fals
   || fail "turning the filter off or removing it does not reset the firewall status"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
+init_body="$(awk '/^    init\(state: AppState\) [{]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$init_body" | grep -Fq 'if hasEmbeddedExtension { refreshFilterOffState() }' \
+  || fail "the app does not read at launch whether the filter is off, so an early save failure can raise the banner (#348)"
 refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$refresh_body" | grep -Fq 'fromOutside: true' \
   && printf '%s\n' "$refresh_body" | grep -Fq 'self.apply(change)' \

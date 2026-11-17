@@ -256,6 +256,17 @@ off.turnedOn()
 //     No configuration at all counts as off.
 expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
        "a removed filter configuration is not treated as off")
+//     #348: at launch the app reads the filter state once. Before that read
+//     it assumes on, so a failure then warns; finding the filter left off
+//     takes the banner down, and finding it on asks for no extra save.
+var launch = FilterOffState()
+expect(launch.saveFailureShowsBanner, "a failure before the launch read is hidden")
+expect(launch.observed(configured: true, enabled: false, fromOutside: true) == .clearBanner,
+       "finding the filter left off at launch keeps an early banner up")
+expect(!launch.saveFailureShowsBanner, "a failed save after finding the filter off at launch warns")
+var launchOn = FilterOffState()
+expect(launchOn.observed(configured: true, enabled: true, fromOutside: true) == .none,
+       "finding the filter on at launch saves the rules a second time")
 print("boot save harness: with the filter off a failed save is logged, and turning it on saves again")
 
 // 11. The app's save cycle around NEFilterManager (#310). The harness plays
@@ -297,16 +308,48 @@ loadRaced.enqueue(policyB)
 expect(loadRaced.afterLoad(racedAt, loadFailed: true, configurationExists: true, hasSavedPolicy: true)
        == .loadFailed(failActivation: false, next: .now),
        "a newer policy queued during a failed load waited for the retry delay")
-//      A failed load while turning the filter on fails visibly and drops the snapshot.
+//      A failed load while turning the filter on fails visibly, ends the
+//      enable request and keeps the snapshot for a retry that only saves (#345).
 var enableLoadFails = Cycle()
 enableLoadFails.requestEnable()
 enableLoadFails.enqueue(policyB)
 let enableLoadAt = enableLoadFails.begin()!
-expect(enableLoadFails.afterLoad(enableLoadAt, loadFailed: true, configurationExists: false, hasSavedPolicy: false)
-       == .loadFailed(failActivation: true, next: .none),
-       "a failed load during activation was not reported, or was retried")
-expect(!enableLoadFails.queue.hasPending, "a failed activation kept its snapshot for a later retry")
-print("boot save harness: cycle: a failed load keeps the snapshot and retries; during activation it fails visibly")
+expect(enableLoadFails.afterLoad(enableLoadAt, loadFailed: true, configurationExists: true, hasSavedPolicy: true)
+       == .loadFailed(failActivation: true, next: .retry(after: 5)),
+       "a failed load during activation was not reported, or its snapshot was not retried")
+expect(!enableLoadFails.enableRequested, "a failed load during activation kept the enable request, so the retry would turn the filter on")
+let enableLoadRetryAt = enableLoadFails.begin()!
+let enableLoadRetry = savePlan(enableLoadFails.afterLoad(enableLoadRetryAt, loadFailed: false, configurationExists: true, hasSavedPolicy: true),
+                               "the retry after a failed activation load did not save")
+expect(enableLoadRetry.pending?.data == policyB && !enableLoadRetry.enable,
+       "the retry after a failed activation load saved the wrong snapshot or turned the filter on")
+//      #345: rules over the limit, so the queued save is the removal of the
+//      older saved policy. A failed activation load keeps it, and the retry
+//      removes the older policy without turning the filter on.
+var enableLoadRemoval = Cycle()
+enableLoadRemoval.requestEnable()
+enableLoadRemoval.queueRemoval()
+let enableRemovalAt = enableLoadRemoval.begin()!
+expect(enableLoadRemoval.afterLoad(enableRemovalAt, loadFailed: true, configurationExists: true, hasSavedPolicy: true)
+       == .loadFailed(failActivation: true, next: .retry(after: 5)),
+       "a failed load while turning the filter on dropped the queued removal of the older saved policy")
+let removalRetryAt = enableLoadRemoval.begin()!
+let removalRetry = savePlan(enableLoadRemoval.afterLoad(removalRetryAt, loadFailed: false, configurationExists: true, hasSavedPolicy: true),
+                            "the retried removal did not save")
+expect(removalRetry.removesSavedPolicy && !removalRetry.enable,
+       "the retried removal did not remove the older saved policy, or turned the filter on")
+expect(enableLoadRemoval.afterSave(removalRetry, saveFailed: false).removedSavedPolicy,
+       "the retried removal did not take the older saved policy out")
+//      With no configuration (the first turn-on failed), the retry saves nothing.
+var enableLoadNoConfig = Cycle()
+enableLoadNoConfig.requestEnable()
+enableLoadNoConfig.enqueue(policyB)
+let noConfigLoadAt = enableLoadNoConfig.begin()!
+_ = enableLoadNoConfig.afterLoad(noConfigLoadAt, loadFailed: true, configurationExists: false, hasSavedPolicy: false)
+let noConfigRetryAt = enableLoadNoConfig.begin()!
+expect(enableLoadNoConfig.afterLoad(noConfigRetryAt, loadFailed: false, configurationExists: false, hasSavedPolicy: false)
+       == .stop(.noConfiguration), "the retry after a failed first turn-on created a filter configuration")
+print("boot save harness: cycle: a failed load keeps the snapshot and retries; during activation it fails visibly and retries without turning on")
 
 // 11b. Save failure: the snapshot is put back and retried on the schedule;
 //      a newer policy queued during the save wins and runs at once.
@@ -341,17 +384,24 @@ lateOlder.enqueue(policyB)
 let lateDone = lateOlder.afterSave(lateSave, saveFailed: false)
 expect(lateDone.savedPolicy && !lateDone.clearWarning && lateDone.runAgainNow,
        "an older save finishing late cleared the warning or did not save the newer policy next")
-//      A failed save while turning the filter on fails visibly and is not retried.
+//      A failed save while turning the filter on fails visibly and keeps
+//      what it was saving for a retry that only saves (#345).
 var enableSaveFails = Cycle()
 enableSaveFails.requestEnable()
-enableSaveFails.enqueue(policyB)
+enableSaveFails.queueRemoval()
 let enableSaveAt = enableSaveFails.begin()!
-let enabling = savePlan(enableSaveFails.afterLoad(enableSaveAt, loadFailed: false, configurationExists: false, hasSavedPolicy: false),
+let enabling = savePlan(enableSaveFails.afterLoad(enableSaveAt, loadFailed: false, configurationExists: true, hasSavedPolicy: true),
                         "activation did not save")
-expect(enabling.enable, "activation did not enable the filter")
+expect(enabling.enable && enabling.removesSavedPolicy, "activation did not enable the filter and remove the older policy")
 let enableFailed = enableSaveFails.afterSave(enabling, saveFailed: true)
-expect(enableFailed.failActivation && enableFailed.next == .none && !enableFailed.activated
-       && !enableSaveFails.queue.hasPending, "a failed activation save was retried or not reported")
+expect(enableFailed.failActivation && !enableFailed.activated, "a failed activation save was not reported")
+expect(enableFailed.next == .retry(after: 5) && enableSaveFails.queue.hasPending,
+       "a failed save while turning the filter on dropped the queued removal of the older saved policy")
+let enableSaveRetryAt = enableSaveFails.begin()!
+let enableSaveRetry = savePlan(enableSaveFails.afterLoad(enableSaveRetryAt, loadFailed: false, configurationExists: true, hasSavedPolicy: true),
+                               "the retry after a failed activation save did not run")
+expect(enableSaveRetry.removesSavedPolicy && !enableSaveRetry.enable,
+       "the retry after a failed activation save turned the filter on or did not remove the older policy")
 print("boot save harness: cycle: a failed save is retried, newer work wins, only the newest save clears the warning")
 
 // 11c. Cancel during load: turned off or removed while loading saves nothing.
@@ -694,12 +744,24 @@ mutate_and_expect_failure off-ignores-pending-on \
 mutate_and_expect_failure settings-change-ignored \
   Sources/GUI/App/SystemExtensionManager.swift \
   'forName: .NEFilterConfigurationDidChange' 'forName: .init("unused")'
+mutate_and_expect_failure launch-off-not-read \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'if hasEmbeddedExtension { refreshFilterOffState() }' ''
 mutate_and_expect_failure settings-on-keeps-old-rules \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'turning it on in the app does.\n            state?.syncSharedRules()' 'turning it on in the app does.'
 mutate_and_expect_failure settings-off-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'while it is off.\n            state?.clearFilterPersistenceFailure()' 'while it is off.'
+mutate_and_expect_failure failed-enable-save-keeps-enable-in-memory \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'mgr.isEnabled = loadedEnabled' ''
+mutate_and_expect_failure failed-enable-save-keeps-configuration-in-memory \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'mgr.providerConfiguration = loadedConfiguration' ''
+mutate_and_expect_failure failed-enable-save-keeps-name-in-memory \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'mgr.localizedDescription = loadedDescription' ''
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''
@@ -722,7 +784,7 @@ mutate_cycle_and_expect_harness_failure cancelled-load-raises-warning \
 mutate_cycle_and_expect_harness_failure cancelled-save-raises-warning \
   'result.reportFailure = cancellations == save.load.cancellations' 'result.reportFailure = true'
 mutate_cycle_and_expect_harness_failure no-load-retry \
-  'return .loadFailed(failActivation: false, next: nextRetry())' 'return .loadFailed(failActivation: false, next: .none)'
+  'return .loadFailed(failActivation: failActivation, next: nextRetry())' 'return .loadFailed(failActivation: failActivation, next: .none)'
 mutate_cycle_and_expect_harness_failure save-after-cancel-during-load \
   'if !enable && pending == nil {' 'if false {'
 mutate_cycle_and_expect_harness_failure create-missing-configuration \
@@ -731,8 +793,14 @@ mutate_cycle_and_expect_harness_failure enable-with-stale-snapshot \
   'if enable && !queue.hasPending {' 'if false {'
 mutate_cycle_and_expect_harness_failure older-save-clears-warning \
   'if !queue.hasNewerWork(since: pending.generation) {' 'if true {'
-mutate_cycle_and_expect_harness_failure retry-activation-failure \
-  $'if save.enable {\n                    result.failActivation = true\n                } else if' 'if'
+mutate_cycle_and_expect_harness_failure drop-failed-activation-save \
+  'if let pending = save.pending, queue.requeueFailed(pending) {' 'if !save.enable, let pending = save.pending, queue.requeueFailed(pending) {'
+mutate_cycle_and_expect_harness_failure drop-failed-activation-load \
+  $'let failActivation = enableRequested\n                enableRequested = false' $'let failActivation = enableRequested\n                if enableRequested { enableRequested = false; queue.discardThrough(generationAtLoad); return .loadFailed(failActivation: true, next: .none) }'
+mutate_cycle_and_expect_harness_failure failed-activation-load-keeps-request \
+  $'let failActivation = enableRequested\n                enableRequested = false' 'let failActivation = enableRequested'
+mutate_cycle_and_expect_harness_failure failed-activation-save-unreported \
+  'result.failActivation = save.enable' 'result.failActivation = false'
 mutate_cycle_and_expect_harness_failure off-keeps-enable \
   $'public mutating func dropEnableRequest() {\n            enableRequested = false' 'public mutating func dropEnableRequest() {'
 mutate_cycle_and_expect_harness_failure endless-retries \
