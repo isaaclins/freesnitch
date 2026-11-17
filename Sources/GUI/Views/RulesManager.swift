@@ -1358,22 +1358,22 @@ struct RulesManagerView: View {
         let profiles = plan.replacedProfiles.map(Self.profileLabel)
         var lines = ["Importing \(Self.rulesCount(pendingImportRules.count)) replaces the rules in \(Self.list(profiles))."]
         if plan.removed.isEmpty {
-            lines.append("No rule there is deleted: every stored rule in \(profiles.count == 1 ? "that profile" : "those profiles") is in the file, and the file's copy replaces it.")
+            lines.append("Every rule stored there is also in the file, so none is deleted.")
         } else {
             // Name them, the way the table does, so the user sees which
             // rules go and not only how many.
             let shown = plan.removed.prefix(10).map { "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)))" }
-            let more = plan.removed.count > shown.count ? "\nand \(plan.removed.count - shown.count) more, all named in the log" : ""
-            lines.append("\(Self.rulesCount(plan.removed.count)) there \(plan.removed.count == 1 ? "is" : "are") not in the file and will be deleted:\n"
-                         + shown.joined(separator: "\n") + more)
+            let more = plan.removed.count > shown.count ? "\nand \(plan.removed.count - shown.count) more (the log lists them all)" : ""
+            lines.append((plan.removed.count == 1 ? "This rule is not in the file and will be deleted." : "These \(plan.removed.count) rules are not in the file and will be deleted.")
+                         + "\n" + shown.joined(separator: "\n") + more)
         }
         if !plan.moved.isEmpty {
             let moves = plan.moved.prefix(10).map {
                 "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)) → \(Self.profileLabel(plan.movedTo[$0.id] ?? $0.profile)))"
             }
-            let more = plan.moved.count > moves.count ? "\nand \(plan.moved.count - moves.count) more, all named in the log" : ""
-            lines.append("\(Self.rulesCount(plan.moved.count)) \(plan.moved.count == 1 ? "moves" : "move") to another profile:\n"
-                         + moves.joined(separator: "\n") + more)
+            let more = plan.moved.count > moves.count ? "\nand \(plan.moved.count - moves.count) more (the log lists them all)" : ""
+            lines.append((plan.moved.count == 1 ? "This rule moves to another profile." : "These \(plan.moved.count) rules move to another profile.")
+                         + "\n" + moves.joined(separator: "\n") + more)
         }
         // A backup restored on another Mac can name profiles that don't exist
         // here. Their rules are stored but apply nowhere until a profile with
