@@ -58,8 +58,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var enableFilterRequested = false
     /// Automatic retries of a failed boot-policy save (#213). Bounded and
     /// spaced; reset by a successful save or a newer policy.
-    private var persistenceRetryAttempts = 0
-    private static let persistenceRetryDelays: [TimeInterval] = [5, 30, 120]
+    private var persistenceRetry = SharedRuleBridge.RetrySchedule()
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
@@ -214,9 +213,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                           immediate: Bool = false) {
         do {
             persistenceQueue.enqueue(try SharedRuleBridge.encodeBootSnapshot(snapshot))
-            persistenceRetryAttempts = 0
+            persistenceRetry.reset()
             schedulePersistence(immediate: immediate || enableFilterRequested)
         } catch {
+            // This policy cannot be saved (for example it is over the boot
+            // policy size limit). An older snapshot still queued for a retry
+            // must not be saved instead and clear the warning: drop it, and
+            // invalidate a save in flight.
+            cancelPendingPersistence()
             recordPersistenceFailure("encode", error: error)
             if immediate {
                 enableFilterRequested = true
@@ -318,8 +322,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                             }
                         } else {
                             if snapshotData != nil {
-                                self.persistenceRetryAttempts = 0
-                                self.state?.clearFilterPersistenceFailure()
+                                // Only a save of the newest policy clears the
+                                // warning; an older one finishing late does not.
+                                if let pending, !self.persistenceQueue.hasNewerWork(since: pending.generation) {
+                                    self.persistenceRetry.reset()
+                                    self.state?.clearFilterPersistenceFailure()
+                                }
                                 if shouldEnable || self.filterConfigurationActive {
                                     self.recordFilterDiagnostic(state: "installed-enabled", detail: "The content filter configuration is installed and enabled.")
                                 }
@@ -361,23 +369,20 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // can no longer be put back and retried, so it can neither enable nor
         // rewrite a filter the user just turned on, off or removed.
         persistenceQueue.invalidateAll()
-        persistenceRetryAttempts = 0
+        persistenceRetry.reset()
     }
 
     @discardableResult
     private func schedulePersistenceRetry() -> Bool {
-        let delays = Self.persistenceRetryDelays
-        guard persistenceRetryAttempts < delays.count else {
-            let message = "The current rules are still not saved for the next start after \(delays.count) retries. "
+        guard let delay = persistenceRetry.nextDelay() else {
+            let message = "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
                 + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
             state?.appendLog(level: "error", message: message)
             os_log("%{public}@", log: log, type: .error, message)
             return false
         }
-        let delay = delays[persistenceRetryAttempts]
-        persistenceRetryAttempts += 1
         os_log("Retrying the boot policy save in %{public}.0f s (attempt %{public}ld)", log: log, type: .info,
-               delay, persistenceRetryAttempts)
+               delay, persistenceRetry.attempts)
         schedulePersistence(immediate: true, after: delay)
         return true
     }

@@ -113,6 +113,34 @@ expect(!cancelled.requeueFailed(inFlight), "a save in flight during cancellation
 expect(!cancelled.hasPending, "cancellation left a snapshot queued")
 print("boot save harness: cancelling drops the in-flight save too")
 
+// 6c. Snapshot A waits for a retry; the newer B cannot be saved at all (over
+//     the boot policy size limit). A must not be saved in B's place, and an A
+//     save finishing late must not count as the newest one (it would clear
+//     the warning). The app invalidates the queue on an encode failure.
+var tooBig = SharedRuleBridge.NewestWriteWinsQueue()
+tooBig.enqueue(encoded(withDeny))
+let retainedA = tooBig.takeNewest()!
+expect(tooBig.requeueFailed(retainedA), "A was not kept for a retry")
+let hugeRules = (0..<(SharedRuleBridge.maximumBootSnapshotRuleCount + 1)).map {
+    Rule(id: UUID(), remoteHost: "h\($0).example", action: .deny, scope: .domain)
+}
+expect((try? SharedRuleBridge.encodeBootSnapshot(snapshot(hugeRules, generation: 20))) == nil,
+       "a policy over the boot limit encoded, so this case does not test anything")
+tooBig.invalidateAll()
+expect(!tooBig.hasPending, "the older snapshot stayed queued after a newer one could not be encoded")
+expect(tooBig.hasNewerWork(since: retainedA.generation),
+       "a late save of the older snapshot would count as the newest and clear the warning")
+print("boot save harness: an unsaveable newer policy is never replaced by an older retry")
+
+// 6d. Retries are spaced, bounded, and start over after a newer policy.
+var schedule = SharedRuleBridge.RetrySchedule()
+expect(schedule.nextDelay() == 5 && schedule.nextDelay() == 30 && schedule.nextDelay() == 120,
+       "the retry delays are not 5, 30, 120 seconds")
+expect(schedule.nextDelay() == nil, "retries continue after the last delay")
+schedule.reset()
+expect(schedule.nextDelay() == 5, "a newer policy does not restart the retries")
+print("boot save harness: retries are 5 s, 30 s, 120 s, then stop until something changes")
+
 // 7. A restarted helper opens a new session at a lower generation. Its saved
 //    policy outranks the old session's, and an older session's is refused.
 try extensionAcceptsLive(snapshot([], generation: 0, epoch: 4))
@@ -188,6 +216,9 @@ mutate_and_expect_failure load-stale-boot-policy \
 mutate_and_expect_failure enable-keeps-retained-save \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'cancelPendingPersistence()\n        enableFilterRequested = true' 'enableFilterRequested = true'
+mutate_and_expect_failure encode-failure-keeps-older \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  $'cancelPendingPersistence()\n            recordPersistenceFailure("encode", error: error)' 'recordPersistenceFailure("encode", error: error)'
 mutate_and_expect_failure stop-drops-record \
   Sources/NetExt/FilterDataProvider.swift \
   'watermarkQueue.sync {}' ''

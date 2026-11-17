@@ -84,7 +84,6 @@ final class AppState: ObservableObject {
     /// rejection.
     @Published var authoritativeSnapshotEpoch: UInt64?
     @Published var filterPersistenceDegraded = false
-    @Published var filterPersistenceMessage: String?
     /// What the app is doing, or wants the user to do, about an extension that
     /// refused the helper's policy. Never a request to restart the Mac.
     @Published var filterRecoveryMessage: String?
@@ -405,13 +404,11 @@ final class AppState: ObservableObject {
 
     func recordFilterPersistenceFailure(_ message: String) {
         filterPersistenceDegraded = true
-        filterPersistenceMessage = message
         appendLog(level: "error", message: message)
     }
 
     func clearFilterPersistenceFailure() {
         filterPersistenceDegraded = false
-        filterPersistenceMessage = nil
     }
 
     /// Sets the mode the app actually enforces.

@@ -89,6 +89,28 @@ public enum SharedRuleBridge {
         }
     }
 
+    /// Spaced, bounded retries of a failed boot-policy save (#213). A newer
+    /// policy or a successful save resets it; after the last delay it gives up
+    /// until one of those happens, so nothing retries forever.
+    public struct RetrySchedule: Sendable {
+        public static let defaultDelays: [TimeInterval] = [5, 30, 120]
+        public let delays: [TimeInterval]
+        public private(set) var attempts = 0
+
+        public init(delays: [TimeInterval] = RetrySchedule.defaultDelays) {
+            self.delays = delays
+        }
+
+        /// The delay before the next retry, or nil when the retries are used up.
+        public mutating func nextDelay() -> TimeInterval? {
+            guard attempts < delays.count else { return nil }
+            defer { attempts += 1 }
+            return delays[attempts]
+        }
+
+        public mutating func reset() { attempts = 0 }
+    }
+
     /// The (session, generation) of the last live policy the extension
     /// accepted, kept by the extension in its own container.
     ///

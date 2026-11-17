@@ -163,7 +163,7 @@ private struct BannerInfo {
             : "The network filter needs attention"
         let base = persistenceDegraded
             ? (liveRulesReady
-                ? "The filter is using them now. After a restart it would allow everything until FreeSnitch sends them again."
+                ? "The filter is using them now, but after a restart it may not have them until FreeSnitch sends them again."
                 : "After a restart the filter may start without them. Send Rules Again tries once more.")
             : ""
         detail = [base, recoveryMessage]
