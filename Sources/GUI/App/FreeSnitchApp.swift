@@ -107,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         state.applyDockIconPolicy()
+        // Opened from the disk image or Downloads: offer to move into
+        // Applications first, because nothing else can work from there (#370).
+        if InstallLocation.offerMoveAtLaunch() { return }
         windowManager = WindowManager(state: state, systemExtension: systemExtension)
         menubar = MenubarController(state: state, systemExtension: systemExtension, windows: windowManager)
         menubar.install()
@@ -164,6 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+
+        // An old PureSnitch install must not keep filtering next to this one.
+        DispatchQueue.main.async { LegacyPureSnitch.offerRemovalAtLaunch() }
     }
 
     private func seedDemoAlert() {

@@ -771,6 +771,16 @@ commit_and_publish() {
     assets+=("$delta")
   done
 
+  # Checksums come from the files being uploaded, so nobody copies a hash by
+  # hand into the README or the site again (#370). Check a download with
+  # `shasum -a 256 -c SHA256SUMS.txt` in the folder it was saved to.
+  local sums="$BUILD_ROOT/SHA256SUMS.txt" sum_file
+  : >"$sums"
+  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
+    printf '%s  %s\n' "$(shasum -a 256 "$sum_file" | awk '{print $1}')" "$(basename "$sum_file")" >>"$sums"
+  done
+  assets+=("$sums")
+
   # Every enclosure the new appcast item advertises must be in the upload set.
   # A feed that points at a file we never attached is indistinguishable from a
   # tampered feed, so refuse to publish rather than ship one.

@@ -56,20 +56,18 @@ Neither mode changes tracked files, tags, remotes, or GitHub Releases.
 ## After a release
 
 `Scripts/release.sh` does not touch the website or the README. Both name the
-current version, its download link, and its SHA-256, so update them by hand
-once the GitHub Release is live:
+current version and its download link, so update them by hand once the GitHub
+Release is live:
 
 - `docs/index.html`: every `releases/download/vX.Y.Z/FreeSnitch-X.Y.Z.dmg`
   link (navigation, hero, install), the version line under the hero buttons,
-  the size on the install button, the SHA-256 under the install steps, and
-  `softwareVersion` and `downloadUrl` in the JSON-LD.
+  the size on the install button, and `softwareVersion` and `downloadUrl` in
+  the JSON-LD.
 - `README.md`: the Install section and the Status paragraph.
 
-Get the checksum from the published asset, not from the local build folder:
-
-```sh
-curl -sL https://github.com/isaaclins/freesnitch/releases/download/vVERSION/FreeSnitch-VERSION.dmg | shasum -a 256
-```
+Neither carries a checksum. The release script attaches `SHA256SUMS.txt`,
+made from the files it uploads, and GitHub shows each asset's SHA-256 on the
+release page.
 
 ## Prerequisites
 
@@ -115,8 +113,12 @@ archives.
 
 ## Migrating the pre-FreeSnitch installation
 
-The old and new content filters must not run together. Before installing a
-signed FreeSnitch firewall build, run:
+The old and new content filters must not run together. FreeSnitch checks for
+`/Applications/PureSnitch.app` and the old helper's LaunchDaemon every time it
+opens and offers to remove both (`Sources/GUI/App/LegacyPureSnitch.swift`):
+it stops the helper behind one password prompt, moves the app to the Trash so
+macOS removes its system extension, and keeps PureSnitch's user data. From a
+source checkout the same can be done by hand:
 
 ```sh
 Scripts/uninstall_puresnitch.sh
