@@ -84,7 +84,8 @@ final class AppState: ObservableObject {
     /// rejection.
     @Published var authoritativeSnapshotEpoch: UInt64?
     @Published var filterPersistenceDegraded = false
-    @Published var filterPersistenceMessage: String?
+    /// Why the current rules cannot be kept for the next start, if so (#320).
+    @Published var filterPersistenceUnsavable: String?
     /// What the app is doing, or wants the user to do, about an extension that
     /// refused the helper's policy. Never a request to restart the Mac.
     @Published var filterRecoveryMessage: String?
@@ -403,15 +404,17 @@ final class AppState: ObservableObject {
         if let message { appendLog(level: "info", message: message) }
     }
 
-    func recordFilterPersistenceFailure(_ message: String) {
+    /// `unsavable` is set when the current rules can never be kept for the
+    /// next start (over the boot policy's limit, #320), with the reason.
+    func recordFilterPersistenceFailure(_ message: String, unsavable: String? = nil, writeLog: Bool = true) {
         filterPersistenceDegraded = true
-        filterPersistenceMessage = message
-        appendLog(level: "error", message: message)
+        filterPersistenceUnsavable = unsavable
+        if writeLog { appendLog(level: "error", message: message) }
     }
 
     func clearFilterPersistenceFailure() {
         filterPersistenceDegraded = false
-        filterPersistenceMessage = nil
+        filterPersistenceUnsavable = nil
     }
 
     /// Sets the mode the app actually enforces.
