@@ -197,4 +197,15 @@ mutate_and_expect_failure remove-unserialized "$SEM" \
   $'        enableFilterRequested = false\n        filterPreferences.run { [weak self] done in' \
   $'        enableFilterRequested = false\n        do { let done = {}'
 
+mutate_and_expect_failure overtaken-enable-reports-active "$SEM" \
+  'if shouldEnable && !enableOvertaken {
+                                self.filterConfigurationActive = true' \
+  'if shouldEnable {
+                                self.filterConfigurationActive = true'
+mutate_and_expect_failure disable-not-counted "$SEM" \
+  $'        enableFilterRequested = false\n        filterTurnOffs &+= 1\n        // A save cycle' \
+  $'        enableFilterRequested = false\n        // A save cycle'
+mutate_and_expect_failure remove-not-counted "$SEM" \
+  $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        enableFilterRequested = false\n        filterPreferences.run' \
+  $'        cancelPendingPersistence()\n        enableFilterRequested = false\n        filterPreferences.run'
 printf 'filter off vs boot-policy save verification: PASS\n'
