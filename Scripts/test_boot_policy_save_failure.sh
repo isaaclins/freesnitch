@@ -275,8 +275,14 @@ expect(off.observed(configured: true, enabled: true, fromOutside: false) == .non
        "a save cycle that finds the filter on asks for a second save")
 //     A turn-off that finishes after a turn-on was asked for does not win.
 off.turnedOn()
-off.turnedOff(turnOnPending: true)
+expect(!off.turnedOff(turnOnPending: true),
+       "a late turn-off reports the firewall as not filtering while a turn-on is pending (#335)")
 expect(off.saveFailureShowsBanner, "a late turn-off overrode the turn-on asked for after it")
+//     #335: a turn-off or removal with nothing pending says the firewall is
+//     not filtering, whatever macOS answers about the extension afterwards.
+expect(off.turnedOff(turnOnPending: false),
+       "a finished turn-off or removal leaves the firewall shown as filtering")
+off.turnedOn()
 //     No configuration at all counts as off.
 expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
        "a removed filter configuration is not treated as off")
@@ -347,6 +353,23 @@ let enableLoadRetry = savePlan(enableLoadFails.afterLoad(enableLoadRetryAt, load
                                "the retry after a failed activation load did not save")
 expect(enableLoadRetry.pending?.data == policyB && !enableLoadRetry.enable,
        "the retry after a failed activation load saved the wrong snapshot or turned the filter on")
+//      #334: a rule change made while the activation load fails runs right
+//      after it and saves the rules, but the filter stays off: only turning it
+//      on again may enable it.
+var enableLoadRaced = Cycle()
+enableLoadRaced.requestEnable()
+enableLoadRaced.enqueue(policyA)
+let enableRacedAt = enableLoadRaced.begin()!
+enableLoadRaced.enqueue(policyB)
+expect(enableLoadRaced.afterLoad(enableRacedAt, loadFailed: true, configurationExists: true, hasSavedPolicy: true)
+       == .loadFailed(failActivation: true, next: .now),
+       "a rule change made during a failed activation load was not saved next")
+let racedRuleChange = savePlan(enableLoadRaced.afterLoad(enableLoadRaced.begin()!, loadFailed: false, configurationExists: true, hasSavedPolicy: true),
+                               "the rule change made during a failed activation load did not save")
+expect(racedRuleChange.pending?.data == policyB && !racedRuleChange.enable,
+       "a rule change made during a failed activation load turned the filter on")
+expect(!enableLoadRaced.afterSave(racedRuleChange, saveFailed: false).activated,
+       "a rule change made during a failed activation load reported the filter active")
 //      #345: rules over the limit, so the queued save is the removal of the
 //      older saved policy. A failed activation load keeps it, and the retry
 //      removes the older policy without turning the filter on.

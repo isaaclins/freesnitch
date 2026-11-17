@@ -148,21 +148,21 @@ do {
         expect(app.reported == expected, "\(name): reported \(app.reported), expected \(expected)")
         expect(mgr.storedEnabled == storedEnabled, "\(name): stored isEnabled \(mgr.storedEnabled)")
     }
-    let turnOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
+    let userTurnsOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
         app.turnOffs &+= 1   // disableFilter / removeFilterConfiguration
         app.enableRequested = false
         line.run { done in turnOff(mgr, done: done) }
     }
     run("nothing overtakes", between: { _, _, _ in }, expected: [.active], storedEnabled: true)
     run("save fails", saveFails: true, between: { _, _, _ in }, expected: [.failed], storedEnabled: true)
-    run("off while loading", between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off while loading", between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off while saving", between: { app, mgr, line in
         mgr.deliver("save load")
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
     }, expected: [.stayedOff], storedEnabled: false)
-    run("off, then the save fails", saveFails: true, between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off, then the save fails", saveFails: true, between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off then on again", between: { app, mgr, line in
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
         app.enableRequested = true // enableFilter: the next cycle reports
     }, expected: [.awaitReenable], storedEnabled: false)
     expect(FilterSaveCompletion.decide(enabling: false, turnOffsAtLoad: 0, turnOffsNow: 1,
@@ -264,4 +264,12 @@ mutate_and_expect_failure disable-not-counted "$SEM" \
 mutate_and_expect_failure remove-not-counted "$SEM" \
   $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        persistenceCycle.dropEnableRequest()\n        filterPreferences.run' \
   $'        cancelPendingPersistence()\n        persistenceCycle.dropEnableRequest()\n        filterPreferences.run'
+mutate_and_expect_failure removal-keeps-active-status "$SEM" \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
+mutate_and_expect_failure disable-keeps-active-status "$SEM" \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
+mutate_and_expect_failure not-filtering-keeps-status "$SEM" \
+  'if status != .unsupported { status = .idle }' ''
 printf 'filter off vs boot-policy save verification: PASS\n'
