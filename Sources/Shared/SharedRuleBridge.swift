@@ -49,6 +49,9 @@ public enum SharedRuleBridge {
 
         public var hasPending: Bool { pendingData != nil }
 
+        /// The payload the next flush would save, without taking it.
+        public var peekNewest: Data? { pendingData }
+
         @discardableResult
         public mutating func enqueue(_ data: Data) -> Int {
             generation += 1

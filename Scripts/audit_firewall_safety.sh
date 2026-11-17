@@ -417,6 +417,18 @@ printf '%s\n' "$request_body" | grep -Fq 'if filterConfigurationActive || enable
 if awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'unsavableLogged'; then
   fail "a save cycle with no filter configured forgets the over-limit error was logged, so the next edit logs it again"
 fi
+# A removal that gives up never suggests Send Rules Again, and one while the
+# filter isn't in use (no banner shown) leaves the activity log alone (#349).
+giveup_body="$(awk '/private func schedulePersistenceRetry\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$giveup_body" | grep -Fq 'let message = removal' \
+  || fail "a boot-policy removal that gives up logs the generic Send Rules Again error"
+printf '%s\n' "$giveup_body" | grep -Fq 'if removal && state?.filterPersistenceUnsavable == nil {' \
+  || fail "a boot-policy removal while the filter isn't in use writes an error to the activity log when it gives up"
+if grep -F 'self.schedulePersistenceRetry(' "$SYSTEM_EXTENSION_MANAGER" | grep -Fvq 'schedulePersistenceRetry(removal: removesBootSnapshot)'; then
+  fail "a boot-policy retry no longer says whether the failed save was a removal"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" "let removesBootSnapshot = self.persistenceQueue.peekNewest == SharedRuleBridge.bootSnapshotRemoval" \
+  "a failed load before a removal while the filter isn't in use raises a banner"
 require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil" \
   "a failed preferences load while the removal is queued swaps the over-limit banner for the Send Rules Again one"
 require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil" \
