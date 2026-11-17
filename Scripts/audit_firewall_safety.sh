@@ -384,6 +384,16 @@ require_text "$SAVE_CYCLE" "queue.requeueFailed(pending)" \
   "a failed boot-policy save is dropped instead of retried"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.carryOut(result.next, removal: removesBootSnapshot)" \
   "the GUI does not schedule the retry of a failed boot-policy save"
+# A failed save while turning the filter on puts the loaded state back on the
+# shared manager before the next preferences operation may start (#345).
+save_turn_block="$(awk '/mgr.saveToPreferences [{] saveError in/ && !n++ {a=1} a {print} a && /self.endPersistenceTurn[(][)]/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$save_turn_block" | grep -Fq 'if saveError != nil && shouldEnable {' \
+  || fail "a failed save while turning the filter on does not put the loaded filter state back before the next preferences operation"
+for restore in 'mgr.isEnabled = loadedEnabled' 'mgr.providerConfiguration = loadedConfiguration' \
+               'mgr.localizedDescription = loadedDescription'; do
+  printf '%s\n' "$save_turn_block" | grep -Fq "$restore" \
+    || fail "a failed save while turning the filter on leaves the enable in memory, where the retry could save it"
+done
 require_text "$FILTER" "watermark.supersedes(decoded)" \
   "the extension can load a saved boot policy older than the last live policy it enforced"
 require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
