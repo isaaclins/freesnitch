@@ -374,7 +374,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                         self.endPersistenceCycle()
                         if let saveError {
                             if self.persistenceCancellations == cancellationsAtLoad {
-                                self.recordPersistenceFailure("save", error: saveError)
+                                // A failed removal is still about rules that
+                                // can't be kept: keep that reason and banner.
+                                self.recordPersistenceFailure("save", error: saveError,
+                                                              unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil)
                             } else {
                                 // The filter was turned on, off or removed
                                 // meanwhile; this save no longer matters and
@@ -401,7 +404,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 let message = "Removed the saved rules for the next start. \(reason) "
                                     + "After a restart the per-process filter lets every connection through until FreeSnitch sends the current rules."
                                 self.state?.appendLog(level: "info", message: message)
-                                os_log("%{public}@", log: self.log, type: .error, message)
+                                os_log("%{public}@", log: self.log, type: .info, message)
                                 if shouldEnable || self.filterConfigurationActive {
                                     self.recordFilterDiagnostic(state: "degraded", detail: "The content filter is enabled, but no valid boot policy could be persisted. Future starts will fail open.")
                                 }

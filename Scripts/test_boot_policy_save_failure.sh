@@ -276,6 +276,12 @@ mutate_and_expect_failure over-limit-stops-activation \
 mutate_and_expect_failure removal-clears-unsavable-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'// can be kept is saved.\n                                self.persistenceRetry.reset()' $'// can be kept is saved.\n                                self.state?.clearFilterPersistenceFailure()'
+mutate_and_expect_failure failed-removal-drops-reason \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil' 'unsavable: nil'
+mutate_and_expect_failure banner-claims-rules-in-use \
+  Sources/GUI/Views/HelperBanner.swift \
+  'liveRulesReady ? "The filter is using them now." : nil' '"The filter is using them now."'
 mutate_and_expect_failure removal-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()' 'no longer applies (#311).'

@@ -165,8 +165,11 @@ private struct BannerInfo {
         tint = Color.orange
         if persistenceDegraded, let unsavableReason {
             title = "The current rules won't survive a restart"
+            // Only claim the rules are in use when the extension holds them
+            // (the filter may be off while rules still sync).
             detail = [unsavableReason,
-                      "The filter is using them now. After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again. Remove some rules to keep them across restarts.",
+                      liveRulesReady ? "The filter is using them now." : nil,
+                      "After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again. Remove some rules to keep them across restarts.",
                       recoveryMessage]
                 .compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: " ")

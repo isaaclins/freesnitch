@@ -406,6 +406,10 @@ removal_block="$(awk '/if removesBootSnapshot [{]/ && ++n == 2 {a=1} a {print} a
 if printf '%s\n' "$removal_block" | grep -Fq 'clearFilterPersistenceFailure()'; then
   fail "removing the saved policy clears the could-not-keep-for-restart banner"
 fi
+require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil" \
+  "a failed save of the boot-policy removal swaps the over-limit banner for the Send Rules Again one"
+require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
+  "the over-limit banner says the filter is using the rules when the extension does not hold them"
 printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
   || fail "removing the filter configuration leaves the could-not-save banner up"
 no_config_block="$(awk '/No filter is configured/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
