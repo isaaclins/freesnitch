@@ -94,6 +94,11 @@ public struct Rule: Identifiable, Codable, Hashable, Sendable {
 }
 
 public struct Connection: Identifiable, Codable, Hashable, Sendable {
+    /// The process name on the DNS proxy's alerts. The proxy cannot tell
+    /// which app sent a lookup, so a rule remembered from such an alert
+    /// carries this name and no app, and covers every app's lookups.
+    public static let dnsLookupProcessName = "dns"
+
     public enum Status: String, Codable, Sendable {
         case allowed
         case denied
@@ -126,6 +131,10 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     public var longitude: Double?
     public var firstSeen: Date
     public var lastSeen: Date
+    /// A name this address was recently seen under, for display when the
+    /// connection itself carries only the address (#168). Never a rule target:
+    /// rules are written from `remoteHost` and `remoteIP`.
+    public var resolvedName: String?
 
     public init(
         id: UUID = UUID(),

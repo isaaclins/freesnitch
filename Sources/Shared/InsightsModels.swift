@@ -238,13 +238,18 @@ public struct InsightsContact: Codable, Hashable, Sendable {
         let app = observation.processBundleId?.isEmpty == false
             ? observation.processBundleId!
             : observation.processPath
-        let destination = Self.destination(for: observation.remoteHost, ip: observation.remoteIP)
+        let destination = Self.destination(for: observation.remoteHost, ip: observation.remoteIP,
+                                           port: observation.remotePort)
         guard !app.isEmpty, !destination.isEmpty else { return nil }
         self.init(appIdentity: app, destination: destination)
     }
 
-    public static func destination(for host: String, ip: String) -> String {
-        PFHostValidator.kind(for: host) == .hostname ? host.lowercased() : ip
+    /// A lookup on port 53 carries the looked-up name, but the contact is
+    /// with the DNS server. The store keys it the same way, so Alert mode and
+    /// Insights agree on what an app has already reached (#167).
+    public static func destination(for host: String, ip: String, port: Int = 0) -> String {
+        guard port != 53 else { return ip }
+        return PFHostValidator.kind(for: host) == .hostname ? host.lowercased() : ip
     }
 }
 

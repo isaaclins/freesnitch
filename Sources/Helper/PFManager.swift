@@ -3,8 +3,8 @@ import Foundation
 final class PFManager: @unchecked Sendable {
     // Keep the established anchor name so a rename cannot strand active firewall rules.
     static let anchorName = "puresnitch"
-    private let anchorPath = "/etc/pf.anchors/puresnitch"
-    private let pfctl = "/sbin/pfctl"
+    private let anchorPath: String
+    private let pfctl: String
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.pf")
     private var loaded = false
 
@@ -18,33 +18,127 @@ final class PFManager: @unchecked Sendable {
     private var resolverAddresses: [String] = []
     private var lastRules: [Rule] = []
 
+    /// Serializes every write and load of the anchor, so the expiry timer can
+    /// never load an older rule set over a newer one.
+    private let applyLock = NSLock()
+    /// Fires when the next temporary rule runs out. Guarded by `applyLock`.
+    private var expiryTimer: DispatchSourceTimer?
+
     /// Invalid rules are omitted from the anchor, but their rejection is sent
     /// to the helper event stream so the GUI can show it to the user.
     var onWarning: ((String) -> Void)?
 
-    func install() throws {
+    /// The paths are parameters only so a harness can point them at a scratch
+    /// file and a stub; the helper always uses the defaults.
+    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl") {
+        self.anchorPath = anchorPath
+        self.pfctl = pfctl
+    }
+
+    /// Loads the anchor with `rules`, the policy in force right now. Loading
+    /// it empty left pf enforcing none of the user's rules until the next
+    /// rule change, and the next feed refresh then rendered whatever rules
+    /// were recorded before enforcement went off (issue #185).
+    ///
+    /// `rules` is read under `applyLock`, as in `applyRules`, so whichever
+    /// call takes the lock last renders the newest published policy.
+    func install(rules readRules: @autoclosure () -> [Rule]) throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        let rules = readRules()
+        stateLock.lock()
+        lastRules = rules
+        stateLock.unlock()
         try ensureMainPFConfReferencesAnchor()
         try run(pfctl, ["-E"]) // enable pf
         // Use the same fail-open load path as later rule/feed updates. If a
         // feed table is rejected, the user's anchor still gets loaded without
         // the feed rather than leaving enforcement in a half-applied state.
-        try writeAndLoad(rules: [])
+        try writeAndLoad(rules: rules)
         loaded = true
     }
 
     func uninstall() throws {
-        _ = try? run(pfctl, ["-a", PFManager.anchorName, "-F", "all"])
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        unloadLocked()
+    }
+
+    /// Run once when the helper starts, before it accepts any client. The
+    /// kernel keeps the anchor a previous helper loaded, and pf.conf loads the
+    /// anchor file at boot, but a new helper starts with enforcement off and
+    /// says so. Leaving those rules in force meant rule edits were only
+    /// recorded and pf kept enforcing what the user had since changed (issue
+    /// #189). Clearing them fails open: the app turns enforcement back on with
+    /// the current rules as soon as it reconnects. Throws when the kernel
+    /// anchor could not be flushed: no client is connected yet to hear a
+    /// warning, so the helper reports it in its status instead.
+    func clearLeftoverAnchor() throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        if let error = unloadLocked() { throw error }
+    }
+
+    /// Empties the anchor in the kernel and in the file pf.conf loads it from.
+    /// Flushing only the kernel left the last rules in the file, so any later
+    /// load of pf.conf (boot, a VPN, another tool) brought them back while
+    /// FreeSnitch reported enforcement off (issue #190). The file is emptied,
+    /// not deleted: pf.conf still names it, and a missing file would make that
+    /// load fail. Caller holds `applyLock`. Returns why the kernel anchor
+    /// could not be flushed, if it could not.
+    @discardableResult
+    private func unloadLocked() -> Error? {
+        expiryTimer?.cancel()
+        expiryTimer = nil
+        if FileManager.default.fileExists(atPath: anchorPath) {
+            do {
+                try PFManager.emptyAnchor.write(toFile: anchorPath, atomically: true, encoding: .utf8)
+            } catch {
+                PSLog.error(PSLog.pf, "could not empty \(anchorPath): \(error.localizedDescription)")
+                onWarning?("PF could not empty \(anchorPath), so a later load of /etc/pf.conf could bring "
+                    + "back FreeSnitch's last rules: \(error.localizedDescription)")
+            }
+        }
+        var flushError: Error?
+        do { try run(pfctl, ["-a", PFManager.anchorName, "-F", "all"]) } catch { flushError = error }
         _ = try? run(pfctl, ["-a", PFManager.anchorName, "-f", "/dev/null"])
         loaded = false
+        return flushError
     }
+
+    /// What the anchor file holds while enforcement is off: no rules at all.
+    static let emptyAnchor = "# FreeSnitch pf anchor - enforcement is off, so it holds no rules.\n"
 
     var isLoaded: Bool { loaded }
 
-    func applyRules(_ rules: [Rule]) throws {
+    /// The rules the anchor renders the next time it is written.
+    var currentRules: [Rule] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return lastRules
+    }
+
+    /// Records `rules` as the policy in force and, only while the anchor is
+    /// loaded, writes and loads it. Recording always happens, so a later
+    /// install or feed refresh can never render rules the user has since
+    /// changed (issue #185). The loaded check is made under `applyLock`, so
+    /// an update racing `uninstall` cannot load the anchor again after
+    /// enforcement went off. Returns whether the anchor was written.
+    ///
+    /// `rules` is read under `applyLock`. Read before it, a call holding an
+    /// older list could take the lock after a newer one and load a deny the
+    /// user had just deleted.
+    @discardableResult
+    func applyRules(_ readRules: @autoclosure () -> [Rule]) throws -> Bool {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        let rules = readRules()
         stateLock.lock()
         lastRules = rules
         stateLock.unlock()
+        guard loaded else { return false }
         try writeAndLoad(rules: rules)
+        return true
     }
 
     /// Publishes an address feed set into the anchor.
@@ -53,6 +147,8 @@ final class PFManager: @unchecked Sendable {
     /// same reason rules are: enforcement is off, so the feed is blocking
     /// nothing and must not say otherwise.
     func setIPBlocklist(_ set: IPBlocklistSet, resolverAddresses: [String] = []) throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
         stateLock.lock()
         ipBlocklist = set
         self.resolverAddresses = resolverAddresses
@@ -68,6 +164,7 @@ final class PFManager: @unchecked Sendable {
     /// firewall that drops the feed is strictly safer than one that drops the
     /// user's own rules.
     private func writeAndLoad(rules: [Rule]) throws {
+        scheduleExpiryRender(for: rules)
         try writeAnchorFile(rules: rules, includeIPBlocklist: true)
         do {
             try loadAnchor()
@@ -83,6 +180,58 @@ final class PFManager: @unchecked Sendable {
             PSLog.error(PSLog.pf, "pf anchor load failed with the IP blocklist table; retrying without it")
             try writeAnchorFile(rules: rules, includeIPBlocklist: false)
             try loadAnchor()
+        }
+    }
+
+    /// The matcher and the DNS proxy stop applying a temporary rule the moment
+    /// it expires, but pf only changes when the anchor is rendered again, so a
+    /// "deny for 1 hour" kept blocking until the next rule change (issue #180).
+    /// One timer for the earliest expiry re-renders the anchor then, and that
+    /// render schedules the next one. It runs on the wall clock, so a Mac that
+    /// slept through the expiry re-renders as soon as it wakes.
+    private func scheduleExpiryRender(for rules: [Rule], now: Date = Date()) {
+        scheduleRender(at: PFManager.nextExpiry(of: rules, after: now), now: now)
+    }
+
+    private func scheduleRender(at deadline: Date?, now: Date = Date()) {
+        expiryTimer?.cancel()
+        expiryTimer = nil
+        guard let deadline else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(wallDeadline: .now() + max(0, deadline.timeIntervalSince(now)), leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in self?.renderAfterExpiry() }
+        timer.resume()
+        expiryTimer = timer
+    }
+
+    /// The earliest moment a rule the anchor carries runs out. Rules pf never
+    /// carries, such as an app's temporary deny, need no render.
+    static func nextExpiry(of rules: [Rule], after now: Date) -> Date? {
+        rules
+            .filter { $0.enabled && !hasExpired($0, at: now) && reachesPF($0) }
+            .compactMap(\.expiresAt)
+            .min()
+    }
+
+    /// A failed reload is tried again after this long, so one pfctl hiccup
+    /// cannot leave an expired rule in pf until some unrelated change.
+    static let expiryRetryInterval: TimeInterval = 30
+
+    private func renderAfterExpiry() {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        guard loaded else { return }
+        stateLock.lock()
+        let rules = lastRules
+        stateLock.unlock()
+        do {
+            try writeAndLoad(rules: rules)
+        } catch {
+            onWarning?("PF could not drop an expired temporary rule from the anchor, trying again in "
+                + "\(Int(PFManager.expiryRetryInterval)) seconds: \(error.localizedDescription)")
+            let now = Date()
+            let retry = now.addingTimeInterval(PFManager.expiryRetryInterval)
+            scheduleRender(at: min(retry, PFManager.nextExpiry(of: rules, after: now) ?? retry), now: now)
         }
     }
 
@@ -112,6 +261,7 @@ final class PFManager: @unchecked Sendable {
         rules: [Rule],
         ipBlocklist: IPBlocklistSet = .empty,
         resolverAddresses: [String] = [],
+        now: Date = Date(),
         onRejected: ((Rule, String) -> Void)? = nil
     ) -> String {
         var lines: [String] = []
@@ -119,11 +269,16 @@ final class PFManager: @unchecked Sendable {
         lines.append("# Hostname rules are intentionally not emitted to pf.")
         lines.append("# The Network Extension filter evaluates them when active, avoiding pf's one-time DNS resolution.")
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
+        lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
+        lines.append("# so an app's address or port deny would block every app on the Mac.")
+        lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
+        lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
-        let denyRules = rules.filter { $0.action == .deny && $0.enabled }
-        let allowRules = rules.filter { $0.action == .allow && $0.enabled }
+        let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }
+        let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }
+        let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
 
         for rule in denyRules {
             if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
@@ -139,6 +294,34 @@ final class PFManager: @unchecked Sendable {
         lines.append(contentsOf: ipBlocklistLines(ipBlocklist, resolverAddresses: resolverAddresses))
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// pf matches packets, not processes, so a block line rendered from an
+    /// app's deny rule blocked that destination for every app (issue #155).
+    /// Those rules belong to the Network Extension, which sees the process.
+    /// An app's allow rule is still rendered: dropping it would let an
+    /// address feed block what the user allowed, and a pass line can only
+    /// block less. The test is the matcher's own, so pf and the extension
+    /// agree on which rules apply to every app: a bundle id or path that is
+    /// not empty. A name alone identifies nothing (#157).
+    static func namesAnApp(_ rule: Rule) -> Bool {
+        !(rule.processBundleId ?? "").isEmpty || !(rule.processPath ?? "").isEmpty
+    }
+
+    /// Which rules the anchor renders at all: every allow, and the denies that
+    /// do not name an app (issue #155).
+    static func reachesPF(_ rule: Rule) -> Bool {
+        switch rule.action {
+        case .allow: return true
+        case .deny: return !namesAnApp(rule)
+        case .ask: return false
+        }
+    }
+
+    /// The matcher's own test: a rule still applies at the instant it expires.
+    static func hasExpired(_ rule: Rule, at now: Date) -> Bool {
+        guard let expiresAt = rule.expiresAt else { return false }
+        return expiresAt < now
     }
 
     /// The address feed section (issue #51).
@@ -225,6 +408,11 @@ final class PFManager: @unchecked Sendable {
                 }
                 if port == 67 || port == 68 {
                     return reject("blocking destination port \(port) could disable DHCP")
+                }
+                // DHCPv6, which the address feed section already lets through
+                // (issue #186).
+                if port == 546 || port == 547 {
+                    return reject("blocking destination port \(port) could disable DHCPv6")
                 }
             }
         }

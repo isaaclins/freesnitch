@@ -172,6 +172,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let profileQueue = DispatchQueue(label: "io.isaaclins.freesnitch.profiles", qos: .userInitiated)
     private let dns = DNSProxy()
     private let netmon = NetMonitor()
+    private let recentNames = RecentHostNames()
     private let blocklists: BlocklistManager
     private let listener: NSXPCListener
     private let insightsMaintenanceQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-maintenance", qos: .utility)
@@ -220,7 +221,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         // generation durable, so the policy state read below already carries
         // both halves of the ordering the extension compares.
         let session = self.store.beginPolicySession()
-        let persistedPolicy = store.policyState()
+        // The active profile's policy, as every later publication uses: the
+        // raw store state carries every profile's rules (issue #184).
+        let persistedPolicy = store.activePolicyState()
         self.mode = persistedPolicy.mode
         self.policyGeneration = persistedPolicy.generation
         self.blocklists = BlocklistManager(store: store)
@@ -263,6 +266,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         dns.onResolve = { [weak self] domain, ips in
             let observedAt = Date()
+            for ip in ips { self?.recentNames.note(name: domain, for: ip, at: observedAt) }
             let mappings = ips.map {
                 DNSMapping(domain: domain, ip: $0, observedAt: observedAt,
                            expiresAt: observedAt.addingTimeInterval(5 * 60))
@@ -316,8 +320,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             for c in conns {
                 try? self.store.recordConnection(c)
             }
+            let named = self.recentNames.annotate(conns)
             self.broadcast { c in
-                if let data = try? FreeSnitchWireCodec.encode(conns) {
+                if let data = try? FreeSnitchWireCodec.encode(named) {
                     c.notifyConnection(connectionJSON: data)
                 }
             }
@@ -349,6 +354,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func start() {
+        // Before any client can turn enforcement on (issue #189).
+        do { try pf.clearLeftoverAnchor() } catch { recordPFError(error) }
         listener.resume()
         netmon.start()
         startInsightsMaintenance()
@@ -366,6 +373,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             let state = store.activePolicyState()
             adoptLocked(state)
             dns.applyPolicy(mode: state.mode, rules: state.rules)
+        }
+        // pf follows the switch too, or it kept enforcing the previous
+        // profile's rules until some unrelated rule change (issue #184).
+        do { try applyRulesIfEnforcing() } catch {
+            PSLog.error(PSLog.pf,
+                        "the profile switch could not be applied to the pf anchor: \(error.localizedDescription)")
         }
         broadcast { client in
             client.notifyLog(level: "info", message: AppConstants.profilePolicyChangedLogMessage)
@@ -534,7 +547,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                     "DNS query name '\(domain)' is not a connectable PF destination: \(PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
                 )
             }
-            let stub = Connection(pid: 0, processName: "dns", processPath: "", remoteHost: ruleHost, status: .pending)
+            let stub = Connection(pid: 0, processName: Connection.dnsLookupProcessName, processPath: "", remoteHost: ruleHost, status: .pending)
             // An unencodable alert is the same situation as an unreachable
             // client: zero deliveries, so the coordinator fails open.
             guard let data = try? FreeSnitchWireCodec.encode(stub) else { return 0 }
@@ -622,7 +635,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     private func authoritativePolicyState() -> RuleStore.PolicyState {
         policyQueue.sync {
-            let state = store.policyState()
+            let state = store.activePolicyState()
             adoptLocked(state)
             return state
         }
@@ -664,9 +677,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     /// The database commit, generation advance, and runtime policy assignment
     /// are one ordered owner. PF work happens only after this returns.
+    ///
+    /// What is published is the active profile's policy, the same list and
+    /// order the extension's snapshot carries. Publishing the store's raw
+    /// state made pf and the DNS proxy enforce every profile's rules
+    /// (issue #184).
     private func mutatePolicy(_ change: (inout RuleStore.PolicyDraft) throws -> Void) throws -> SharedRuleBridge.Snapshot {
         try policyQueue.sync {
-            let state = try store.mutatePolicy(change)
+            let state = try store.mutateActivePolicy(change)
             adoptLocked(state)
             // Mode and rules belong to the same committed generation, so they
             // are published together. Assigning them one after the other left a
@@ -719,7 +737,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func setMode(rawValue: String, reply: @escaping (Bool, String?) -> Void) {
         guard let m = AppMode(rawValue: rawValue) else { reply(false, "invalid mode"); return }
         do {
-            _ = try mutatePolicy { draft in draft.mode = m }
+            // What is enforced is the active profile's mode, so a mode change
+            // lands there as well, in the same transaction, as the app already
+            // does (#128). Without it a mode set from the command line would
+            // change nothing.
+            _ = try mutatePolicy { draft in
+                draft.mode = m
+                draft.activeProfileMode = m
+            }
             reply(true, nil)
         } catch {
             reply(false, "could not persist mode: \(error)")
@@ -730,8 +755,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     // for a good error message; the helper validates because a malformed
     // address must never reach the store, whatever the caller did.
     private func rejectionReason(for rule: Rule) -> String? {
-        guard let reason = RuleAddressValidator.rejectionReason(forRemoteIP: rule.remoteIP) else { return nil }
-        return "rule \(rule.id.uuidString) has an invalid remote IP `\(rule.remoteIP ?? "")`: \(reason). \(RuleAddressValidator.remediation)"
+        if let reason = RuleAddressValidator.rejectionReason(forRemoteIP: rule.remoteIP) {
+            return "rule \(rule.id.uuidString) has an invalid remote IP `\(rule.remoteIP ?? "")`: \(reason). \(RuleAddressValidator.remediation)"
+        }
+        if let reason = rule.nameOnlyRejectionReason {
+            return "Refused: \(reason)."
+        }
+        return nil
     }
 
     private func mergedRules(_ incoming: [Rule], into existing: inout [Rule]) {
@@ -867,13 +897,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         reply(true, nil)
     }
 
-    /// pf only has an anchor loaded while enforcement is on; pushing rules at it
-    /// otherwise is both pointless and a source of phantom errors.
+    /// Hands pf the policy in force. pf always records it but only writes the
+    /// anchor while enforcement is on, deciding that under its own lock, so
+    /// turning enforcement on later loads exactly these rules and nothing
+    /// stale can come back (issue #185).
     private func applyRulesIfEnforcing() throws {
-        guard pf.isLoaded else { return }
         do {
-            try pf.applyRules(dns.rules)
-            clearPFError()
+            if try pf.applyRules(dns.rules) { clearPFError() }
         } catch {
             recordPFError(error)
             throw error
@@ -886,7 +916,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         if enabled {
             do {
                 do {
-                    try pf.install()
+                    try pf.install(rules: dns.rules)
                     clearPFError()
                 } catch {
                     recordPFError(error)
@@ -917,7 +947,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func currentConnections(reply: @escaping (Data) -> Void) {
-        let conns = store.recentConnections(limit: 500)
+        let conns = recentNames.annotate(store.recentConnections(limit: 500))
         reply((try? FreeSnitchWireCodec.encode(conns)) ?? Data())
     }
 
@@ -1001,7 +1031,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func installPF(reply: @escaping (Bool, String?) -> Void) {
         PSLog.error(PSLog.helper, "AUDIT: pf install requested")
         do {
-            try pf.install()
+            try pf.install(rules: dns.rules)
             clearPFError()
             reply(true, nil)
         } catch {
@@ -1052,6 +1082,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         do {
             let batch = try FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: observationBatch)
             try batch.validate(payloadBytes: observationBatch.count)
+            recentNames.note(batch.observations)
             enqueueObservations(batch.observations, reply: reply)
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")

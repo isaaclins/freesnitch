@@ -41,14 +41,15 @@ struct InsightsHarness {
     }
 
     static func observation(app: String, bundle: String?, path: String, host: String, ip: String,
-                            at date: Date, bytesIn: Int64 = 100, bytesOut: Int64 = 50) -> FlowObservation {
+                            at date: Date, port: Int = 443,
+                            bytesIn: Int64 = 100, bytesOut: Int64 = 50) -> FlowObservation {
         let connection = Connection(pid: 501,
                                     processName: app,
                                     processPath: path,
                                     processBundleId: bundle,
                                     remoteHost: host,
                                     remoteIP: ip,
-                                    remotePort: 443,
+                                    remotePort: port,
                                     direction: .outgoing,
                                     protocolName: "tcp",
                                     bytesIn: bytesIn,
@@ -269,6 +270,39 @@ struct InsightsHarness {
         check(overview().rollupRowCount > 0, "rollups are still kept one day short of a year")
         try! store.prune(now: now.addingTimeInterval(366 * day))
         equal(overview().rollupRowCount, 0, "rollups are pruned past one year")
+
+        // MARK: lookups through a resolver (#167)
+        // A port-53 flow names what was looked up and carries the resolver's
+        // address. It is a contact with the resolver, never with the name, and
+        // a name shows the address it was last reached at, not a text maximum.
+        let resolverIP = "46.243.231.30"
+        let mailPath = "/System/Applications/Mail.app"
+        try! store.record([
+            observation(app: "Mail", bundle: "com.apple.mail", path: mailPath,
+                        host: "github.com", ip: "20.26.156.215", at: now.addingTimeInterval(-300)),
+            observation(app: "Mail", bundle: "com.apple.mail", path: mailPath,
+                        host: "github.com", ip: "140.82.121.4", at: now.addingTimeInterval(-60)),
+            observation(app: "Mail", bundle: "com.apple.mail", path: mailPath,
+                        host: "github.com", ip: resolverIP, at: now.addingTimeInterval(-30), port: 53),
+            observation(app: "Mail", bundle: "com.apple.mail", path: mailPath,
+                        host: "formulae.brew.sh", ip: resolverIP, at: now.addingTimeInterval(-20), port: 53)
+        ])
+        let mail = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.apple.mail",
+                                                       since: now.addingTimeInterval(-day), limit: 50))
+        let github = mail.destinations.first { $0.destinationKey == "github.com" }
+        equal(github?.connectionCount, 2, "lookups of a name are not counted as contacts with it")
+        equal(github?.remoteIP, "140.82.121.4", "a name shows the address it was most recently reached at")
+        check(!mail.destinations.contains { $0.destinationKey == "formulae.brew.sh" },
+              "a name that was only looked up is not listed as a destination")
+        let resolver = mail.destinations.first { $0.destinationKey == resolverIP }
+        equal(resolver?.connectionCount, 2, "the lookups are contacts with the resolver")
+        let mailProposals = try! store.report(for: InsightsQuery(kind: .proposals, since: now.addingTimeInterval(-day), limit: 50))
+        check(!mailProposals.proposals.contains { $0.remoteIP == resolverIP || $0.domain == "formulae.brew.sh" },
+              "no block is proposed against the DNS server or a name that was only looked up")
+        let longProposals = try! store.report(for: InsightsQuery(kind: .proposals, since: now.addingTimeInterval(-30 * day), limit: 50))
+        check(longProposals.source == .dailyRollups, "a 30 day range is answered from the daily rollups")
+        check(!longProposals.proposals.contains { $0.remoteIP == resolverIP || $0.domain == "formulae.brew.sh" || $0.domain == "github.com" && $0.connectionCount > 2 },
+              "the daily rollups carry no lookups, so long ranges propose nothing against the DNS server either")
 
         // MARK: purge, including the write-ahead log
         try! store.record([observation(app: "Beeper", bundle: "com.beeper.app", path: "/Applications/Beeper.app",

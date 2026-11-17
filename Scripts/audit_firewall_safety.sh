@@ -34,6 +34,7 @@ RULE_MATCHER="$ROOT/Sources/Shared/RuleMatcher.swift"
 CLI_PARSER="$ROOT/Sources/CLI/CLIParser.swift"
 POLICY_EPOCH="$ROOT/Sources/Shared/PolicyEpoch.swift"
 SNAPSHOT_RECOVERY="$ROOT/Sources/Shared/SnapshotRecovery.swift"
+PF_MANAGER="$ROOT/Sources/Helper/PFManager.swift"
 
 fail() {
   printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
@@ -75,6 +76,7 @@ require_text() {
 [[ -f "$DNS_PROXY" ]] || fail "missing $DNS_PROXY"
 [[ -f "$POLICY_EPOCH" ]] || fail "missing $POLICY_EPOCH"
 [[ -f "$SNAPSHOT_RECOVERY" ]] || fail "missing $SNAPSHOT_RECOVERY"
+[[ -f "$PF_MANAGER" ]] || fail "missing $PF_MANAGER"
 
 # A CIDR prefix outside 0...32 used to produce mask 0 through Swift's
 # non-trapping smart shift, and mask 0 matches every IPv4 address. The matcher
@@ -619,7 +621,7 @@ text_within_block() {
 # Persisted helper settings must be restored together. Restoring the mode but
 # not the DoH upstream silently changes the user's resolver after every helper
 # restart.
-if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'store.policyState()'; then
+if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'store.activePolicyState()'; then
   fail "the helper no longer restores its persisted mode and policy generation"
 fi
 if ! text_within_block "$HELPER" 'init[(]listener: NSXPCListener[)]' 'dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url"))'; then
@@ -840,9 +842,9 @@ require_text "$HELPER_PROTOCOL" "@objc optional func getAuthoritativeSnapshot(re
   "the helper protocol has no backward-compatible authoritative snapshot getter"
 require_text "$HELPER" "func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void)" \
   "the helper does not vend an authoritative encoded policy snapshot"
-require_text "$HELPER" "store.policyState()" \
+require_text "$HELPER" "store.activePolicyState()" \
   "the helper snapshot path does not read persisted mode and rules together"
-require_text "$HELPER" "store.mutatePolicy" \
+require_text "$HELPER" "store.mutateActivePolicy" \
   "helper policy mutations do not use the serialized RuleStore transaction"
 require_text "$RULE_STORE" "BEGIN IMMEDIATE" \
   "RuleStore policy mutations are not transactionally serialized"
@@ -926,12 +928,35 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q '\\\('; then
 fi
 # Flushing the shared anchor is required; deleting it or disabling pf is not,
 # because /etc/pf.conf still references it and the user's firewall would be
-# stranded.
-if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|anchors/puresnitch'; then
+# stranded. Emptying the anchor file is required too: pf.conf loads it at boot,
+# so rules left in it came back after FreeSnitch was gone (issue #192). The one
+# mention of the file allowed is that write of a comment-only anchor; it is
+# removed before the check, so any other use of the path still fails.
+EMPTY_ANCHOR_WRITE="[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; "
+privileged_uninstall_code="$(rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL")"
+if printf '%s\n' "${privileged_uninstall_code//"$EMPTY_ANCHOR_WRITE"/}" | rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|pf\.anchors|/private/etc/pf'; then
   fail "the privileged uninstall disables pf globally or removes the shared anchor file"
+fi
+# Every pfctl call stays inside FreeSnitch's own anchor; a bare `pfctl -F all`
+# would flush every rule on the Mac.
+if printf '%s\n' "$privileged_uninstall_code" | rg -o 'pfctl[^;"]*' | rg -qv '^pfctl -a puresnitch '; then
+  fail "the privileged uninstall runs pfctl outside the puresnitch anchor"
 fi
 require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
   "the privileged uninstall no longer flushes the FreeSnitch anchor"
+# Both scripts (keep or remove the database) must start with that write, so
+# it runs before the flush and before anything is removed.
+[[ "$(rg -F -c "do shell script \"$EMPTY_ANCHOR_WRITE" "$PRIVILEGED_UNINSTALL" || true)" == 2 ]] \
+  || fail "the privileged uninstall leaves the last rules in the anchor file pf.conf loads at boot"
+UNINSTALL_SCRIPT="$ROOT/Scripts/uninstall_freesnitch.sh"
+uninstall_flush="$(awk '/^flush_pf_anchor\(\) [{]/,/^}/' "$UNINSTALL_SCRIPT")"
+printf '%s\n' "$uninstall_flush" | awk '/empty_pf_anchor_file/ { seen = 1 } /-F all/ { ok = seen; exit } END { exit !ok }' \
+  || fail "the uninstall script flushes the anchor without first emptying the file pf.conf loads at boot"
+uninstall_empty="$(awk '/^empty_pf_anchor_file\(\) [{]/,/^}/' "$UNINSTALL_SCRIPT")"
+printf '%s\n' "$uninstall_empty" | grep -Fq 'run_privileged /usr/bin/tee "$PF_ANCHOR"' \
+  || fail "the uninstall script no longer empties the anchor file"
+printf '%s\n' "$uninstall_empty" | grep -Eq '\brm\b|pfctl' \
+  && fail "emptying the anchor file deletes it or touches pf"
 # The app bundle must go to the Trash through Finder, never be deleted.
 # Moving an app that hosts a system extension to the Trash is what makes macOS
 # remove the extension; deleting the bundle directly takes the app away and
@@ -1177,4 +1202,118 @@ absence_action_line="$(grep -nF 'action { ok, message in' "$BUNDLE_WATCHER" | he
 [[ -n "$absence_evidence_line" && -n "$absence_action_line" && "$absence_evidence_line" -lt "$absence_action_line" ]] \
   || fail "the bundle-absence stand-down acts before it logs its evidence"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, and a bundle-absence stand-down that can neither unregister nor delete are present.\n'
+# The matcher never reads a rule's name, so an enabled rule that names its app
+# only by name matches every app (#157). Every helper ingest path and the
+# shared import reader must refuse one.
+helper_reject_body="$(swift_function_body "$HELPER" 'private func rejectionReason(for rule: Rule)')"
+printf '%s\n' "$helper_reject_body" | grep -Fq 'rule.nameOnlyRejectionReason' \
+  || fail "the helper accepts an enabled rule that names its app only by name, which matches every app"
+for ingest in 'func addRule(ruleJSON' 'func reloadRules(rulesJSON' 'func replaceRules(rulesJSON'; do
+  swift_function_body "$HELPER" "$ingest" | grep -Fq 'rejectionReason(for:' \
+    || fail "the helper's $ingest path skips rule content validation"
+done
+swift_function_body "$ROOT/Sources/Shared/RuleExportFormat.swift" 'public static func validate(_ rules: [Rule])' \
+  | grep -Fq 'rule.nameOnlyRejectionReason' \
+  || fail "rule import accepts an enabled rule that names its app only by name"
+# A rule remembered from a DNS alert carries the proxy's name and no app, and
+# means every app. Refusing it would make "remember" on a DNS alert store
+# nothing, so the exception must stay, keyed to the name the proxy uses.
+swift_function_body "$RULE_MATCHER" 'public var namesAppOnlyByName: Bool' \
+  | grep -Fq 'Connection.dnsLookupProcessName' \
+  || fail "a rule remembered from a DNS alert counts as name-only and would be refused"
+require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
+  "the DNS proxy's alerts no longer use the name the name-only check exempts"
+
+# pf matches packets, not processes. An app's deny rule used to be rendered
+# from its address or port alone, so "Discord, deny, <address>" blocked that
+# address for every app (issue #155). Deny rules that name an app must stay
+# out of the anchor, and no other loop may render the rule set. Allow rules
+# stay in, so an address feed never blocks what the user allowed.
+anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
+[[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
+printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }' \
+  || fail "the pf anchor renders disabled or expired rules, so a temporary deny keeps blocking after it ran out"
+printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }' \
+  || fail "the pf anchor no longer filters deny rules through reachesPF"
+printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }' \
+  || fail "the pf anchor no longer filters allow rules through reachesPF"
+reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .deny: return !namesAnApp(rule)' \
+  || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .allow: return true' \
+  || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
+if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
+  fail "the pf anchor renders the unfiltered rule set somewhere"
+fi
+# pf only changes when the anchor is rendered, so every render must schedule
+# the next one for the earliest expiry, or an expired temporary deny keeps
+# blocking until some unrelated rule change (issue #180).
+write_body="$(swift_function_body "$PF_MANAGER" 'private func writeAndLoad(')"
+printf '%s\n' "$write_body" | grep -Fq 'scheduleExpiryRender(for: rules)' \
+  || fail "writing the pf anchor no longer schedules a render for the next rule expiry"
+expired_body="$(swift_function_body "$PF_MANAGER" 'static func hasExpired(')"
+printf '%s\n' "$expired_body" | grep -Fq 'expiresAt < now' \
+  || fail "pf decides expiry differently from the matcher, which drops a rule only once expiresAt < now"
+names_body="$(swift_function_body "$PF_MANAGER" 'static func namesAnApp(')"
+for field in processBundleId processPath; do
+  printf '%s\n' "$names_body" | grep -Fq "rule.$field" \
+    || fail "namesAnApp ignores $field, so a deny naming an app that way would reach pf"
+done
+printf '%s\n' "$names_body" | grep -Fq 'trimming' \
+  && fail "namesAnApp trims whitespace, which the matcher does not, so pf and the extension would disagree"
+
+# pf, the DNS proxy and the extension enforce one policy: the active profile's
+# mode with the Always rules, then that profile's rules. The store's raw state
+# carries every profile's rules, and publishing it made pf and the DNS proxy
+# enforce profiles that were not active (issue #184).
+for raw in 'store.policyState()' 'store.mutatePolicy('; do
+  grep -Fq "$raw" "$HELPER" \
+    && fail "the helper reads $raw, which carries every profile's rules, not the active profile's"
+done
+republish_body="$(swift_function_body "$HELPER" 'private func republishActivePolicy(')"
+printf '%s\n' "$republish_body" | grep -Fq 'applyRulesIfEnforcing()' \
+  || fail "a profile switch no longer reaches pf, which keeps enforcing the previous profile's rules"
+# Turning enforcement on loads the rules in force, and pf records every rule
+# change even while enforcement is off, so nothing stale can come back on the
+# next feed refresh (issue #185).
+install_body="$(swift_function_body "$PF_MANAGER" 'func install(')"
+printf '%s\n' "$install_body" | grep -Fq 'writeAndLoad(rules: rules)' \
+  || fail "loading the pf anchor no longer renders the rules in force"
+printf '%s\n' "$install_body" | grep -Fq 'writeAndLoad(rules: [])' \
+  && fail "loading the pf anchor renders no user rules"
+apply_body="$(swift_function_body "$PF_MANAGER" 'func applyRules(')"
+printf '%s\n' "$apply_body" | grep -Fq 'lastRules = rules' \
+  || fail "pf no longer records every rule change, so a feed refresh could render stale rules"
+for body_name in install_body apply_body; do
+  printf '%s\n' "${!body_name}" | grep -Fq 'let rules = readRules()' \
+    || fail "pf reads the rules to load before taking its lock, so an older list can win over a newer one"
+done
+printf '%s\n' "$apply_body" | grep -Fq 'guard loaded else { return false }' \
+  || fail "pf no longer decides under its own lock whether the anchor is loaded"
+grep -Eq 'pf\.install\(\)' "$HELPER" \
+  && fail "the helper loads the pf anchor without the rules in force"
+gate_body="$(swift_function_body "$HELPER" 'private func applyRulesIfEnforcing(')"
+printf '%s\n' "$gate_body" | grep -Fq 'pf.isLoaded' \
+  && fail "the helper skips recording rules in pf while enforcement is off"
+
+# A new helper starts with enforcement off, so it clears whatever anchor the
+# previous helper or pf.conf left in the kernel before any client can reach it
+# (issue #189). Turning enforcement off empties the anchor file as well as the
+# kernel anchor, so a later load of /etc/pf.conf cannot bring the last rules
+# back (issue #190). Scripts/test_pf_leftover_anchor.sh exercises both.
+start_body="$(swift_function_body "$HELPER" '    func start() {')"
+printf '%s\n' "$start_body" | awk '/pf\.clearLeftoverAnchor\(\)/ { seen = 1 } /listener\.resume\(\)/ { resumed = 1; ok = seen; exit } END { exit !(resumed && ok) }' \
+  || fail "the helper accepts clients before clearing a pf anchor a previous helper left loaded"
+for entry in 'func uninstall(' 'func clearLeftoverAnchor('; do
+  swift_function_body "$PF_MANAGER" "$entry" | grep -Fq 'unloadLocked()' \
+    || fail "pf's $entry no longer empties both the kernel anchor and the anchor file"
+done
+unload_body="$(swift_function_body "$PF_MANAGER" 'private func unloadLocked(')"
+printf '%s\n' "$unload_body" | grep -Fq 'PFManager.emptyAnchor.write(toFile: anchorPath' \
+  || fail "turning enforcement off leaves the last rules in the anchor file pf.conf loads at boot"
+printf '%s\n' "$unload_body" | grep -Fq -- '"-F", "all"' \
+  || fail "turning enforcement off no longer flushes the kernel anchor"
+printf '%s\n' "$unload_body" | grep -Eq 'removeItem|"-d"' \
+  && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
+
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'

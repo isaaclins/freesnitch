@@ -11,6 +11,7 @@
 #   3. Loopback, the configured resolvers, DHCP and the app's own traffic are
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
+#      Deny rules that name an app are never written to pf (issue #155).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -213,6 +214,101 @@ struct IPBlocklistHarness {
         let plain = pf.renderAnchor(rules: [])
         checks.expect(!plain.contains("freesnitch_ipblock"),
                       "an anchor with no feed loaded must not mention the feed table at all")
+
+        // Deny rules that name an app never reach pf, which cannot tell
+        // processes apart (issue #155). Allow rules still do, so a feed can
+        // never block what the user allowed for an app. Which rules name an
+        // app is decided exactly as the matcher decides it.
+        let appScoped = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.hnc.Discord", remoteIP: "162.159.128.233", action: .deny, scope: .ip),
+            Rule(processPath: "/Applications/Firefox.app/", remotePort: 443, action: .deny, scope: .port),
+            Rule(processPath: "/usr/bin/curl", remoteIP: "198.51.100.21", action: .allow, scope: .ip),
+            Rule(processName: "Discord", remoteIP: "198.51.100.20", action: .deny, scope: .ip),
+            Rule(processBundleId: "  ", remoteIP: "198.51.100.30", action: .deny, scope: .ip),
+            Rule(processBundleId: "", processPath: "", remoteIP: "198.51.100.31", action: .deny, scope: .ip),
+            Rule(remotePort: 8443, action: .deny, scope: .port)
+        ], ipBlocklist: hostile, resolverAddresses: resolvers)
+        for leaked in ["162.159.128.233", "port 443", "198.51.100.30"] {
+            checks.expect(!appScoped.contains(leaked),
+                          "a deny rule that names an app must not be written to pf, but the anchor carries \(leaked)")
+        }
+        checks.expect(appScoped.contains("pass out quick proto { tcp udp } to 198.51.100.21"),
+                      "an app's allow rule must still reach pf, so the feed cannot block what the user allowed")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.20"),
+                      "a name alone identifies no app for the matcher, so pf must treat the rule as every app's too")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } to 198.51.100.31"),
+                      "empty app fields are no app, as in the matcher")
+        checks.expect(appScoped.contains("block out quick proto { tcp udp } port 8443"),
+                      "a rule with no app must still be written to pf")
+        let allowIndex = appScoped.range(of: "to 198.51.100.21")?.lowerBound
+        let feedIndex = appScoped.range(of: "to <freesnitch_ipblock>")?.lowerBound
+        checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
+                      "the user's allow must come before the feed's block")
+
+        // A user's deny can never take DHCP or DHCPv6 away, whatever the
+        // direction (issue #186). The refusal is reported, not silent.
+        var refusedPorts: [String] = []
+        let infrastructure = pf.renderAnchor(rules: [
+            Rule(remotePort: 67, action: .deny, scope: .port),
+            Rule(remotePort: 68, direction: .incoming, action: .deny, scope: .port),
+            Rule(remotePort: 546, action: .deny, scope: .port),
+            Rule(remotePort: 546, direction: .incoming, action: .deny, scope: .port),
+            Rule(remoteIP: "203.0.113.40", remotePort: 547, direction: .outgoing, action: .deny, scope: .ip),
+            Rule(remotePort: 547, action: .allow, scope: .port),
+            Rule(remotePort: 548, action: .deny, scope: .port)
+        ]) { _, reason in refusedPorts.append(reason) }
+        for port in [67, 68, 546] {
+            checks.expect(!infrastructure.contains("block out quick proto { tcp udp } port \(port)")
+                            && !infrastructure.contains("block in quick proto { tcp udp } port \(port)")
+                            && !infrastructure.contains("block quick proto { tcp udp } port \(port)"),
+                          "a deny on port \(port) must never be written to pf")
+        }
+        checks.expect(!infrastructure.contains("203.0.113.40"),
+                      "a deny on port 547 must never be written to pf, even with an address")
+        checks.expect(infrastructure.contains("pass out quick proto { tcp udp } port 547"),
+                      "an allow on a DHCPv6 port must still be written, since a pass can only block less")
+        checks.expect(infrastructure.contains("block out quick proto { tcp udp } port 548"),
+                      "a deny on an ordinary port next to DHCPv6 must still be written")
+        checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 3,
+                      "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
+
+        // A temporary rule leaves pf when it expires, as it leaves the matcher,
+        // and the next expiry is when the anchor must be rendered again
+        // (issue #180).
+        let clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let temporary = [
+            Rule(remoteIP: "203.0.113.5", action: .deny, scope: .ip, temporary: true,
+                 expiresAt: clock.addingTimeInterval(-1)),
+            Rule(remoteIP: "203.0.113.6", action: .allow, scope: .ip, temporary: true,
+                 expiresAt: clock.addingTimeInterval(-3600)),
+            Rule(remoteIP: "203.0.113.7", action: .deny, scope: .ip, temporary: true,
+                 expiresAt: clock.addingTimeInterval(3600)),
+            Rule(remoteIP: "203.0.113.8", action: .deny, scope: .ip, temporary: true,
+                 expiresAt: clock),
+            Rule(remoteIP: "203.0.113.9", action: .deny, scope: .ip, enabled: false, temporary: true,
+                 expiresAt: clock.addingTimeInterval(60)),
+            Rule(remoteIP: "203.0.113.10", action: .deny, scope: .ip)
+        ]
+        let expiring = pf.renderAnchor(rules: temporary, now: clock)
+        checks.expect(!expiring.contains("203.0.113.5"), "an expired temporary deny must leave the pf anchor")
+        checks.expect(!expiring.contains("203.0.113.6"), "an expired temporary allow must leave the pf anchor")
+        checks.expect(expiring.contains("block out quick proto { tcp udp } to 203.0.113.7"),
+                      "a temporary deny that has not expired must stay in the anchor")
+        checks.expect(expiring.contains("to 203.0.113.8"),
+                      "a rule still applies at the instant it expires, as in the matcher")
+        checks.expect(expiring.contains("to 203.0.113.10"), "a rule without an expiry must stay in the anchor")
+        checks.expect(PFManager.nextExpiry(of: temporary, after: clock) == clock,
+                      "the next render must come at the earliest expiry the anchor still carries")
+        checks.expect(PFManager.nextExpiry(of: temporary, after: clock.addingTimeInterval(1)) == clock.addingTimeInterval(3600),
+                      "after one rule runs out, the next render must come at the following expiry")
+        checks.expect(PFManager.nextExpiry(of: temporary, after: clock.addingTimeInterval(7200)) == nil,
+                      "with every temporary rule expired no render may be scheduled")
+        checks.expect(PFManager.nextExpiry(of: [temporary[4], temporary[5]], after: clock) == nil,
+                      "a disabled or permanent rule must never schedule a render")
+        let appOnlyTemporary = Rule(processBundleId: "com.hnc.Discord", remoteIP: "203.0.113.11", action: .deny,
+                                    scope: .ip, temporary: true, expiresAt: clock.addingTimeInterval(60))
+        checks.expect(PFManager.nextExpiry(of: [appOnlyTemporary, temporary[2]], after: clock) == clock.addingTimeInterval(3600),
+                      "a temporary rule pf never carries, such as an app's deny, must not schedule a render")
 
         // 7. Feed handling: unreachable, malformed, then usable. All fail open.
         let storePath = (NSTemporaryDirectory() as NSString)

@@ -335,6 +335,21 @@ struct PendingAlertHarness {
             check(forever.expiresAt == nil, "a permanent decision has no expiration")
             check(!forever.temporary, "a permanent decision is not marked temporary")
 
+            // A DNS alert has no app: the proxy cannot tell which one asked.
+            // Remembering it must store a rule the helper accepts (#157).
+            let lookup = descriptor(process: Connection.dnsLookupProcessName, bundle: nil, path: "",
+                                    host: "ads.example.com", ip: "", port: 53)
+            let rememberedLookup = try! PendingAlertRuleFactory.rule(
+                for: lookup,
+                answer: PendingAlertAnswer(allow: false, scope: .domain, remember: .forever))!
+            equal(rememberedLookup.remoteHost, "ads.example.com", "a remembered DNS answer targets the looked-up name")
+            check(rememberedLookup.nameOnlyRejectionReason == nil,
+                  "a remembered DNS answer is not refused as a rule that names its app only by name")
+            var namedOnly = rememberedLookup
+            namedOnly.processName = "Discord"
+            check(namedOnly.nameOnlyRejectionReason != nil,
+                  "a rule with any other bare name is still refused")
+
             let now = Date()
             let temporary = try! PendingAlertRuleFactory.rule(
                 for: unnamed,
