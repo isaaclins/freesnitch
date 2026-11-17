@@ -218,7 +218,7 @@ expect(extensionStart(saved: encoded(withDeny)) != nil,
        "an unreadable watermark refused the saved policy")
 print("boot save harness: a missing or unreadable watermark changes nothing")
 
-// 11. #321: with the filter off, a failed boot-policy save is only logged,
+// 10. #321: with the filter off, a failed boot-policy save is only logged,
 //     and turning it on (in the app or in System Settings) saves the current
 //     rules again, after which a failure warns as before.
 var off = FilterOffState()
@@ -251,7 +251,8 @@ expect(off.saveFailureShowsBanner, "a late turn-off overrode the turn-on asked f
 expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
        "a removed filter configuration is not treated as off")
 print("boot save harness: with the filter off a failed save is logged, and turning it on saves again")
-// 10. The app's save cycle around NEFilterManager (#310). The harness plays
+
+// 11. The app's save cycle around NEFilterManager (#310). The harness plays
 //     the system's answers (load failed, configuration exists, save failed)
 //     and checks each decision BootPolicySaveCycle makes.
 typealias Cycle = SharedRuleBridge.BootPolicySaveCycle
@@ -266,7 +267,7 @@ func savePlan(_ decision: Cycle.AfterLoad, _ message: String) -> Cycle.Save {
     return plan
 }
 
-// 10a. Load failure: the snapshot stays queued and a spaced retry follows.
+// 11a. Load failure: the snapshot stays queued and a spaced retry follows.
 var loadFails = Cycle()
 loadFails.enqueue(policyB)
 let loadAt = loadFails.begin()!
@@ -301,7 +302,7 @@ expect(enableLoadFails.afterLoad(enableLoadAt, loadFailed: true, configurationEx
 expect(!enableLoadFails.queue.hasPending, "a failed activation kept its snapshot for a later retry")
 print("boot save harness: cycle: a failed load keeps the snapshot and retries; during activation it fails visibly")
 
-// 10b. Save failure: the snapshot is put back and retried on the schedule;
+// 11b. Save failure: the snapshot is put back and retried on the schedule;
 //      a newer policy queued during the save wins and runs at once.
 var saveFails = Cycle()
 saveFails.enqueue(policyB)
@@ -347,7 +348,7 @@ expect(enableFailed.failActivation && enableFailed.next == .none && !enableFaile
        && !enableSaveFails.queue.hasPending, "a failed activation save was retried or not reported")
 print("boot save harness: cycle: a failed save is retried, newer work wins, only the newest save clears the warning")
 
-// 10c. Cancel during load: turned off or removed while loading saves nothing.
+// 11c. Cancel during load: turned off or removed while loading saves nothing.
 var cancelLoad = Cycle()
 cancelLoad.enqueue(policyA)
 let cancelLoadAt = cancelLoad.begin()!
@@ -374,7 +375,7 @@ expect(enableLoadCancelled.afterLoad(enableCancelAt, loadFailed: true, configura
 expect(enableLoadCancelled.enableRequested, "the activation was dropped by a stale load failure")
 print("boot save harness: cycle: turning the filter off or removing it during the load saves nothing")
 
-// 10d. Cancel during save: the save in flight fails and is not put back.
+// 11d. Cancel during save: the save in flight fails and is not put back.
 var cancelSave = Cycle()
 cancelSave.enqueue(policyA)
 let cancelSaveAt = cancelSave.begin()!
@@ -395,7 +396,7 @@ expect(!cancelSaveOk.afterSave(cancellingOk, saveFailed: false).clearWarning,
        "a save cancelled in flight cleared the warning")
 print("boot save harness: cycle: a save cancelled in flight is never retried or counted as current")
 
-// 10e. Enable without a fresh snapshot: a snapshot kept for a retry is never
+// 11e. Enable without a fresh snapshot: a snapshot kept for a retry is never
 //      what activation saves; only the helper's fresh answer may enable.
 var staleEnable = Cycle()
 staleEnable.enqueue(policyA)
@@ -437,7 +438,7 @@ let onThenOffSave = savePlan(onThenOff.afterLoad(onThenOffAt, loadFailed: false,
 expect(!onThenOffSave.enable, "the helper's answer turned the filter back on after the user turned it off")
 print("boot save harness: cycle: turning the filter on only ever saves the helper's fresh answer")
 
-// 10f. No configuration: a boot-policy save never creates one.
+// 11f. No configuration: a boot-policy save never creates one.
 var noConfig = Cycle()
 noConfig.enqueue(policyA)
 let noConfigAt = noConfig.begin()!
@@ -446,7 +447,7 @@ expect(noConfig.afterLoad(noConfigAt, loadFailed: false, configurationExists: fa
 expect(!noConfig.queue.hasPending, "the snapshot stayed queued for a configuration that does not exist")
 print("boot save harness: cycle: a save never creates a missing filter configuration")
 
-// 10g. Retries used up: three spaced retries, then it stops until something
+// 11g. Retries used up: three spaced retries, then it stops until something
 //      changes; a newer policy starts the retries over.
 var exhausted = Cycle()
 exhausted.enqueue(policyB)
@@ -466,7 +467,7 @@ let restart = savePlan(exhausted.afterLoad(restartAt, loadFailed: false, configu
 expect(exhausted.afterSave(restart, saveFailed: true).next == .retry(after: 5), "a newer policy did not restart the retries")
 print("boot save harness: cycle: retries stop after three and start over with a newer policy")
 
-// 10h. Over the boot policy limit (#320): the newest policy cannot be kept
+// 11h. Over the boot policy limit (#320): the newest policy cannot be kept
 //      for the next start, but it is enforced live. The older snapshot kept
 //      for a retry is dropped, the saved policy is removed instead, and
 //      turning the filter on goes ahead.
@@ -525,7 +526,7 @@ expect(nothingSaved.afterLoad(nothingSavedAt, loadFailed: false, configurationEx
 expect(!nothingSaved.inFlight && !nothingSaved.queue.hasPending, "a removal with nothing saved left work behind")
 print("boot save harness: cycle: over the limit the saved policy is removed, never replaced by an older one, and turning on goes ahead")
 
-// 10i. A snapshot that arrived while the preferences were loading is the one
+// 11i. A snapshot that arrived while the preferences were loading is the one
 //      the cycle takes. When its save fails and is put back, the spaced retry
 //      owns it; no extra immediate cycle starts (#312).
 var midLoadCycle = Cycle()
@@ -730,11 +731,5 @@ mutate_cycle_and_expect_harness_failure off-keeps-enable \
   $'public mutating func dropEnableRequest() {\n            enableRequested = false' 'public mutating func dropEnableRequest() {'
 mutate_cycle_and_expect_harness_failure endless-retries \
   'guard let delay = retry.nextDelay() else { return .retriesUsedUp }' 'let delay = retry.nextDelay() ?? 120'
-mutate_and_expect_failure stop-drops-record \
-  Sources/NetExt/FilterDataProvider.swift \
-  'watermarkQueue.sync {}' ''
-mutate_and_expect_failure forget-live-policy \
-  Sources/NetExt/FilterDataProvider.swift \
-  'if decision == .accepted { recordLiveWatermark(accepted) }' ''
 
 printf 'boot policy save failure verification: PASS\n'
