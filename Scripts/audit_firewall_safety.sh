@@ -523,17 +523,19 @@ grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYS
   && grep -Fq 'enableFilter(fromSettings: true)' "$SYSTEM_EXTENSION_MANAGER" \
   || fail "a turn-on that follows System Settings turns the filter back on after it was turned off there again (#361)"
 clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
-printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if filterConfigurationActive && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
+printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
   || fail "turning the filter off in System Settings leaves the app saying the firewall is active (#361)"
 # A turn-on from System Settings that the helper gave no rules for: turned
 # off there again meanwhile, that is not a failed turn-on (#382).
 snapshot_status_body="$(awk '/private func recordSnapshotStatus\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$snapshot_status_body" | grep -A1 -F 'if turnOnFromSettings {' | grep -Fq 'reportAbandonedSettingsTurnOn(message)' \
+  && printf '%s\n' "$snapshot_status_body" | grep -Fq 'failAbandonedTurnOn(message)' \
+  && awk '/private func failAbandonedTurnOn\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'abandonedTurnOnShown = true' \
   || fail "a turn-on from System Settings that was turned off there again reports a failed turn-on (#382)"
 abandoned_body="$(awk '/private func reportAbandonedSettingsTurnOn\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$abandoned_body" | grep -Fq 'filterPreferences.run {' \
   && printf '%s\n' "$abandoned_body" | grep -Fq 'guard !self.persistenceCycle.enableRequested else { return }' \
-  && printf '%s\n' "$abandoned_body" | tr -d '\n' | grep -Eq 'FilterOffState\.abandonedTurnOnFailed\(fromSettings: true, readFailed: error != nil, +configured: configured, enabled: enabled\) \{ +self\.fail\(message\) +return +\}' \
+  && printf '%s\n' "$abandoned_body" | tr -d '\n' | grep -Eq 'FilterOffState\.abandonedTurnOnFailed\(fromSettings: true, readFailed: error != nil, +configured: configured, enabled: enabled\) \{ +self\.failAbandonedTurnOn\(message\) +return +\}' \
   && printf '%s\n' "$abandoned_body" | grep -Fq 'guard self.status != .needsApproval && self.status != .activating else { return }' \
   && printf '%s\n' "$abandoned_body" | grep -A3 -F 'self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))' | grep -Fq 'self.showNotFiltering()' \
   || fail "a turn-on from System Settings given up for lack of rules does not check whether the filter is still on there (#382)"

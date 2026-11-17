@@ -416,11 +416,11 @@ mutate_and_expect_failure disable-keeps-active-status "$SEM" \
 mutate_and_expect_failure not-filtering-keeps-status "$SEM" \
   'if status != .unsupported { status = .idle }' ''
 mutate_and_expect_failure outside-off-keeps-active-status "$SEM" \
-  'if filterConfigurationActive && !persistenceCycle.enableRequested {
+  'if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {
                 showNotFiltering()
             }' ''
 mutate_and_expect_failure outside-off-hides-approval "$SEM" \
-  'if filterConfigurationActive && !persistenceCycle.enableRequested {' 'if true {'
+  'if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {' 'if true {'
 mutate_and_expect_failure outside-on-stays-not-filtering "$SEM" \
   $'            if hasEmbeddedExtension && status != .needsApproval && status != .activating {\n                enableFilter(fromSettings: true)' \
   $'            if hasEmbeddedExtension {\n                state?.syncSharedRules()'
@@ -448,6 +448,10 @@ mutate_and_expect_failure abandoned-settings-read-failure-hidden "$SEM" \
 mutate_and_expect_failure abandoned-settings-keeps-status "$SEM" \
   $'else { return }\n                    self.showNotFiltering()' \
   $'else { return }'
+mutate_and_expect_failure failed-turn-on-then-off-keeps-error "$SEM" \
+  'if (filterConfigurationActive || abandonedTurnOnShown) &&' 'if (filterConfigurationActive) &&'
+mutate_and_expect_failure failed-turn-on-not-marked "$SEM" \
+  $'        fail(message)\n        abandonedTurnOnShown = true' $'        fail(message)'
 mutate_and_expect_failure abandoned-settings-hides-approval "$SEM" \
   'guard self.status != .needsApproval && self.status != .activating else { return }
                     self.showNotFiltering()' \
