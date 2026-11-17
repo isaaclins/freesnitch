@@ -1419,6 +1419,13 @@ struct RulesManagerView: View {
                           message ?? "The helper did not return the rules, so nothing was exported.")
                 return
             }
+            // The helper answers an unreadable rule table with no rules. Never
+            // write that as a backup while the window shows rules.
+            guard !rules.isEmpty || state.rules.isEmpty else {
+                showError("Could not export the rules",
+                          "The helper returned no rules although FreeSnitch has some, so nothing was exported. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+                return
+            }
             exportDocument = RuleJSONDocument(rules: rules)
             showingExporter = true
         }
