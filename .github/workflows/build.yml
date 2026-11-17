@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request supersedes the run before it, so the stale
+# harness jobs stop instead of holding macOS runners. Pushes to main each
+# keep their own run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   firewall-safety:
     name: Firewall safety audit
@@ -63,7 +70,9 @@ jobs:
       # as the runner user. None of them needs root: privileged tools are
       # stubbed, and pfctl is only ever asked to parse (-n), never to load.
       - name: Run ${{ matrix.script }}
-        run: bash "${{ matrix.script }}"
+        env:
+          SCRIPT: ${{ matrix.script }}
+        run: bash "$SCRIPT"
 
   # One stable check name for the whole matrix, so branch protection can
   # require it without listing each harness.
