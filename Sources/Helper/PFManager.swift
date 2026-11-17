@@ -276,7 +276,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it. An incoming allow")
         lines.append("# with only a port is left to the Network Extension; from any port N would open every local port.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
-        lines.append("# which only this anchor enforces, never block what the user allowed.")
+        lines.append("# which only this anchor enforces, never block what the user allowed. An app's incoming")
+        lines.append("# allow is written without quick: it only keeps state for the replies, and any later block wins.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
@@ -450,7 +451,16 @@ final class PFManager: @unchecked Sendable {
                 passes.append("pass out quick proto { tcp udp }" + target)
             }
             if r.direction != .outgoing && destination != nil {
-                passes.append("pass in quick proto { tcp udp } from" + host)
+                // pf can't tell apps apart, so a quick pass for an app's
+                // incoming allow would let that peer reach every app on any
+                // local port, past later blocks in /etc/pf.conf (#313).
+                // Without quick, pf keeps evaluating and the last matching
+                // rule wins, so any later block still applies. When nothing
+                // blocks the peer, the pass still keeps state, and that state
+                // is what lets this Mac's replies to it past the feed below:
+                // the feed is the only reason an app's allow is in pf.
+                let quick = PFManager.namesAnApp(r) ? "" : " quick"
+                passes.append("pass in\(quick) proto { tcp udp } from" + host)
             }
             return passes
         }

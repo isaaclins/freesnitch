@@ -388,6 +388,33 @@ struct IPBlocklistHarness {
         checks.expect(!passLines.contains { $0.hasPrefix("pass quick") },
                       "an allow must always name its direction, so to and from mean the remote peer")
 
+        // pf can't tell apps apart, so an app's incoming allow written with
+        // quick would let that peer reach every app on any local port, past
+        // later blocks in /etc/pf.conf (#313). It stays in pf only for the
+        // feed: without quick any later block wins, and when nothing blocks
+        // the peer, the state it keeps lets this Mac's replies past the feed.
+        // An app's outgoing allow keeps quick, or the feed's quick block
+        // after it would win.
+        let appAllows = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.example.server", remoteIP: "203.0.113.60", remotePort: 51010,
+                 direction: .incoming, action: .allow, scope: .ip),
+            Rule(processPath: "/Applications/Example.app/Contents/MacOS/Example", remoteIP: "203.0.113.61",
+                 direction: .any, action: .allow, scope: .ip),
+            Rule(processBundleId: "", processPath: "", remoteIP: "203.0.113.62", direction: .incoming, action: .allow, scope: .ip)
+        ], ipBlocklist: IPBlocklistSet(entries: ["203.0.113.60", "203.0.113.61"]), resolverAddresses: resolvers)
+        checkPFSyntax("app-incoming-allows", appAllows, checks)
+        let appPasses = appAllows.split(separator: "\n").map(String.init).filter { $0.hasPrefix("pass") }
+        checks.expect(appPasses.contains("pass in proto { tcp udp } from 203.0.113.60 port 51010")
+                        && !appPasses.contains { $0.hasPrefix("pass in quick") && $0.contains("203.0.113.60") },
+                      "an app's incoming allow must be written without quick, got \(appPasses)")
+        checks.expect(appPasses.contains("pass in proto { tcp udp } from 203.0.113.61")
+                        && appPasses.contains("pass out quick proto { tcp udp } to 203.0.113.61"),
+                      "an app's allow both ways must keep quick only on its outgoing half, got \(appPasses)")
+        checks.expect(appPasses.contains("pass in quick proto { tcp udp } from 203.0.113.62"),
+                      "empty app fields are no app, so that incoming allow keeps quick, got \(appPasses)")
+        checks.expect(appAllows.contains("block out quick proto { tcp udp } to <freesnitch_ipblock>"),
+                      "the feed must still be in the anchor next to an app's incoming allow")
+
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again
         // (issue #180).
