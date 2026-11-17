@@ -277,7 +277,7 @@ final class PFManager: @unchecked Sendable {
         lines.append("# with only a port is left to the Network Extension; from any port N would open every local port.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed. An app's incoming")
-        lines.append("# allow is written without quick: it only keeps state for the replies, and any later block wins.")
+        lines.append("# allow is written without quick: it keeps state for the replies, and a later block still wins.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
@@ -331,9 +331,13 @@ final class PFManager: @unchecked Sendable {
 
     /// The address feed section (issue #51).
     ///
-    /// It is emitted last on purpose. Every rule in this anchor is `quick`, so
-    /// the user's own rules, including their allow rules, are consulted first
-    /// and a feed can never override a decision the user made. The passes that
+    /// It is emitted last on purpose. The user's own rules come first, and
+    /// all but one kind are `quick`, so they decide before the feed is
+    /// consulted and a feed can never override a decision the user made. The
+    /// exception is an app's incoming allow, written without `quick` (#313):
+    /// the feed only blocks outgoing traffic, and that pass keeps state,
+    /// which pf checks before any rule, so the replies to that peer still
+    /// get past the feed. The passes that
     /// precede the block are the bypasses that no feed may cross: DNS, DHCP,
     /// and the configured resolvers. Loopback is already covered by the
     /// `set skip on lo0` at the top of the anchor.
@@ -455,7 +459,9 @@ final class PFManager: @unchecked Sendable {
                 // incoming allow would let that peer reach every app on any
                 // local port, past later blocks in /etc/pf.conf (#313).
                 // Without quick, pf keeps evaluating and the last matching
-                // rule wins, so any later block still applies. When nothing
+                // rule wins, so a block after this anchor still applies. A
+                // non-quick block before it still loses, as it did to the
+                // quick pass. When nothing
                 // blocks the peer, the pass still keeps state, and that state
                 // is what lets this Mac's replies to it past the feed below:
                 // the feed is the only reason an app's allow is in pf.

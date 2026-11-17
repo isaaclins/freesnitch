@@ -241,7 +241,7 @@ struct IPBlocklistHarness {
         let passIndex = anchor.range(of: "pass out quick proto { tcp udp } to any port 53")?.lowerBound
         let blockIndex = anchor.range(of: "block out quick proto { tcp udp } to <freesnitch_ipblock>")?.lowerBound
         checks.expect(passIndex != nil && blockIndex != nil && passIndex! < blockIndex!,
-                      "the DNS and DHCP passes must precede the feed block, since every rule here is quick")
+                      "the DNS and DHCP passes must precede the feed block, since they and the feed block are quick")
         let plain = pf.renderAnchor(rules: [])
         checkPFSyntax("plain", plain, checks)
         checks.expect(!plain.contains("freesnitch_ipblock"),
