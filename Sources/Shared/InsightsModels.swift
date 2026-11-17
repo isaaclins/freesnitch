@@ -729,10 +729,18 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
     /// so Insights should not offer it again. An address is compared the way
     /// the matcher compares it: one IPv6 address in any spelling, a range that
     /// contains it, and an address or range typed into the hostname field.
-    public func isCovered(by rules: [Rule]) -> Bool {
+    /// A rule only covers the proposal when it would match every outgoing
+    /// connection the proposal stands for: no port restriction, a direction of
+    /// outgoing or any, and not expired at `now` (#331).
+    public func isCovered(by rules: [Rule], now: Date = Date()) -> Bool {
         let matcher = RuleMatcher()
         return rules.contains { rule in
             guard rule.enabled else { return false }
+            // The matcher skips a rule once its expiry has passed.
+            if let expiresAt = rule.expiresAt, expiresAt < now { return false }
+            guard rule.direction != .incoming else { return false }
+            // Port 0 means any port, as in the matcher.
+            if let port = rule.remotePort, port != 0 { return false }
             let destinationMatches: Bool
             if let domain {
                 destinationMatches = rule.remoteHost?.lowercased() == domain.lowercased()
