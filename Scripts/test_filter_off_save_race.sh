@@ -241,7 +241,7 @@ do {
     print("filter off harness: turned on and off again in System Settings, what is set there wins")
 }
 
-// 7. #382: the filter is turned on in System Settings, so the app asks the
+// 6. #382: the filter is turned on in System Settings, so the app asks the
 //    helper for the current rules to turn it on. The user turns it off (or
 //    removes it) there again before the helper answers, and the helper then
 //    gives no rules. The app reads System Settings only after giving up, as
@@ -250,7 +250,7 @@ do {
 do {
     typealias Cycle = SharedRuleBridge.BootPolicySaveCycle
     enum Shown: Equatable { case notFiltering, failed }
-    func run(_ name: String, guarded: Bool = true, fromSettings: Bool = true, readFails: Bool = false,
+    func run(_ name: String, guarded: Bool = true, readFails: Bool = false,
              userAction: (FakeFilterManager, inout Bool) -> Void) -> Shown {
         let mgr = FakeFilterManager()
         var configured = true
@@ -260,7 +260,7 @@ do {
         _ = off.observed(configured: true, enabled: false, fromOutside: true)
         // Turned on there: the change notice asks for the current rules.
         mgr.storedEnabled = true
-        let change = fromSettings ? off.observed(configured: true, enabled: true, fromOutside: true) : .saveCurrentRules
+        let change = off.observed(configured: true, enabled: true, fromOutside: true)
         expect(change == .saveCurrentRules, "\(name): turning it on in System Settings did not start a turn-on")
         cycle.requestEnable()
         off.turnedOn()
@@ -269,7 +269,13 @@ do {
         expect(cycle.enableRequested, "\(name): the turn-on was dropped before the helper answered")
         // The helper gives no rules.
         expect(cycle.abandonEnableIfIdle(), "\(name): no rules did not give up the turn-on")
-        guard guarded && fromSettings else { return .failed }
+        // Before #382 the app reported a failed turn-on right here, without
+        // reading System Settings again, even though the off-state still
+        // counts the filter as on.
+        guard guarded else {
+            expect(!off.isOff, "\(name): the app already knew the filter was off")
+            return .failed
+        }
         var shown: Shown?
         mgr.loadFromPreferences("read") {
             if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: readFails,
@@ -292,6 +298,7 @@ do {
     }
     let leaveOn: (FakeFilterManager, inout Bool) -> Void = { _, _ in }
 
+    // Without the read the app can't know: it still counts the filter as on.
     expect(run("unguarded", guarded: false, userAction: turnOffThere) == .failed,
            "the failed turn-on did not reproduce, so this test proves nothing")
     expect(run("off again", userAction: turnOffThere) == .notFiltering,
@@ -307,7 +314,7 @@ do {
     print("filter off harness: turned on and off again in System Settings with no rules, the app says not filtering")
 }
 
-// 6. A sequence that finishes with an error still lets the next one run, and
+// 7. A sequence that finishes with an error still lets the next one run, and
 //    calling done twice does not skip anyone.
 do {
     let line = FilterPreferencesLine()

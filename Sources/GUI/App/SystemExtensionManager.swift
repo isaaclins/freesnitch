@@ -897,7 +897,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     self.apply(self.filterOff.observed(configured: configured, enabled: mgr.isEnabled, fromOutside: true))
                     self.showNotFiltering()
                     self.state?.appendLog(level: "info",
-                                          message: "Firewall not filtering: the filter was turned off in System Settings.")
+                                          message: "Firewall not filtering: the filter was turned off or removed in System Settings.")
                 }
             }
         }
