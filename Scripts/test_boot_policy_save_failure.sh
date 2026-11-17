@@ -181,6 +181,8 @@ expect(problem(future) == .datedInFuture, "a policy dated after the clock is not
 expect(problem(snapshot([denyTracker], generation: 24)) == nil, "a small policy dated now does not encode")
 expect(SharedRuleBridge.BootSnapshotProblem(NSError(domain: "Other", code: 2), ruleCount: 1) == .other,
        "an unrelated error is reported as a size or count problem")
+expect(SharedRuleBridge.BootSnapshotProblem(NSError(domain: "SharedRuleBridge", code: 1), ruleCount: 1) == .other,
+       "another boot snapshot error (such as an unsupported version) is reported as a size, count or date problem")
 print("boot save harness: each reason a policy can't be kept for the next start is told apart")
 
 // 6d. Retries are spaced, bounded, and start over after a newer policy.
