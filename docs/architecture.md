@@ -97,7 +97,7 @@ pass out quick proto { tcp udp } to 1.1.1.1 port 443
 
 Host glob: `*.example.com`, `.example.com` both match.
 IP CIDR: `10.0.0.0/8` matches anywhere in that block.
-Process: bundle ID match wins; otherwise path prefix.
+Process: bundle ID match wins; otherwise the rule's path covers the process at exactly that path and anything inside it as a folder (`/usr/local/bin/node` does not match `/usr/local/bin/nodemon`, `/Applications/X.app` covers its helpers).
 
 ## NetExt - per-process firewall (Network System Extension)
 
