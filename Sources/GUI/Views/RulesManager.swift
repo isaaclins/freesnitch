@@ -166,7 +166,8 @@ struct RulesManagerView: View {
         .confirmationDialog("Import rules?",
                             isPresented: $showingImportConfirmation,
                             titleVisibility: .visible) {
-            Button("Import Rules", role: .destructive) {
+            Button("Import Rules",
+                   role: (pendingImportPlan?.confirmedIDs.isEmpty ?? false) ? nil : .destructive) {
                 replaceRules(with: pendingImportRules)
             }
             Button("Cancel", role: .cancel) {
@@ -1336,13 +1337,13 @@ struct RulesManagerView: View {
                 // "rules saved but the firewall refused" means the import was
                 // committed, deletions included, so log what it changed.
                 if detail.hasPrefix("rules saved"), let plan {
-                    state.appendLog(level: "info", message: plan.logSummary)
+                    plan.logLines.forEach { state.appendLog(level: "info", message: $0) }
                 }
                 state.refreshRules()
                 showError("Could not import the rules", detail)
                 return
             }
-            if let plan { state.appendLog(level: "info", message: plan.logSummary) }
+            if let plan { plan.logLines.forEach { state.appendLog(level: "info", message: $0) } }
             state.refreshRules()
             clearSelection()
         }

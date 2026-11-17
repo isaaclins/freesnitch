@@ -835,7 +835,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 PSLog.error(PSLog.helper, "rule import refused: \(conflict.localizedDescription)")
                 throw conflict
             }
-            if let plan { PSLog.info(PSLog.helper, plan.logSummary) }
+            plan?.logLines.forEach { PSLog.notice(PSLog.helper, $0) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()

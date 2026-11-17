@@ -341,7 +341,11 @@ public struct RuleImportPlan: Sendable {
     public init(current: [Rule], imported: [Rule]) {
         let profiles = Set(imported.map(\.profile))
         let importedIDs = Set(imported.map(\.id))
-        replacedProfiles = profiles.sorted()
+        // Always first, as the Rules window lists it, then the rest by name.
+        replacedProfiles = profiles.sorted { lhs, rhs in
+            if lhs == Profile.alwaysName || rhs == Profile.alwaysName { return lhs == Profile.alwaysName && rhs != Profile.alwaysName }
+            return lhs < rhs
+        }
         // A stored rule the file also carries, by ID, is replaced by the
         // file's copy wherever it lived, so it is neither kept nor lost.
         kept = current.filter { !profiles.contains($0.profile) && !importedIDs.contains($0.id) }
@@ -380,6 +384,16 @@ public struct RuleImportPlan: Sendable {
         try RuleTransportBoundary.validate(rules: plan.resulting)
         draft.rules = plan.resulting
         return plan
+    }
+
+    /// What the log keeps of an import: the summary, then one line per rule it
+    /// deleted or moved, so a large import is not one line the log truncates.
+    public var logLines: [String] {
+        let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
+        return ["rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
+                + "\(removed.count) removed, \(moved.count) moved to another profile, \(self.kept.count) kept in other profiles [\(kept)]"]
+            + removed.map { "rule import removed: \(Self.describe($0)) in \($0.profile) (\($0.id.uuidString))" }
+            + moved.map { "rule import moved: \(Self.describe($0)) from \($0.profile) (\($0.id.uuidString))" }
     }
 
     /// Kept rules counted per profile, sorted by profile name.

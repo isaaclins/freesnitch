@@ -38,8 +38,16 @@ grep -Fq 'confirmedIDs: Set(expectedRemovedIDs),' "$HELPER" \
   || fail "the helper import does not check the deletions the user confirmed"
 grep -Fq 'expectedRemovedIDs: plan?.confirmedIDs ?? []' "$RULES_MANAGER" \
   || fail "the app does not send the deletions it showed in the dialog"
-grep -Fq 'PSLog.info(PSLog.helper, plan.logSummary)' "$HELPER" \
-  || fail "the helper import does not log what it removed and kept"
+grep -Fq 'plan?.logLines.forEach { PSLog.notice(PSLog.helper, $0) }' "$HELPER" \
+  || fail "the helper import does not log what it removed, at a level the log store keeps"
+# An older helper drops the new import request without answering. The app
+# must give up on its own instead of waiting forever.
+awk '/func replaceRules\(_ rules: \[Rule\]/,/^    }$/' "$ROOT/Sources/GUI/App/HelperClient.swift" > "$TMP/replace.swift"
+grep -Fq 'asyncAfter(deadline: .now() + 30, execute: work)' "$TMP/replace.swift" \
+  || fail "the app's import request has no timeout"
+grep -Fq 'finish(ok, message)' "$TMP/replace.swift" \
+  || fail "the import reply does not go through the once-only finish"
+pass "the app's import request times out instead of waiting on an older helper"
 pass "the helper import applies RuleImportPlan and logs it"
 
 cat > "$TMP/main.swift" <<'SWIFT'
@@ -121,6 +129,10 @@ check("the plan names exactly the removed rule", lossPlan.removed.map(\.id) == [
 check("the log line names the removed rule's ID", lossPlan.logSummary.contains(extraHome.id.uuidString))
 check("the log line names the removed rule the way a person reads it",
       lossPlan.logSummary.contains("deny curl to extra-home.example in home"))
+check("the log keeps one line per removed rule",
+      lossPlan.logLines.contains { $0.hasPrefix("rule import removed: deny curl to extra-home.example in home") })
+check("Always is listed first among replaced profiles",
+      RuleImportPlan(current: [], imported: [office, always, home]).replacedProfiles == [Profile.alwaysName, "Office", "home"])
 check("Office still survives", labels(store.allRules(profile: nil)).contains("Office:office.example"))
 
 // 4. The stored rules change while the dialog is open: a rule allowed from an
