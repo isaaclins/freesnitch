@@ -377,19 +377,17 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         persistenceRetry.reset()
     }
 
-    @discardableResult
-    private func schedulePersistenceRetry() -> Bool {
+    private func schedulePersistenceRetry() {
         guard let delay = persistenceRetry.nextDelay() else {
             let message = "The current rules are still not saved for the next start after \(persistenceRetry.delays.count) retries. "
                 + "FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
             state?.appendLog(level: "error", message: message)
             os_log("%{public}@", log: log, type: .error, message)
-            return false
+            return
         }
         os_log("Retrying the boot policy save in %{public}.0f s (attempt %{public}ld)", log: log, type: .info,
                delay, persistenceRetry.attempts)
         schedulePersistence(immediate: false, after: delay)
-        return true
     }
 
     private func recordPersistenceFailure(_ operation: String, error: Error) {
