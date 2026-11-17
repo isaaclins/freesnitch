@@ -291,6 +291,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 let pending = self.persistenceQueue.takeNewest()
                 let snapshotData = pending?.data
+                if !shouldEnable && pending == nil {
+                    // Turned off or removed while this cycle was loading:
+                    // there is nothing to save, and writing the configuration
+                    // loaded before would race that change.
+                    self.persistenceInFlight = false
+                    return
+                }
                 self.enableFilterRequested = false
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
