@@ -286,6 +286,19 @@ off.turnedOn()
 //     No configuration at all counts as off.
 expect(off.observed(configured: false, enabled: true, fromOutside: true) == .clearBanner,
        "a removed filter configuration is not treated as off")
+//     #361: the filter was turned on in System Settings and the app is
+//     saving the current rules to turn it on. Turned off or removed there
+//     again before that save loads, the turn-on no longer stands; left on, it
+//     does. Activation's own turn-on always stands.
+expect(FilterOffState.turnOnStands(fromSettings: true, configured: true, enabled: true),
+       "a turn-on from System Settings that nobody undid was dropped")
+expect(!FilterOffState.turnOnStands(fromSettings: true, configured: true, enabled: false),
+       "turned off again in System Settings, the app's save would turn the filter back on")
+expect(!FilterOffState.turnOnStands(fromSettings: true, configured: false, enabled: false),
+       "removed in System Settings, the app's save would recreate the filter")
+expect(FilterOffState.turnOnStands(fromSettings: false, configured: true, enabled: false)
+       && FilterOffState.turnOnStands(fromSettings: false, configured: false, enabled: false),
+       "activation no longer turns the filter on")
 //     #348: at launch the app reads the filter state once. Before that read
 //     it assumes on, so a failure then warns; finding the filter left off
 //     takes the banner down, and finding it on asks for no extra save.
