@@ -310,6 +310,7 @@ DMG_NAME="FreeSnitch-${VERSION}.dmg"
 DOWNLOAD_PREFIX="https://github.com/${REPOSITORY}/releases/download/v${VERSION}/"
 ZIP_PATH="$APPCAST_ARCHIVES/$ZIP_NAME"
 DMG_PATH="$BUILD_ROOT/$DMG_NAME"
+SUMS_PATH="$BUILD_ROOT/SHA256SUMS.txt"
 NOTARIZE_APP_ZIP="$BUILD_ROOT/FreeSnitch-${VERSION}-app-notary.zip"
 
 assert_file() {
@@ -740,6 +741,32 @@ assert_only_version_files_changed() {
     die "xcodegen changed tracked files beyond the release version bump:"$'\n'"$unexpected"
 }
 
+# Checksums come from the files being uploaded, so nobody copies a hash by
+# hand into the README or the site again (#370). Check a download with
+# `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder it was saved
+# to. They only depend on the disk image and zip, so they are written and
+# checked before the release commit: a failure here stops the release before
+# anything is tagged or pushed (#376).
+write_checksums() {
+  local sum_file hash name
+  : >"$SUMS_PATH"
+  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
+    assert_file "$sum_file"
+    hash="$(shasum -a 256 "$sum_file" | awk '{print $1}')"
+    [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die "could not compute the SHA-256 of $sum_file"
+    printf '%s  %s\n' "$hash" "$(basename "$sum_file")" >>"$SUMS_PATH"
+  done
+
+  [[ "$(wc -l <"$SUMS_PATH" | tr -d ' ')" == "2" ]] || die "$SUMS_PATH must list exactly two files"
+  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
+    name="$(basename "$sum_file")"
+    grep -q "^[0-9a-f]\{64\}  ${name}\$" "$SUMS_PATH" || die "$SUMS_PATH does not list $name"
+    ( cd "$(dirname "$sum_file")" && grep "  ${name}\$" "$SUMS_PATH" | shasum -a 256 -c --status ) || \
+      die "$SUMS_PATH does not match $name"
+  done
+  printf 'Wrote %s.\n' "$SUMS_PATH"
+}
+
 commit_and_publish() {
   local notes_destination="$ROOT/docs/release-notes/v${VERSION}.md"
   local tag="v${VERSION}"
@@ -771,16 +798,7 @@ commit_and_publish() {
     assets+=("$delta")
   done
 
-  # Checksums come from the files being uploaded, so nobody copies a hash by
-  # hand into the README or the site again (#370). Check a download with
-  # `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder
-  # it was saved to.
-  local sums="$BUILD_ROOT/SHA256SUMS.txt" sum_file
-  : >"$sums"
-  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
-    printf '%s  %s\n' "$(shasum -a 256 "$sum_file" | awk '{print $1}')" "$(basename "$sum_file")" >>"$sums"
-  done
-  assets+=("$sums")
+  assets+=("$SUMS_PATH")
 
   # Every enclosure the new appcast item advertises must be in the upload set.
   # A feed that points at a file we never attached is indistinguishable from a
@@ -878,4 +896,5 @@ make_and_notarize_dmg
 
 generator="$(sparkle_tool)"
 generate_appcast "$generator"
+write_checksums
 commit_and_publish

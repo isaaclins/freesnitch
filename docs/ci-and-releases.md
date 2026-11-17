@@ -66,8 +66,9 @@ Release is live:
 - `README.md`: the Install section and the Status paragraph.
 
 Neither carries a checksum. The release script attaches `SHA256SUMS.txt`,
-made from the files it uploads, and GitHub shows each asset's SHA-256 on the
-release page.
+made from the files it uploads and checked before the release commit, so a
+failure there stops the release before anything is tagged or pushed. GitHub
+shows each asset's SHA-256 on the release page.
 
 ## Prerequisites
 
