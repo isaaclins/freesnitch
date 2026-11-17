@@ -44,7 +44,10 @@ make_fake_root() {
   : >"$root/Applications/FreeSnitch.app/Contents/Helpers/freesnitch-helper"
   : >"$root/Library/Application Support/FreeSnitch/Insights/insights.sqlite"
   printf 'fake policy database\n' >"$root/Library/Application Support/FreeSnitch/freesnitch.sqlite"
-  : >"$root/etc/pf.anchors/puresnitch"
+  # The anchor file holds the last rules, as it does when the helper was not
+  # reachable to turn enforcement off before the uninstall (issue #192).
+  printf 'table <freesnitch_feed> persist { 203.0.113.7 }\nblock drop out quick proto tcp to 198.51.100.4 port 443\n' \
+    >"$root/etc/pf.anchors/puresnitch"
   mkdir -p "$stubs"
   write_stubs "$stubs"
   printf '%s\n' "$root"
@@ -249,6 +252,14 @@ test_sip_refusal_is_honest() {
   [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed after a refused deactivation"
 }
 
+# pf.conf loads the anchor file at boot, so after an uninstall it must hold no
+# rules: only comments or blank lines (issue #192).
+expect_anchor_file_empty() {
+  local root="$1" what="$2" rules
+  rules="$(grep -Ev '^[[:space:]]*(#|$)' "$root/etc/pf.anchors/puresnitch" || true)"
+  [[ -z "$rules" ]] || fail "$what left rules in the anchor file pf.conf loads at boot: $rules"
+}
+
 # --- 4. it flushes only the named anchor, and honours the database choice ----
 
 test_flushes_only_named_anchor() {
@@ -265,6 +276,7 @@ test_flushes_only_named_anchor() {
   [[ -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] || fail "the policy database was deleted without --remove-database"
   expect_contains "$output" "Kept $root/Library/Application Support/FreeSnitch/freesnitch.sqlite" "kept-database message"
   [[ -f "$root/etc/pf.anchors/puresnitch" ]] || fail "the shared anchor file was deleted"
+  expect_anchor_file_empty "$root" "a clean uninstall"
 
   local pf_calls
   pf_calls="$(grep '^pfctl ' "$WORK/happy-path/stub.log" || true)"
@@ -286,6 +298,24 @@ test_flushes_only_named_anchor() {
   (( status == 0 )) || fail "the uninstall with --remove-database failed: $output"
   [[ -f "$root2/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] && fail "--remove-database did not delete the policy database"
   expect_contains "$output" "Removed $root2/Library/Application Support/FreeSnitch/freesnitch.sqlite" "database removal message"
+  expect_anchor_file_empty "$root2" "the uninstall with --remove-database"
+}
+
+# --- 4b. it never writes through a symlinked anchor file ---------------------
+
+test_refuses_symlinked_anchor() {
+  local root; root="$(make_fake_root symlinked-anchor)"
+  local target="$WORK/symlinked-anchor/elsewhere"
+  printf 'not FreeSnitch\n' >"$target"
+  rm "$root/etc/pf.anchors/puresnitch"
+  ln -s "$target" "$root/etc/pf.anchors/puresnitch"
+
+  export FAKE_SIP=enabled FAKE_EXT_PRESENT=0 FAKE_HELPER_RUNNING=0
+  run_uninstall symlinked-anchor --yes
+  unset FAKE_SIP FAKE_EXT_PRESENT FAKE_HELPER_RUNNING
+  (( RUN_STATUS != 0 )) || fail "the uninstall wrote through a symlinked anchor file"
+  [[ "$(cat "$target")" == "not FreeSnitch" ]] || fail "the symlink target was overwritten"
+  [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed although the anchor could not be emptied"
 }
 
 # --- 5. no real system path may appear in any privileged call ---------------
@@ -308,6 +338,7 @@ test_refuses_unexpected_path
 test_refuses_while_helper_runs
 test_sip_refusal_is_honest
 test_flushes_only_named_anchor
+test_refuses_symlinked_anchor
 test_never_touched_the_real_system
 
 if (( failures > 0 )); then

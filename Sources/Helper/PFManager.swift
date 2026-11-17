@@ -3,8 +3,8 @@ import Foundation
 final class PFManager: @unchecked Sendable {
     // Keep the established anchor name so a rename cannot strand active firewall rules.
     static let anchorName = "puresnitch"
-    private let anchorPath = "/etc/pf.anchors/puresnitch"
-    private let pfctl = "/sbin/pfctl"
+    private let anchorPath: String
+    private let pfctl: String
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.pf")
     private var loaded = false
 
@@ -28,37 +28,117 @@ final class PFManager: @unchecked Sendable {
     /// to the helper event stream so the GUI can show it to the user.
     var onWarning: ((String) -> Void)?
 
-    func install() throws {
+    /// The paths are parameters only so a harness can point them at a scratch
+    /// file and a stub; the helper always uses the defaults.
+    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl") {
+        self.anchorPath = anchorPath
+        self.pfctl = pfctl
+    }
+
+    /// Loads the anchor with `rules`, the policy in force right now. Loading
+    /// it empty left pf enforcing none of the user's rules until the next
+    /// rule change, and the next feed refresh then rendered whatever rules
+    /// were recorded before enforcement went off (issue #185).
+    ///
+    /// `rules` is read under `applyLock`, as in `applyRules`, so whichever
+    /// call takes the lock last renders the newest published policy.
+    func install(rules readRules: @autoclosure () -> [Rule]) throws {
         applyLock.lock()
         defer { applyLock.unlock() }
+        let rules = readRules()
+        stateLock.lock()
+        lastRules = rules
+        stateLock.unlock()
         try ensureMainPFConfReferencesAnchor()
         try run(pfctl, ["-E"]) // enable pf
         // Use the same fail-open load path as later rule/feed updates. If a
         // feed table is rejected, the user's anchor still gets loaded without
         // the feed rather than leaving enforcement in a half-applied state.
-        try writeAndLoad(rules: [])
+        try writeAndLoad(rules: rules)
         loaded = true
     }
 
     func uninstall() throws {
         applyLock.lock()
         defer { applyLock.unlock() }
+        unloadLocked()
+    }
+
+    /// Run once when the helper starts, before it accepts any client. The
+    /// kernel keeps the anchor a previous helper loaded, and pf.conf loads the
+    /// anchor file at boot, but a new helper starts with enforcement off and
+    /// says so. Leaving those rules in force meant rule edits were only
+    /// recorded and pf kept enforcing what the user had since changed (issue
+    /// #189). Clearing them fails open: the app turns enforcement back on with
+    /// the current rules as soon as it reconnects. Throws when the kernel
+    /// anchor could not be flushed: no client is connected yet to hear a
+    /// warning, so the helper reports it in its status instead.
+    func clearLeftoverAnchor() throws {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        if let error = unloadLocked() { throw error }
+    }
+
+    /// Empties the anchor in the kernel and in the file pf.conf loads it from.
+    /// Flushing only the kernel left the last rules in the file, so any later
+    /// load of pf.conf (boot, a VPN, another tool) brought them back while
+    /// FreeSnitch reported enforcement off (issue #190). The file is emptied,
+    /// not deleted: pf.conf still names it, and a missing file would make that
+    /// load fail. Caller holds `applyLock`. Returns why the kernel anchor
+    /// could not be flushed, if it could not.
+    @discardableResult
+    private func unloadLocked() -> Error? {
         expiryTimer?.cancel()
         expiryTimer = nil
-        _ = try? run(pfctl, ["-a", PFManager.anchorName, "-F", "all"])
+        if FileManager.default.fileExists(atPath: anchorPath) {
+            do {
+                try PFManager.emptyAnchor.write(toFile: anchorPath, atomically: true, encoding: .utf8)
+            } catch {
+                PSLog.error(PSLog.pf, "could not empty \(anchorPath): \(error.localizedDescription)")
+                onWarning?("PF could not empty \(anchorPath), so a later load of /etc/pf.conf could bring "
+                    + "back FreeSnitch's last rules: \(error.localizedDescription)")
+            }
+        }
+        var flushError: Error?
+        do { try run(pfctl, ["-a", PFManager.anchorName, "-F", "all"]) } catch { flushError = error }
         _ = try? run(pfctl, ["-a", PFManager.anchorName, "-f", "/dev/null"])
         loaded = false
+        return flushError
     }
+
+    /// What the anchor file holds while enforcement is off: no rules at all.
+    static let emptyAnchor = "# FreeSnitch pf anchor - enforcement is off, so it holds no rules.\n"
 
     var isLoaded: Bool { loaded }
 
-    func applyRules(_ rules: [Rule]) throws {
+    /// The rules the anchor renders the next time it is written.
+    var currentRules: [Rule] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return lastRules
+    }
+
+    /// Records `rules` as the policy in force and, only while the anchor is
+    /// loaded, writes and loads it. Recording always happens, so a later
+    /// install or feed refresh can never render rules the user has since
+    /// changed (issue #185). The loaded check is made under `applyLock`, so
+    /// an update racing `uninstall` cannot load the anchor again after
+    /// enforcement went off. Returns whether the anchor was written.
+    ///
+    /// `rules` is read under `applyLock`. Read before it, a call holding an
+    /// older list could take the lock after a newer one and load a deny the
+    /// user had just deleted.
+    @discardableResult
+    func applyRules(_ readRules: @autoclosure () -> [Rule]) throws -> Bool {
         applyLock.lock()
         defer { applyLock.unlock() }
+        let rules = readRules()
         stateLock.lock()
         lastRules = rules
         stateLock.unlock()
+        guard loaded else { return false }
         try writeAndLoad(rules: rules)
+        return true
     }
 
     /// Publishes an address feed set into the anchor.
@@ -330,6 +410,11 @@ final class PFManager: @unchecked Sendable {
                 }
                 if port == 67 || port == 68 {
                     return reject("blocking destination port \(port) could disable DHCP")
+                }
+                // DHCPv6, which the address feed section already lets through
+                // (issue #186).
+                if port == 546 || port == 547 {
+                    return reject("blocking destination port \(port) could disable DHCPv6")
                 }
             }
         }

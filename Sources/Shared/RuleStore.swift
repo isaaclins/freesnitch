@@ -42,6 +42,9 @@ public final class RuleStore: @unchecked Sendable {
     public struct PolicyDraft {
         public var mode: AppMode
         public var rules: [Rule]
+        /// Set to also write this mode to the active profile, in the same
+        /// transaction. What is enforced is the active profile's mode.
+        public var activeProfileMode: AppMode?
 
         public init(mode: AppMode, rules: [Rule]) {
             self.mode = mode
@@ -429,16 +432,23 @@ public final class RuleStore: @unchecked Sendable {
     /// The generation is the same committed policy generation, so existing
     /// snapshot gating is unchanged.
     public func activePolicyState() -> PolicyState {
-        queue.sync {
-            let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
-            guard let profile = activeProfileLocked() else {
-                return policyStateLocked()
-            }
-            return PolicyState(mode: profile.mode,
-                               rules: layeredRulesLocked(profileName: profile.name),
+        queue.sync { activePolicyStateLocked() }
+    }
+
+    private func activePolicyStateLocked() -> PolicyState {
+        let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
+        guard let profile = activeProfileLocked() else {
+            // No profile at all: the Always layer only, never every
+            // profile's rules (issue #184).
+            return PolicyState(mode: policyStateLocked().mode,
+                               rules: allRulesLocked(profile: Profile.alwaysName),
                                generation: generation,
                                epoch: sessionEpoch)
         }
+        return PolicyState(mode: profile.mode,
+                           rules: layeredRulesLocked(profileName: profile.name),
+                           generation: generation,
+                           epoch: sessionEpoch)
     }
 
     public func profilePolicy(named name: String) throws -> ProfilePolicy {
@@ -471,30 +481,51 @@ public final class RuleStore: @unchecked Sendable {
     /// validate the complete batch before this method commits anything.
     @discardableResult
     public func mutatePolicy(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
-        try queue.sync {
-            let current = policyStateLocked()
-            var draft = PolicyDraft(mode: current.mode, rules: current.rules)
-            try change(&draft)
-            guard current.generation < UInt64.max else {
-                throw PolicyStoreError.generationExhausted
-            }
-            let nextGeneration = current.generation + 1
+        try queue.sync { try mutatePolicyLocked(change) }
+    }
 
-            try execLocked("BEGIN IMMEDIATE;")
-            do {
-                try replaceRulesLocked(draft.rules)
-                try setSettingLocked(Self.modeSettingKey, draft.mode.rawValue)
-                try setSettingLocked(Self.policyGenerationSettingKey, String(nextGeneration))
-                try execLocked("COMMIT;")
-            } catch {
-                try? execLocked("ROLLBACK;")
-                throw error
-            }
-            // Read the committed ordering back so the helper runtime and
-            // every later authoritative snapshot use the same persisted rule
-            // order, including priority tie-breaks.
-            return policyStateLocked()
+    /// Commits like `mutatePolicy`, but returns the policy that is enforced
+    /// afterwards: the active profile's mode with the Always rules, then that
+    /// profile's rules. `mutatePolicy` returns every profile's rules, and
+    /// publishing that to pf and the DNS proxy enforced profiles that are not
+    /// active (issue #184). Both are read in one critical section, so a
+    /// profile switch cannot land between the commit and the read.
+    public func mutateActivePolicy(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
+        try queue.sync {
+            _ = try mutatePolicyLocked(change)
+            return activePolicyStateLocked()
         }
+    }
+
+    private func mutatePolicyLocked(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
+        let current = policyStateLocked()
+        var draft = PolicyDraft(mode: current.mode, rules: current.rules)
+        try change(&draft)
+        guard current.generation < UInt64.max else {
+            throw PolicyStoreError.generationExhausted
+        }
+        let nextGeneration = current.generation + 1
+
+        try execLocked("BEGIN IMMEDIATE;")
+        do {
+            try replaceRulesLocked(draft.rules)
+            try setSettingLocked(Self.modeSettingKey, draft.mode.rawValue)
+            if let profileMode = draft.activeProfileMode, let profile = activeProfileLocked() {
+                try executeLocked("UPDATE profiles SET mode=? WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, profileMode.rawValue, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, profile.id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+            }
+            try setSettingLocked(Self.policyGenerationSettingKey, String(nextGeneration))
+            try execLocked("COMMIT;")
+        } catch {
+            try? execLocked("ROLLBACK;")
+            throw error
+        }
+        // Read the committed ordering back so the helper runtime and
+        // every later authoritative snapshot use the same persisted rule
+        // order, including priority tie-breaks.
+        return policyStateLocked()
     }
 
     private func policyStateLocked() -> PolicyState {

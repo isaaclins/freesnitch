@@ -26,12 +26,16 @@ enum PrivilegedUninstall {
     /// Order matters: the anchor is flushed while the app is still on disk,
     /// and the bundle goes last because the helper binary lives inside it.
     ///
-    /// The anchor is flushed, never deleted, and pf is never disabled
-    /// globally: `/etc/pf.conf` still references the `puresnitch` anchor, and
-    /// removing the file while pf.conf points at it would strand the user's
-    /// firewall configuration.
+    /// The anchor is emptied and flushed, never deleted, and pf is never
+    /// disabled globally: `/etc/pf.conf` still references the `puresnitch`
+    /// anchor, and removing the file while pf.conf points at it would strand
+    /// the user's firewall configuration. Emptying the file matters as much as
+    /// the flush: pf.conf loads it at boot, and so does any VPN or tool that
+    /// reloads pf.conf, so rules left in it came back after FreeSnitch was
+    /// gone (issue #192).
     private static let keepDatabase = """
-    do shell script "/sbin/pfctl -a puresnitch -F all; \
+    do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
+    /sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'" with administrator privileges
     """
@@ -39,7 +43,8 @@ enum PrivilegedUninstall {
     /// The same, plus the policy database. Separate constant rather than a
     /// flag spliced into a string, so both forms stay literal and auditable.
     private static let removeDatabase = """
-    do shell script "/sbin/pfctl -a puresnitch -F all; \
+    do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
+    /sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'; \
     /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite'" with administrator privileges
