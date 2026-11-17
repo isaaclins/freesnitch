@@ -398,6 +398,15 @@ final class PFManager: @unchecked Sendable {
         }
 
         if verb == "block" {
+            // pf reads `in ... to X port N` as this Mac's own address and
+            // port, while the rule names the remote side, as the matcher and
+            // the Network Extension read it. pf keeps no state for a block,
+            // so such a line would also drop replies to this Mac's own
+            // connections that arrive on that local port, DNS replies
+            // included. An incoming deny is left to the extension (#298).
+            if r.direction == .incoming {
+                return reject("an incoming deny is enforced by the Network Extension filter layer when active and is not emitted to PF, which cannot match the remote port of an incoming connection")
+            }
             if let destination,
                let reason = PFHostValidator.protectedDestinationReason(for: destination) {
                 return reject("blocking \(destination) is unsafe: \(reason)")
@@ -418,7 +427,10 @@ final class PFManager: @unchecked Sendable {
         }
 
         var line = verb
-        if r.direction != .any {
+        if verb == "block" {
+            // Only the outgoing half of a deny reaches pf, see above.
+            line += " out"
+        } else if r.direction != .any {
             line += r.direction == .incoming ? " in" : " out"
         }
         line += " quick proto { tcp udp }"

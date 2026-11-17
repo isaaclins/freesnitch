@@ -72,7 +72,11 @@ func checkPFSyntax(_ name: String, _ anchor: String, _ checks: Checks) {
                       "\(name): pf refuses a port without a host before it: '\(line)'")
     }
     if let dir = ProcessInfo.processInfo.environment["PF_SYNTAX_DIR"] {
-        try? anchor.write(toFile: "\(dir)/\(name).conf", atomically: true, encoding: .utf8)
+        do {
+            try anchor.write(toFile: "\(dir)/\(name).conf", atomically: true, encoding: .utf8)
+        } catch {
+            checks.expect(false, "\(name): could not keep the anchor for pfctl: \(error)")
+        }
     }
 }
 
@@ -282,10 +286,9 @@ struct IPBlocklistHarness {
             Rule(remotePort: 550, direction: .any, action: .allow, scope: .port)
         ]) { _, reason in refusedPorts.append(reason) }
         checkPFSyntax("infrastructure", infrastructure, checks)
+        let blockLines = infrastructure.split(separator: "\n").filter { $0.hasPrefix("block") }
         for port in [67, 68, 546] {
-            checks.expect(!infrastructure.contains("block out quick proto { tcp udp } port \(port)")
-                            && !infrastructure.contains("block in quick proto { tcp udp } port \(port)")
-                            && !infrastructure.contains("block quick proto { tcp udp } port \(port)"),
+            checks.expect(!blockLines.contains { $0.hasSuffix(" port \(port)") },
                           "a deny on port \(port) must never be written to pf")
         }
         checks.expect(!infrastructure.contains("203.0.113.40"),
@@ -294,13 +297,27 @@ struct IPBlocklistHarness {
                       "an allow on a DHCPv6 port must still be written, since a pass can only block less")
         checks.expect(infrastructure.contains("block out quick proto { tcp udp } to any port 548"),
                       "a deny on an ordinary port next to DHCPv6 must still be written")
-        // A rule with only a port matches any host (issue #298), in every
-        // direction pf is told about.
-        checks.expect(infrastructure.contains("block in quick proto { tcp udp } to any port 549"),
-                      "an incoming port-only deny must be written as to any port")
+        // A rule with only a port matches any host (issue #298).
         checks.expect(infrastructure.contains("pass quick proto { tcp udp } to any port 550"),
                       "a port-only allow in both directions must be written as to any port")
-        checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 3,
+        // pf would read an incoming deny's port as this Mac's own local port
+        // and drop replies arriving on it, so only outgoing denies reach pf.
+        checks.expect(!infrastructure.contains("549"),
+                      "an incoming deny must never be written to pf")
+        checks.expect(!blockLines.contains { $0.hasPrefix("block in") || $0.hasPrefix("block quick") },
+                      "a deny must only ever be written to pf as block out")
+        checks.expect(refusedPorts.filter { $0.contains("could disable DHCP") && !$0.contains("DHCPv6") }.count == 1
+                        && refusedPorts.filter { $0.contains("incoming deny") }.count == 3,
+                      "the DHCP and incoming refusals must be reported with a reason, got \(refusedPorts)")
+        let bothWays = pf.renderAnchor(rules: [
+            Rule(remoteIP: "203.0.113.41", remotePort: 8080, direction: .any, action: .deny, scope: .ip),
+            Rule(remotePort: 8081, direction: .any, action: .deny, scope: .port)
+        ])
+        checkPFSyntax("both-ways", bothWays, checks)
+        checks.expect(bothWays.contains("block out quick proto { tcp udp } to 203.0.113.41 port 8080")
+                        && bothWays.contains("block out quick proto { tcp udp } to any port 8081"),
+                      "a deny in both directions must be written as its outgoing half only")
+        checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 2,
                       "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
@@ -510,7 +527,7 @@ PF_SYNTAX_DIR="$TMP/pf-syntax" "$TMP/run"
 # needs no root on macOS. Where pfctl cannot run at all (no pfctl, a sandbox
 # without /dev/pf), the grammar checks above still ran.
 PFCTL="${PFCTL:-/sbin/pfctl}"
-printf 'pass out quick proto { tcp udp } to any port 1\n' > "$TMP/pf-probe.conf"
+printf 'pass out all\n' > "$TMP/pf-probe.conf"
 if [[ -x "$PFCTL" ]] && "$PFCTL" -n -f "$TMP/pf-probe.conf" >/dev/null 2>&1; then
   parsed=0
   for conf in "$TMP"/pf-syntax/*.conf; do
@@ -520,7 +537,7 @@ if [[ -x "$PFCTL" ]] && "$PFCTL" -n -f "$TMP/pf-probe.conf" >/dev/null 2>&1; the
     fi
     parsed=$((parsed + 1))
   done
-  [[ "$parsed" -gt 0 ]] || { printf 'ip blocklist harness: FAIL: no rendered anchor reached pfctl\n' >&2; exit 1; }
+  [[ "$parsed" -eq 6 ]] || { printf 'ip blocklist harness: FAIL: %d of 6 rendered anchors reached pfctl\n' "$parsed" >&2; exit 1; }
   printf 'ip blocklist harness: pfctl -n parsed all %d rendered anchors\n' "$parsed"
 else
   printf 'ip blocklist harness: pfctl -n cannot run here; the grammar checks stand in for it\n'
