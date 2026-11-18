@@ -178,7 +178,9 @@ enum InstallLocation {
     static let homebrewCaskrooms = ["/opt/homebrew/Caskroom/freesnitch", "/usr/local/Caskroom/freesnitch"]
 
     /// Whether FreeSnitch was installed with `brew install --cask` (#407):
-    /// Homebrew then owns the copy, and reinstalling goes through it.
+    /// Homebrew then owns the copy, and reinstalling goes through it. Only the
+    /// two standard Homebrew prefixes are known; anything else gets the disk
+    /// image advice, which also works.
     static func installedWithHomebrew(caskrooms: [String] = homebrewCaskrooms,
                                       exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Bool {
         caskrooms.contains(where: exists)
@@ -307,9 +309,11 @@ extension InstallLocation {
         guard !isDemo else { return false }
         // Opening the installed copy would only run this same copy again.
         // Defensive: launch and the banner already route a stuck copy to the
-        // explanation, so nothing should reach this today.
+        // explanation, so nothing should reach this today. It only explains;
+        // the one automatic clear-and-reopen belongs to launch.
         if let installed = stuckInstalledCopy {
-            explainStuckInstalledCopy(installed, flagCleared: clearQuarantine(at: installed))
+            let flagGone = getxattr(installed.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) < 0
+            explainStuckInstalledCopy(installed, flagCleared: flagGone)
             return false
         }
         let running = Bundle.main.bundleURL
