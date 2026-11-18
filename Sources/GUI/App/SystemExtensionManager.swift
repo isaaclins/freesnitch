@@ -1173,7 +1173,7 @@ final class AppCommunicationBridge: NSObject, AppCommunication {
             return
         }
         Task { @MainActor in
-            responseHandler(state.helper.ingestObservationBatch(observationBatch))
+            responseHandler(state.helper.ingestObservationBatch(state.relabelUnansweredAlerts(in: observationBatch)))
         }
     }
 }

@@ -296,6 +296,12 @@ struct InsightsView: View {
                 Text("\(Self.plural(app.destinationCount, "destination")), \(PSFormat.compactCount(app.connectionCount)) connections")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .help("\(Self.plural(app.destinationCount, "destination")), \(Self.plural(app.connectionCount, "connection"))")
+                if app.blockedCount > 0 {
+                    Label("\(PSFormat.compactCount(app.blockedCount)) blocked", systemImage: "xmark.octagon.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption).foregroundStyle(.red).lineLimit(1)
+                        .help("FreeSnitch blocked \(Self.plural(app.blockedCount, "connection")) from this app in this range.")
+                }
             }
             Spacer()
             Text(PSFormat.bytes(app.bytesIn + app.bytesOut))
@@ -314,6 +320,7 @@ struct InsightsView: View {
                     PSChip("No DNS name seen", color: .orange, icon: "questionmark.circle")
                 }
                 Spacer()
+                decisionChip(destination)
                 Text("\(PSFormat.compactCount(destination.connectionCount)) connections")
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 Text(PSFormat.bytes(destination.bytesIn + destination.bytesOut))
@@ -330,6 +337,50 @@ struct InsightsView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// What FreeSnitch did with the connections in this row (#447). Rows with
+    /// no recorded decision (from before decisions were kept) show nothing,
+    /// rather than a guess.
+    @ViewBuilder
+    private func decisionChip(_ destination: InsightsDestinationSummary) -> some View {
+        if let counts = destination.decisions {
+            Group {
+                switch counts.status(total: destination.connectionCount) {
+                case .allowed:
+                    PSChip("Allowed", color: .green, icon: "checkmark.circle.fill")
+                case .blocked:
+                    PSChip("Blocked", color: .red, icon: "xmark.octagon.fill")
+                case .mixed(let blocked, let total):
+                    PSChip("\(PSFormat.compactCount(blocked)) of \(PSFormat.compactCount(total)) blocked",
+                           color: .orange, icon: "xmark.octagon")
+                case .notBlocked:
+                    PSChip("Not blocked", color: .green, icon: "checkmark.circle")
+                case .unfiltered:
+                    PSChip("Not filtered", color: .secondary, icon: "minus.circle")
+                case .unknown:
+                    EmptyView()
+                }
+            }
+            .help(Self.decisionHelp(counts, total: destination.connectionCount))
+        }
+    }
+
+    /// The exact split behind the chip, including connections recorded
+    /// before decisions were kept.
+    static func decisionHelp(_ counts: InsightsDecisionCounts, total: Int) -> String {
+        var parts: [String] = []
+        if counts.allowed > 0 { parts.append("\(Self.plural(counts.allowed, "connection")) allowed") }
+        if counts.blocked > 0 { parts.append("\(Self.plural(counts.blocked, "connection")) blocked") }
+        if counts.unfiltered > 0 {
+            parts.append("\(Self.plural(counts.unfiltered, "connection")) let through without a filtering decision "
+                         + "(name lookups, local traffic, an alert nobody answered, or no rules loaded yet)")
+        }
+        let unknown = total - counts.allowed - counts.blocked - counts.unfiltered
+        if unknown > 0 {
+            parts.append("\(Self.plural(unknown, "connection")) recorded before FreeSnitch kept decisions")
+        }
+        return parts.joined(separator: "\n")
     }
 
     /// Acts on the selected row, the way Mail's toolbar acts on the selected

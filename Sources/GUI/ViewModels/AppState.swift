@@ -576,6 +576,21 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Alerts answered "allow" here without anyone deciding (#447).
+    private var unansweredAlerts = UnansweredAlertLedger()
+
+    /// The observation batch to forward to the helper: unchanged, unless it
+    /// holds flows this app let through without anyone answering, which are
+    /// then recorded as not filtered rather than allowed (#447). A batch that
+    /// does not decode is forwarded as it came, for the helper to judge.
+    func relabelUnansweredAlerts(in data: Data) -> Data {
+        guard let batch = try? FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: data),
+              let relabelled = unansweredAlerts.relabel(batch),
+              let encoded = try? FreeSnitchWireCodec.encode(relabelled),
+              encoded.count <= InsightsLimits.maxBatchBytes else { return data }
+        return encoded
+    }
+
     func presentAlert(for c: Connection, reply: @escaping (Bool, Bool) -> Void) {
         rollCountersIfDayChanged()
         // Alert mode's known-contact verdict is the settled #26 behavior:
@@ -607,12 +622,14 @@ final class AppState: ObservableObject {
             // Not a new decision, so it is not a new question. It still counts,
             // because the dialog says how many are waiting behind it.
             coalescedAlertCount += 1
+            unansweredAlerts.note(c.id)
             reply(true, false)
             return
         }
         if pendingAlerts.count >= Self.maxPendingAlerts {
             overflowAllowedToday += 1
             recordSilentAllow(c, because: "\(Self.maxPendingAlerts) questions were already waiting")
+            unansweredAlerts.note(c.id)
             reply(true, false)
             return
         }
@@ -676,6 +693,9 @@ final class AppState: ObservableObject {
             // The registry is full. Do not queue a question nobody can answer:
             // resume with the same fail-open default this view model already
             // uses when its own alert queue overflows.
+            if let alert = pendingAlerts.first(where: { $0.id == id }) {
+                unansweredAlerts.note(alert.connection.id)
+            }
             finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false)
         case .withdrawn, .expired:
             // Answered here, or no longer answerable from outside. The flow

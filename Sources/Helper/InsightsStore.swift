@@ -236,6 +236,13 @@ final class InsightsStore: @unchecked Sendable {
             try addColumnIfMissingLocked(table: "flow_observations", column: "process_version")
             try addColumnIfMissingLocked(table: "daily_rollups", column: "bytes_in")
             try addColumnIfMissingLocked(table: "daily_rollups", column: "bytes_out")
+            // What the filter did with each connection (#447). NULL on rows
+            // recorded before this, which stay "unknown" and are never
+            // counted as allowed or blocked.
+            try addColumnIfMissingLocked(table: "flow_observations", column: "decision", definition: "TEXT")
+            for column in ["allowed_count", "blocked_count", "unfiltered_count"] {
+                try addColumnIfMissingLocked(table: "daily_rollups", column: column)
+            }
             try verifyDatabaseFilesLocked()
         } catch {
             sqlite3_close(handle)
@@ -248,8 +255,8 @@ final class InsightsStore: @unchecked Sendable {
         try executeLocked("""
             INSERT OR IGNORE INTO flow_observations(
                 id,observed_at,pid,process_bundle_id,process_path,process_name,process_version,
-                remote_host,remote_ip,remote_port,direction,protocol_name,bytes_in,bytes_out
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+                remote_host,remote_ip,remote_port,direction,protocol_name,bytes_in,bytes_out,decision
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """) { statement in
                 try self.bindText(statement, index: 1, value: observation.id.uuidString)
                 try self.bindDouble(statement, index: 2, value: observation.observedAt.timeIntervalSince1970)
@@ -265,6 +272,7 @@ final class InsightsStore: @unchecked Sendable {
                 try self.bindText(statement, index: 12, value: observation.protocolName)
                 try self.bindOptionalInt64(statement, index: 13, value: observation.bytesIn)
                 try self.bindOptionalInt64(statement, index: 14, value: observation.bytesOut)
+                try self.bindOptionalText(statement, index: 15, value: observation.decision?.rawValue)
             }
     }
 
@@ -297,18 +305,25 @@ final class InsightsStore: @unchecked Sendable {
             : observation.remoteIP
         guard !app.isEmpty, !destination.isEmpty else { return }
         try executeLocked("""
-            INSERT INTO daily_rollups(app_identity,destination_key,utc_day,connection_count,bytes_in,bytes_out)
-            VALUES (?,?,?,1,?,?)
+            INSERT INTO daily_rollups(app_identity,destination_key,utc_day,connection_count,bytes_in,bytes_out,
+                                      allowed_count,blocked_count,unfiltered_count)
+            VALUES (?,?,?,1,?,?,?,?,?)
             ON CONFLICT(app_identity,destination_key,utc_day)
             DO UPDATE SET connection_count=connection_count+1,
                           bytes_in=bytes_in+excluded.bytes_in,
-                          bytes_out=bytes_out+excluded.bytes_out;
+                          bytes_out=bytes_out+excluded.bytes_out,
+                          allowed_count=allowed_count+excluded.allowed_count,
+                          blocked_count=blocked_count+excluded.blocked_count,
+                          unfiltered_count=unfiltered_count+excluded.unfiltered_count;
             """) { statement in
                 try self.bindText(statement, index: 1, value: app)
                 try self.bindText(statement, index: 2, value: destination)
                 try self.bindText(statement, index: 3, value: self.utcDay(for: observation.observedAt))
                 try self.bindInt64(statement, index: 4, value: observation.bytesIn ?? 0)
                 try self.bindInt64(statement, index: 5, value: observation.bytesOut ?? 0)
+                try self.bindInt64(statement, index: 6, value: observation.decision == .allowed ? 1 : 0)
+                try self.bindInt64(statement, index: 7, value: observation.decision == .blocked ? 1 : 0)
+                try self.bindInt64(statement, index: 8, value: observation.decision == .unfiltered ? 1 : 0)
             }
         if let version = observation.processVersion {
             try executeLocked("""
@@ -341,13 +356,22 @@ final class InsightsStore: @unchecked Sendable {
             }
     }
 
-    private func addColumnIfMissingLocked(table: String, column: String) throws {
+    /// Three columns in the order `rawDecisionSQL` and `rollupDecisionSQL`
+    /// select them.
+    private func decisionCounts(_ statement: OpaquePointer?, firstIndex: Int32) -> InsightsDecisionCounts {
+        InsightsDecisionCounts(allowed: Int(columnInt64(statement, index: firstIndex)),
+                               blocked: Int(columnInt64(statement, index: firstIndex + 1)),
+                               unfiltered: Int(columnInt64(statement, index: firstIndex + 2)))
+    }
+
+    private func addColumnIfMissingLocked(table: String, column: String,
+                                          definition: String = "INTEGER NOT NULL DEFAULT 0") throws {
         var present = false
         try queryLocked("PRAGMA table_info(\(table));") { statement in
             if let name = self.columnText(statement, index: 1), name == column { present = true }
         }
         guard !present else { return }
-        try execLocked("ALTER TABLE \(table) ADD COLUMN \(column) INTEGER NOT NULL DEFAULT 0;")
+        try execLocked("ALTER TABLE \(table) ADD COLUMN \(column) \(definition);")
     }
 
     private func settingLocked(_ key: String) throws -> String? {
@@ -518,6 +542,12 @@ extension InsightsStore {
     }
 
     private static let appIdentitySQL = "COALESCE(NULLIF(process_bundle_id,''), process_path)"
+    /// Allowed, blocked and unfiltered counts over raw events (#447). Rows
+    /// with no recorded decision fall in none of them.
+    private static let rawDecisionSQL =
+        "COALESCE(SUM(decision = 'allowed'),0), COALESCE(SUM(decision = 'blocked'),0), COALESCE(SUM(decision = 'unfiltered'),0)"
+    private static let rollupDecisionSQL =
+        "COALESCE(SUM(allowed_count),0), COALESCE(SUM(blocked_count),0), COALESCE(SUM(unfiltered_count),0)"
     /// The hostname the app asked for when one was recorded, otherwise the
     /// address it connected to. A flow to port 53 is a lookup: its hostname is
     /// the name being looked up and its address is the resolver, so it counts
@@ -594,7 +624,8 @@ extension InsightsStore {
                 SELECT \(Self.appIdentitySQL) AS app,
                        MAX(process_name), MAX(process_bundle_id), MAX(process_path),
                        COUNT(DISTINCT \(Self.destinationSQL)),
-                       COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
+                       COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at),
+                       \(Self.rawDecisionSQL)
                 FROM flow_observations
                 WHERE observed_at >= ? AND observed_at <= ?
                   \(destination == nil ? "" : "AND \(Self.destinationSQL) = ?")
@@ -618,12 +649,14 @@ extension InsightsStore {
                     connectionCount: Int(self.columnInt64(statement, index: 5)),
                     bytesIn: self.columnInt64(statement, index: 6),
                     bytesOut: self.columnInt64(statement, index: 7),
-                    lastSeen: self.columnDate(statement, index: 8)))
+                    lastSeen: self.columnDate(statement, index: 8),
+                    decisions: self.decisionCounts(statement, firstIndex: 9)))
             }
         case .dailyRollups:
             let sql = """
                 SELECT app_identity, COUNT(DISTINCT destination_key), SUM(connection_count),
-                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day)
+                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day),
+                       \(Self.rollupDecisionSQL)
                 FROM daily_rollups
                 WHERE utc_day >= ? AND utc_day <= ?
                   \(destination == nil ? "" : "AND destination_key = ?")
@@ -646,7 +679,8 @@ extension InsightsStore {
                     connectionCount: Int(self.columnInt64(statement, index: 2)),
                     bytesIn: self.columnInt64(statement, index: 3),
                     bytesOut: self.columnInt64(statement, index: 4),
-                    lastSeen: self.columnText(statement, index: 5).flatMap(self.date(fromUTCDay:))))
+                    lastSeen: self.columnText(statement, index: 5).flatMap(self.date(fromUTCDay:)),
+                    decisions: self.decisionCounts(statement, firstIndex: 6)))
             }
         }
         return trim(rows, limit: query.limit)
@@ -657,7 +691,8 @@ extension InsightsStore {
     private func destinationsLocked(_ query: InsightsQuery,
                                     source: InsightsDataSource) throws -> (rows: [InsightsDestinationSummary], hasMore: Bool) {
         guard let app = query.appIdentity else { return ([], false) }
-        var raw: [(key: String, ip: String?, count: Int, bytesIn: Int64, bytesOut: Int64, lastSeen: Date?)] = []
+        var raw: [(key: String, ip: String?, count: Int, bytesIn: Int64, bytesOut: Int64, lastSeen: Date?,
+                   decisions: InsightsDecisionCounts)] = []
         switch source {
         case .rawEvents:
             let sql = """
@@ -666,7 +701,8 @@ extension InsightsStore {
                 -- observation, so a name shows the address it was last
                 -- reached at. MAX(remote_ip) was a text maximum (#167).
                 SELECT \(Self.destinationSQL) AS dest, remote_ip,
-                       COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
+                       COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at),
+                       \(Self.rawDecisionSQL)
                 FROM flow_observations
                 WHERE observed_at >= ? AND observed_at <= ? AND \(Self.appIdentitySQL) = ?
                 GROUP BY dest
@@ -684,12 +720,14 @@ extension InsightsStore {
                             Int(self.columnInt64(statement, index: 2)),
                             self.columnInt64(statement, index: 3),
                             self.columnInt64(statement, index: 4),
-                            self.columnDate(statement, index: 5)))
+                            self.columnDate(statement, index: 5),
+                            self.decisionCounts(statement, firstIndex: 6)))
             }
         case .dailyRollups:
             let sql = """
                 SELECT destination_key, SUM(connection_count),
-                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day)
+                       COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day),
+                       \(Self.rollupDecisionSQL)
                 FROM daily_rollups
                 WHERE utc_day >= ? AND utc_day <= ? AND app_identity = ?
                 GROUP BY destination_key
@@ -707,7 +745,8 @@ extension InsightsStore {
                             Int(self.columnInt64(statement, index: 1)),
                             self.columnInt64(statement, index: 2),
                             self.columnInt64(statement, index: 3),
-                            self.columnText(statement, index: 4).flatMap(self.date(fromUTCDay:))))
+                            self.columnText(statement, index: 4).flatMap(self.date(fromUTCDay:)),
+                            self.decisionCounts(statement, firstIndex: 5)))
             }
         }
 
@@ -723,7 +762,8 @@ extension InsightsStore {
                 bytesIn: entry.bytesIn,
                 bytesOut: entry.bytesOut,
                 otherAppCount: try otherAppCountLocked(destination: entry.key, excluding: app, query: query, source: source),
-                lastSeen: entry.lastSeen))
+                lastSeen: entry.lastSeen,
+                decisions: entry.decisions))
         }
         return trim(rows, limit: query.limit)
     }

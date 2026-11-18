@@ -12,6 +12,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 cat > "$TMP/verify.swift" <<'SWIFT'
 import Foundation
+import SQLite3
 
 @main
 struct InsightsHarness {
@@ -42,7 +43,8 @@ struct InsightsHarness {
 
     static func observation(app: String, bundle: String?, path: String, host: String, ip: String,
                             at date: Date, port: Int = 443,
-                            bytesIn: Int64 = 100, bytesOut: Int64 = 50) -> FlowObservation {
+                            bytesIn: Int64 = 100, bytesOut: Int64 = 50,
+                            decision: FlowDecision? = nil) -> FlowObservation {
         let connection = Connection(pid: 501,
                                     processName: app,
                                     processPath: path,
@@ -54,7 +56,12 @@ struct InsightsHarness {
                                     protocolName: "tcp",
                                     bytesIn: bytesIn,
                                     bytesOut: bytesOut)
-        return FlowObservation(connection: connection, observedAt: date)
+        return FlowObservation(connection: connection, observedAt: date, decision: decision)
+    }
+
+    static func rowStatus(_ row: InsightsDestinationSummary?) -> InsightsDecisionCounts.Status? {
+        guard let row else { return nil }
+        return row.decisions?.status(total: row.connectionCount)
     }
 
     static func main() {
@@ -517,6 +524,173 @@ struct InsightsHarness {
                                                                     since: Date().addingTimeInterval(-day), limit: 50)).destinations
         equal((probeDestinations.first { $0.destinationKey == sharedResolverIP }?.otherAppCount ?? -2) + 1, withLookups.count,
               "the Apps tab's 'also contacted by' count matches the list its Show Apps opens")
+
+        // MARK: what the filter did with each connection (#447)
+        var decided: [FlowObservation] = []
+        let spotify = (app: "Spotify", bundle: "com.spotify.client", path: "/Applications/Spotify.app")
+        for index in 0..<4 {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "apresolve.spotify.com", ip: "203.0.113.30",
+                                       at: now.addingTimeInterval(-Double(index) * 10), decision: .allowed))
+        }
+        for index in 0..<3 {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "analytics.spotify.com", ip: "203.0.113.31",
+                                       at: now.addingTimeInterval(-Double(index) * 10), decision: .blocked))
+        }
+        // A rule that changed part way: two allowed, then one blocked.
+        for (index, decision) in [FlowDecision.allowed, .allowed, .blocked].enumerated() {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "ads.spotify.com", ip: "203.0.113.32",
+                                       at: now.addingTimeInterval(-Double(index) * 10), decision: decision))
+        }
+        // Blocked next to connections that went through without a decision
+        // (an alert that timed out): not "Blocked" (#447).
+        for decision in [FlowDecision.blocked, .unfiltered] {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "", ip: "192.0.2.92", at: now, decision: decision))
+        }
+        // Allowed next to a connection with no recorded decision: no label.
+        for decision in [FlowDecision.allowed, nil] {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "", ip: "192.0.2.93", at: now, decision: decision))
+        }
+        // Allowed next to one let through without a decision: not blocked,
+        // but not all allowed either.
+        for decision in [FlowDecision.allowed, .unfiltered] {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "", ip: "192.0.2.94", at: now, decision: decision))
+        }
+        // Let through without a decision, and one recorded by an older
+        // extension that sent no decision at all.
+        decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                   host: "", ip: "192.0.2.90", at: now, decision: .unfiltered))
+        decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                   host: "", ip: "192.0.2.91", at: now, decision: nil))
+        try! store.record(decided)
+
+        for (label, since) in [("raw events", now.addingTimeInterval(-day)), ("daily rollups", now.addingTimeInterval(-300 * day))] {
+            let apps = try! store.report(for: InsightsQuery(kind: .apps, since: since, limit: 50))
+            let spotifyApp = apps.apps.first { $0.appIdentity == spotify.bundle }
+            equal(spotifyApp?.decisions, InsightsDecisionCounts(allowed: 8, blocked: 5, unfiltered: 3),
+                  "\(label): the app row counts allowed, blocked and unfiltered connections")
+            equal(spotifyApp?.blockedCount, 5, "\(label): the app row says how many were blocked")
+            let destinations = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: spotify.bundle,
+                                                                    since: since, limit: 50))
+            let byKey = Dictionary(uniqueKeysWithValues: destinations.destinations.map { ($0.destinationKey, $0) })
+            equal(rowStatus(byKey["apresolve.spotify.com"]), .allowed, "\(label): an all-allowed destination reads Allowed")
+            equal(rowStatus(byKey["analytics.spotify.com"]), .blocked, "\(label): an all-blocked destination reads Blocked")
+            equal(rowStatus(byKey["ads.spotify.com"]), .mixed(blocked: 1, of: 3),
+                  "\(label): a destination with both reads as 1 of 3 blocked")
+            equal(rowStatus(byKey["192.0.2.90"]), .unfiltered, "\(label): a connection let through without a decision reads Not filtered")
+            equal(rowStatus(byKey["192.0.2.92"]), .mixed(blocked: 1, of: 2),
+                  "\(label): blocked next to an unfiltered connection reads 1 of 2 blocked, not Blocked")
+            equal(rowStatus(byKey["192.0.2.93"]), .unknown,
+                  "\(label): allowed next to a connection with no decision gets no label, not Allowed")
+            equal(rowStatus(byKey["192.0.2.94"]), .notBlocked,
+                  "\(label): allowed next to an unfiltered connection reads Not blocked, not Allowed")
+            equal(rowStatus(byKey["192.0.2.91"]), .unknown,
+                  "\(label): a connection with no recorded decision is neither allowed nor blocked")
+        }
+        // Rows from before this change have no decision and must stay unknown.
+        equal(appsReport.apps.first { $0.appIdentity == "com.beeper.app" }?.decisions,
+              InsightsDecisionCounts(allowed: 0, blocked: 0, unfiltered: 0),
+              "connections recorded without a decision are counted in none of the three")
+
+        // The wire form: a decision survives the trip, and one this build
+        // does not know reads as unknown instead of failing the batch.
+        let blockedObservation = observation(app: "curl", bundle: nil, path: "/usr/bin/curl", host: "", ip: "192.0.2.5",
+                                             at: now, decision: .blocked)
+        let wire = try! FreeSnitchWireCodec.encode(FlowObservationBatch(observations: [blockedObservation]))
+        let decoded = try! FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: wire)
+        equal(decoded.observations.first?.decision, .blocked, "the decision travels with the observation")
+        let future = String(decoding: wire, as: UTF8.self).replacingOccurrences(of: "\"blocked\"", with: "\"quarantined\"")
+        let futureBatch = try? FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: Data(future.utf8))
+        check(futureBatch != nil, "an unknown decision value does not fail the batch")
+        check(futureBatch?.observations.first?.decision == nil, "an unknown decision value reads as unknown")
+
+        // MARK: alerts the app let through without anyone answering (#447)
+        // The extension only hears "allow" back, so it sends these as allowed.
+        // The app relabels them on the way to the helper.
+        let duplicate = observation(app: "Chrome", bundle: "com.google.Chrome", path: "/Applications/Chrome.app",
+                                    host: "", ip: "192.0.2.60", at: now, decision: .allowed)
+        let answered = observation(app: "Chrome", bundle: "com.google.Chrome", path: "/Applications/Chrome.app",
+                                   host: "", ip: "192.0.2.61", at: now, decision: .allowed)
+        let denied = observation(app: "Chrome", bundle: "com.google.Chrome", path: "/Applications/Chrome.app",
+                                 host: "", ip: "192.0.2.62", at: now, decision: .blocked)
+        var ledger = UnansweredAlertLedger()
+        check(ledger.relabel(FlowObservationBatch(observations: [duplicate])) == nil,
+              "with nothing noted, a batch is forwarded unchanged")
+        ledger.note(duplicate.id)
+        ledger.note(denied.id)
+        let relabelled = ledger.relabel(FlowObservationBatch(observations: [duplicate, answered, denied]))
+        equal(relabelled?.observations.map(\.decision), [.unfiltered, .allowed, .blocked],
+              "only the flow let through without an answer becomes not filtered")
+        check(ledger.relabel(FlowObservationBatch(observations: [duplicate])) == nil,
+              "a noted flow is relabelled once")
+        var withHits = UnansweredAlertLedger()
+        withHits.note(answered.id)
+        let hit = RuleHit(ruleID: UUID(), count: 3, lastMatchedAt: now)
+        equal(withHits.relabel(FlowObservationBatch(observations: [answered], ruleHits: [hit]))?.ruleHits, [hit],
+              "relabelling keeps the rule hits that travel in the same batch")
+        try! store.record(relabelled!.observations)
+        let chrome = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.google.Chrome",
+                                                          since: now.addingTimeInterval(-day), limit: 50))
+        equal(rowStatus(chrome.destinations.first { $0.destinationKey == "192.0.2.60" }), .unfiltered,
+              "a duplicate alert's flow reads Not filtered, not Allowed")
+        let evicted = observation(app: "Chrome", bundle: nil, path: "/Applications/Chrome.app", host: "",
+                                  ip: "192.0.2.63", at: now, decision: .allowed)
+        let newest = observation(app: "Chrome", bundle: nil, path: "/Applications/Chrome.app", host: "",
+                                 ip: "192.0.2.64", at: now, decision: .allowed)
+        var bounded = UnansweredAlertLedger()
+        bounded.note(evicted.id)
+        for _ in 0..<(UnansweredAlertLedger.capacity - 1) { bounded.note(UUID()) }
+        bounded.note(newest.id)
+        check(bounded.relabel(FlowObservationBatch(observations: [evicted])) == nil,
+              "the ledger stays bounded and forgets the oldest id")
+        equal(bounded.relabel(FlowObservationBatch(observations: [newest]))?.observations.first?.decision, .unfiltered,
+              "the newest id is still there after the oldest was dropped")
+        let negative = try? JSONDecoder().decode(InsightsDecisionCounts.self,
+                                                 from: Data(#"{"allowed":-3,"blocked":2,"unfiltered":-1}"#.utf8))
+        equal(negative, InsightsDecisionCounts(allowed: 0, blocked: 2, unfiltered: 0),
+              "negative counts from the wire read as zero")
+
+        // MARK: a store from before #447 gains the columns and keeps its rows unknown
+        let legacySupport = root.appendingPathComponent("Legacy Support")
+        try! FileManager.default.createDirectory(at: legacySupport.appendingPathComponent("Insights"),
+                                                 withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        let legacyPath = legacySupport.appendingPathComponent("Insights/insights.sqlite").path
+        var legacyDB: OpaquePointer?
+        check(sqlite3_open(legacyPath, &legacyDB) == SQLITE_OK, "a pre-#447 store can be created")
+        let legacySQL = """
+            CREATE TABLE flow_observations (id TEXT PRIMARY KEY, observed_at REAL NOT NULL, pid INTEGER NOT NULL,
+                process_bundle_id TEXT, process_path TEXT NOT NULL, process_name TEXT NOT NULL, process_version TEXT,
+                remote_host TEXT NOT NULL, remote_ip TEXT NOT NULL, remote_port INTEGER NOT NULL, direction TEXT NOT NULL,
+                protocol_name TEXT NOT NULL, bytes_in INTEGER, bytes_out INTEGER);
+            CREATE TABLE daily_rollups (app_identity TEXT NOT NULL, destination_key TEXT NOT NULL, utc_day TEXT NOT NULL,
+                connection_count INTEGER NOT NULL, bytes_in INTEGER NOT NULL DEFAULT 0, bytes_out INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(app_identity, destination_key, utc_day));
+            INSERT INTO flow_observations VALUES ('\(UUID().uuidString)', \(now.timeIntervalSince1970 - 60), 501, 'com.old.app',
+                '/Applications/Old.app', 'Old', NULL, '', '192.0.2.70', 443, 'outgoing', 'tcp', 10, 10);
+            INSERT INTO daily_rollups VALUES ('com.old.app', '192.0.2.70', '2026-01-01', 7, 70, 70);
+            """
+        check(sqlite3_exec(legacyDB, legacySQL, nil, nil, nil) == SQLITE_OK, "the pre-#447 store was seeded")
+        sqlite3_close(legacyDB)
+        chmod(legacyPath, 0o600)
+        do {
+            let upgraded = try InsightsStore(path: legacyPath, expectedUID: getuid())
+            try upgraded.record([observation(app: "Old", bundle: "com.old.app", path: "/Applications/Old.app",
+                                             host: "", ip: "192.0.2.70", at: now, decision: .blocked)])
+            let oldRows = try upgraded.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.old.app",
+                                                                 since: now.addingTimeInterval(-day), limit: 50))
+            let oldRow = oldRows.destinations.first
+            equal(oldRow?.connectionCount, 2, "the upgraded store keeps its old row and takes the new one")
+            equal(oldRow?.decisions, InsightsDecisionCounts(allowed: 0, blocked: 1, unfiltered: 0),
+                  "only the new connection counts as blocked; the old one stays unknown")
+        } catch {
+            check(false, "a pre-#447 store opens and upgrades: \(error)")
+        }
 
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {

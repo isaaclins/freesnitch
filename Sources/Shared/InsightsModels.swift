@@ -89,6 +89,113 @@ public enum InsightsIdentity {
     }
 }
 
+/// What the filter did with one recorded connection (#447). Recorded by the
+/// network extension at the moment the verdict is returned or, for a flow that
+/// waited on an alert, when that alert settled.
+public enum FlowDecision: String, Codable, Hashable, Sendable {
+    /// A rule or the mode let it through, or the user answered Allow.
+    case allowed
+    /// A rule or the mode dropped it, or the user answered Deny.
+    case blocked
+    /// Let through without a filtering decision: FreeSnitch's own and local
+    /// traffic, name lookups and DHCP, no policy loaded yet, or an alert that
+    /// nobody answered (the fail-open path).
+    case unfiltered
+}
+
+/// How the recorded connections in a row were decided (#447). Connections
+/// recorded before decisions were kept are in none of the three, so a row is
+/// never called Allowed or Blocked on a guess.
+public struct InsightsDecisionCounts: Codable, Hashable, Sendable {
+    public let allowed: Int
+    public let blocked: Int
+    public let unfiltered: Int
+
+    public init(allowed: Int, blocked: Int, unfiltered: Int) {
+        self.allowed = max(0, allowed)
+        self.blocked = max(0, blocked)
+        self.unfiltered = max(0, unfiltered)
+    }
+
+    private enum CodingKeys: String, CodingKey { case allowed, blocked, unfiltered }
+
+    /// Through the clamping init, so a negative count from the wire reads as 0.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(allowed: try c.decode(Int.self, forKey: .allowed),
+                  blocked: try c.decode(Int.self, forKey: .blocked),
+                  unfiltered: try c.decode(Int.self, forKey: .unfiltered))
+    }
+
+    /// What one row says, given every connection it holds (`total`),
+    /// including those recorded with no decision. A label only claims what is
+    /// true of all of them.
+    public enum Status: Hashable, Sendable {
+        case allowed
+        case blocked
+        /// Some of `of` connections blocked, the rest not.
+        case mixed(blocked: Int, of: Int)
+        /// None blocked, but not all allowed either: some went through
+        /// without a filtering decision.
+        case notBlocked
+        case unfiltered
+        /// Not every connection has a recorded decision and none was
+        /// blocked, so nothing can be said for the whole row.
+        case unknown
+    }
+
+    public func status(total: Int) -> Status {
+        let total = max(total, allowed + blocked + unfiltered)
+        guard total > 0 else { return .unknown }
+        if blocked == total { return .blocked }
+        if blocked > 0 { return .mixed(blocked: blocked, of: total) }
+        if allowed == total { return .allowed }
+        if unfiltered == total { return .unfiltered }
+        if allowed + unfiltered == total { return .notBlocked }
+        return .unknown
+    }
+}
+
+/// Flows the app let through on an alert without anyone answering it (#447):
+/// a duplicate of an alert already on screen, a full alert queue, or a full
+/// command-line registry. The extension only sees "allow" come back, so it
+/// records those as allowed. The app forwards every observation batch to the
+/// helper, and on the way it relabels these as `.unfiltered`, which is what
+/// they were. Bounded: the oldest ids go first, and an id is used once.
+public struct UnansweredAlertLedger: Sendable {
+    public static let capacity = 4096
+    private var order: [UUID] = []
+    private var ids = Set<UUID>()
+
+    public init() {}
+
+    public mutating func note(_ id: UUID) {
+        guard ids.insert(id).inserted else { return }
+        order.append(id)
+        if order.count > Self.capacity {
+            ids.remove(order.removeFirst())
+        }
+    }
+
+    /// The batch with every noted flow that came back as allowed relabelled,
+    /// or nil when nothing in it was noted, so the caller can forward the
+    /// original bytes untouched.
+    public mutating func relabel(_ batch: FlowObservationBatch) -> FlowObservationBatch? {
+        guard !ids.isEmpty else { return nil }
+        var changed = false
+        let observations = batch.observations.map { observation -> FlowObservation in
+            guard ids.contains(observation.id) else { return observation }
+            ids.remove(observation.id)
+            order.removeAll { $0 == observation.id }
+            guard observation.decision == .allowed else { return observation }
+            changed = true
+            return observation.withDecision(.unfiltered)
+        }
+        // The rule hits ride along unchanged (#434).
+        return changed ? FlowObservationBatch(observations: observations, ruleHits: batch.ruleHits) : nil
+    }
+}
+
 public struct FlowObservation: Codable, Hashable, Sendable {
     public let schemaVersion: Int
     public let id: UUID
@@ -110,8 +217,12 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     public let protocolName: String
     public let bytesIn: Int64?
     public let bytesOut: Int64?
+    /// Nil when the sender did not know it (an older extension). Never
+    /// guessed from anything else (#447).
+    public private(set) var decision: FlowDecision?
 
-    public init(connection: Connection, observedAt: Date = Date(), processVersion: String? = nil) {
+    public init(connection: Connection, observedAt: Date = Date(), processVersion: String? = nil,
+                decision: FlowDecision? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.id = connection.id
         self.observedAt = observedAt
@@ -128,11 +239,12 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         self.protocolName = connection.protocolName
         self.bytesIn = connection.bytesIn >= 0 ? connection.bytesIn : nil
         self.bytesOut = connection.bytesOut >= 0 ? connection.bytesOut : nil
+        self.decision = decision
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, id, observedAt, pid, processBundleId, processTeamId, processPath, processName,
-             processVersion, remoteHost, remoteIP, remotePort, direction, protocolName, bytesIn, bytesOut
+             processVersion, remoteHost, remoteIP, remotePort, direction, protocolName, bytesIn, bytesOut, decision
     }
 
     public init(from decoder: Decoder) throws {
@@ -153,6 +265,9 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         protocolName = try c.decode(String.self, forKey: .protocolName)
         bytesIn = try c.decodeIfPresent(Int64.self, forKey: .bytesIn)
         bytesOut = try c.decodeIfPresent(Int64.self, forKey: .bytesOut)
+        // A value this build does not know reads as unknown rather than
+        // failing the whole batch.
+        decision = try c.decodeIfPresent(String.self, forKey: .decision).flatMap(FlowDecision.init(rawValue:))
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -173,6 +288,15 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         try c.encode(protocolName, forKey: .protocolName)
         try c.encodeIfPresent(bytesIn, forKey: .bytesIn)
         try c.encodeIfPresent(bytesOut, forKey: .bytesOut)
+        try c.encodeIfPresent(decision, forKey: .decision)
+    }
+
+    /// The same observation with another decision. Only the app uses it, for
+    /// alerts it let through without anyone answering (`UnansweredAlertLedger`).
+    public func withDecision(_ decision: FlowDecision) -> FlowObservation {
+        var copy = self
+        copy.decision = decision
+        return copy
     }
 
     public func validate(now: Date = Date()) throws {
@@ -681,9 +805,12 @@ public struct InsightsAppSummary: Codable, Sendable, Hashable, Identifiable {
     public let bytesIn: Int64
     public let bytesOut: Int64
     public let lastSeen: Date?
+    /// Nil from a helper that does not count decisions yet (#447).
+    public let decisions: InsightsDecisionCounts?
 
     public init(appIdentity: String, displayName: String, processBundleId: String?, processPath: String?,
-                destinationCount: Int, connectionCount: Int, bytesIn: Int64, bytesOut: Int64, lastSeen: Date?) {
+                destinationCount: Int, connectionCount: Int, bytesIn: Int64, bytesOut: Int64, lastSeen: Date?,
+                decisions: InsightsDecisionCounts? = nil) {
         self.appIdentity = appIdentity
         self.displayName = displayName
         self.processBundleId = processBundleId
@@ -693,7 +820,10 @@ public struct InsightsAppSummary: Codable, Sendable, Hashable, Identifiable {
         self.bytesIn = bytesIn
         self.bytesOut = bytesOut
         self.lastSeen = lastSeen
+        self.decisions = decisions
     }
+
+    public var blockedCount: Int { decisions?.blocked ?? 0 }
 }
 
 public struct InsightsDestinationSummary: Codable, Sendable, Hashable, Identifiable {
@@ -712,9 +842,12 @@ public struct InsightsDestinationSummary: Codable, Sendable, Hashable, Identifia
     /// Co-occurrence only: it says nothing about why.
     public let otherAppCount: Int
     public let lastSeen: Date?
+    /// Nil from a helper that does not count decisions yet (#447).
+    public let decisions: InsightsDecisionCounts?
 
     public init(appIdentity: String, destinationKey: String, resolvedDomain: String?, remoteIP: String?,
-                connectionCount: Int, bytesIn: Int64, bytesOut: Int64, otherAppCount: Int, lastSeen: Date?) {
+                connectionCount: Int, bytesIn: Int64, bytesOut: Int64, otherAppCount: Int, lastSeen: Date?,
+                decisions: InsightsDecisionCounts? = nil) {
         self.appIdentity = appIdentity
         self.destinationKey = destinationKey
         self.resolvedDomain = resolvedDomain
@@ -724,6 +857,7 @@ public struct InsightsDestinationSummary: Codable, Sendable, Hashable, Identifia
         self.bytesOut = bytesOut
         self.otherAppCount = otherAppCount
         self.lastSeen = lastSeen
+        self.decisions = decisions
     }
 
     public var isNameKnown: Bool { resolvedDomain != nil }
