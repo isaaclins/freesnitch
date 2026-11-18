@@ -191,7 +191,8 @@ public struct UnansweredAlertLedger: Sendable {
             changed = true
             return observation.withDecision(.unfiltered)
         }
-        return changed ? FlowObservationBatch(observations: observations) : nil
+        // The rule hits ride along unchanged (#434).
+        return changed ? FlowObservationBatch(observations: observations, ruleHits: batch.ruleHits) : nil
     }
 }
 

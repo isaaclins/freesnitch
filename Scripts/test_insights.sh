@@ -628,6 +628,11 @@ struct InsightsHarness {
               "only the flow let through without an answer becomes not filtered")
         check(ledger.relabel(FlowObservationBatch(observations: [duplicate])) == nil,
               "a noted flow is relabelled once")
+        var withHits = UnansweredAlertLedger()
+        withHits.note(answered.id)
+        let hit = RuleHit(ruleID: UUID(), count: 3, lastMatchedAt: now)
+        equal(withHits.relabel(FlowObservationBatch(observations: [answered], ruleHits: [hit]))?.ruleHits, [hit],
+              "relabelling keeps the rule hits that travel in the same batch")
         try! store.record(relabelled!.observations)
         let chrome = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.google.Chrome",
                                                           since: now.addingTimeInterval(-day), limit: 50))
