@@ -56,6 +56,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Once macOS asks the person to allow the removal, they get this long.
     static let approvalTimeout: TimeInterval = 600
     static let noAnswer = "macOS did not answer in time."
+    static let filterSettingsKept = "macOS did not let FreeSnitch remove its network filter settings."
 
     private enum RequestKind {
         case activation
@@ -218,7 +219,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // Nothing was ever staged from this bundle, so there is no OS
             // answer to wait for. Still drop the filter configuration, and
             // answer once that is done.
-            removeFilterConfiguration { [weak self] in self?.uninstallState = .notInstalled }
+            removeFilterConfiguration { [weak self] removed in
+                self?.uninstallState = removed ? .notInstalled : .failed(Self.filterSettingsKept)
+            }
             return
         }
         // Remove the filter configuration and WAIT for it, then deactivate.
@@ -230,8 +233,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // which is a large part of why uninstalling always ended in "waiting to
         // uninstall on reboot". And the deactivation request was submitted
         // without waiting for the asynchronous save, so the two raced.
-        removeFilterConfiguration { [weak self] in
+        removeFilterConfiguration { [weak self] removed in
             guard let self else { return }
+            // A filter configuration left in place keeps filtering with the
+            // user's rules. Going on would remove the app that controls it.
+            guard removed else {
+                self.uninstallState = .failed(Self.filterSettingsKept)
+                return
+            }
             self.requestKind = .deactivation
             let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: self.extensionIdentifier,
                                                                        queue: .main)
@@ -247,10 +256,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// re-approving anything. Removal is only correct when the user is taking
     /// FreeSnitch off the machine.
     ///
-    /// The completion runs on the main queue in every path, including the
-    /// failure paths: an uninstall that stalls because a preferences call
-    /// errored would be worse than one that continues and reports.
-    private func removeFilterConfiguration(completion: @escaping () -> Void) {
+    /// The completion runs on the main queue in every path and says whether no
+    /// configuration is left: removed now, or there was none. A failed read or
+    /// removal is false, so the uninstall stops instead of removing the app
+    /// that controls a filter that still runs (#391).
+    private func removeFilterConfiguration(completion: @escaping (Bool) -> Void) {
         unsavableLogged = false
         cancelPendingPersistence()
         filterTurnOffs &+= 1
@@ -258,13 +268,19 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
                 DispatchQueue.main.async {
-                    guard let self else { done(); completion(); return }
+                    guard let self else { done(); completion(false); return }
                     let mgr = NEFilterManager.shared()
                     if error != nil {
                         self.recordFilterDiagnostic(state: "unknown",
                                                     detail: "Could not read the content filter preferences while removing them.")
                         done()
-                        completion()
+                        completion(false)
+                        return
+                    }
+                    guard mgr.providerConfiguration != nil else {
+                        // Never installed, or already removed: nothing to do.
+                        done()
+                        completion(true)
                         return
                     }
                     mgr.removeFromPreferences { removeError in
@@ -285,7 +301,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 }
                             }
                             done()
-                            completion()
+                            completion(removeError == nil)
                         }
                     }
                 }

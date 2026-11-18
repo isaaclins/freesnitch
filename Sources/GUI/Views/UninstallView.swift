@@ -11,9 +11,10 @@ import Combine
 ///
 /// After one confirmation the whole uninstall runs by itself, in this order
 /// (#391): turn enforcement off; remove the content filter configuration and
-/// deactivate the network extension, and wait for macOS to answer; unregister
-/// the helper; flush the pf anchor and delete the data behind one password
-/// prompt; move the app to the Trash; quit. The helper and the app are only
+/// deactivate the network extension, and wait for macOS to answer; flush the
+/// pf anchor and delete the data behind one password prompt; unregister the
+/// helper; move the app to the Trash; quit. It stops at the first step that
+/// fails. The helper and the app are only
 /// touched once macOS confirmed the extension is stopped, because an app
 /// removed while its extension still runs leaves that extension behind.
 ///
@@ -129,18 +130,17 @@ final class UninstallFlowModel: ObservableObject {
         }
     }
 
-    /// Unregister the helper, then remove the root-owned data behind one
-    /// authorization prompt, then the user's own files, then the app.
+    /// Flush the pf anchor and remove the root-owned data behind one
+    /// authorization prompt, then unregister the helper, then the user's own
+    /// files, then the app.
+    ///
+    /// The helper goes only after the anchor is flushed. Turning enforcement
+    /// off is a request the helper may time out on or roll back; if the
+    /// password prompt is then cancelled, a helper still registered is what
+    /// can clear the rules left in pf (#391).
     private func removeHelperAndData() {
         phase = .removingHelper
         if demo { return }
-        if let problem = state.helper.unregisterDaemonForUninstall() {
-            // Not fatal: the removal below still takes the bundle away, and the
-            // launchd record for a missing bundle is inert. Recorded so the
-            // failure is not silent.
-            state.appendLog(level: "error",
-                            message: "Uninstall could not unregister the helper: \(problem)")
-        }
         let alsoDatabase = removeDatabase
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = PrivilegedUninstall.run(removingDatabase: alsoDatabase)
@@ -148,6 +148,13 @@ final class UninstallFlowModel: ObservableObject {
                 guard let self else { return }
                 switch outcome {
                 case .success:
+                    if let problem = self.state.helper.unregisterDaemonForUninstall() {
+                        // Not fatal: the anchor is already flushed, the bundle
+                        // goes next, and the launchd record for a missing
+                        // bundle is inert. Recorded so it is not silent.
+                        self.state.appendLog(level: "error",
+                                             message: "Uninstall could not unregister the helper: \(problem)")
+                    }
                     PrivilegedUninstall.removeUserData()
                     self.moveToTrash()
                 case .failure(.cancelled):
@@ -353,16 +360,16 @@ struct UninstallFlowSheet: View {
             failureHeadline(reason == SystemExtensionManager.noAnswer
                             ? "macOS didn’t answer FreeSnitch’s request to remove its network filter"
                             : "macOS didn’t let FreeSnitch remove its network filter")
-            Text("Nothing else was removed. Try again. If it keeps failing, restart your Mac and try once more.")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac. Nothing else was removed. Try again, and if it keeps failing, restart your Mac and try once more. To keep FreeSnitch instead, reopen it and turn Enforcement back on in Settings.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)
         case .passwordCancelled:
             failureHeadline("The password prompt was cancelled")
-            Text("The network filter is already removed. Try again to remove the rest.")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac. Try again to remove the rest.")
                 .fixedSize(horizontal: false, vertical: true)
         case .helperKept(let reason):
             failureHeadline("FreeSnitch couldn’t remove its helper and firewall rules")
-            Text("The network filter is already removed. Try again to remove the rest.")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac. Try again to remove the rest.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)
         case .appKept(let reason):

@@ -1185,8 +1185,8 @@ if rg -q 'disableFilter\(' <<<"$UNINSTALL_BODY"; then
 fi
 # The deactivation must be submitted only after the configuration removal
 # answered, inside its completion, never next to it.
-if ! printf '%s\n' "$UNINSTALL_BODY" | awk '/removeFilterConfiguration \{ \[weak self\] in/ { inside = 1 } inside && /deactivationRequest/ { found = 1 } END { exit !found }'; then
-  fail "uninstall submits the extension deactivation without waiting for the filter configuration removal"
+if ! printf '%s\n' "$UNINSTALL_BODY" | awk '/removeFilterConfiguration \{ \[weak self\] removed in/ { inside = 1 } inside && /guard removed else/ { gated = 1 } gated && /deactivationRequest/ { found = 1 } END { exit !found }'; then
+  fail "uninstall submits the extension deactivation without waiting for the filter configuration removal, or after it failed"
 fi
 # The uninstall removes the helper and the app only after macOS answered the
 # deactivation with the extension stopped (#391): removing them while the
@@ -1195,6 +1195,17 @@ UNINSTALL_ANSWER=$(awk '/private func extensionAnswered/,/^    }$/' "$UNINSTALL_
 if ! printf '%s\n' "$UNINSTALL_ANSWER" | rg -q 'case \.failed' \
    || printf '%s\n' "$UNINSTALL_ANSWER" | awk '/case \.failed/,/case \.notInstalled/' | rg -q 'removeHelperAndData'; then
   fail "the uninstall removes the helper and the app although macOS kept the network extension"
+fi
+# A filter configuration removal that failed must stop the uninstall: the
+# filter would keep running with the user's rules and no app left (#391).
+if ! awk '/private func removeFilterConfiguration/,/^    }$/' "$SYSEXT_MANAGER" | rg -q 'completion\(removeError == nil\)'; then
+  fail "the filter configuration removal reports success whether or not it worked"
+fi
+# The helper is unregistered only after the privileged step flushed the pf
+# anchor: if that step is cancelled, the helper is what can still clear pf.
+if ! awk '/private func removeHelperAndData/,/^    }$/' "$UNINSTALL_VIEW" \
+     | awk '/case \.success:/ { ok = 1 } /unregisterDaemonForUninstall/ { found = ok; exit } END { exit !found }'; then
+  fail "the uninstall unregisters the helper before the pf anchor is flushed"
 fi
 # The finished uninstall ends the process outright: NSApp.terminate from a
 # bundle already in the Trash hung 1.1.0 until it was force quit (#391).
