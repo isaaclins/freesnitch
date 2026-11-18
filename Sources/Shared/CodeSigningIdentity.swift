@@ -11,8 +11,8 @@ import Security
 /// Apple for distribution:
 ///
 /// - Apple's own code (`anchor apple`)
-/// - an app signed for the Mac App Store or the iOS App Store, where Apple
-///   hands out each bundle id to one developer only
+/// - an app signed for the Mac App Store, the iOS App Store or TestFlight,
+///   where Apple hands out each bundle id to one developer only
 /// - a Developer ID application
 ///
 /// Ad-hoc signatures, development certificates and unsigned code give no bundle
@@ -50,20 +50,32 @@ public enum CodeSigningIdentity {
         case unavailable
     }
 
-    /// Apple's own code, the Mac App Store, the iOS App Store, or a Developer
-    /// ID application. The OIDs are the ones Apple's designated requirements
-    /// use: 6.1.9 Mac App Store, 6.1.3 iPhone App Store, 6.2.6 Developer ID
-    /// intermediate, 6.1.13 Developer ID application.
+    /// Apple's own code, the Mac App Store, the iOS App Store, TestFlight, or a
+    /// Developer ID application. The marker OIDs: 6.1.9 Mac App Store, 6.2.6
+    /// Developer ID intermediate and 6.1.13 Developer ID application are the
+    /// ones Apple's designated requirements use (TN3127, "Inside Code Signing:
+    /// Requirements"); 6.1.3 iPhone App Store and 6.1.25.1 TestFlight (Prod)
+    /// are the leaf markers Apple's Security framework checks for those
+    /// channels (`SecPolicyCreateiPhoneProfileApplicationSigning` in
+    /// apple-oss-distributions/Security, OSX/sec/Security/SecPolicy.c).
+    /// TestFlight hands out bundle ids through App Store Connect like the App
+    /// Store, so a TestFlight signature vouches for its identifier the same way
+    /// (#402).
+    static let testFlightMarker = "1.2.840.113635.100.6.1.25.1"
+
     static let distributionRequirementText =
         "anchor apple"
         + " or (anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists)"
         + " or (anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.3] exists)"
+        + " or (anchor apple generic and certificate leaf[field.\(testFlightMarker)] exists)"
         + " or (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
         + " and certificate leaf[field.1.2.840.113635.100.6.1.13] exists)"
 
+    /// Channels where Apple decides who gets which bundle id.
     static let appStoreRequirementText =
         "anchor apple generic and (certificate leaf[field.1.2.840.113635.100.6.1.9] exists"
-        + " or certificate leaf[field.1.2.840.113635.100.6.1.3] exists)"
+        + " or certificate leaf[field.1.2.840.113635.100.6.1.3] exists"
+        + " or certificate leaf[field.\(testFlightMarker)] exists)"
 
     private static let distributionRequirement: SecRequirement? = requirement(distributionRequirementText)
     private static let appStoreRequirement: SecRequirement? = requirement(appStoreRequirementText)

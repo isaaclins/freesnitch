@@ -212,6 +212,27 @@ for (path, expected) in appStore where fm.fileExists(atPath: path) {
            "the signed app at \((path as NSString).lastPathComponent) keeps its bundle id (\(got ?? "nil"))")
 }
 
+// TestFlight (#402). No TestFlight-signed build exists on this Mac, so this
+// checks that both requirements carry Apple's TestFlight (Prod) leaf marker
+// and that Security parses and keeps it, plus the decision for such a signer.
+func compiledText(_ text: String) -> String? {
+    var requirement: SecRequirement?
+    guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess,
+          let requirement else { return nil }
+    var out: CFString?
+    guard SecRequirementCopyString(requirement, [], &out) == errSecSuccess else { return nil }
+    return out as String?
+}
+let testFlightClause = "certificate leaf[field.1.2.840.113635.100.6.1.25.1] /* exists */"
+expect(compiledText(CodeSigningIdentity.distributionRequirementText)?.contains(testFlightClause) == true,
+       "the accepted signers include TestFlight (Prod), leaf marker 1.2.840.113635.100.6.1.25.1")
+expect(compiledText(CodeSigningIdentity.appStoreRequirementText)?.contains(testFlightClause) == true,
+       "TestFlight counts as a channel where Apple hands out bundle ids")
+expect(CodeSigningIdentity.decide(.trusted(CodeSigningIdentity.Signed(identifier: "com.example.beta",
+                                                                     signer: .team("ABCDE12345"), appStore: true)))
+       == .resolved("com.example.beta"),
+       "a TestFlight-signed app keeps its own signed id")
+
 // The decision itself, for signers this Mac may not have.
 typealias S = CodeSigningIdentity.Signed
 func decideID(_ p: CodeSigningIdentity.Lookup) -> String? { CodeSigningIdentity.decide(p).bundleIdentifier }
