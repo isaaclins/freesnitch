@@ -24,8 +24,14 @@ bundle, so the signature and identifier the helper checks stay intact.
 Symlink into a directory that is already on your `PATH`:
 
 ```sh
-sudo ln -sf /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch
+sudo mkdir -p /usr/local/bin
+sudo ln -sh /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch
 ```
+
+The first line creates `/usr/local/bin` if it does not exist, as on a fresh
+Apple silicon Mac. The second has no `-f`, so like the Install Command button
+it refuses to replace a `freesnitch` that is already there and prints an error
+instead. Move or remove that file yourself if you want the link in its place.
 
 Or put the bundle's `Helpers` directory on your `PATH`, which needs no
 administrator rights. For zsh, the default shell on macOS:
