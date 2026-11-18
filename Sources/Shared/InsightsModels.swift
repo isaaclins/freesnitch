@@ -117,24 +117,31 @@ public struct InsightsDecisionCounts: Codable, Hashable, Sendable {
         self.unfiltered = max(0, unfiltered)
     }
 
-    public var decided: Int { allowed + blocked }
-
-    /// What one row says.
+    /// What one row says, given every connection it holds (`total`),
+    /// including those recorded with no decision. A label only claims what is
+    /// true of all of them.
     public enum Status: Hashable, Sendable {
         case allowed
         case blocked
-        /// Some blocked, the rest allowed.
+        /// Some of `of` connections blocked, the rest not.
         case mixed(blocked: Int, of: Int)
+        /// None blocked, but not all allowed either: some went through
+        /// without a filtering decision.
+        case notBlocked
         case unfiltered
-        /// Nothing recorded with a decision.
+        /// Not every connection has a recorded decision and none was
+        /// blocked, so nothing can be said for the whole row.
         case unknown
     }
 
-    public var status: Status {
-        if blocked > 0 && allowed > 0 { return .mixed(blocked: blocked, of: decided) }
-        if blocked > 0 { return .blocked }
-        if allowed > 0 { return .allowed }
-        if unfiltered > 0 { return .unfiltered }
+    public func status(total: Int) -> Status {
+        let total = max(total, allowed + blocked + unfiltered)
+        guard total > 0 else { return .unknown }
+        if blocked == total { return .blocked }
+        if blocked > 0 { return .mixed(blocked: blocked, of: total) }
+        if allowed == total { return .allowed }
+        if unfiltered == total { return .unfiltered }
+        if allowed + unfiltered == total { return .notBlocked }
         return .unknown
     }
 }

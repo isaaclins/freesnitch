@@ -59,6 +59,11 @@ struct InsightsHarness {
         return FlowObservation(connection: connection, observedAt: date, decision: decision)
     }
 
+    static func rowStatus(_ row: InsightsDestinationSummary?) -> InsightsDecisionCounts.Status? {
+        guard let row else { return nil }
+        return row.decisions?.status(total: row.connectionCount)
+    }
+
     static func main() {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("freesnitch-insights-harness-\(UUID().uuidString)")
@@ -539,6 +544,23 @@ struct InsightsHarness {
                                        host: "ads.spotify.com", ip: "203.0.113.32",
                                        at: now.addingTimeInterval(-Double(index) * 10), decision: decision))
         }
+        // Blocked next to connections that went through without a decision
+        // (an alert that timed out): not "Blocked" (#447).
+        for decision in [FlowDecision.blocked, .unfiltered] {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "", ip: "192.0.2.92", at: now, decision: decision))
+        }
+        // Allowed next to a connection with no recorded decision: no label.
+        for decision in [FlowDecision.allowed, nil] {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "", ip: "192.0.2.93", at: now, decision: decision))
+        }
+        // Allowed next to one let through without a decision: not blocked,
+        // but not all allowed either.
+        for decision in [FlowDecision.allowed, .unfiltered] {
+            decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
+                                       host: "", ip: "192.0.2.94", at: now, decision: decision))
+        }
         // Let through without a decision, and one recorded by an older
         // extension that sent no decision at all.
         decided.append(observation(app: spotify.app, bundle: spotify.bundle, path: spotify.path,
@@ -550,18 +572,24 @@ struct InsightsHarness {
         for (label, since) in [("raw events", now.addingTimeInterval(-day)), ("daily rollups", now.addingTimeInterval(-300 * day))] {
             let apps = try! store.report(for: InsightsQuery(kind: .apps, since: since, limit: 50))
             let spotifyApp = apps.apps.first { $0.appIdentity == spotify.bundle }
-            equal(spotifyApp?.decisions, InsightsDecisionCounts(allowed: 6, blocked: 4, unfiltered: 1),
+            equal(spotifyApp?.decisions, InsightsDecisionCounts(allowed: 8, blocked: 5, unfiltered: 3),
                   "\(label): the app row counts allowed, blocked and unfiltered connections")
-            equal(spotifyApp?.blockedCount, 4, "\(label): the app row says how many were blocked")
+            equal(spotifyApp?.blockedCount, 5, "\(label): the app row says how many were blocked")
             let destinations = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: spotify.bundle,
                                                                     since: since, limit: 50))
             let byKey = Dictionary(uniqueKeysWithValues: destinations.destinations.map { ($0.destinationKey, $0) })
-            equal(byKey["apresolve.spotify.com"]?.decisions?.status, .allowed, "\(label): an all-allowed destination reads Allowed")
-            equal(byKey["analytics.spotify.com"]?.decisions?.status, .blocked, "\(label): an all-blocked destination reads Blocked")
-            equal(byKey["ads.spotify.com"]?.decisions?.status, .mixed(blocked: 1, of: 3),
+            equal(rowStatus(byKey["apresolve.spotify.com"]), .allowed, "\(label): an all-allowed destination reads Allowed")
+            equal(rowStatus(byKey["analytics.spotify.com"]), .blocked, "\(label): an all-blocked destination reads Blocked")
+            equal(rowStatus(byKey["ads.spotify.com"]), .mixed(blocked: 1, of: 3),
                   "\(label): a destination with both reads as 1 of 3 blocked")
-            equal(byKey["192.0.2.90"]?.decisions?.status, .unfiltered, "\(label): a connection let through without a decision reads Not filtered")
-            equal(byKey["192.0.2.91"]?.decisions?.status, .unknown,
+            equal(rowStatus(byKey["192.0.2.90"]), .unfiltered, "\(label): a connection let through without a decision reads Not filtered")
+            equal(rowStatus(byKey["192.0.2.92"]), .mixed(blocked: 1, of: 2),
+                  "\(label): blocked next to an unfiltered connection reads 1 of 2 blocked, not Blocked")
+            equal(rowStatus(byKey["192.0.2.93"]), .unknown,
+                  "\(label): allowed next to a connection with no decision gets no label, not Allowed")
+            equal(rowStatus(byKey["192.0.2.94"]), .notBlocked,
+                  "\(label): allowed next to an unfiltered connection reads Not blocked, not Allowed")
+            equal(rowStatus(byKey["192.0.2.91"]), .unknown,
                   "\(label): a connection with no recorded decision is neither allowed nor blocked")
         }
         // Rows from before this change have no decision and must stay unknown.

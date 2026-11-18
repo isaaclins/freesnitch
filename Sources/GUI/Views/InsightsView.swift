@@ -346,7 +346,7 @@ struct InsightsView: View {
     private func decisionChip(_ destination: InsightsDestinationSummary) -> some View {
         if let counts = destination.decisions {
             Group {
-                switch counts.status {
+                switch counts.status(total: destination.connectionCount) {
                 case .allowed:
                     PSChip("Allowed", color: .green, icon: "checkmark.circle.fill")
                 case .blocked:
@@ -354,6 +354,8 @@ struct InsightsView: View {
                 case .mixed(let blocked, let total):
                     PSChip("\(PSFormat.compactCount(blocked)) of \(PSFormat.compactCount(total)) blocked",
                            color: .orange, icon: "xmark.octagon")
+                case .notBlocked:
+                    PSChip("Not blocked", color: .green, icon: "checkmark.circle")
                 case .unfiltered:
                     PSChip("Not filtered", color: .secondary, icon: "minus.circle")
                 case .unknown:

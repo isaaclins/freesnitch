@@ -147,8 +147,7 @@ enum InsightsDemoData {
         let decisions = allowed + blocked + unfiltered == 0
             ? nil
             : InsightsDecisionCounts(allowed: allowed, blocked: blocked, unfiltered: unfiltered)
-        return 
-        InsightsDestinationSummary(appIdentity: identity,
+        return InsightsDestinationSummary(appIdentity: identity,
                                    destinationKey: domain ?? ip ?? "",
                                    resolvedDomain: domain,
                                    remoteIP: ip,
