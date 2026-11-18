@@ -36,6 +36,12 @@ expect(msg("kSMErrorDomainFramework", 11, "Launch denied", true).contains("Allow
 expect(msg("SMAppServiceErrorDomain", 3, "Invalid signature", true).contains("signed release again"), "bad signature says reinstall")
 expect(msg("SMAppServiceErrorDomain", 108, "Unable to read plist", true).contains("declaration"), "unreadable plist says reinstall")
 
+expect(!msg("SMAppServiceErrorDomain", 3, "No such process", true).contains("signed"), "code 3 that isn't a signature error gets no signature advice")
+expect(msg("SMAppServiceErrorDomain", 9, "Job must be enabled", true).contains("Allow in the Background"), "must-be-enabled points at Login Items")
+expect(!msg("kSMErrorDomainLaunchd", 11, "Resource deadlock avoided", true).contains("Allow in the Background"), "launchd errno codes get no kSMError advice")
+let fallback = msg("SMAppServiceErrorDomain", 1, "The operation couldn't be completed. (SMAppServiceErrorDomain error 1.)", true)
+expect(fallback.components(separatedBy: "SMAppServiceErrorDomain").count == 2, "fallback description doesn't repeat the domain and code")
+
 let other = msg("NSPOSIXErrorDomain", 5, "Input/output error.", true)
 expect(!other.contains(move), "unrelated error: no move advice")
 expect(other.contains("Input/output error (NSPOSIXErrorDomain 5)."), "unrelated error keeps its own text, no double period")
@@ -53,6 +59,6 @@ swiftc "$ROOT/Sources/GUI/App/HelperRegistrationFailure.swift" "$TMP/main.swift"
 if grep -q 'Move FreeSnitch into /Applications and try again' "$ROOT/Sources/GUI/Views/HelperBanner.swift"; then
   echo "FAIL the banner still appends the move advice to every failure"; exit 1
 fi
-grep -q 'HelperRegistrationFailure.message(' "$ROOT/Sources/GUI/App/HelperClient.swift" \
-  || { echo "FAIL registerDaemon no longer builds the message from the error"; exit 1; }
+[ "$(grep -c 'HelperRegistrationFailure.message(' "$ROOT/Sources/GUI/App/HelperClient.swift")" -ge 2 ] \
+  || { echo "FAIL registration or repair no longer builds the message from the error"; exit 1; }
 echo "ok   banner and registration path use the built message"

@@ -344,7 +344,8 @@ final class HelperClient: NSObject, ObservableObject {
         } catch {
             let details = HelperRecovery.registrationErrorDetails(error)
             state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
-            finishRepairFailure("SMAppService could not register the absent helper: \(details). Open System Settings under General > Login Items & Extensions if approval is required, then try again.")
+            finishRepairFailure("FreeSnitch could not register the missing helper. " + HelperRegistrationFailure.message(
+                for: error, inApplications: Self.isInApplicationsFolder))
         }
     }
 
