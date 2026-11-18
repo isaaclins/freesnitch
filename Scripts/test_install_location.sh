@@ -109,6 +109,37 @@ try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: readOnly.path)
 check(!ok(roResult), "a copy that keeps the download flag is reported as a failure")
 check((try? fm.contentsOfDirectory(atPath: roApps.path))?.isEmpty == true, "nothing is left in Applications after that failure")
 
+// #413: a move cut off mid-copy (crash, force quit) left its hidden staging
+// folder behind. The next move removes those, read-only insides included,
+// and nothing else in the folder.
+let leftApps = work.appendingPathComponent("LeftoverApplications", isDirectory: true)
+try! fm.createDirectory(at: leftApps, withIntermediateDirectories: true)
+let leftover = leftApps.appendingPathComponent(".FreeSnitch.app.partial-\(UUID().uuidString)", isDirectory: true)
+makeBundle(at: leftover, build: "35")
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: leftover.appendingPathComponent("Contents").path)
+let lookalikes = [".FreeSnitch.app.partial-notauuid", ".FreeSnitch.app.partial-\(UUID().uuidString.lowercased())",
+                  ".Other.app.partial-\(UUID().uuidString)", "FreeSnitch.app.partial-\(UUID().uuidString)", "Other.app"]
+for name in lookalikes { makeBundle(at: leftApps.appendingPathComponent(name), build: "1") }
+let outside = work.appendingPathComponent("Outside", isDirectory: true)
+makeBundle(at: outside, build: "1")
+let linked = ".FreeSnitch.app.partial-\(UUID().uuidString)"
+try! fm.createSymbolicLink(atPath: leftApps.appendingPathComponent(linked).path, withDestinationPath: outside.path)
+let leftDestination = leftApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+check(ok(InstallLocation.copyBundle(from: source, to: leftDestination)), "a move with a leftover staging folder present succeeds")
+check(!fm.fileExists(atPath: leftover.path), "the next move removes a leftover staging folder")
+check(Set(try! fm.contentsOfDirectory(atPath: leftApps.path)) == Set(lookalikes + [linked, "FreeSnitch.app"]),
+      "lookalike names, other apps and a symlinked staging name are all left alone")
+check(fm.fileExists(atPath: outside.appendingPathComponent("Contents/MacOS/FreeSnitch").path),
+      "the folder a symlinked staging name points to is untouched")
+let launchApps = work.appendingPathComponent("LaunchApplications", isDirectory: true)
+let launchLeftover = launchApps.appendingPathComponent(".FreeSnitch.app.partial-\(UUID().uuidString)", isDirectory: true)
+makeBundle(at: launchLeftover, build: "35")
+makeBundle(at: launchApps.appendingPathComponent("FreeSnitch.app"), build: "35")
+InstallLocation.removeLeftoverStaging(in: launchApps)
+check(try! fm.contentsOfDirectory(atPath: launchApps.path) == ["FreeSnitch.app"], "launch cleanup removes the leftover and keeps the installed app")
+InstallLocation.removeLeftoverStaging(in: work.appendingPathComponent("Missing", isDirectory: true))
+check(true, "a missing Applications folder is fine")
+
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
 
 // #400: only a downloaded copy is asked at launch. A build folder isn't.
@@ -196,6 +227,58 @@ check(InstallLocation.canRunBrewReinstall(caskrooms: [otherCaskroom.path]),
       "this user's own Caskroom folder lets them run brew")
 check(InstallLocation.reinstallSteps(homebrew: true).contains(InstallLocation.brewReinstallCommand),
       "the Homebrew advice names the same command its Copy Command button copies")
+
+// #412: macOS activates a system extension only from /Applications, so the
+// firewall build in ~/Applications is not installed. Real bundles, so the
+// rule reads the extension from the bundle itself, as the app does.
+let userApps = homeDir.appendingPathComponent("Applications", isDirectory: true)
+let firewallCopy = userApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+makeBundle(at: firewallCopy, build: "35")
+try! fm.createDirectory(at: firewallCopy.appendingPathComponent("Contents/Library/SystemExtensions/io.isaaclins.freesnitch.netext.systemextension"),
+                        withIntermediateDirectories: true)
+let monitorCopy = userApps.appendingPathComponent("Monitor/FreeSnitch.app", isDirectory: true)
+makeBundle(at: monitorCopy, build: "35")
+check(InstallLocation.embedsSystemExtension(firewallCopy) && !InstallLocation.embedsSystemExtension(monitorCopy),
+      "the firewall build is told apart from the monitor build by its embedded extension")
+check(!InstallLocation.isInApplications(firewallCopy, home: homeDir.path),
+      "a firewall build in ~/Applications doesn't count as installed")
+check(InstallLocation.isInApplications(monitorCopy, home: homeDir.path),
+      "a monitor build in ~/Applications still counts as installed")
+check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: homeDir.path, embedsSystemExtension: true),
+      "a firewall build in /Applications counts as installed")
+check(InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path),
+      "a firewall build in ~/Applications is asked to move at launch")
+check(!InstallLocation.shouldTrashOriginal(firewallCopy, home: homeDir.path),
+      "after a move, the ~/Applications copy stays, since its helper may still be registered")
+let oldMonitor = work.appendingPathComponent("home2/Applications/FreeSnitch.app", isDirectory: true)
+makeBundle(at: oldMonitor, build: "30")
+let downloadedMonitor = homeDir.appendingPathComponent("Downloads/Monitor/FreeSnitch.app", isDirectory: true)
+makeBundle(at: downloadedMonitor, build: "35")
+check(!InstallLocation.userCopyCountsAsInstalled(source: firewallCopy, userCopy: oldMonitor),
+      "a firewall build never stops at a monitor copy in ~/Applications; it goes to /Applications")
+check(!InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userCopy: firewallCopy),
+      "a firewall copy in ~/Applications isn't counted as installed for a monitor download either")
+check(InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userCopy: oldMonitor),
+      "a monitor download stops at the monitor copy in ~/Applications, as before")
+// #418: the new /Applications copy registers the helper again, once, so
+// launchd stops running it from the ~/Applications copy.
+let newCopy = URL(fileURLWithPath: "/Applications/FreeSnitch.app")
+check(InstallLocation.shouldReregister(requestedPath: "/Applications/FreeSnitch.app", running: newCopy),
+      "the copy the move made registers the helper again")
+check(!InstallLocation.shouldReregister(requestedPath: "/Applications/FreeSnitch.app", running: firewallCopy),
+      "the old ~/Applications copy never acts on the request")
+check(!InstallLocation.shouldReregister(requestedPath: nil, running: newCopy),
+      "without a move, nothing is registered again")
+let defaultsKey = InstallLocation.reregisterKey
+UserDefaults.standard.set(newCopy.path, forKey: defaultsKey)
+let first = InstallLocation.takeReregisterRequest(running: newCopy)
+let second = InstallLocation.takeReregisterRequest(running: newCopy)
+check(first && !second, "the request is used once and then cleared")
+UserDefaults.standard.set(newCopy.path, forKey: defaultsKey)
+_ = InstallLocation.takeReregisterRequest(running: firewallCopy)
+check(UserDefaults.standard.string(forKey: defaultsKey) == nil, "a request read by another copy is cleared too, so it can't fire later")
+check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path)),
+      "a ~/Applications copy of an installed build offers to open the /Applications one")
 
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
@@ -297,6 +380,18 @@ if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination
   echo "install location: FAIL: the move can delete the installed copy" >&2; exit 1
 fi
 echo "install location: PASS: the move never deletes the installed copy"
+grep -q 'versionState, installState != .wrongLocation' "$ROOT/Sources/GUI/Views/HelperBanner.swift" \
+  || { echo "install location: FAIL: a helper mismatch can hide the Move banner of a copy outside Applications" >&2; exit 1; }
+echo "install location: PASS: a copy outside Applications shows Move before Repair Helper"
+grep -B1 'let info = BannerInfo(helperOtherCopy:' "$ROOT/Sources/GUI/Views/HelperBanner.swift" | grep -q 'helperInstallState != .wrongLocation' \
+  || { echo "install location: FAIL: the other-copy warning can hide the Move banner" >&2; exit 1; }
+echo "install location: PASS: a copy outside Applications shows Move before the other-copy warning"
+helper_swift="$ROOT/Sources/GUI/App/HelperClient.swift"
+awk '/func reregisterAfterCopy/ { inside = 1 } inside && /unregister/ { bad = 1 } inside && /^    }$/ { inside = 0 } END { exit bad ? 1 : 0 }' "$helper_swift" \
+  && grep -q 'if isInUserApplications(original) {' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+  && grep -A4 'let reregister = InstallLocation.takeReregisterRequest()' "$helper_swift" | grep -q 'case .alreadyEnabled:' \
+  || { echo "install location: FAIL: the copy out of ~/Applications doesn't hand the helper over, or the handover can unregister" >&2; exit 1; }
+echo "install location: PASS: a copy out of ~/Applications registers the helper again from /Applications, without unregistering"
 app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
 [ "$(grep -c 'systemExtension.activate()' "$app_swift")" = 1 ] \
   && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \

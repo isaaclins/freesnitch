@@ -269,12 +269,33 @@ public struct InsightsContactSnapshot: Codable, Sendable {
     public let preparedAt: Date
     public let contacts: [InsightsContact]
     public let truncated: Bool
+    /// The team Insights first saw sign each bundle id (#372), keyed by that
+    /// id. A contact recorded for a bundle id only counts for a process the
+    /// same team signed, because a Developer ID can sign its own binary with
+    /// another app's identifier. A bundle id with no entry was only seen
+    /// before teams were recorded, and its contacts count as they did then.
+    public let appTeams: [String: String]
 
-    public init(contacts: [InsightsContact], preparedAt: Date = Date(), truncated: Bool = false) {
+    public init(contacts: [InsightsContact], appTeams: [String: String] = [:],
+                preparedAt: Date = Date(), truncated: Bool = false) {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.preparedAt = preparedAt
         self.contacts = contacts
+        self.appTeams = appTeams
         self.truncated = truncated
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, preparedAt, contacts, truncated, appTeams
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        preparedAt = try c.decode(Date.self, forKey: .preparedAt)
+        contacts = try c.decode([InsightsContact].self, forKey: .contacts)
+        truncated = try c.decode(Bool.self, forKey: .truncated)
+        appTeams = try c.decodeIfPresent([String: String].self, forKey: .appTeams) ?? [:]
     }
 
     public func validate(now: Date = Date()) throws {
@@ -298,6 +319,15 @@ public struct InsightsContactSnapshot: Codable, Sendable {
                 throw InsightsValidationError.invalidContactSnapshot("contact")
             }
         }
+        guard appTeams.count <= InsightsLimits.maxContactCount else {
+            throw InsightsValidationError.invalidContactSnapshot("appTeams")
+        }
+        for (app, team) in appTeams {
+            guard !app.isEmpty, app.utf8.count <= InsightsLimits.maxPathLength,
+                  !team.isEmpty, team.utf8.count <= RuleTransportBoundary.maximumTeamIdLength else {
+                throw InsightsValidationError.invalidContactSnapshot("appTeam")
+            }
+        }
     }
 
     public func contains(_ contact: InsightsContact) -> Bool {
@@ -314,21 +344,33 @@ public enum InsightsContactDecision: String, Codable, Sendable {
 
 public struct InsightsContactClassifier: Sendable {
     private let contacts: Set<InsightsContact>?
+    private let appTeams: [String: String]
 
     public init(snapshot: InsightsContactSnapshot?, now: Date = Date()) {
         guard let snapshot, (try? snapshot.validate(now: now)) != nil else {
             self.contacts = nil
+            self.appTeams = [:]
             return
         }
         self.contacts = Set(snapshot.contacts)
+        self.appTeams = snapshot.appTeams
     }
 
     public var isAvailable: Bool { contacts != nil }
 
     public func decision(for observation: FlowObservation) -> InsightsContactDecision {
         guard let contacts else { return .askHistoryUnavailable }
-        guard let contact = InsightsContact(observation: observation) else { return .firstContact }
+        guard let contact = InsightsContact(observation: observation),
+              isSignedByRecordedTeam(bundleId: observation.processBundleId, team: observation.processTeamId)
+        else { return .firstContact }
         return contacts.contains(contact) ? .knownContact : .firstContact
+    }
+
+    /// False when Insights saw this bundle id signed by another team (#372):
+    /// the app's history is not this process's history.
+    private func isSignedByRecordedTeam(bundleId: String?, team: String?) -> Bool {
+        guard let bundleId, !bundleId.isEmpty, let recorded = appTeams[bundleId] else { return true }
+        return team == recorded
     }
 
     public func decision(for connection: Connection) -> InsightsContactDecision {
@@ -340,7 +382,9 @@ public struct InsightsContactClassifier: Sendable {
         let app = connection.processBundleId?.isEmpty == false
             ? connection.processBundleId!
             : connection.processPath
-        guard !app.isEmpty else { return 0 }
+        guard !app.isEmpty,
+              isSignedByRecordedTeam(bundleId: connection.processBundleId, team: connection.processTeamId)
+        else { return 0 }
         return contacts.reduce(into: 0) { count, contact in
             if contact.appIdentity == app { count += 1 }
         }
@@ -733,9 +777,11 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
     }
 
     /// True when an enabled rule already covers this destination for this app,
-    /// so Insights should not offer it again. An address is compared the way
-    /// the matcher compares it: one IPv6 address in any spelling, a range that
-    /// contains it, and an address or range typed into the hostname field.
+    /// so Insights should not offer it again. A name is compared the way the
+    /// matcher compares it, wildcard and suffix rules included (#332). An
+    /// address is compared the way the matcher compares it too: one IPv6
+    /// address in any spelling, a range that contains it, and an address or
+    /// range typed into the hostname field.
     /// A rule only covers the proposal when it would match every outgoing
     /// connection the proposal stands for: no port restriction, a direction of
     /// outgoing or any, and not expired at `now` (#331).
@@ -750,7 +796,14 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
             if let port = rule.remotePort, port != 0 { return false }
             let destinationMatches: Bool
             if let domain {
-                destinationMatches = rule.remoteHost?.lowercased() == domain.lowercased()
+                // Same comparison as the matcher, so a wildcard (*.example.com)
+                // or suffix (.example.com) rule covers api.example.com. Case is
+                // ignored, because DNS names are.
+                if let host = rule.remoteHost, !host.isEmpty {
+                    destinationMatches = matcher.hostMatches(pattern: host.lowercased(), host: domain.lowercased())
+                } else {
+                    destinationMatches = false
+                }
             } else if let remoteIP, !remoteIP.isEmpty {
                 let ruleAddress = (rule.remoteIP ?? "").isEmpty ? rule.addressInHostField : rule.remoteIP
                 if let ruleAddress {

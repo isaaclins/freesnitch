@@ -15,6 +15,9 @@ import Foundation
 enum InstallLocation {
     static let bundleName = "FreeSnitch.app"
 
+    /// Why a firewall build in ~/Applications is asked to move (#412).
+    static let userApplicationsReason = "macOS only turns on FreeSnitch's network filter when it runs from the main Applications folder, not the one in your home folder."
+
     enum Plan: Equatable {
         /// Nothing at the destination yet: copy this bundle there.
         case copy(to: URL)
@@ -56,8 +59,9 @@ enum InstallLocation {
         guard !fm.fileExists(atPath: destination.path) else {
             return .failure(.failed("\(destination.path) already exists."))
         }
+        removeLeftoverStaging(in: destination.deletingLastPathComponent())
         let staging = destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(bundleName).partial-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(stagingPrefix)\(UUID().uuidString)", isDirectory: true)
         do {
             try fm.copyItem(at: source, to: staging)
             // A copy that keeps the flag would run translocated again, so it
@@ -71,6 +75,31 @@ enum InstallLocation {
         } catch {
             removeStaging(staging)
             return .failure(.failed(error.localizedDescription))
+        }
+    }
+
+    /// The hidden name a copy is staged under, followed by a UUID.
+    static let stagingPrefix = ".\(bundleName).partial-"
+
+    /// Whether `name` is one of the staging folders `copyBundle` makes:
+    /// exactly the prefix and an uppercase UUID, as `UUID().uuidString`
+    /// writes it. Anything else, even a close match, isn't ours.
+    static func isStagingName(_ name: String) -> Bool {
+        guard name.hasPrefix(stagingPrefix) else { return false }
+        let id = String(name.dropFirst(stagingPrefix.count))
+        return UUID(uuidString: id)?.uuidString == id
+    }
+
+    /// Removes staging folders a move left behind when the app crashed or was
+    /// force-quit mid-copy (#413). Only real folders with exactly the staging
+    /// name are touched, never a symlink and never anything else in `folder`.
+    static func removeLeftoverStaging(in folder: URL) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
+        for name in names where isStagingName(name) {
+            let leftover = folder.appendingPathComponent(name, isDirectory: true)
+            var info = stat()
+            guard lstat(leftover.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { continue }
+            removeStaging(leftover)
         }
     }
 
@@ -124,11 +153,66 @@ enum InstallLocation {
         return original.takeRetainedValue() as URL
     }
 
-    /// The same rule as HelperClient.isInApplicationsFolder, for any path.
-    static func isInApplications(_ url: URL, home: String = NSHomeDirectory()) -> Bool {
-        let path = url.resolvingSymlinksInPath().path
+    /// The one rule for "FreeSnitch is installed" (#401): the move question,
+    /// helper registration and the banner all ask this.
+    ///
+    /// /Applications always counts. ~/Applications counts only for a build
+    /// without the network filter: macOS activates a system extension only
+    /// from an app in /Applications, so the firewall build there could
+    /// register its helper but never filter per process (#412).
+    /// `embedsSystemExtension` is read from the bundle when not given.
+    static func isInApplications(_ url: URL, home: String = NSHomeDirectory(),
+                                 embedsSystemExtension: Bool? = nil) -> Bool {
+        if url.resolvingSymlinksInPath().path.hasPrefix("/Applications/") { return true }
+        guard isInUserApplications(url, home: home) else { return false }
+        return !(embedsSystemExtension ?? Self.embedsSystemExtension(url))
+    }
+
+    /// The Applications folder in the user's home folder.
+    static func isInUserApplications(_ url: URL, home: String = NSHomeDirectory()) -> Bool {
         let userApps = (home as NSString).appendingPathComponent("Applications") + "/"
-        return path.hasPrefix("/Applications/") || path.hasPrefix(userApps)
+        return url.resolvingSymlinksInPath().path.hasPrefix(userApps)
+    }
+
+    /// Whether a FreeSnitch already in ~/Applications is where the move should
+    /// stop. Not when either build carries the network filter: a firewall
+    /// build must land in /Applications, and an old monitor copy there is not
+    /// a substitute for it (#412).
+    static func userCopyCountsAsInstalled(source: URL, userCopy: URL) -> Bool {
+        !embedsSystemExtension(source) && !embedsSystemExtension(userCopy)
+    }
+
+    /// Where this copy really is: the original behind a translocated copy.
+    static var runningOriginal: URL {
+        translocatedOriginal(of: Bundle.main.bundleURL) ?? Bundle.main.bundleURL
+    }
+
+    /// Set by a copy out of ~/Applications to the path of the new copy (#418).
+    static let reregisterKey = "PSReregisterHelperAfterMoveTo"
+
+    /// Whether this launch is the new copy a ~/Applications copy just made,
+    /// which must register the helper again even though macOS reports it
+    /// enabled: launchd may still run it from the old copy. Registering again
+    /// never unregisters (#24); if it fails, the old registration stays.
+    static func shouldReregister(requestedPath: String?, running: URL) -> Bool {
+        guard let requestedPath else { return false }
+        return requestedPath == running.resolvingSymlinksInPath().path
+    }
+
+    /// Reads and clears the request, so it is acted on at most once.
+    static func takeReregisterRequest(running: URL = Bundle.main.bundleURL) -> Bool {
+        let requested = UserDefaults.standard.string(forKey: reregisterKey)
+        guard requested != nil else { return false }
+        UserDefaults.standard.removeObject(forKey: reregisterKey)
+        return shouldReregister(requestedPath: requested, running: running)
+    }
+
+    /// Whether the bundle carries the network filter (the firewall build).
+    /// The monitor-only build doesn't.
+    static func embedsSystemExtension(_ bundle: URL) -> Bool {
+        let dir = bundle.appendingPathComponent("Contents/Library/SystemExtensions")
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return false }
+        return urls.contains { $0.pathExtension == "systemextension" }
     }
 
     /// Passed to the copy FreeSnitch reopens after clearing the flag on its
@@ -277,8 +361,20 @@ enum InstallLocation {
     /// After a successful move, only a downloaded original is moved to the
     /// Trash (Downloads clutter that would land here again). A disk image
     /// can't be changed, and a contributor's build output stays where it is.
+    ///
+    /// A copy in ~/Applications stays too: its helper may still be registered
+    /// with macOS, and trashing it would leave that registration pointing at
+    /// nothing.
     static func shouldTrashOriginal(_ original: URL, home: String = NSHomeDirectory()) -> Bool {
         !isOnReadOnlyVolume(original) && cameFromDownload(original, home: home)
+            && !isInUserApplications(original, home: home)
+    }
+
+    /// Whether launch asks the move question for a copy that isn't installed:
+    /// a download, or a firewall build someone put in ~/Applications (#412).
+    /// A contributor's build folder only gets the banner (#400).
+    static func asksAtLaunch(_ url: URL, home: String = NSHomeDirectory()) -> Bool {
+        cameFromDownload(url, home: home) || isInUserApplications(url, home: home)
     }
 
     /// With a FreeSnitch already installed, "Open It" only makes sense for a
@@ -286,6 +382,9 @@ enum InstallLocation {
     /// build from a folder (a rebuilt build keeps its build number, so it can
     /// be newer code than the installed one), gets "replace it in Finder"
     /// instead of quietly opening the installed copy.
+    ///
+    /// `sourceFromDownload` also covers a copy in ~/Applications: that one is
+    /// an installed release, not a contributor's newer build.
     static func offersOpenInstalled(isOlder: Bool, sourceFromDownload: Bool) -> Bool {
         !isOlder && sourceFromDownload
     }
@@ -320,6 +419,11 @@ extension InstallLocation {
             }
             return false
         }
+        // A move cut off mid-copy (crash, force quit) leaves its hidden
+        // staging folder behind; tidy those up whichever copy this is (#413).
+        for folder in ["/Applications", (NSHomeDirectory() as NSString).appendingPathComponent("Applications")] {
+            removeLeftoverStaging(in: URL(fileURLWithPath: folder, isDirectory: true))
+        }
         guard !HelperClient.isInApplicationsFolder else { return false }
         // Already in Applications but quarantined and put there without
         // Finder, so macOS runs it translocated. Moving can't help; clearing
@@ -338,7 +442,7 @@ extension InstallLocation {
         }
         // Translocated means it still carries the download flag.
         let running = Bundle.main.bundleURL
-        guard translocatedOriginal(of: running) != nil || cameFromDownload(running) else { return false }
+        guard translocatedOriginal(of: running) != nil || asksAtLaunch(running) else { return false }
         NSApp.activate(ignoringOtherApps: true)
         guard moveAlert().runModal() == .alertFirstButtonReturn else { return false }
         return moveToApplications()
@@ -380,9 +484,18 @@ extension InstallLocation {
 
     private static func moveAlert() -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = "Move FreeSnitch to Applications?"
-        alert.informativeText = "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen."
-        alert.addButton(withTitle: "Move to Applications")
+        // From ~/Applications it copies and leaves the original, whose helper
+        // may still be registered, so it says copy and doesn't suggest
+        // deleting that copy.
+        let fromHome = isInUserApplications(runningOriginal)
+        if fromHome {
+            alert.messageText = "Copy FreeSnitch to the main Applications folder?"
+            alert.informativeText = userApplicationsReason + " FreeSnitch can copy itself there and reopen."
+        } else {
+            alert.messageText = "Move FreeSnitch to Applications?"
+            alert.informativeText = "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen."
+        }
+        alert.addButton(withTitle: fromHome ? "Copy to Applications" : "Move to Applications")
         alert.addButton(withTitle: "Not Now")
         return alert
     }
@@ -406,15 +519,20 @@ extension InstallLocation {
         let original = translocatedOriginal(of: running) ?? running
         let applications = URL(fileURLWithPath: "/Applications", isDirectory: true)
         let userApplications = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Applications"), isDirectory: true)
-        // A copy in ~/Applications counts as installed too, so the move never
-        // adds a second one.
+        // A copy in ~/Applications counts as installed too when the shared
+        // rule says so, so the move never adds a second one. For the firewall
+        // build it doesn't, and the move goes to /Applications (#412).
         let userPlan = plan(source: running, applications: userApplications)
         let chosen: Plan
-        if case .existing = userPlan { chosen = userPlan } else { chosen = plan(source: running, applications: applications) }
+        if case .existing(let userCopy, _) = userPlan, userCopyCountsAsInstalled(source: running, userCopy: userCopy) {
+            chosen = userPlan
+        } else {
+            chosen = plan(source: running, applications: applications)
+        }
         switch chosen {
         case .existing(let installed, let isOlder):
             let alert = NSAlert()
-            if !offersOpenInstalled(isOlder: isOlder, sourceFromDownload: cameFromDownload(original)) {
+            if !offersOpenInstalled(isOlder: isOlder, sourceFromDownload: asksAtLaunch(original)) {
                 alert.messageText = isOlder ? "An older FreeSnitch is already in Applications" : "FreeSnitch is already in Applications"
                 alert.informativeText = "FreeSnitch won't replace it for you, because that copy may be running the network filter. Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace."
                 alert.addButton(withTitle: "Show in Finder")
@@ -445,6 +563,13 @@ extension InstallLocation {
                 }
                 return false
             case .success:
+                // The home-folder copy stays, and its helper registration may
+                // still point into it. The new copy registers the helper again
+                // once at launch, so launchd runs it from /Applications (#418).
+                if isInUserApplications(original) {
+                    UserDefaults.standard.set(destination.resolvingSymlinksInPath().path, forKey: reregisterKey)
+                    UserDefaults.standard.synchronize()
+                }
                 if shouldTrashOriginal(original) {
                     // Synchronous: the process quits right after this.
                     try? FileManager.default.trashItem(at: original, resultingItemURL: nil)

@@ -269,7 +269,7 @@ final class PFManager: @unchecked Sendable {
     ) -> String {
         var lines: [String] = []
         lines.append("# FreeSnitch pf anchor - auto-generated. Do not edit.")
-        lines.append("# Hostname rules are intentionally not emitted to pf.")
+        lines.append("# Hostname rules are intentionally not emitted to pf, nor are denies that name a hostname and an address.")
         lines.append("# The Network Extension filter evaluates them when active, avoiding pf's one-time DNS resolution.")
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
@@ -282,20 +282,23 @@ final class PFManager: @unchecked Sendable {
         lines.append("# which only this anchor enforces, never block what the user allowed. An app's incoming")
         lines.append("# allow is written without quick: it keeps state for the replies, and a later block still wins.")
         lines.append("# An app's outgoing allow is also written without quick; it tags its packets so the feed lets them by.")
+        lines.append("# Rules are written in priority order, the order the Network Extension consults them.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
-        let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }
-        let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }
-        let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
+        // A quick line stops pf at the first match, as the matcher stops at
+        // the first rule in its order. Writing every deny before every allow
+        // let a lower-priority deny override a higher-priority allow (issue
+        // #181), so the lines follow the matcher's own order: priority first,
+        // then the snapshot's order. An app's allow has no quick (#313,
+        // #328), so in pf a lower-priority deny for every app still blocks
+        // it; the order changes nothing for it.
+        let liveRules = PreparedRuleSet(rules: rules).ordered.filter { !PFManager.hasExpired($0, at: now) }
+        let renderedRules = liveRules.filter { PFManager.reachesPF($0) }
 
-        for rule in denyRules {
-            if let ruleLines = pfLines(rule: rule, verb: "block", onRejected: onRejected) {
-                lines.append(contentsOf: ruleLines)
-            }
-        }
-        for rule in allowRules {
-            if let ruleLines = pfLines(rule: rule, verb: "pass", onRejected: onRejected) {
+        for rule in renderedRules {
+            let verb = rule.action == .deny ? "block" : "pass"
+            if let ruleLines = pfLines(rule: rule, verb: verb, onRejected: onRejected) {
                 lines.append(contentsOf: ruleLines)
             }
         }
@@ -317,8 +320,21 @@ final class PFManager: @unchecked Sendable {
         !(rule.processBundleId ?? "").isEmpty || !(rule.processPath ?? "").isEmpty
     }
 
+    /// An allow that pf would apply more widely than the matcher: one that
+    /// names an app (pf can't tell apps apart), or one with both an address
+    /// and a hostname (pf only gets the address, the matcher needs both). Its
+    /// pass drops quick, so in priority order it can't override a block for
+    /// traffic the user never allowed (issue #181).
+    static func passIsWiderInPF(_ rule: Rule) -> Bool {
+        namesAnApp(rule) || (!(rule.remoteIP ?? "").isEmpty && !(rule.remoteHost ?? "").isEmpty)
+    }
+
     /// Which rules the anchor renders at all: every allow, and the denies that
-    /// do not name an app (issue #155).
+    /// do not name an app (issue #155). Ask rules stay out: the address feeds
+    /// live only in pf, after the user's rules, so an ask rule written as a
+    /// pass would turn the feeds off for its whole address or port, for every
+    /// app (issue #181). A lower-priority deny behind an ask rule still blocks
+    /// in pf.
     static func reachesPF(_ rule: Rule) -> Bool {
         switch rule.action {
         case .allow: return true
@@ -390,6 +406,15 @@ final class PFManager: @unchecked Sendable {
             }
             guard kind != .hostname else {
                 return reject("hostname destination '\(rawIP)' is enforced by the Network Extension filter layer when active and is not emitted to PF")
+            }
+            // The matcher needs both the name and the address to fit, but pf
+            // only sees the address. A block line would stop every name on
+            // that address, which is more than the user asked, so the deny
+            // stays with the Network Extension (issue #302). A pass line can
+            // only block less, and keeps an address feed from blocking what
+            // the user allowed, so an allow still goes out as the address.
+            if verb == "block", let rawHost = r.remoteHost, !rawHost.isEmpty {
+                return reject("deny rule names hostname '\(rawHost)' as well as '\(rawIP)'; pf cannot check the name, so the Network Extension filter enforces it when active")
             }
             destination = rawIP
         } else if let rawHost = r.remoteHost, !rawHost.isEmpty {
@@ -465,7 +490,7 @@ final class PFManager: @unchecked Sendable {
                 // /etc/pf.conf still wins (#328). Without quick the feed's
                 // quick block would win, so the pass tags its packets and
                 // the feed lets tagged packets by, see ipBlocklistLines.
-                if PFManager.namesAnApp(r) {
+                if PFManager.passIsWiderInPF(r) {
                     passes.append("pass out proto { tcp udp }" + target + " tag \(PFManager.appAllowTag)")
                 } else {
                     passes.append("pass out quick proto { tcp udp }" + target)
@@ -478,7 +503,7 @@ final class PFManager: @unchecked Sendable {
                     // still wins (one before it still loses, #327), and its
                     // state lets the replies past the feed, see
                     // ipBlocklistLines.
-                    let quick = PFManager.namesAnApp(r) ? "" : " quick"
+                    let quick = PFManager.passIsWiderInPF(r) ? "" : " quick"
                     passes.append("pass in\(quick) proto { tcp udp } from" + host)
                 } else {
                     onRejected?(r, "the incoming half of an allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port; only the outgoing half is written")

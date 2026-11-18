@@ -425,6 +425,7 @@ DMG_NAME="FreeSnitch-${VERSION}.dmg"
 DOWNLOAD_PREFIX="https://github.com/${REPOSITORY}/releases/download/v${VERSION}/"
 ZIP_PATH="$APPCAST_ARCHIVES/$ZIP_NAME"
 DMG_PATH="$BUILD_ROOT/$DMG_NAME"
+SUMS_PATH="$BUILD_ROOT/SHA256SUMS.txt"
 NOTARIZE_APP_ZIP="$BUILD_ROOT/FreeSnitch-${VERSION}-app-notary.zip"
 
 assert_file() {
@@ -855,39 +856,35 @@ assert_only_version_files_changed() {
     die "xcodegen changed tracked files beyond the release version bump:"$'\n'"$unexpected"
 }
 
+# Checksums come from the files being uploaded, so nobody copies a hash by
+# hand into the README or the site again (#370). Check a download with
+# `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder it was saved
+# to. They only depend on the disk image and zip, so they are written and
+# checked before the release commit: a failure here stops the release before
+# anything is tagged or pushed (#376).
+write_checksums() {
+  local sum_file sum_line name
+  : >"$SUMS_PATH"
+  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
+    assert_file "$sum_file"
+    sum_line="$(shasum -a 256 "$sum_file")" || die "could not compute the SHA-256 of $sum_file"
+    [[ "$sum_line" =~ ^[0-9a-f]{64}\  ]] || die "unexpected shasum output for $sum_file"
+    printf '%s  %s\n' "${sum_line%% *}" "$(basename "$sum_file")" >>"$SUMS_PATH"
+  done
+
+  [[ "$(wc -l <"$SUMS_PATH" | tr -d ' ')" == "2" ]] || die "$SUMS_PATH must list exactly two files"
+  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
+    name="$(basename "$sum_file")"
+    grep -q "^[0-9a-f]\{64\}  ${name}\$" "$SUMS_PATH" || die "$SUMS_PATH does not list $name"
+    ( cd "$(dirname "$sum_file")" && grep "  ${name}\$" "$SUMS_PATH" | shasum -a 256 -c --status ) || \
+      die "$SUMS_PATH does not match $name"
+  done
+  printf 'Wrote %s.\n' "$SUMS_PATH"
+}
+
 commit_and_publish() {
   local notes_destination="$ROOT/docs/release-notes/v${VERSION}.md"
   local tag="v${VERSION}"
-  mkdir -p "$(dirname "$notes_destination")"
-  cp "$NOTES_INPUT" "$notes_destination"
-  cp "$BUILD_ROOT/appcast.xml" "$ROOT/docs/appcast.xml"
-
-  # Checksums come from the files being uploaded, so nobody copies a hash by
-  # hand into the README or the site again (#370). Check a download with
-  # `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder
-  # it was saved to. Built before anything is committed, tagged or pushed, so
-  # a failure here stops the release with nothing published (#376).
-  local sums="$BUILD_ROOT/SHA256SUMS.txt" sum_file
-  : >"$sums"
-  local sum_line
-  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
-    sum_line="$(shasum -a 256 "$sum_file")" || die "could not checksum $sum_file"
-    [[ "$sum_line" =~ ^[0-9a-f]{64}\  ]] || die "unexpected checksum output for $sum_file"
-    printf '%s  %s\n' "${sum_line%% *}" "$(basename "$sum_file")" >>"$sums"
-  done
-
-  local staged_files unexpected
-  git add -- "${VERSIONED_TRACKED_PATHS[@]}" "$ROOT/docs/appcast.xml" "$notes_destination"
-  git diff --cached --check
-  staged_files="$(git diff --cached --name-only)"
-  unexpected="$(printf '%s\n' "$staged_files" | grep -Ev '^(project\.yml|Sources/GUI/Info\.plist|Sources/NetExt/Info\.plist|docs/appcast\.xml|docs/release-notes/v[0-9]+\.[0-9]+\.[0-9]+\.md)$' || true)"
-  [[ -z "$unexpected" ]] || die "release staged unexpected files:\n$unexpected"
-  git diff --cached --quiet && die "release has no staged version, appcast, or notes changes"
-
-  git commit -m "chore(release): FreeSnitch ${VERSION}"
-  git tag -a "$tag" -m "FreeSnitch $VERSION"
-  git push origin main
-  git push origin "$tag"
 
   # Sparkle names deltas by BUILD number, not marketing version:
   # FreeSnitch32-31.delta patches build 31 up to build 32. Globbing these
@@ -899,8 +896,7 @@ commit_and_publish() {
     [[ -f "$delta" ]] || continue
     assets+=("$delta")
   done
-
-  assets+=("$sums")
+  assets+=("$SUMS_PATH")
 
   # Every enclosure the new appcast item advertises must be in the upload set.
   # A feed that points at a file we never attached is indistinguishable from a
@@ -916,6 +912,25 @@ commit_and_publish() {
   done < <(grep -o "releases/download/${tag}/[^\"]*" "$BUILD_ROOT/appcast.xml" | sed 's#.*/##' | sort -u)
   (( ${#missing[@]} == 0 )) || \
     die "appcast advertises files that are not being uploaded: ${missing[*]}"
+  # This runs before anything is copied, committed, tagged or pushed, so a
+  # mismatch leaves the tree for the version trap to restore (#376).
+
+  mkdir -p "$(dirname "$notes_destination")"
+  cp "$NOTES_INPUT" "$notes_destination"
+  cp "$BUILD_ROOT/appcast.xml" "$ROOT/docs/appcast.xml"
+
+  local staged_files unexpected
+  git add -- "${VERSIONED_TRACKED_PATHS[@]}" "$ROOT/docs/appcast.xml" "$notes_destination"
+  git diff --cached --check
+  staged_files="$(git diff --cached --name-only)"
+  unexpected="$(printf '%s\n' "$staged_files" | grep -Ev '^(project\.yml|Sources/GUI/Info\.plist|Sources/NetExt/Info\.plist|docs/appcast\.xml|docs/release-notes/v[0-9]+\.[0-9]+\.[0-9]+\.md)$' || true)"
+  [[ -z "$unexpected" ]] || die "release staged unexpected files:\n$unexpected"
+  git diff --cached --quiet && die "release has no staged version, appcast, or notes changes"
+
+  git commit -m "chore(release): FreeSnitch ${VERSION}"
+  git tag -a "$tag" -m "FreeSnitch $VERSION"
+  git push origin main
+  git push origin "$tag"
 
   gh release create "$tag" "${assets[@]}" \
     --repo "$REPOSITORY" \
@@ -1009,6 +1024,7 @@ make_and_notarize_dmg
 
 generator="$(sparkle_tool)"
 generate_appcast "$generator"
+write_checksums
 commit_and_publish
 
 # The release is public at this point. A failed tap bump must not look like a

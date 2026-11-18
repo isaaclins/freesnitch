@@ -144,11 +144,10 @@ final class HelperClient: NSObject, ObservableObject {
     /// True when the bundle lives somewhere macOS will accept a background
     /// helper from. Launching straight off the mounted DMG is the single most
     /// common way this app ends up looking dead.
+    /// The rule lives in InstallLocation.isInApplications, so the move
+    /// question and registration always agree (#401).
     static var isInApplicationsFolder: Bool {
-        let path = Bundle.main.bundleURL.resolvingSymlinksInPath().path
-        if path.hasPrefix("/Applications/") { return true }
-        let userApps = (NSHomeDirectory() as NSString).appendingPathComponent("Applications") + "/"
-        return path.hasPrefix(userApps)
+        InstallLocation.isInApplications(Bundle.main.bundleURL)
     }
 
     static var hasBundledHelper: Bool {
@@ -188,9 +187,15 @@ final class HelperClient: NSObject, ObservableObject {
         guard !DemoMode.isOn else { return }
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
+        // Read and cleared on every launch from Applications, so it can't
+        // linger there (#418).
+        let reregister = InstallLocation.takeReregisterRequest()
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
         case .alreadyEnabled:
             installState = .enabled
+            if reregister {
+                reregisterAfterCopy(service)
+            }
         case .register:
             guard Self.hasBundledHelper else {
                 installState = .notFound
@@ -212,6 +217,21 @@ final class HelperClient: NSObject, ObservableObject {
         case .manualKickstart, .noRegistration:
             installState = .unknown
         }
+    }
+
+    /// This copy was just made from one in ~/Applications whose registration
+    /// launchd may still run the helper from. Registering again from here
+    /// points it at this copy. It never unregisters (#24): if it fails, the
+    /// old registration and the old copy are both still there (#418).
+    private func reregisterAfterCopy(_ service: SMAppService) {
+        let path = Bundle.main.bundleURL.path
+        do {
+            try service.register()
+            state?.appendLog(level: "info", message: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications.")
+        } catch {
+            state?.appendLog(level: "error", message: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))")
+        }
+        refreshInstallState()
     }
 
     /// Re-reads the launchd registration so the UI can drop the banner as soon
@@ -617,6 +637,11 @@ final class HelperClient: NSObject, ObservableObject {
             let status = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: data)
             Task { @MainActor in
                 self?.status = status
+                if let status {
+                    self?.state?.helperOtherCopyPath = AppBundleIdentity.otherCopy(
+                        helperAppPath: status.appPath,
+                        thisAppPath: InstallLocation.runningOriginal.path)
+                }
                 // Adopt the persisted mode instead of leaving the GUI on its
                 // pre-connection default, which would then be pushed to the
                 // extension and silently undo the user's choice.

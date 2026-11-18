@@ -14,6 +14,11 @@
 #
 # Before the fix the helper reported the disk value at call time, so the stale
 # process answered "0.2.0 (20)" and nothing surfaced the staleness.
+#
+# It also replays #418: FreeSnitch is copied to another Applications folder
+# while the helper keeps running from the first copy. The helper must keep
+# reporting the copy it started from, and the comparison the app and doctor
+# use must name that copy as the other one.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -168,6 +173,56 @@ struct HelperIdentityHarness {
             failures.expect(false, "a legacy status payload no longer decodes: \(error.localizedDescription)")
         }
 
+        // #418: the user copies FreeSnitch to another folder (the move to
+        // /Applications) while this helper keeps running from the first copy.
+        let helperCopy = AppBundleIdentity.containingAppURL?.path
+        let movedCopy = ProcessInfo.processInfo.environment["FREESNITCH_MOVED_COPY"] ?? ""
+        let linkToHelperCopy = ProcessInfo.processInfo.environment["FREESNITCH_LINK_TO_COPY"] ?? ""
+        do {
+            try FileManager.default.copyItem(atPath: helperCopy ?? "", toPath: movedCopy)
+        } catch {
+            failures.expect(false, "could not copy the app to \(movedCopy): \(error.localizedDescription)")
+        }
+        failures.expect(AppBundleIdentity.runningAppPath == helperCopy,
+                        "the helper reports \(AppBundleIdentity.runningAppPath ?? "nil") as its copy, expected \(helperCopy ?? "nil")")
+        failures.expect(AppBundleIdentity.otherCopy(helperAppPath: AppBundleIdentity.runningAppPath,
+                                                    thisAppPath: movedCopy) == helperCopy,
+                        "the moved copy did not see that the helper runs from \(helperCopy ?? "nil")")
+        failures.expect(AppBundleIdentity.otherCopy(helperAppPath: AppBundleIdentity.runningAppPath,
+                                                    thisAppPath: helperCopy) == nil,
+                        "the copy the helper runs from was told the helper runs elsewhere")
+        failures.expect(AppBundleIdentity.otherCopy(helperAppPath: AppBundleIdentity.runningAppPath,
+                                                    thisAppPath: linkToHelperCopy) == nil,
+                        "the same copy reached through a symlink was taken for another copy")
+        failures.expect(AppBundleIdentity.otherCopy(helperAppPath: nil, thisAppPath: movedCopy) == nil,
+                        "a helper that reports no copy was claimed to run from another one")
+        let copyStatus = HelperStatus(version: HelperService.runningVersion, running: true, pfctlActive: false,
+                                      dnsProxyActive: false, dnsProxyPort: 53, activeRules: 0, blockedToday: 0,
+                                      appPath: AppBundleIdentity.runningAppPath)
+        if let encoded = try? FreeSnitchWireCodec.encode(copyStatus),
+           let decoded = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: encoded) {
+            failures.expect(decoded.appPath == helperCopy,
+                            "status round trip lost the helper's copy: \(decoded.appPath ?? "nil")")
+        } else {
+            failures.expect(false, "status with the helper's copy did not round trip")
+        }
+        if let decoded = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: legacy) {
+            failures.expect(decoded.appPath == nil, "a legacy status payload invented a helper copy")
+        }
+        let text = HelperOtherCopyMessage.detail(other: helperCopy ?? "", this: movedCopy)
+        failures.expect(text.contains(helperCopy ?? "\u{0}") && text.contains(movedCopy)
+                            && text.contains("Keep \(helperCopy ?? "")"),
+                        "the message does not name both copies and say to keep the helper's: \(text)")
+
+        // #421: a stale helper running from another copy gets "keep that
+        // copy", not a kickstart that would restart the same old copy.
+        let staleOther = HelperOtherCopyMessage.staleHelperAction(other: helperCopy, kickstartCommand: "KICK")
+        failures.expect(staleOther.contains(helperCopy ?? "\u{0}") && !staleOther.contains("KICK") && !staleOther.lowercased().contains("run: "),
+                        "a stale helper in another copy is still told to kickstart: \(staleOther)")
+        let staleHere = HelperOtherCopyMessage.staleHelperAction(other: nil, kickstartCommand: "KICK")
+        failures.expect(staleHere.contains("KICK") && staleHere.contains("Do not unregister"),
+                        "a stale helper in this copy lost its kickstart advice: \(staleHere)")
+
         // The only supported repair is a kickstart. Never an unregister.
         failures.expect(AppConstants.helperKickstartArguments == ["kickstart", "-k", "system/io.isaaclins.freesnitch.helper"],
                         "the helper restart arguments are not a kickstart: \(AppConstants.helperKickstartArguments)")
@@ -183,6 +238,7 @@ struct HelperIdentityHarness {
         }
         print("helper identity harness: captured 0.2.0 (19) at start, disk moved to 0.2.0 (20), running value unchanged")
         print("helper identity harness: stale process detected, running and installed reported separately")
+        print("helper identity harness: app copied elsewhere, helper still reports its own copy and the moved copy names it")
         print("helper identity harness: PASS")
     }
 }
@@ -196,8 +252,11 @@ xcrun swiftc -O -sdk "$SDK" -target "$TARGET" -parse-as-library \
   "$TMP/verify.swift"
 cp "$TMP/run" "$APP/Contents/MacOS/FreeSnitchHelper"
 
+mkdir -p "$TMP/Applications"
+ln -s "$APP" "$TMP/link.app"
 printf 'helper identity harness: running from %s\n' "$APP/Contents/MacOS/FreeSnitchHelper"
-"$APP/Contents/MacOS/FreeSnitchHelper"
+FREESNITCH_MOVED_COPY="$TMP/Applications/FreeSnitch.app" FREESNITCH_LINK_TO_COPY="$TMP/link.app" \
+  "$APP/Contents/MacOS/FreeSnitchHelper"
 
 # The restart path must stay a kickstart. #24 showed that unregistering an
 # enabled helper can remove the service entirely.

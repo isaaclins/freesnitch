@@ -53,6 +53,10 @@ final class AppState: ObservableObject {
     @Published var helperVersionState: HelperVersionState = .unknown
     @Published var helperRepairState: HelperRepairState = .idle
     @Published var helperNeedsRepair: Bool = false
+    /// The other FreeSnitch copy the helper is running from, when the helper
+    /// reports one that isn't this app (#418). Nil when they match or when the
+    /// helper is too old to say.
+    @Published var helperOtherCopyPath: String?
     @Published var pfctlEnabled: Bool = false
     @Published var dnsProxyEnabled: Bool = false
     /// The port the helper says the proxy is on, rather than the port the GUI

@@ -11,7 +11,9 @@
 #   3. Loopback, the configured resolvers, DHCP and the app's own traffic are
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
-#      Deny rules that name an app are never written to pf (issue #155).
+#      Deny rules that name an app are never written to pf (issue #155), nor
+#      are denies that name a hostname and an address (issue #302), and the
+#      anchor follows the matcher's priority order (issue #181).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -332,6 +334,115 @@ struct IPBlocklistHarness {
         let feedIndex = appScoped.range(of: "to <freesnitch_ipblock>")?.lowerBound
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
+
+        // A rule that names a hostname and an address matches only when both
+        // fit, but pf sees only the address (issue #302). A deny written as
+        // the address would block every name on it, so it stays out of pf and
+        // the refusal is reported. An allow still goes out as the address,
+        // without quick like an app's allow (#183), so the feed cannot block
+        // what the user allowed.
+        var hostAndAddressRefusals: [String] = []
+        let hostAndAddress = pf.renderAnchor(rules: [
+            Rule(remoteHost: "tracker.example.com", remoteIP: "198.51.100.40", action: .deny, scope: .ip),
+            Rule(remoteHost: "*.example.net", remoteIP: "198.51.100.0/24", remotePort: 443, action: .deny, scope: .ip),
+            Rule(remoteHost: "api.example.org", remoteIP: "198.51.100.41", action: .allow, scope: .ip),
+            Rule(remoteIP: "198.51.100.42", action: .deny, scope: .ip)
+        ], ipBlocklist: hostile, resolverAddresses: resolvers) { _, reason in
+            hostAndAddressRefusals.append(reason)
+        }
+        for leaked in ["198.51.100.40", "198.51.100.0/24"] {
+            checks.expect(!hostAndAddress.contains(leaked),
+                          "a deny that names a hostname and an address must not reach pf as the address alone, but the anchor carries \(leaked)")
+        }
+        checks.expect(hostAndAddressRefusals.count == 2
+                      && hostAndAddressRefusals.allSatisfy { $0.contains("names hostname") },
+                      "both skipped hostname-and-address denies must be reported, got \(hostAndAddressRefusals)")
+        checks.expect(hostAndAddress.contains("pass out proto { tcp udp } to 198.51.100.41 tag"),
+                      "an allow that names a hostname and an address must still reach pf as the address")
+        checks.expect(blocks(hostAndAddress, "to 198.51.100.42"),
+                      "a deny with an address and no hostname must still be written to pf")
+        let hostAllowIndex = hostAndAddress.range(of: "to 198.51.100.41")?.lowerBound
+        let hostFeedIndex = hostAndAddress.range(of: "to <freesnitch_ipblock>")?.lowerBound
+        checks.expect(hostAllowIndex != nil && hostFeedIndex != nil && hostAllowIndex! < hostFeedIndex!,
+                      "the hostname-and-address allow must come before the feed's block")
+
+        // pf stops at the first quick line that matches, so the lines must
+        // come in the matcher's order. A lower-priority deny must never
+        // override a higher-priority allow (issue #181), and equal priorities
+        // keep the order the snapshot delivered them in, as in the matcher.
+        func position(_ needle: String, in text: String) -> String.Index? {
+            text.range(of: needle)?.lowerBound
+        }
+        let wideDeny = Rule(remoteIP: "203.0.113.0/24", action: .deny, scope: .ip, priority: 50)
+        let firefoxAllow = Rule(processPath: "/Applications/Firefox.app/", remoteIP: "203.0.113.7",
+                                action: .allow, scope: .ip, priority: 100)
+        let everyAppAllow = Rule(remoteIP: "203.0.113.8", action: .allow, scope: .ip, priority: 100)
+        let ranked = pf.renderAnchor(rules: [wideDeny, firefoxAllow, everyAppAllow])
+        checkPFSyntax("ranked", ranked, checks)
+        let wideIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: ranked)
+        let everyAppPass = position("pass out quick proto { tcp udp } to 203.0.113.8", in: ranked)
+        checks.expect(everyAppPass != nil && wideIndex != nil && everyAppPass! < wideIndex!,
+                      "a higher-priority allow for every app must come before a lower-priority deny that covers it")
+        // An app's allow has no quick (#313, #328): pf would apply it to every
+        // app, so a later block still wins. The order must not turn it into a
+        // quick pass that beats the deny for every app.
+        checks.expect(!ranked.contains("pass out quick proto { tcp udp } to 203.0.113.7"),
+                      "an app's allow must stay without quick, whatever its priority")
+        checks.expect(ranked.contains("pass out proto { tcp udp } to 203.0.113.7 tag"),
+                      "an app's allow is still written, tagged for the address feed")
+        // An allow with both a hostname and an address reaches pf as the
+        // address alone, wider than the matcher, which needs both. Hoisted
+        // as a quick pass it would let other names on that address past a
+        // lower-priority deny, so it is written like an app's allow.
+        let namedAllow = Rule(remoteHost: "allowed.example", remoteIP: "203.0.113.9",
+                              action: .allow, scope: .ip, priority: 100)
+        let namedRanked = pf.renderAnchor(rules: [wideDeny, namedAllow])
+        checkPFSyntax("named-ranked", namedRanked, checks)
+        checks.expect(!namedRanked.contains("pass out quick proto { tcp udp } to 203.0.113.9"),
+                      "an allow with a hostname and an address must not become a quick pass ahead of the deny")
+        checks.expect(namedRanked.contains("pass out proto { tcp udp } to 203.0.113.9 tag"),
+                      "an allow with a hostname and an address is still written, tagged for the address feed")
+        var outranked = wideDeny
+        outranked.priority = 200
+        let denyFirst = pf.renderAnchor(rules: [everyAppAllow, outranked])
+        checkPFSyntax("deny-first", denyFirst, checks)
+        let outrankedIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: denyFirst)
+        let lowerAllowIndex = position("pass out quick proto { tcp udp } to 203.0.113.8", in: denyFirst)
+        checks.expect(outrankedIndex != nil && lowerAllowIndex != nil && outrankedIndex! < lowerAllowIndex!,
+                      "a higher-priority deny must still come before a lower-priority allow")
+        let tiedDeny = Rule(remoteIP: "198.51.100.0/24", action: .deny, scope: .ip)
+        let tiedAllow = Rule(remoteIP: "198.51.100.4", action: .allow, scope: .ip)
+        let tieProbe = Connection(pid: 501, processName: "curl", processPath: "/usr/bin/curl", remoteHost: "198.51.100.4",
+                                  remoteIP: "198.51.100.4", remotePort: 443, direction: .outgoing)
+        for order in [[tiedDeny, tiedAllow], [tiedAllow, tiedDeny]] {
+            let tied = pf.renderAnchor(rules: order)
+            let blockAt = position("block out quick proto { tcp udp } to 198.51.100.0/24", in: tied)
+            let passAt = position("pass out quick proto { tcp udp } to 198.51.100.4", in: tied)
+            let pfFirst: RuleAction? = (blockAt != nil && passAt != nil) ? (blockAt! < passAt! ? .deny : .allow) : nil
+            let matcherSays = RuleMatcher().decision(for: tieProbe, rules: order, defaultMode: .alert)
+            checks.expect(pfFirst == matcherSays,
+                          "with equal priorities pf must pick what the matcher picks, got pf \(String(describing: pfFirst)) and matcher \(matcherSays)")
+        }
+        // Ask rules stay out of pf. The address feeds live only in pf, after
+        // the user's rules, so an ask written as a pass would turn the feeds
+        // off for its whole address or port, for every app (issue #181).
+        // A disabled allow stays out too, and the deny is still written.
+        let askAndDisabled = pf.renderAnchor(rules: [
+            Rule(remoteIP: "198.51.100.9", action: .allow, scope: .ip, priority: 900, enabled: false),
+            Rule(remoteIP: "198.51.100.9", action: .ask, scope: .ip, priority: 800),
+            Rule(remotePort: 8444, action: .ask, scope: .port),
+            Rule(remoteIP: "198.51.100.9", action: .deny, scope: .ip)
+        ])
+        checks.expect(!askAndDisabled.contains("pass out quick proto { tcp udp } to 198.51.100.9"),
+                      "neither an ask rule nor a disabled allow may pass 198.51.100.9 in pf")
+        checks.expect(!askAndDisabled.contains("8444"),
+                      "a port-only ask rule must not reach pf, where it would pass the whole port past the feeds")
+        checks.expect(askAndDisabled.contains("block out quick proto { tcp udp } to 198.51.100.9"),
+                      "the deny behind the ask rule is still written")
+        let feedSet = IPBlocklistSet(entries: ["198.51.100.0/24"])
+        let askedFeed = pf.renderAnchor(rules: [Rule(remotePort: 443, action: .ask, scope: .port)], ipBlocklist: feedSet)
+        checks.expect(!askedFeed.contains("port 443") && askedFeed.contains("<freesnitch_ipblock>"),
+                      "an ask rule on a port must leave the address feed blocking that port")
 
         // An address typed into the hostname field (no remoteIP) is written
         // to pf as that address, so the matcher must apply it to every flow
