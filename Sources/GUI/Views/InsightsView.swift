@@ -942,6 +942,10 @@ final class InsightsViewModel: ObservableObject {
             loadApps(offset: 0)
         case .unresolved:
             unresolved = []
+            // The Apps tab's sheet shares this list; don't show its apps under
+            // the No Name address while that list reloads.
+            reachingKey = nil
+            reachingApps = []
             loadUnresolved(offset: 0)
         case .proposals:
             proposals = []
@@ -1031,10 +1035,10 @@ final class InsightsViewModel: ObservableObject {
             guard self.reachingKey == key else { return }
             self.isLoading = false
             guard let report else { self.errorMessage = error; return }
-            // Narrowed to one destination, every row reached exactly one. A
-            // helper from before the destination filter ignores it and sends
-            // every app; listing those under this address would be wrong.
-            guard report.apps.allSatisfy({ $0.destinationCount == 1 }) else {
+            // A helper from before the destination filter ignores it, sends
+            // every app and never echoes the key; listing those under this
+            // address would be wrong.
+            guard report.destinationKey == key else {
                 self.errorMessage = "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address."
                 return
             }

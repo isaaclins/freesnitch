@@ -571,7 +571,8 @@ extension InsightsStore {
                                   unresolved: page.unresolved,
                                   proposals: page.proposals,
                                   findings: page.findings,
-                                  overview: page.overview)
+                                  overview: page.overview,
+                                  destinationKey: query.destinationKey)
         }
     }
 

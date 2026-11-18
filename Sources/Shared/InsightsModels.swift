@@ -935,10 +935,15 @@ public struct InsightsReport: Codable, Sendable {
     public let proposals: [InsightsProposedRule]
     public let findings: [InsightsBehaviourFinding]
     public let overview: InsightsOverview?
+    /// The destination the apps were narrowed to, echoed from the query. A
+    /// helper from before that filter never sets it, which is how the app
+    /// tells an unfiltered list from a narrowed one (#435).
+    public let destinationKey: String?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, kind, generatedAt, rangeStart, rangeEnd, source, recordingEnabled,
-             limit, offset, hasMore, apps, destinations, unresolved, proposals, findings, overview
+             limit, offset, hasMore, apps, destinations, unresolved, proposals, findings, overview,
+             destinationKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -959,6 +964,7 @@ public struct InsightsReport: Codable, Sendable {
         proposals = try c.decode([InsightsProposedRule].self, forKey: .proposals)
         findings = try c.decodeIfPresent([InsightsBehaviourFinding].self, forKey: .findings) ?? []
         overview = try c.decodeIfPresent(InsightsOverview.self, forKey: .overview)
+        destinationKey = try c.decodeIfPresent(String.self, forKey: .destinationKey)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -979,6 +985,7 @@ public struct InsightsReport: Codable, Sendable {
         try c.encode(proposals, forKey: .proposals)
         try c.encode(findings, forKey: .findings)
         try c.encodeIfPresent(overview, forKey: .overview)
+        try c.encodeIfPresent(destinationKey, forKey: .destinationKey)
     }
 
     public init(kind: InsightsQueryKind,
@@ -995,8 +1002,10 @@ public struct InsightsReport: Codable, Sendable {
                 unresolved: [InsightsUnresolvedDestination] = [],
                 proposals: [InsightsProposedRule] = [],
                 findings: [InsightsBehaviourFinding] = [],
-                overview: InsightsOverview? = nil) {
+                overview: InsightsOverview? = nil,
+                destinationKey: String? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
+        self.destinationKey = destinationKey
         self.kind = kind
         self.generatedAt = generatedAt
         self.rangeStart = rangeStart

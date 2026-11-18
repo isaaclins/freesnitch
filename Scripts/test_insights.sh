@@ -57,11 +57,6 @@ struct InsightsHarness {
         return FlowObservation(connection: connection, observedAt: date)
     }
 
-    static func sharedRollup0(_ store: InsightsStore, _ key: String, _ now: Date) -> [InsightsAppSummary] {
-        (try? store.report(for: InsightsQuery(kind: .apps, destinationKey: key,
-                                              since: now.addingTimeInterval(-300 * 24 * 60 * 60), limit: 50)).apps) ?? []
-    }
-
     static func main() {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("freesnitch-insights-harness-\(UUID().uuidString)")
@@ -217,8 +212,8 @@ struct InsightsHarness {
         equal(sharedRaw.apps.map(\.appIdentity), ["com.beeper.app", "com.slack.app", "com.apple.Notes"],
               "a shared address lists every app that reached it, busiest first")
         equal(sharedRaw.apps.map(\.connectionCount), [3, 2, 1], "each app keeps its own count for that address")
-        check(sharedRaw.apps.allSatisfy { $0.destinationCount == 1 } && sharedRollup0(store, segmentIP, now).allSatisfy { $0.destinationCount == 1 },
-              "a narrowed list counts one destination per app, which the app uses to spot an older helper")
+        equal(sharedRaw.destinationKey, segmentIP, "a narrowed report echoes its destination, which the app uses to spot an older helper")
+        check(appsReport.destinationKey == nil, "an unfiltered apps report carries no destination")
         equal(sharedRaw.apps.first?.processPath, "/Applications/Beeper.app", "the app behind a shared address carries its path")
         let bareRaw = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: bareIP,
                                                           since: now.addingTimeInterval(-day), limit: 50))
