@@ -160,6 +160,20 @@ enum InstallLocation {
                 "sh", String(pid), app.path, open] + arguments
     }
 
+    /// Whether launch should ask the move question: only for a copy that came
+    /// from a download, meaning a disk image (read-only), anything under
+    /// ~/Downloads, or a copy still carrying the download flag (which macOS
+    /// runs translocated). A build a contributor runs from Xcode or the build
+    /// folder is none of these and only gets the banner with its Move button,
+    /// so it isn't asked on every run (#400).
+    static func cameFromDownload(_ url: URL, home: String = NSHomeDirectory()) -> Bool {
+        let path = url.resolvingSymlinksInPath().path
+        let downloads = (home as NSString).appendingPathComponent("Downloads") + "/"
+        return isOnReadOnlyVolume(url)
+            || path.hasPrefix(downloads)
+            || getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+    }
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -205,6 +219,9 @@ extension InstallLocation {
             explainStuckInstalledCopy(installed, flagCleared: cleared)
             return false
         }
+        // Translocated means it still carries the download flag.
+        let running = Bundle.main.bundleURL
+        guard translocatedOriginal(of: running) != nil || cameFromDownload(running) else { return false }
         NSApp.activate(ignoringOtherApps: true)
         guard moveAlert().runModal() == .alertFirstButtonReturn else { return false }
         return moveToApplications()

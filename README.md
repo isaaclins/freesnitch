@@ -99,7 +99,7 @@ xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Relea
 open build/Build/Products/Release/FreeSnitch.app
 ```
 
-This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release. Opened from the build folder it offers to move itself there; if a FreeSnitch is already installed, it never overwrites that copy.
+This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release. Opened from the build folder, its banner has a Move to Applications button; if a FreeSnitch is already installed, it never overwrites that copy.
 
 ## Uninstall
 
