@@ -131,15 +131,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.syncSharedRules()
 
         // An old PureSnitch install must not keep filtering next to this one,
-        // so ask before this app's own filter starts. The removal itself runs
-        // in the background behind its password prompt.
-        LegacyPureSnitch.offerRemovalAtLaunch()
-
+        // so this app's own filter starts only once that question is settled:
+        // at once for Not Now, after the removal when the user chose Remove.
+        //
         // Per-process firewall (Network System Extension). `activate()` is a
         // no-op unless this build embeds one. The monitor-only build does
         // not, so no extension approval prompt appears.
-        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
-            systemExtension.activate()
+        LegacyPureSnitch.offerRemovalAtLaunch { [systemExtension] in
+            if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
+                systemExtension.activate()
+            }
         }
 
         // A menu-bar-only app that shows nothing on first launch reads as

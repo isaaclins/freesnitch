@@ -892,8 +892,11 @@ commit_and_publish() {
   # it was saved to.
   local sums="$BUILD_ROOT/SHA256SUMS.txt" sum_file
   : >"$sums"
+  local sum_line
   for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
-    printf '%s  %s\n' "$(shasum -a 256 "$sum_file" | awk '{print $1}')" "$(basename "$sum_file")" >>"$sums"
+    sum_line="$(shasum -a 256 "$sum_file")" || die "could not checksum $sum_file"
+    [[ "$sum_line" =~ ^[0-9a-f]{64}\  ]] || die "unexpected checksum output for $sum_file"
+    printf '%s  %s\n' "${sum_line%% *}" "$(basename "$sum_file")" >>"$sums"
   done
   assets+=("$sums")
 

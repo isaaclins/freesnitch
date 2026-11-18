@@ -124,6 +124,36 @@ check(asked == ["/Applications/PureSnitch.app", "/Library/LaunchDaemons/io.isaac
 check(LegacyPureSnitch.detect { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
       "a helper left behind without the app is still found")
 
+// Choosing Remove: FreeSnitch's own filter may only start once the removal
+// is done, and also when it failed, so the filter never stays off for good.
+@MainActor func runRemoval(helper: LegacyPureSnitch.Outcome, trash: LegacyPureSnitch.Outcome?, app: Bool) -> [String] {
+    var events: [String] = []
+    var done = false
+    LegacyPureSnitch.performRemoval(
+        .init(app: app, daemon: true),
+        removeHelper: { _ in Thread.sleep(forTimeInterval: 0.05); return helper },
+        trashApp: { completion in
+            events.append("trash")
+            DispatchQueue.main.async { completion(trash ?? .removed) }
+        },
+        report: { _ in events.append("report") },
+        then: { events.append("startup"); done = true })
+    events.append("returned")
+    let deadline = Date().addingTimeInterval(5)
+    while !done && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    return events
+}
+MainActor.assumeIsolated {
+    check(runRemoval(helper: .removed, trash: .removed, app: true) == ["returned", "trash", "report", "startup"],
+          "with Remove chosen, the filter starts only after PureSnitch went to the Trash and the result was shown")
+    check(runRemoval(helper: .failed("x"), trash: nil, app: true) == ["returned", "report", "startup"],
+          "a failed helper removal still lets the filter start, after saying so")
+    check(runRemoval(helper: .cancelled, trash: nil, app: true) == ["returned", "report", "startup"],
+          "a cancelled password prompt still lets the filter start")
+    check(runRemoval(helper: .removed, trash: .failed("y"), app: true) == ["returned", "trash", "report", "startup"],
+          "a failed move to the Trash still lets the filter start, after saying so")
+}
+
 exit(failures == 0 ? 0 : 1)
 SWIFT
 
@@ -150,3 +180,8 @@ if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination
   echo "install location: FAIL: the move can delete the installed copy" >&2; exit 1
 fi
 echo "install location: PASS: the move never deletes the installed copy"
+app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
+[ "$(grep -c 'systemExtension.activate()' "$app_swift")" = 1 ] \
+  && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \
+  || { echo "install location: FAIL: the filter can start outside the PureSnitch continuation" >&2; exit 1; }
+echo "install location: PASS: the filter starts only from the PureSnitch continuation"
