@@ -1611,6 +1611,9 @@ private struct RuleJSONDocument: FileDocument {
 struct RuleEditorRequest: Identifiable {
     let id = UUID()
     let app: RuleApplication?
+    /// Fields filled in from what was recorded, when the rule is started from
+    /// Insights instead of from scratch (#446).
+    var draft: RuleDraft? = nil
 }
 
 struct RuleApplication: Equatable {
@@ -1676,9 +1679,10 @@ struct RuleApplication: Equatable {
     }
 }
 
-private struct RuleEditorView: View {
+struct RuleEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let initialApp: RuleApplication?
+    var draft: RuleDraft? = nil
     let profiles: [Profile]
     let activeProfileName: String
     let onSave: (Rule) -> Void
@@ -1773,7 +1777,10 @@ private struct RuleEditorView: View {
                 if let dropped { pick(dropped) } else { dropRejected = true }
             }
         }
-        .onAppear { if let initialApp { pick(initialApp) } }
+        .onAppear {
+            if let draft { apply(draft) }
+            if let initialApp { pick(initialApp) }
+        }
     }
 
     private var applicationRow: some View {
@@ -1802,6 +1809,23 @@ private struct RuleEditorView: View {
         .padding(4)
         .background(RoundedRectangle(cornerRadius: 6)
             .strokeBorder(Color.accentColor, lineWidth: appDropTargeted ? 2 : 0))
+    }
+
+    /// Fills the sheet from a recorded destination. An app that is no longer
+    /// on disk can't be loaded, so its bundle id is kept instead when one was
+    /// recorded; with neither, the sheet shows "Any app" like any rule
+    /// without one, and the person sees that before adding it.
+    private func apply(_ draft: RuleDraft) {
+        processBundleID = draft.processBundleID
+        remoteHost = draft.remoteHost
+        remoteIP = draft.remoteIP
+        scope = draft.scope
+        if let path = draft.appFilePath,
+           let loaded = RuleApplication(url: URL(fileURLWithPath: path)) {
+            pick(loaded)
+        } else if let fallback = draft.fallbackBundleID {
+            processBundleID = fallback
+        }
     }
 
     /// A rule for an app with nothing else filled in is a rule for all of

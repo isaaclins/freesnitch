@@ -18,6 +18,10 @@ struct InsightsView: View {
     /// (#124).
     @State private var selectedUnresolvedID: String?
     @State private var showingSourceNote = false
+    /// The Rules page's own Add Rule sheet, started from a recorded
+    /// destination (#446).
+    @State private var ruleEditorRequest: RuleEditorRequest?
+    @ObservedObject private var profileClient = ProfileClient.shared
     /// Insights was the only page without the recovery banner every other page
     /// carries, so a missing helper showed up here as a red string per query
     /// with nothing to press (#136).
@@ -32,6 +36,12 @@ struct InsightsView: View {
             content
         }
         .onAppear { model.attach(state) }
+        .sheet(item: $ruleEditorRequest) { request in
+            RuleEditorView(initialApp: request.app,
+                           draft: request.draft,
+                           profiles: profileClient.profiles,
+                           activeProfileName: profileClient.activeProfileName) { rule in model.add(rule) }
+        }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
             Button("Cancel", role: .cancel) {}
             Button("Delete History", role: .destructive) { model.purge() }
@@ -122,7 +132,7 @@ struct InsightsView: View {
     /// bands stacked across the top; they are notice cards now, and they only
     /// take space when there is something to say.
     @ViewBuilder private var notices: some View {
-        let hasNotice = notBlockingMessage != nil || model.errorMessage != nil
+        let hasNotice = notBlockingMessage != nil || model.errorMessage != nil || model.ruleAddedMessage != nil
         if hasNotice {
             VStack(spacing: 8) {
                 if let message = notBlockingMessage {
@@ -130,6 +140,9 @@ struct InsightsView: View {
                 }
                 if let error = model.errorMessage {
                     NoticeCard(title: error, icon: "exclamationmark.triangle", tint: .red)
+                }
+                if let added = model.ruleAddedMessage {
+                    NoticeCard(title: added, icon: "checkmark.circle", tint: .green)
                 }
             }
             .padding(.horizontal, 12)
@@ -313,6 +326,16 @@ struct InsightsView: View {
     /// silently inert (#106).
     private func destinationFooter(app: InsightsAppSummary) -> some View {
         HStack(spacing: 8) {
+            Button("New Rule\u{2026}") {
+                guard let id = selectedDestinationID,
+                      let destination = model.destinations.first(where: { $0.id == id }) else { return }
+                newRule(app: app, domain: destination.resolvedDomain, ip: destination.remoteIP)
+            }
+            .controlSize(.small)
+            .disabled(selectedDestinationID == nil)
+            .help(selectedDestinationID == nil
+                  ? "Select a destination first."
+                  : "Make a rule for the selected destination, with the app and address already filled in.")
             Button("Suggest a Rule\u{2026}") {
                 guard let id = selectedDestinationID,
                       let destination = model.destinations.first(where: { $0.id == id }) else { return }
@@ -367,10 +390,28 @@ struct InsightsView: View {
     @ViewBuilder
     private func destinationContextMenu(_ destination: InsightsDestinationSummary,
                                         app: InsightsAppSummary) -> some View {
+        Button("New Rule\u{2026}") {
+            newRule(app: app, domain: destination.resolvedDomain, ip: destination.remoteIP)
+        }
         Button("Suggest a Rule\u{2026}") { model.proposeRule(for: destination, app: app) }
         Divider()
         CopyMenuItem(title: "Copy Destination", value: destination.displayName)
         CopyMenuItem(title: "Copy IP Address", value: destination.remoteIP)
+    }
+
+    /// Opens the Rules page's Add Rule sheet filled in from what Insights
+    /// recorded. Nothing is added until the person presses Add (#446).
+    private func newRule(app: InsightsAppSummary?, domain: String?, ip: String?) {
+        guard state.helperConnected else {
+            model.errorMessage = "Approve the FreeSnitch helper before adding rules."
+            return
+        }
+        model.ruleAddedMessage = nil
+        let draft = RuleDraft(processPath: app?.processPath,
+                              processBundleId: app?.processBundleId,
+                              domain: domain,
+                              remoteIP: ip)
+        ruleEditorRequest = RuleEditorRequest(app: nil, draft: draft)
     }
 
     @ViewBuilder
@@ -445,12 +486,24 @@ struct InsightsView: View {
     @ViewBuilder
     private func unresolvedContextMenu(_ ids: Set<String>) -> some View {
         if let id = ids.first, let entry = model.unresolved.first(where: { $0.id == id }) {
-            ForEach(model.proposableApps(for: entry), id: \.appIdentity) { app in
+            let apps = model.proposableApps(for: entry)
+            // One entry per app that reached it, and one for every app, since
+            // an address nobody looked up is often one to block outright.
+            ForEach(apps, id: \.appIdentity) { app in
+                Button("New Rule for \(app.displayName)\u{2026}") {
+                    newRule(app: app, domain: nil, ip: entry.remoteIP)
+                }
+            }
+            Button(apps.isEmpty ? "New Rule\u{2026}" : "New Rule for Any App\u{2026}") {
+                newRule(app: nil, domain: nil, ip: entry.remoteIP)
+            }
+            Divider()
+            ForEach(apps, id: \.appIdentity) { app in
                 Button("Suggest a Rule for \(app.displayName)…") {
                     model.proposeRule(forUnresolved: entry, app: app)
                 }
             }
-            if !model.proposableApps(for: entry).isEmpty { Divider() }
+            if !apps.isEmpty { Divider() }
             CopyMenuItem(title: "Copy Address", value: entry.remoteIP)
         }
     }
@@ -728,6 +781,8 @@ final class InsightsViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var acceptMessage: String?
+    /// Says a rule made with New Rule… went in, on whichever tab it was made.
+    @Published var ruleAddedMessage: String?
     @Published var accepted: Set<UUID> = []
     @Published var confirmingPurge = false
     @Published var hasMoreApps = false
@@ -762,6 +817,7 @@ final class InsightsViewModel: ObservableObject {
     func reload() {
         errorMessage = nil
         acceptMessage = nil
+        ruleAddedMessage = nil
         if InsightsDemoData.isEnabled {
             loadDemoData()
             return
@@ -1021,6 +1077,23 @@ final class InsightsViewModel: ObservableObject {
     private func isCoveredByExistingRule(_ proposal: InsightsProposedRule) -> Bool {
         guard let rules = state?.rules else { return false }
         return proposal.isCovered(by: rules)
+    }
+
+    /// A rule the person made and checked in the Add Rule sheet, sent the
+    /// same way the Rules page sends one.
+    func add(_ rule: Rule) {
+        guard let state else { return }
+        state.helper.addRule(rule) { [weak self] ok, message in
+            guard let self else { return }
+            guard ok else {
+                self.errorMessage = message ?? "The helper rejected the rule and did not say why."
+                return
+            }
+            self.errorMessage = nil
+            let who = rule.processName ?? rule.processBundleId ?? "every app"
+            self.ruleAddedMessage = "Added a rule to \(rule.action == .deny ? "block" : rule.action == .allow ? "allow" : "ask before connecting to") \(rule.displayDestination) for \(who)."
+            state.refreshRules()
+        }
     }
 
     /// D2: this is the only path from a proposal to a rule, and a person is
