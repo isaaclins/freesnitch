@@ -1026,9 +1026,18 @@ final class InsightsViewModel: ObservableObject {
         isLoading = true
         helper.insightsReport(request) { [weak self] report, error in
             guard let self else { return }
-            self.isLoading = false
+            // A reply for an address the reader has already left must not end
+            // the loading state of the one they are looking at now.
             guard self.reachingKey == key else { return }
+            self.isLoading = false
             guard let report else { self.errorMessage = error; return }
+            // Narrowed to one destination, every row reached exactly one. A
+            // helper from before the destination filter ignores it and sends
+            // every app; listing those under this address would be wrong.
+            guard report.apps.allSatisfy({ $0.destinationCount == 1 }) else {
+                self.errorMessage = "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address."
+                return
+            }
             self.source = report.source
             self.reachingApps = offset == 0 ? report.apps : self.reachingApps + report.apps
             self.hasMoreReachingApps = report.hasMore
