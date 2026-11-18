@@ -56,8 +56,9 @@ enum InstallLocation {
         guard !fm.fileExists(atPath: destination.path) else {
             return .failure(.failed("\(destination.path) already exists."))
         }
+        removeLeftoverStaging(in: destination.deletingLastPathComponent())
         let staging = destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(bundleName).partial-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(stagingPrefix)\(UUID().uuidString)", isDirectory: true)
         do {
             try fm.copyItem(at: source, to: staging)
             // A copy that keeps the flag would run translocated again, so it
@@ -71,6 +72,31 @@ enum InstallLocation {
         } catch {
             removeStaging(staging)
             return .failure(.failed(error.localizedDescription))
+        }
+    }
+
+    /// The hidden name a copy is staged under, followed by a UUID.
+    static let stagingPrefix = ".\(bundleName).partial-"
+
+    /// Whether `name` is one of the staging folders `copyBundle` makes:
+    /// exactly the prefix and an uppercase UUID, as `UUID().uuidString`
+    /// writes it. Anything else, even a close match, isn't ours.
+    static func isStagingName(_ name: String) -> Bool {
+        guard name.hasPrefix(stagingPrefix) else { return false }
+        let id = String(name.dropFirst(stagingPrefix.count))
+        return UUID(uuidString: id)?.uuidString == id
+    }
+
+    /// Removes staging folders a move left behind when the app crashed or was
+    /// force-quit mid-copy (#413). Only real folders with exactly the staging
+    /// name are touched, never a symlink and never anything else in `folder`.
+    static func removeLeftoverStaging(in folder: URL) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
+        for name in names where isStagingName(name) {
+            let leftover = folder.appendingPathComponent(name, isDirectory: true)
+            var info = stat()
+            guard lstat(leftover.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { continue }
+            removeStaging(leftover)
         }
     }
 
@@ -184,6 +210,11 @@ extension InstallLocation {
             NSApp.activate(ignoringOtherApps: true)
             _ = moveAlert().runModal()
             return false
+        }
+        // A move cut off mid-copy (crash, force quit) leaves its hidden
+        // staging folder behind; tidy those up whichever copy this is (#413).
+        for folder in ["/Applications", (NSHomeDirectory() as NSString).appendingPathComponent("Applications")] {
+            removeLeftoverStaging(in: URL(fileURLWithPath: folder, isDirectory: true))
         }
         guard !HelperClient.isInApplicationsFolder else { return false }
         // Already in Applications but quarantined and put there without
