@@ -600,6 +600,11 @@ expect(first?.taught == [Sighting(bundleId: "com.google.Chrome", team: chromeTea
 let elsewhere = RuleSigningTeam.learn(rules: [pathBound], from: [Sighting(bundleId: "com.google.Chrome", team: attackerTeam,
                                                                           processPath: "/tmp/Chrome.app/Contents/MacOS/Chrome")])
 expect(elsewhere == nil, "a rule that names a path does not learn from a process somewhere else")
+let sibling = RuleSigningTeam.learn(rules: [Rule(processBundleId: "com.google.Chrome", processPath: "/Applications/Google Chrome.app",
+                                                 action: .allow)],
+                                    from: [Sighting(bundleId: "com.google.Chrome", team: attackerTeam,
+                                                    processPath: "/Applications/Google Chrome.app2/Contents/MacOS/Chrome")])
+expect(sibling == nil, "a rule for an app's folder does not learn from a sibling folder that only shares its name's prefix")
 let learned = first!.rules
 expect(RuleSigningTeam.learn(rules: learned, from: [Sighting(bundleId: "com.google.Chrome", team: attackerTeam,
                                                              processPath: chromeExe)]) == nil,

@@ -66,7 +66,7 @@ public enum RuleSigningTeam {
             let path = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
             guard let sighting = sightings.first(where: { sighting in
                 sighting.bundleId == rule.processBundleId
-                    && (path.map { sighting.processPath.hasPrefix($0) } ?? true)
+                    && (path.map { processPathCovers($0, sighting.processPath) } ?? true)
             }) else { continue }
             learned[index].processTeamId = sighting.team
             if !taught.contains(sighting) { taught.append(sighting) }
