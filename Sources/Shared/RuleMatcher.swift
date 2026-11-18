@@ -362,6 +362,17 @@ public struct RuleMatcher: Sendable {
 
     /// Orders the rule set on every call. A verdict path should hold a
     /// `PreparedRuleSet` and use the overload below instead.
+    /// macOS's system DNS resolver. It sits under the system volume, which
+    /// System Integrity Protection keeps read-only, so the executable path
+    /// the kernel reports cannot belong to a look-alike copy.
+    public static let systemResolverPath = "/usr/sbin/mDNSResponder"
+
+    /// An outgoing flow from the system resolver: a name lookup made for
+    /// some app (plain DNS, or encrypted DNS when a profile turns that on).
+    public static func isSystemResolver(_ c: Connection) -> Bool {
+        c.direction == .outgoing && c.processPath == systemResolverPath
+    }
+
     public func decision(for c: Connection, rules: [Rule], defaultMode: AppMode) -> RuleAction {
         decision(for: c, prepared: PreparedRuleSet(rules: rules), defaultMode: defaultMode)
     }
@@ -408,6 +419,12 @@ public struct RuleMatcher: Sendable {
             }
         }
 
+        // No rule covers this flow. The Mac's own resolver is not one app
+        // among many: every app's name lookups leave through it, so asking
+        // about it or denying it by default stops DNS for the whole Mac
+        // until someone answers (#422). The default for it is allow; a rule
+        // the user wrote for it was already honoured above.
+        if Self.isSystemResolver(c) { return (askFloor ? .ask : .allow, skipped) }
         switch defaultMode {
         case .alert: return (.ask, skipped)
         case .silentAllow: return (askFloor ? .ask : .allow, skipped)

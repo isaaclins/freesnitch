@@ -166,6 +166,13 @@ require_text "$RULE_MATCHER" "public struct PreparedRuleSet" \
   "the precomputed rule order is missing, so every flow pays a filter and a sort again"
 verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for c: Connection, prepared:')"
 [[ -n "$verdict_body" ]] || fail "the shared matcher has no prepared-rule verdict path to audit"
+# Every app's name lookups leave through the system resolver. With no rule
+# for it, the default mode must not ask about it or drop it, or DNS stops for
+# the whole Mac until someone answers (#422).
+grep -Fq 'if Self.isSystemResolver(c) { return (askFloor ? .ask : .allow, skipped) }' <<<"$verdict_body" \
+  || fail "the default mode can ask about or drop the system resolver, which stops DNS for the whole Mac"
+require_text "$RULE_MATCHER" 'public static let systemResolverPath = "/usr/sbin/mDNSResponder"' \
+  "the system resolver is no longer identified by its protected system path"
 for forbidden in '.sorted' '.filter' '.map('; do
   if grep -Fq -- "$forbidden" <<<"$verdict_body"; then
     fail "the per-flow verdict path uses $forbidden, which reorders or allocates on every flow"
