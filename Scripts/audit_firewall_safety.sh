@@ -266,7 +266,7 @@ for ingest_func in 'func addRule[(]' 'func reloadRules[(]'; do
     }
   ' "$HELPER")"
   reason_line="$(printf '%s\n' "$ingest_body" | grep -nF 'rejectionReason(for:' | head -1 | cut -d: -f1 || true)"
-  persist_line="$(printf '%s\n' "$ingest_body" | grep -nE 'store\.upsertRule|mutatePolicy' | head -1 | cut -d: -f1 || true)"
+  persist_line="$(printf '%s\n' "$ingest_body" | grep -nF 'mutatePolicy' | head -1 | cut -d: -f1 || true)"
   [[ -n "$reason_line" && -n "$persist_line" ]] \
     || fail "a helper rule ingest path stores rules without an address rejection check"
   (( reason_line < persist_line )) \
@@ -1402,6 +1402,14 @@ require_text "$FILTER" "received.generation < current.generation" \
   "the extension does not reject a lower-generation live snapshot before assignment"
 require_text "$FILTER" "received.generation == current.generation" \
   "the extension does not check equal-generation split-brain content"
+# A store method that changes rules outside mutatePolicy keeps the policy
+# generation, and republishing under an old generation is refused by the
+# extension as split-brain, which stops filtering (#438).
+# Sources/Shared is compiled into every target, so an internal method is as
+# reachable as a public one; only private ones are left out.
+if grep -nE '^[[:space:]]*((public|internal|open|fileprivate)[[:space:]]+)?func (upsertRule|deleteRule|insertRule|replaceRules)\b' "$RULE_STORE"; then
+  fail "RuleStore exposes a rule write that does not advance the policy generation; use mutatePolicy"
+fi
 # Same policy or not is decided by one shared definition that leaves out usage
 # counters. Comparing whole rules made a resend after a counted match look like
 # split-brain, and filtering stopped (#438).
@@ -1411,7 +1419,7 @@ require_text "$BRIDGE" "guard PolicyContent.same(current, received) else {" \
   "the live snapshot gate does not use the shared policy content"
 require_text "$BRIDGE" "let rules = PolicyContent.rules(snapshot.rules)" \
   "the watermark digest does not use the shared policy content"
-if grep -nE '\.rules (==|!=) ' "$FILTER" "$BRIDGE"; then
+if grep -nE '\.rules[[:space:]]*(==|!=)' "$FILTER" "$BRIDGE"; then
   fail "a policy comparison uses whole rules, usage counters included; use SharedRuleBridge.PolicyContent"
 fi
 require_text "$FILTER" "setSnapshotLocked(accepted)" \

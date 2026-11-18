@@ -578,10 +578,6 @@ public final class RuleStore: @unchecked Sendable {
         for rule in rules { try upsertRuleLocked(rule, keeping: stored[rule.id]) }
     }
 
-    public func upsertRule(_ r: Rule) throws {
-        try queue.sync { try upsertRuleLocked(r, keeping: usageCountersLocked(id: r.id)[r.id]) }
-    }
-
     public struct UsageCounters: Equatable, Sendable {
         public let hitCount: Int
         public let lastUsedAt: Date?
@@ -672,14 +668,6 @@ public final class RuleStore: @unchecked Sendable {
             if let l = r.lastUsedAt { sqlite3_bind_double(stmt, 19, l.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 19) }
             sqlite3_bind_int(stmt, 20, Int32(clamping: max(0, r.hitCount)))
             bindOpt(stmt, 21, r.processTeamId)
-        }
-    }
-
-    public func deleteRule(id: UUID) throws {
-        try queue.sync {
-            try executeLocked("DELETE FROM rules WHERE id=?;") { stmt in
-                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
-            }
         }
     }
 

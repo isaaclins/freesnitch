@@ -138,7 +138,7 @@ struct Verify {
               "saving rules from an older copy keeps the counted hits and Last used")
         var single = staleCopy.first { $0.id == allow.id }!
         single.notes = "Mine"
-        try store.upsertRule(single)
+        _ = try store.mutatePolicy { draft in draft.rules = draft.rules.map { $0.id == single.id ? single : $0 } }
         check(store.allRules().first { $0.id == allow.id }?.hitCount == 1, "saving one rule from an older copy keeps its hits")
 
         if failures == 0 {

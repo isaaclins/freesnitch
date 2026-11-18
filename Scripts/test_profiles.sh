@@ -196,7 +196,7 @@ pass("profile create, read, update and delete guards behave")
 let alwaysRule = Rule(processName: "Slack", remoteHost: "slack.com", action: .allow, profile: Profile.alwaysName)
 let officeRule = Rule(processName: "Printer", remoteHost: "printer.example", action: .allow, profile: "Office HQ")
 let homeRule = Rule(processName: "NAS", remoteHost: "nas.example", action: .allow, profile: "home")
-for rule in [alwaysRule, officeRule, homeRule] { try store.upsertRule(rule) }
+_ = try store.mutatePolicy { draft in draft.rules.append(contentsOf: [alwaysRule, officeRule, homeRule]) }
 
 let officeLayer = try store.layeredRules(profileName: "Office HQ")
 expect(officeLayer.contains { $0.id == alwaysRule.id }, "the profile layer lost the Always rules")
