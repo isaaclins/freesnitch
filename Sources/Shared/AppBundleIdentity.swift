@@ -160,10 +160,10 @@ public enum AppBundleIdentity {
 /// One text for the app's banner and for `freesnitch doctor`.
 public enum HelperOtherCopyMessage {
     public static func detail(other: String, this: String) -> String {
-        "macOS is running FreeSnitch's helper from \(other), the copy that set it up, not from this copy at \(this). Updates to this copy don't reach the helper, and Repair Helper would only restart the other copy. \(keep(other: other))"
+        "macOS is running FreeSnitch's helper from \(other), not from this copy at \(this), so updates to this copy don't reach the helper. \(keep(other: other))"
     }
 
     public static func keep(other: String) -> String {
-        "Keep \(other) where it is for now: if it is deleted, FreeSnitch loses its helper, which runs the traffic monitor and the firewall rules."
+        "Keep \(other) where it is until you have restarted your Mac and this message is gone. Deleting it before that leaves FreeSnitch without its helper, which runs the traffic monitor and the firewall rules."
     }
 }

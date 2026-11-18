@@ -285,6 +285,9 @@ echo "install location: PASS: the move never deletes the installed copy"
 grep -q 'versionState, installState != .wrongLocation' "$ROOT/Sources/GUI/Views/HelperBanner.swift" \
   || { echo "install location: FAIL: a helper mismatch can hide the Move banner of a copy outside Applications" >&2; exit 1; }
 echo "install location: PASS: a copy outside Applications shows Move before Repair Helper"
+grep -B1 'let info = BannerInfo(helperOtherCopy:' "$ROOT/Sources/GUI/Views/HelperBanner.swift" | grep -q 'helperInstallState != .wrongLocation' \
+  || { echo "install location: FAIL: the other-copy warning can hide the Move banner" >&2; exit 1; }
+echo "install location: PASS: a copy outside Applications shows Move before the other-copy warning"
 helper_swift="$ROOT/Sources/GUI/App/HelperClient.swift"
 awk '/func reregisterAfterCopy/ { inside = 1 } inside && /unregister/ { bad = 1 } inside && /^    }$/ { inside = 0 } END { exit bad ? 1 : 0 }' "$helper_swift" \
   && grep -q 'if isInUserApplications(original) {' "$ROOT/Sources/GUI/App/InstallLocation.swift" \

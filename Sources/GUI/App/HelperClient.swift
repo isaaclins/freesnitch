@@ -187,7 +187,8 @@ final class HelperClient: NSObject, ObservableObject {
         guard !DemoMode.isOn else { return }
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
-        // Read and cleared on every launch, so it can't linger (#418).
+        // Read and cleared on every launch from Applications, so it can't
+        // linger there (#418).
         let reregister = InstallLocation.takeReregisterRequest()
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
         case .alreadyEnabled:
@@ -637,7 +638,7 @@ final class HelperClient: NSObject, ObservableObject {
                 if let status {
                     self?.state?.helperOtherCopyPath = AppBundleIdentity.otherCopy(
                         helperAppPath: status.appPath,
-                        thisAppPath: Bundle.main.bundleURL.path)
+                        thisAppPath: InstallLocation.runningOriginal.path)
                 }
                 // Adopt the persisted mode instead of leaving the GUI on its
                 // pre-connection default, which would then be pushed to the

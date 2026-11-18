@@ -16,8 +16,11 @@ struct HelperBanner: View {
             // A helper running from another copy explains a version mismatch
             // too, and there Repair Helper would only restart that other copy,
             // so this banner replaces the helper banner below (#418).
-            if let info = BannerInfo(helperOtherCopy: state.helperOtherCopyPath,
-                                     thisCopy: Bundle.main.bundleURL.path) {
+            // A copy outside Applications shows Move first: that is the step
+            // that helps it, and the other copy's warning would hide it.
+            if state.helperInstallState != .wrongLocation,
+               let info = BannerInfo(helperOtherCopy: state.helperOtherCopyPath,
+                                     thisCopy: InstallLocation.runningOriginal.path) {
                 banner(info)
             } else if let info = BannerInfo(installState: state.helperInstallState,
                                      connected: state.helperConnected,
