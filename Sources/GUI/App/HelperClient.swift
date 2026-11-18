@@ -632,6 +632,11 @@ final class HelperClient: NSObject, ObservableObject {
             let status = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: data)
             Task { @MainActor in
                 self?.status = status
+                if let status {
+                    self?.state?.helperOtherCopyPath = AppBundleIdentity.otherCopy(
+                        helperAppPath: status.appPath,
+                        thisAppPath: Bundle.main.bundleURL.path)
+                }
                 // Adopt the persisted mode instead of leaving the GUI on its
                 // pre-connection default, which would then be pushed to the
                 // extension and silently undo the user's choice.

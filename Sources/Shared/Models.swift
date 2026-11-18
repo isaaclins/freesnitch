@@ -363,7 +363,14 @@ public struct HelperStatus: Codable, Sendable {
     /// Different from `version` exactly when the helper is stale. Optional so
     /// status payloads from helpers that predate #36 still decode.
     public var installedVersion: String?
-    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil, installedVersion: String? = nil) {
+    /// The app copy the helper process was started from, frozen at process
+    /// start. launchd keeps running the helper from the copy that registered
+    /// it, which is not the copy the user opens once FreeSnitch has been moved
+    /// or copied to another Applications folder (#418). Optional so status
+    /// payloads from older helpers still decode.
+    public var appPath: String?
+    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil, installedVersion: String? = nil, appPath: String? = nil) {
+        self.appPath = appPath
         self.mode = mode
         self.policyGeneration = policyGeneration
         self.installedVersion = installedVersion
