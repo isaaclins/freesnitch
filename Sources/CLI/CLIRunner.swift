@@ -58,7 +58,8 @@ final class CLIRunner {
 
         let pf = PFProbe.read(helperStatus: helperStatus)
         var findings: [DoctorFinding] = []
-        appendHelperFindings(findings: &findings, status: helperStatus, error: helperError, observedVersion: helper.observedVersion)
+        appendHelperFindings(findings: &findings, status: helperStatus, error: helperError, observedVersion: helper.observedVersion,
+                             observedAppPath: helper.observedAppPath)
         appendExtensionFindings(findings: &findings, inspection: extensionInspection)
         appendPFFinding(findings: &findings, report: pf)
 
@@ -1023,12 +1024,13 @@ final class CLIRunner {
         "PF anchor \(report.anchor): installed=\(report.installed), valid=\(report.valid), helper-loaded=\(report.helperLoaded.map(humanBool) ?? "unknown")\(report.message.map { "\n  \($0)" } ?? "")"
     }
 
-    private func appendHelperFindings(findings: inout [DoctorFinding], status: HelperStatus?, error: CLIError?, observedVersion: String?) {
+    private func appendHelperFindings(findings: inout [DoctorFinding], status: HelperStatus?, error: CLIError?, observedVersion: String?,
+                                      observedAppPath: String? = nil) {
         if let status {
             findings.append(DoctorFinding(id: "helper_reachable", state: "ok", message: "The privileged helper is reachable.", action: "No action needed.", exitCode: nil))
             let expectedIdentity = CLIAppBundle.expectedBuildIdentity
             let versionMatches = AppConstants.identityMatches(reported: status.version, expected: expectedIdentity)
-            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper process is running \(status.version), which is the installed build." : "The helper process is running \(status.version), but the installed build is \(expectedIdentity). Helper-side fixes are not active until the running process is replaced.", action: versionMatches ? "No action needed." : "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
+            findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper process is running \(status.version), which is the installed build." : "The helper process is running \(status.version), but the installed build is \(expectedIdentity). Helper-side fixes are not active until the running process is replaced.", action: versionMatches ? "No action needed." : HelperOtherCopyMessage.staleHelperAction(other: AppBundleIdentity.otherCopy(helperAppPath: status.appPath, thisAppPath: AppBundleIdentity.containingAppURL?.path), kickstartCommand: AppConstants.helperKickstartCommand), exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
             if let other = AppBundleIdentity.otherCopy(helperAppPath: status.appPath,
                                                        thisAppPath: AppBundleIdentity.containingAppURL?.path) {
                 findings.append(DoctorFinding(id: "helper_copy", state: "problem", message: HelperOtherCopyMessage.detail(other: other, this: AppBundleIdentity.containingAppURL?.path ?? "unknown"), action: "Do not unregister the helper. " + HelperOtherCopyMessage.keep(other: other), exitCode: nil))
@@ -1043,7 +1045,12 @@ final class CLIRunner {
         let staleExpected = CLIAppBundle.expectedBuildIdentity
         let staleReported = observedVersion ?? error?.observedHelperVersion ?? "unknown"
         let staleMessage = "A helper process from an earlier install is still running. It is running \(staleReported), but the installed build is \(staleExpected), so helper-side fixes are not active."
-        findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? staleMessage : "The helper version could not be checked.", action: reachable ? "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)" : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
+        let thisCopy = AppBundleIdentity.containingAppURL?.path
+        let otherCopy = reachable ? AppBundleIdentity.otherCopy(helperAppPath: observedAppPath, thisAppPath: thisCopy) : nil
+        findings.append(DoctorFinding(id: "helper_version", state: reachable ? "problem" : "unknown", message: reachable ? staleMessage : "The helper version could not be checked.", action: reachable ? HelperOtherCopyMessage.staleHelperAction(other: otherCopy, kickstartCommand: AppConstants.helperKickstartCommand) : "Fix helper reachability first, then rerun doctor.", exitCode: reachable ? CLIExitCode.helperVersionMismatch.rawValue : nil))
+        if let otherCopy {
+            findings.append(DoctorFinding(id: "helper_copy", state: "problem", message: HelperOtherCopyMessage.detail(other: otherCopy, this: thisCopy ?? "unknown"), action: "Do not unregister the helper. " + HelperOtherCopyMessage.keep(other: otherCopy), exitCode: nil))
+        }
     }
 
     private func appendExtensionFindings(findings: inout [DoctorFinding], inspection: ExtensionInspection) {

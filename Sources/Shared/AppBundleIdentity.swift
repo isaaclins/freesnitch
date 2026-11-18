@@ -163,6 +163,16 @@ public enum HelperOtherCopyMessage {
         "macOS is running FreeSnitch's helper from \(other), not from this copy at \(this), so updates to this copy don't reach the helper. \(keep(other: other))"
     }
 
+    /// What to do about a helper older than the installed build. When it
+    /// runs from another copy, a kickstart only restarts that same old copy,
+    /// so the advice is to keep that copy instead (#421).
+    public static func staleHelperAction(other: String?, kickstartCommand: String) -> String {
+        guard let other else {
+            return "The helper is still registered. Do not unregister it; run: \(kickstartCommand)"
+        }
+        return "The helper runs from \(other), so restarting it would only start that same older copy again. Do not unregister it. \(keep(other: other))"
+    }
+
     public static func keep(other: String) -> String {
         "Keep \(other) where it is until you have restarted your Mac and this message is gone. Deleting it before that leaves FreeSnitch without its helper, which runs the traffic monitor and the firewall rules."
     }

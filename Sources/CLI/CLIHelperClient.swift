@@ -24,6 +24,9 @@ private struct HelperPayloadReply {
 final class CLIHelperClient: NSObject {
     private var connection: NSXPCConnection?
     private(set) var observedVersion: String?
+    /// The app copy a mismatched helper reports running from, read on a best
+    /// effort basis so doctor can say which copy it is (#421).
+    private(set) var observedAppPath: String?
     private let eventReceiver = CLIEventReceiver()
     private let timeout: TimeInterval = 15
 
@@ -38,6 +41,12 @@ final class CLIHelperClient: NSObject {
                            remediation: "Run `freesnitch settings helper recheck`, then approve FreeSnitch in System Settings > General > Login Items & Extensions.")
         }
         guard AppConstants.identityMatches(reported: version, expected: CLIAppBundle.expectedBuildIdentity) else {
+            // Still read where the old helper runs from; a helper too old to
+            // say, or a failed read, just leaves it unknown.
+            if let data: Data = try? await perform(timeout: timeout, { proxy, reply in proxy.getStatus(reply: reply) }),
+               let status = try? FreeSnitchWireCodec.decode(HelperStatus.self, from: data) {
+                observedAppPath = status.appPath
+            }
             throw CLIError(.helperVersionMismatch,
                            message: "The helper process is running version \(version), but the installed app is version \(CLIAppBundle.expectedBuildIdentity). Helper-side fixes in the installed build are not active.",
                            remediation: "The helper is still running from an earlier build. Do not unregister it. Run `\(AppConstants.helperKickstartCommand)` while launchd still has the service registered, then rerun the command.",

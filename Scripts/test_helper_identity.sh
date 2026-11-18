@@ -214,6 +214,15 @@ struct HelperIdentityHarness {
                             && text.contains("Keep \(helperCopy ?? "")"),
                         "the message does not name both copies and say to keep the helper's: \(text)")
 
+        // #421: a stale helper running from another copy gets "keep that
+        // copy", not a kickstart that would restart the same old copy.
+        let staleOther = HelperOtherCopyMessage.staleHelperAction(other: helperCopy, kickstartCommand: "KICK")
+        failures.expect(staleOther.contains(helperCopy ?? "\u{0}") && !staleOther.contains("KICK") && !staleOther.lowercased().contains("run: "),
+                        "a stale helper in another copy is still told to kickstart: \(staleOther)")
+        let staleHere = HelperOtherCopyMessage.staleHelperAction(other: nil, kickstartCommand: "KICK")
+        failures.expect(staleHere.contains("KICK") && staleHere.contains("Do not unregister"),
+                        "a stale helper in this copy lost its kickstart advice: \(staleHere)")
+
         // The only supported repair is a kickstart. Never an unregister.
         failures.expect(AppConstants.helperKickstartArguments == ["kickstart", "-k", "system/io.isaaclins.freesnitch.helper"],
                         "the helper restart arguments are not a kickstart: \(AppConstants.helperKickstartArguments)")
