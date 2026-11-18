@@ -512,7 +512,7 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "changedOutside: changedOutside)" \
   "a save refused because the filter changed in System Settings is reported as a failure instead of saved again (#368)"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
-init_body="$(awk '/^    init\(state: AppState\) [{]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$init_body" | grep -Fq 'if hasEmbeddedExtension { refreshFilterOffState() }' \
   || fail "the app does not read at launch whether the filter is off, so an early save failure can raise the banner (#348)"
 refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
@@ -585,6 +585,54 @@ outside_writers="$(awk '
   }' "$SYSTEM_EXTENSION_MANAGER")"
 [[ -z "$outside_writers" ]] \
   || fail "NEFilterManager is used outside the serialized writers (line ${outside_writers//$'\n'/, })"
+# Demo mode shows sample data and must leave the real content filter alone,
+# also on a Mac where FreeSnitch is installed (#388): the preferences line is
+# closed, System Settings changes are not followed, and no system extension
+# request is submitted.
+grep -Fq 'filterPreferences = FilterPreferencesLine(closed: demo)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "demo mode can read or save the real content filter configuration"
+grep -Fq 'guard !closed else { return }' "$ROOT/Sources/Shared/FilterPreferencesLine.swift" \
+  || fail "a closed filter preferences line still runs operations"
+init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$init_body" | awk '/guard !demo else [{] return [}]/ { g = 1 } /NEFilterConfigurationDidChange/ { ok = g; exit } END { exit !ok }' \
+  || fail "demo mode follows filter changes made in System Settings"
+embedded_body="$(awk '/private var hasEmbeddedExtension: Bool/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$embedded_body" | grep -Fq 'guard !demo else { return false }' \
+  || fail "demo mode can submit system extension requests"
+# #389: the same for the helper, the extension, the login item and files.
+# Each of these acts on the real install and must check demo mode first.
+DEMO_MODE_FILE="$ROOT/Sources/GUI/App/DemoMode.swift"
+grep -Fq 'static let isOn = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1"' "$DEMO_MODE_FILE" \
+  || fail "demo mode is not read from FREESNITCH_DEMO in one place"
+grep -Fq 'init(state: AppState, demo: Bool = DemoMode.isOn)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "the content filter manager does not know it runs in demo mode"
+demo_guard() {
+  local file="$1" entry="$2" guard="$3" what="$4"
+  swift_function_body "$ROOT/$file" "$entry" | sed -n '2,5p' | grep -Fq "$guard" \
+    || fail "demo mode can $what"
+}
+demo_guard Sources/GUI/App/SystemExtensionManager.swift 'func deactivateForUninstall()' 'guard !demo else {' \
+  "deactivate the real network extension or remove the filter configuration"
+demo_guard Sources/GUI/App/HelperClient.swift 'func unregisterDaemonForUninstall()' 'guard !DemoMode.isOn else' \
+  "unregister the real helper"
+demo_guard Sources/GUI/App/HelperClient.swift 'func registerDaemon()' 'guard !DemoMode.isOn else' \
+  "register the real helper"
+demo_guard Sources/GUI/App/HelperClient.swift 'private func repairHelperInternal()' 'guard !DemoMode.isOn' \
+  "re-register or repair the real helper"
+demo_guard Sources/GUI/App/HelperClient.swift 'private func performPrivilegedKickstart()' 'guard !DemoMode.isOn else' \
+  "restart the real helper"
+demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func run(removingDatabase:' 'guard !DemoMode.isOn else' \
+  "run the privileged uninstall"
+demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func removeUserData()' 'guard !DemoMode.isOn else' \
+  "delete the real install's data"
+demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func trashApplicationBundle(' 'guard !DemoMode.isOn else' \
+  "move the real app to the Trash"
+demo_guard Sources/GUI/Views/UninstallView.swift 'func begin()' 'guard !DemoMode.isOn else' \
+  "turn enforcement off from the uninstall screen"
+demo_guard Sources/GUI/Views/UninstallView.swift 'func finish()' 'guard !DemoMode.isOn else' \
+  "start removing the helper, the data and the app"
+demo_guard Sources/GUI/Views/SettingsView.swift 'private func setLaunchAtLogin(' 'guard !DemoMode.isOn else' \
+  "change the real app's login item"
 for runner in 'runPersistenceCycle()' 'runFilterRestart(done:'; do
   [[ "$(grep -cF "$runner" "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
     || fail "${runner%%(*} is called from somewhere other than its turn on the preferences line"

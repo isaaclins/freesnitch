@@ -330,6 +330,22 @@ do {
     expect(!line.isBusy, "the line is busy with nothing left to run")
     print("filter off harness: sequences run one at a time, in order, and never stall")
 }
+
+// 6. #388: demo mode closes the line. Turning the filter on in System Settings
+//    then asks for a read and a save of the current rules; neither may reach
+//    the real preferences.
+do {
+    let mgr = FakeFilterManager()
+    let line = FilterPreferencesLine(closed: true)
+    var ran = 0
+    line.run { done in ran += 1; mgr.loadFromPreferences("demo read") { done() } }
+    line.run { done in ran += 1; enablingSave(mgr, done: done) }
+    line.run { done in ran += 1; turnOff(mgr, done: done) }
+    expect(ran == 0 && mgr.callbacks.isEmpty, "a closed line ran \(ran) operation(s) on the filter preferences")
+    expect(!mgr.storedEnabled, "a closed line saved the filter on")
+    expect(!line.isBusy, "a closed line holds operations it will never run")
+    print("filter off harness: a closed line (demo mode) never reads or saves the filter preferences")
+}
 SWIFT
   swiftc "$ROOT"/Sources/Shared/*.swift "$dir/main.swift" -lsqlite3 -o "$dir/harness"
   "$dir/harness"
