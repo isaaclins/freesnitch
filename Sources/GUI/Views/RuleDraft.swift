@@ -44,12 +44,26 @@ struct RuleDraft: Equatable {
     /// which also covers the helpers inside it, where browsers and Electron
     /// apps do their networking. A rule started from a recorded process does
     /// the same, so both ways of making a rule for an app make the same rule.
+    ///
+    /// Only an app's own executable (`<name>.app/Contents/MacOS/<exe>`, the
+    /// app itself or a helper app inside it) widens to the app. A tool that
+    /// merely ships inside a bundle, such as Xcode's `git`, stays its own
+    /// executable, so a rule for it never covers the whole app.
     static func appFilePath(forExecutable path: String) -> String {
         let components = (path as NSString).pathComponents
-        guard let index = components.firstIndex(where: { $0.lowercased().hasSuffix(".app") && $0 != ".app" }) else {
+        let count = components.count
+        guard count >= 4,
+              components[count - 2] == "MacOS",
+              components[count - 3] == "Contents",
+              isAppBundle(components[count - 4]),
+              let index = components.firstIndex(where: isAppBundle) else {
             return path
         }
         return NSString.path(withComponents: Array(components[...index]))
+    }
+
+    private static func isAppBundle(_ component: String) -> Bool {
+        component.lowercased().hasSuffix(".app") && component.count > 4
     }
 
     private static func trimmed(_ value: String) -> String? {

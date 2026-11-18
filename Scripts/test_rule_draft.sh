@@ -59,6 +59,11 @@ equal(anyApp.appFilePath, nil, "no app for an any-app rule")
 equal(anyApp.processBundleID, "", "no bundle id for an any-app rule")
 equal(anyApp.remoteIP, "198.51.100.4", "the address is filled")
 
+// A tool shipped inside an app is not the app: it stays its own executable.
+equal(RuleDraft.appFilePath(forExecutable: "/Applications/Xcode.app/Contents/Developer/usr/bin/git"),
+      "/Applications/Xcode.app/Contents/Developer/usr/bin/git", "a tool inside a bundle is not widened to the app")
+// Insights may record the bundle folder itself (demo data, rollups): kept as it is.
+equal(RuleDraft.appFilePath(forExecutable: "/Applications/Zed.app"), "/Applications/Zed.app", "a bundle folder stays the bundle")
 // A path with no app bundle in it is kept as it is.
 equal(RuleDraft.appFilePath(forExecutable: "/opt/tools/bin/thing"), "/opt/tools/bin/thing", "no .app component keeps the path")
 
