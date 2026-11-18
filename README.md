@@ -96,11 +96,10 @@ cd freesnitch
 xcodegen generate --spec project.yml
 xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Release \
   -derivedDataPath build build
-ditto build/Build/Products/Release/FreeSnitch.app /Applications/FreeSnitch.app
-open /Applications/FreeSnitch.app
+open build/Build/Products/Release/FreeSnitch.app
 ```
 
-This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release.
+This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release. Opened from the build folder it offers to move itself there; if a FreeSnitch is already installed, it never overwrites that copy.
 
 ## Uninstall
 

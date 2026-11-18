@@ -60,13 +60,36 @@ enum InstallLocation {
             .appendingPathComponent(".\(bundleName).partial-\(UUID().uuidString)", isDirectory: true)
         do {
             try fm.copyItem(at: source, to: staging)
-            clearQuarantine(at: staging)
+            // A copy that keeps the flag would run translocated again, so it
+            // doesn't count as moved and the original stays where it was.
+            guard clearQuarantine(at: staging) else {
+                removeStaging(staging)
+                return .failure(.failed("The download flag could not be removed from the copy."))
+            }
             try fm.moveItem(at: staging, to: destination)
             return .success(())
         } catch {
-            try? fm.removeItem(at: staging)
+            removeStaging(staging)
             return .failure(.failed(error.localizedDescription))
         }
+    }
+
+    /// The copy keeps the source's permissions, and a read-only folder can't
+    /// be emptied, so make the staging tree writable before removing it.
+    private static func removeStaging(_ staging: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: staging.path) else { return }
+        var paths = [staging.path]
+        if let walker = fm.enumerator(atPath: staging.path) {
+            for case let relative as String in walker { paths.append(staging.appendingPathComponent(relative).path) }
+        }
+        for path in paths {
+            var info = stat()
+            if lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR {
+                chmod(path, info.st_mode | S_IRWXU)
+            }
+        }
+        try? fm.removeItem(at: staging)
     }
 
     /// Returns whether the bundle itself is free of the flag afterwards,
@@ -174,6 +197,8 @@ extension InstallLocation {
     /// Does the move, or says what's in the way. Also the banner's button.
     @discardableResult
     static func moveToApplications() -> Bool {
+        // The demo's banner only shows the button; it never moves anything.
+        guard !isDemo else { return false }
         let running = Bundle.main.bundleURL
         // Where the user actually put it, not the translocated mirror.
         let original = translocatedOriginal(of: running) ?? running
