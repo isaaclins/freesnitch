@@ -474,6 +474,24 @@ public enum SharedRuleBridge {
         return stored.snapshot
     }
 
+    /// The policy a live snapshot is checked against. While the extension
+    /// runs on a boot policy it relaxed itself (a stale Silent Deny loaded as
+    /// Alert, below), a live resend of that same policy is not a second writer:
+    /// it is compared with the policy as it was saved. Compared with the relaxed
+    /// copy, the helper's Silent Deny resend looked like a different mode under
+    /// the same generation, was refused as split-brain, and filtering stopped
+    /// (#455). Only a saved policy of the same session and generation, with the
+    /// same rules, counts; anything else is compared as enforced.
+    public static func policyForLiveComparison(enforced: Snapshot, savedBootPolicy: Snapshot?) -> Snapshot {
+        guard let saved = savedBootPolicy,
+              saved.epoch == enforced.epoch,
+              saved.generation == enforced.generation,
+              PolicyContent.rules(saved.rules) == PolicyContent.rules(enforced.rules) else {
+            return enforced
+        }
+        return saved
+    }
+
     public static func applyingBootPolicySafety(_ snapshot: Snapshot, now: Date = Date()) -> Snapshot {
         guard snapshot.mode == .silentDeny else { return snapshot }
         let age = now.timeIntervalSince(snapshot.updatedAt)

@@ -185,6 +185,10 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// another snapshot's order.
     private var preparedRules = PreparedRuleSet(rules: [])
     private var snapshotOrigin: SnapshotOrigin = .none
+    /// The boot policy exactly as it was saved, before applyingBootPolicySafety.
+    /// Set only while `snapshotOrigin == .boot`; a live resend is checked
+    /// against it, not against the copy this extension relaxed (#455).
+    private var savedBootPolicy: SharedRuleBridge.Snapshot?
     private var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension has not received a rule snapshot from the GUI."
     )
@@ -293,6 +297,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         if !liveSnapshotAlreadyLoaded {
             setSnapshotLocked(nil)
             snapshotOrigin = .none
+            savedBootPolicy = nil
             snapshotStatus = .unavailable(message)
         }
         snapshotLock.unlock()
@@ -789,6 +794,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             if !liveSnapshotAlreadyLoaded {
                 setSnapshotLocked(received)
                 snapshotOrigin = .boot
+                savedBootPolicy = decoded
                 snapshotStatus = status
             }
             snapshotLock.unlock()
@@ -810,6 +816,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             if !liveSnapshotAlreadyLoaded {
                 setSnapshotLocked(nil)
                 snapshotOrigin = .none
+                savedBootPolicy = nil
                 snapshotStatus = status
             }
             snapshotLock.unlock()
@@ -845,6 +852,12 @@ final class FilterDataProvider: NEFilterDataProvider {
             let received = try SharedRuleBridge.decode(data)
             snapshotLock.lock()
             let current = snapshot
+            // What the content checks below compare with: the saved boot
+            // policy while this extension runs on its own relaxed copy (#455).
+            let comparable = current.map {
+                SharedRuleBridge.policyForLiveComparison(enforced: $0,
+                                                         savedBootPolicy: snapshotOrigin == .boot ? savedBootPolicy : nil)
+            }
             // Ordering is (epoch, generation), never the generation alone.
             // This policy outlives every helper process, so a helper that has
             // restarted arrives with a fresh session and a generation that may
@@ -891,7 +904,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             if let current,
                authority == .sameSession,
                received.generation == current.generation,
-               !SharedRuleBridge.PolicyContent.same(received, current),
+               let comparable, !SharedRuleBridge.PolicyContent.same(received, comparable),
                !legacyBootGeneration {
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
                     "Network extension rejected an invalid split-brain snapshot: generation \(received.generation) has different policy content. \(SharedRuleBridge.snapshotRejectionRemediation)",
@@ -909,7 +922,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             // backward compatibility. The first helper-owned live snapshot is
             // allowed to replace that legacy boot policy; equal-generation
             // conflicts remain invalid once a live snapshot exists.
-            var gate = SharedRuleBridge.LiveSnapshotGate(current: legacyBootGeneration ? nil : current)
+            var gate = SharedRuleBridge.LiveSnapshotGate(current: legacyBootGeneration ? nil : comparable)
             let decision = gate.apply(received)
             switch decision {
             case .accepted, .idempotent:
@@ -917,6 +930,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 let status = SharedRuleBridge.SnapshotStatus.ready(for: accepted)
                 setSnapshotLocked(accepted)
                 snapshotOrigin = .live
+                savedBootPolicy = nil
                 snapshotStatus = status
                 // Queued (not written) while the lock is held, so records land
                 // in the order the policies were accepted. The write itself
