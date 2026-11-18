@@ -158,6 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
                 case "popover": self.menubar.showPopover()
+                // The banner a copy outside Applications shows, for review.
+                case "move-banner":
+                    self.state.helperInstallState = .wrongLocation
+                    self.windowManager.showNetworkMonitor()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
                 // without this it is the one screen nobody can review before it

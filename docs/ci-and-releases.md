@@ -41,6 +41,17 @@ firewall project from `project-netext.yml`, builds both architectures, signs,
 notarizes, Gatekeeper-assesses, creates the Sparkle appcast, and only then
 commits, tags, pushes, and creates the GitHub Release.
 
+Once the GitHub Release exists, it also bumps the version and SHA-256 of the
+FreeSnitch cask in [isaaclins/homebrew-tap](https://github.com/isaaclins/homebrew-tap),
+using the checksum GitHub reports for the published disk image. The script
+checks that it can push there before it publishes anything. If the bump fails
+after the release is out, the release stays as it is and the script prints the
+command that finishes it:
+
+```sh
+Scripts/release.sh --update-tap VERSION
+```
+
 Use these non-publishing checks before a real release:
 
 ```sh
@@ -77,14 +88,15 @@ tools, Sparkle's `generate_appcast`, `gh`, and these exact signing credentials:
 
 - Developer ID identity: `Developer ID Application: isaac lins (BHAF4L4726)`
 - Team: `BHAF4L4726`
-- App profile: `FreeSnitch App DeveloperID 2026` for
+- App profile: `FreeSnitch App DeveloperID 2026-11` for
   `io.isaaclins.freesnitch`
-- System extension profile: `FreeSnitch NetExt DeveloperID 2026` for
+- System extension profile: `FreeSnitch NetExt DeveloperID 2026-11` for
   `io.isaaclins.freesnitch.netext`
 - Helper bundle identifier: `io.isaaclins.freesnitch.helper`
 - System extension bundle filename:
   `io.isaaclins.freesnitch.netext.systemextension`
-- Notarytool keychain profile: `puresnitch-dev`
+- Notarytool keychain profile: `puresnitch-dev` (set `NOTARY_PROFILE` for another name and
+  `NOTARY_KEYCHAIN` when it lives in a keychain other than the default one)
 - Sparkle 2.10.1 account: `puresnitch` (or `SPARKLE_EDDSA_PRIVATE_KEY_FILE`)
 - Sparkle public key: `s19KDKXgrxZQgfYO2yymuly/OjXMOpCpwqsIvVebbfU=` (since 1.1.0, build 34; the 1.0.0 key
   `4tyy5OVCWUs8cUsqCW22ce2IxVmhNZbBxJkoBlftIz8=` was lost, so builds below 34
