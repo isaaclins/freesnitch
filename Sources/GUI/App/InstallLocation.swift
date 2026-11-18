@@ -174,6 +174,33 @@ enum InstallLocation {
             || getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
     }
 
+    /// Where Homebrew keeps the casks it installed, on Apple silicon and Intel.
+    static let homebrewCaskrooms = ["/opt/homebrew/Caskroom/freesnitch", "/usr/local/Caskroom/freesnitch"]
+
+    /// Whether FreeSnitch was installed with `brew install --cask` (#407):
+    /// Homebrew then owns the copy, and reinstalling goes through it.
+    static func installedWithHomebrew(caskrooms: [String] = homebrewCaskrooms,
+                                      exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Bool {
+        caskrooms.contains(where: exists)
+    }
+
+    /// How to put a stuck installed copy back so macOS runs it from
+    /// Applications again, for the way it was installed (#375, #407).
+    static func reinstallSteps(homebrew: Bool) -> String {
+        homebrew
+            ? "Reinstall it with brew reinstall --cask freesnitch in Terminal."
+            : "Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+    }
+
+    /// The same, for this Mac. Worked out once: the install doesn't change
+    /// while the app runs. The demo shows the Homebrew wording with
+    /// FREESNITCH_DEMO_HOMEBREW=1 so it can be reviewed.
+    static let reinstallAdvice: String = {
+        let env = ProcessInfo.processInfo.environment
+        if env["FREESNITCH_DEMO"] == "1" { return reinstallSteps(homebrew: env["FREESNITCH_DEMO_HOMEBREW"] == "1") }
+        return reinstallSteps(homebrew: installedWithHomebrew())
+    }()
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -240,7 +267,7 @@ extension InstallLocation {
     static var wrongLocationRepairAdvice: String {
         stuckInstalledCopy == nil
             ? "Move FreeSnitch to /Applications before registering the helper."
-            : "macOS runs FreeSnitch from a temporary copy. Move it from Applications to the Trash in Finder, drag it in again from the disk image, then register the helper."
+            : "macOS runs FreeSnitch from a temporary copy. \(reinstallAdvice) Then register the helper."
     }
 
     /// Says what the user has to do in Finder, since FreeSnitch can't.
@@ -252,7 +279,7 @@ extension InstallLocation {
         let why = flagCleared
             ? "macOS still runs the copy in Applications from a temporary location"
             : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
-        alert.informativeText = "\(why), so FreeSnitch can't install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+        alert.informativeText = "\(why), so FreeSnitch can't install its helper. \(reinstallAdvice)"
         alert.addButton(withTitle: "Show in Finder")
         alert.addButton(withTitle: "Not Now")
         if alert.runModal() == .alertFirstButtonReturn, showInFinder {

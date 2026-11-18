@@ -129,7 +129,7 @@ private struct BannerInfo {
             icon = "arrow.down.app.fill"
             tint = Color.red
             title = "Put FreeSnitch into Applications again"
-            detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+            detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. \(InstallLocation.reinstallAdvice)"
             action = BannerAction(title: "Show in Finder") { _, _ in
                 // The demo's banner only shows the button.
                 if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1",

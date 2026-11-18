@@ -159,6 +159,21 @@ check(runRelaunch([again]) == ["/Applications/Free Snitch.app", "--args", again]
       "the reopened copy receives exactly the marker, and a path with a space survives")
 check(runRelaunch([]) == ["/Applications/Free Snitch.app"], "a plain relaunch passes no arguments")
 
+// #407: a Homebrew install is told to reinstall through Homebrew, anything
+// else to drag it in again from the disk image.
+var looked: [String] = []
+check(!InstallLocation.installedWithHomebrew(exists: { looked.append($0); return false }),
+      "no Caskroom folder, not a Homebrew install")
+check(looked == ["/opt/homebrew/Caskroom/freesnitch", "/usr/local/Caskroom/freesnitch"],
+      "the Homebrew check looks at both Caskroom folders")
+check(InstallLocation.installedWithHomebrew(exists: { $0.hasPrefix("/usr/local/") }),
+      "an Intel Homebrew install is recognised")
+check(InstallLocation.reinstallSteps(homebrew: true).contains("brew reinstall --cask freesnitch")
+      && !InstallLocation.reinstallSteps(homebrew: true).contains("disk image"),
+      "a Homebrew install is told to reinstall with brew, not to use a disk image")
+check(InstallLocation.reinstallSteps(homebrew: false).contains("disk image"),
+      "a disk image install keeps the drag-in-again advice")
+
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
 let none = LegacyPureSnitch.detect { asked.append($0); return false }
