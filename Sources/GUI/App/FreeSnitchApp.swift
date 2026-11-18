@@ -130,6 +130,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // current mode and rules as soon as its XPC listener is available.
         state.syncSharedRules()
 
+        // An old PureSnitch install must not keep filtering next to this one,
+        // so ask before this app's own filter starts. The removal itself runs
+        // in the background behind its password prompt.
+        LegacyPureSnitch.offerRemovalAtLaunch()
+
         // Per-process firewall (Network System Extension). `activate()` is a
         // no-op unless this build embeds one. The monitor-only build does
         // not, so no extension approval prompt appears.
@@ -171,9 +176,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-
-        // An old PureSnitch install must not keep filtering next to this one.
-        DispatchQueue.main.async { LegacyPureSnitch.offerRemovalAtLaunch() }
     }
 
     private func seedDemoAlert() {

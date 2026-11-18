@@ -95,6 +95,20 @@ try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedApps.path)
 check(!ok(lockedResult), "a folder the user can't write to reports a failure")
 check(try! fm.contentsOfDirectory(atPath: lockedApps.path).isEmpty, "a failed copy leaves no partial bundle")
 
+// A bundle that arrives read-only keeps its flag on the copy. That copy must
+// not count as moved (it would run translocated again), and must not be left
+// behind half-made.
+let readOnly = work.appendingPathComponent("ReadOnly/FreeSnitch.app", isDirectory: true)
+makeBundle(at: readOnly, build: "35")
+_ = flag.withCString { setxattr(readOnly.path, "com.apple.quarantine", $0, strlen($0), 0, XATTR_NOFOLLOW) }
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: readOnly.path)
+let roApps = work.appendingPathComponent("ROApplications", isDirectory: true)
+try! fm.createDirectory(at: roApps, withIntermediateDirectories: true)
+let roResult = InstallLocation.copyBundle(from: readOnly, to: roApps.appendingPathComponent("FreeSnitch.app"))
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: readOnly.path)
+check(!ok(roResult), "a copy that keeps the download flag is reported as a failure")
+check((try? fm.contentsOfDirectory(atPath: roApps.path))?.isEmpty == true, "nothing is left in Applications after that failure")
+
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
 check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: "/Users/x")
       && InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Applications/FreeSnitch.app"), home: "/Users/x")
