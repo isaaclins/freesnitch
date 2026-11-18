@@ -146,7 +146,9 @@ private struct BannerInfo {
             icon = "xmark.octagon.fill"
             tint = Color.red
             title = "Helper installation failed"
-            detail = "\(message) Move FreeSnitch into /Applications and try again."
+            // The message already says what macOS reported and what to do,
+            // including the move advice only when it applies (#409).
+            detail = message
             action = BannerAction(title: "Retry") { state, _ in state.helper.registerDaemon() }
         }
     }

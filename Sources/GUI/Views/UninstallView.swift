@@ -1,14 +1,22 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// The state and the actions of a user-initiated uninstall.
 ///
 /// This is an object owned by `WindowManager`, not `@State` on a page, because
 /// the teardown is irreversible and runs in steps that wait on macOS. While it
 /// lived on the Settings page, clicking another sidebar row mid-teardown threw
-/// away the progress and the screen that says what is still left to do (#133).
-/// Here the flow keeps its place even if the sheet is closed between the
-/// deactivation and the removal.
+/// away the progress (#133).
+///
+/// After one confirmation the whole uninstall runs by itself, in this order
+/// (#391): turn enforcement off; remove the content filter configuration and
+/// deactivate the network extension, and wait for macOS to answer; flush the
+/// pf anchor and delete the data behind one password prompt; unregister the
+/// helper; move the app to the Trash; quit. It stops at the first step that
+/// fails. The helper and the app are only
+/// touched once macOS confirmed the extension is stopped, because an app
+/// removed while its extension still runs leaves that extension behind.
 ///
 /// This is a deliberate, user-confirmed teardown. It is NOT the repair path and
 /// shares no code with it. It is also the one and only place in FreeSnitch that
@@ -16,69 +24,136 @@ import AppKit
 /// the user asked for, is the incident in #24.
 @MainActor
 final class UninstallFlowModel: ObservableObject {
-    enum FinishState: Equatable {
-        case idle
-        case working
-        /// Everything the app can remove is gone; only quitting is left.
-        case done
-        /// The automated removal did not happen, so the commands are offered
-        /// as a fallback rather than as the plan.
-        case failed(String)
+    enum Phase: Equatable {
+        /// Nothing has happened yet.
+        case ready
+        /// Filter off, extension deactivation submitted, waiting for macOS.
+        case removingFilter
+        /// Helper, pf anchor and data, behind one password prompt.
+        case removingHelper
+        case movingToTrash
+        /// Everything is gone; macOS clears the stopped extension's record at
+        /// the next restart. Shown instead of quitting at once, so the one
+        /// sentence about the restart can be read.
+        case doneUntilRestart
+        case failed(Failure)
+    }
+
+    enum Failure: Equatable {
+        /// macOS kept the network extension. Nothing else was removed.
+        case filterKept(String)
+        /// The person cancelled the password prompt.
+        case passwordCancelled
+        /// The privileged step failed.
+        case helperKept(String)
+        /// Everything is removed except the app bundle itself.
+        case appKept(String)
     }
 
     @Published var isPresented = false
     @Published var removeDatabase = false
-    @Published var acknowledged = false
     @Published var confirming = false
-    @Published private(set) var startedAt: Date?
-    @Published var finishState: FinishState = .idle
+    @Published private(set) var phase: Phase = .ready
 
     private let state: AppState
     private let systemExtension: SystemExtensionManager
+    private var extensionAnswer: AnyCancellable?
 
     init(state: AppState, systemExtension: SystemExtensionManager) {
         self.state = state
         self.systemExtension = systemExtension
+        extensionAnswer = systemExtension.$uninstallState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] answer in self?.extensionAnswered(answer) }
     }
 
-    var hasStarted: Bool { startedAt != nil }
+    var hasStarted: Bool { phase != .ready }
 
-    /// Closing is refused while the privileged step is in flight, because that
-    /// one cannot be resumed halfway, and after it succeeded, because by then
-    /// the only honest way out of a trashed app is to quit it.
+    var isWorking: Bool {
+        switch phase {
+        case .removingFilter, .removingHelper, .movingToTrash: return true
+        default: return false
+        }
+    }
+
+    /// Closing is refused while a step is running and once the app is gone,
+    /// because by then the only honest way out is to quit.
     var canClose: Bool {
-        switch finishState {
-        case .working, .done: return false
-        case .idle, .failed: return true
+        switch phase {
+        case .ready: return true
+        case .failed(.appKept): return false
+        case .failed: return true
+        default: return false
         }
     }
 
     func present() { isPresented = true }
 
+    /// The one confirmed action. Everything after it runs by itself.
     func begin() {
-        startedAt = Date()
+        guard !DemoMode.isOn else {
+            // Sample data only: the steps are shown, nothing is turned off or
+            // removed on this Mac (#389).
+            phase = .removingFilter
+            runDemo()
+            return
+        }
+        phase = .removingFilter
         // Enforcement first: the pf anchor and the DNS proxy belong to the
-        // helper, and the user asked for the firewall to stop. This is the same
-        // path the Enforcement toggle uses.
+        // helper, and the user asked for the firewall to stop. This is the
+        // same path the Enforcement toggle uses.
         if state.enforcementEnabled {
             state.enforcementEnabled = false
         }
-        state.appendLog(level: "info", message: "User-initiated uninstall: deactivating the network extension.")
+        state.appendLog(level: "info", message: "Uninstall: turning off and removing the network filter.")
+        if systemExtension.uninstallState.extensionIsGone {
+            finish()
+            return
+        }
         systemExtension.deactivateForUninstall()
     }
 
-    /// The part that used to be homework: unregister the helper, then remove
-    /// the root-owned data and the app itself behind one authorization prompt,
-    /// then the user's own files, which need no authorization at all.
-    func finish() {
-        finishState = .working
-        if let problem = state.helper.unregisterDaemonForUninstall() {
-            // Not fatal: the removal below still takes the bundle away, and the
-            // launchd record for a missing bundle is inert. Recorded so the
-            // failure is not silent.
-            state.appendLog(level: "error",
-                            message: "Uninstall could not unregister the helper: \(problem)")
+    func retry() {
+        guard case .failed(let failure) = phase else { return }
+        switch failure {
+        case .filterKept: begin()
+        case .passwordCancelled, .helperKept: finish()
+        case .appKept: quit()
         }
+    }
+
+    private func extensionAnswered(_ answer: SystemExtensionManager.UninstallState) {
+        guard phase == .removingFilter, !DemoMode.isOn else { return }
+        switch answer {
+        case .idle, .deactivating:
+            return
+        case .failed(let reason):
+            state.appendLog(level: "error", message: "Uninstall: macOS kept the network extension: \(reason)")
+            phase = .failed(.filterKept(reason))
+        case .notInstalled, .pendingReboot, .removed:
+            finish()
+        }
+    }
+
+    /// Flush the pf anchor and remove the root-owned data behind one
+    /// authorization prompt, then unregister the helper, then the user's own
+    /// files, then the app.
+    ///
+    /// The helper goes only after the anchor is flushed. Turning enforcement
+    /// off is a request the helper may time out on or roll back; if the
+    /// password prompt is then cancelled, a helper still registered is what
+    /// can clear the rules left in pf (#391).
+    func finish() {
+        guard !DemoMode.isOn else {
+            // The helper, the data and the app of a real install stay; the
+            // demo only walks the remaining steps (#389).
+            phase = .removingHelper
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.phase = .doneUntilRestart
+            }
+            return
+        }
+        phase = .removingHelper
         let alsoDatabase = removeDatabase
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = PrivilegedUninstall.run(removingDatabase: alsoDatabase)
@@ -86,32 +161,81 @@ final class UninstallFlowModel: ObservableObject {
                 guard let self else { return }
                 switch outcome {
                 case .success:
-                    PrivilegedUninstall.removeUserData()
-                    // Finder moves the bundle, not us. That is what makes
-                    // macOS remove the embedded system extension; deleting the
-                    // bundle directly strands it.
-                    PrivilegedUninstall.trashApplicationBundle { problem in
-                        if let problem {
-                            self.finishState = .failed("FreeSnitch removed its helper and data, but could not move itself to the Trash: \(problem) Drag FreeSnitch from Applications to the Trash in Finder to finish, which is also what removes the system extension.")
-                            return
-                        }
-                        self.state.appendLog(level: "info", message: "Uninstall completed; the app was moved to the Trash.")
-                        self.finishState = .done
+                    if let problem = self.state.helper.unregisterDaemonForUninstall() {
+                        // Not fatal: the anchor is already flushed, the bundle
+                        // goes next, and the launchd record for a missing
+                        // bundle is inert. Recorded so it is not silent.
+                        self.state.appendLog(level: "error",
+                                             message: "Uninstall could not unregister the helper: \(problem)")
                     }
+                    PrivilegedUninstall.removeUserData()
+                    self.moveToTrash()
                 case .failure(.cancelled):
-                    self.finishState = .idle
+                    self.phase = .failed(.passwordCancelled)
                 case .failure(.failed(let reason)):
-                    self.finishState = .failed(reason)
+                    self.state.appendLog(level: "error", message: "Uninstall could not remove the helper and data: \(reason)")
+                    self.phase = .failed(.helperKept(reason))
                 }
             }
         }
     }
 
-    /// The last step of the uninstall, and the only one left once the bundle is
-    /// in the Trash: a copy of FreeSnitch that keeps running from there still
-    /// owns a menu bar item and still holds its XPC connections open.
+    private func moveToTrash() {
+        phase = .movingToTrash
+        PrivilegedUninstall.trashApplicationBundle { [weak self] problem in
+            guard let self else { return }
+            if let problem {
+                self.phase = .failed(.appKept(problem))
+                return
+            }
+            self.wrapUp()
+        }
+    }
+
+    private func wrapUp() {
+        if systemExtension.uninstallState == .pendingReboot {
+            phase = .doneUntilRestart
+        } else {
+            quit()
+        }
+    }
+
+    /// Ends the process outright. `NSApp.terminate` runs the app's whole
+    /// shutdown from a bundle that is already in the Trash, and that is where
+    /// 1.1.0 hung until it was force quit (#391). Nothing is left to save at
+    /// this point, so there is nothing for an orderly shutdown to do. The menu
+    /// bar item goes with the process.
     func quit() {
-        NSApp.terminate(nil)
+        exit(0)
+    }
+
+    // MARK: - Demo
+
+    /// `FREESNITCH_DEMO=1` walks through the screens without touching the
+    /// system. `FREESNITCH_DEMO_UNINSTALL` picks the ending: `restart`
+    /// (default), `quit`, `refused`, `cancelled` or `trash`.
+    private func runDemo() {
+        let ending = ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL"] ?? "restart"
+        let hold = Double(ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL_HOLD"] ?? "") ?? 1.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
+            guard let self else { return }
+            if ending == "refused" {
+                self.phase = .failed(.filterKept("The operation couldn’t be completed."))
+                return
+            }
+            self.phase = .removingHelper
+            DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+                if ending == "cancelled" { self.phase = .failed(.passwordCancelled); return }
+                self.phase = .movingToTrash
+                DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+                    switch ending {
+                    case "trash": self.phase = .failed(.appKept("You don’t have permission to access “Applications”."))
+                    case "quit": self.quit()
+                    default: self.phase = .doneUntilRestart
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -123,18 +247,12 @@ struct UninstallView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Remove FreeSnitch from this Mac").font(.headline)
-                Text("FreeSnitch installs a privileged helper and a network system extension. Under System Integrity Protection only this app can deactivate the extension, so start here rather than deleting the app.")
+                Text("Uninstall FreeSnitch").font(.headline)
+                Text("Removes FreeSnitch and everything it installed from this Mac.")
                     .font(.caption).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Divider()
-            Text(flow.hasStarted
-                 ? "An uninstall is already under way. It keeps its place, so you can pick it up where you left it."
-                 : "The uninstall runs in its own window, in one pass, and tells you what it is doing at each step.")
-                .font(.caption).foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(flow.hasStarted ? "Continue removing FreeSnitch…" : "Uninstall FreeSnitch…",
+            Button(flow.hasStarted ? "Continue Uninstalling…" : "Uninstall FreeSnitch…",
                    role: .destructive) { flow.present() }
             Spacer(minLength: 0)
         }
@@ -143,334 +261,187 @@ struct UninstallView: View {
     }
 }
 
-/// The uninstall itself, presented as a sheet on the main window.
-///
-/// A sheet rather than a page: the window's sidebar cannot be reached while it
-/// is up, so a misclick can no longer abandon a half-finished teardown, and the
-/// state behind it belongs to `UninstallFlowModel` rather than to this view.
-///
-/// Under System Integrity Protection the app is the only component macOS lets
-/// deactivate its own system extension: `systemextensionsctl uninstall` refuses
-/// to run at all. So this drives the deactivation and then states, without
-/// decoration, what happened.
+/// The uninstall itself, presented as a sheet on the main window, so a
+/// misclick on the sidebar cannot abandon a half-finished teardown.
 struct UninstallFlowSheet: View {
-    @EnvironmentObject var state: AppState
     @ObservedObject var flow: UninstallFlowModel
     @ObservedObject var systemExtension: SystemExtensionManager
 
-    private var appPath: String { "/Applications/FreeSnitch.app" }
-    private var supportPath: String { "/Library/Application Support/FreeSnitch" }
-    private var databasePath: String { "\(supportPath)/freesnitch.sqlite" }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 12)
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if !flow.hasStarted {
-                        plan
-                        consent
-                    } else {
-                        progress
-                        remainingSteps
-                    }
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 14) {
+                content
             }
-            Divider()
-            footer
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // While a step runs there is nothing to press, so no button row.
+            if !flow.isWorking || showsApprovalButton {
+                Divider()
+                footer
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+            }
         }
-        .frame(width: 620, height: 560)
-        // The teardown must not be dismissed out from under itself while the
-        // authorization prompt is up or once the bundle is already gone.
+        .frame(width: 460)
+        .fixedSize(horizontal: false, vertical: true)
         .interactiveDismissDisabled(!flow.canClose)
         .confirmationDialog("Uninstall FreeSnitch?",
                             isPresented: $flow.confirming,
                             titleVisibility: .visible) {
-            Button("Turn off filtering and deactivate the extension", role: .destructive) {
-                flow.begin()
-            }
+            Button("Uninstall", role: .destructive) { flow.begin() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This turns off enforcement, removes the content filter configuration, and asks macOS to deactivate the FreeSnitch network extension. Your Mac stops being filtered by FreeSnitch immediately. The next step unregisters the privileged helper and removes the data and the app, asking you to authorize that once.")
+            Text("FreeSnitch stops protecting this Mac right away.")
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Remove FreeSnitch from this Mac").font(.headline)
-            Text("Under System Integrity Protection only this app can deactivate its own network extension, so the uninstall runs from here rather than from Finder.")
-                .font(.caption).foregroundColor(.secondary)
+    /// While macOS waits for the person to allow the removal, the way there
+    /// is the one thing to press.
+    private var showsApprovalButton: Bool {
+        flow.phase == .removingFilter && systemExtension.uninstallNeedsApproval
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch flow.phase {
+        case .ready:
+            Text("Uninstall FreeSnitch").font(.headline)
+            Text("This turns off FreeSnitch and removes everything it installed: its network filter, its background helper and its firewall rules. Then FreeSnitch moves itself to the Trash and quits.")
                 .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Also delete my rules and profiles", isOn: $flow.removeDatabase)
+                    .toggleStyle(.checkbox)
+                Text(flow.removeDatabase
+                     ? "They can’t be recovered."
+                     : "They are kept, so they come back if you install FreeSnitch again.")
+                    .font(.caption).foregroundColor(.secondary)
+                    .padding(.leading, 20)
+            }
+        case .removingFilter, .removingHelper, .movingToTrash:
+            Text("Uninstalling FreeSnitch").font(.headline)
+            steps
+        case .doneUntilRestart:
+            headline("FreeSnitch is uninstalled", icon: "checkmark.circle.fill", tint: Color(nsColor: .systemGreen))
+            Text("FreeSnitch isn’t filtering anything now, and macOS finishes removing it the next time you restart.")
+                .fixedSize(horizontal: false, vertical: true)
+        case .failed(let failure):
+            failureText(failure)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Before confirmation
-
-    private var plan: some View {
+    private var steps: some View {
         VStack(alignment: .leading, spacing: 10) {
-            labelledList(title: "FreeSnitch does this itself, in this order",
-                         items: ["Turns enforcement off, so the pf anchor and the DNS proxy stop.",
-                                 "Removes the content filter configuration and asks macOS to deactivate the network extension, which usually completes only after a restart.",
-                                 "Unregisters the privileged helper, which is what takes it out of System Settings > General > Login Items & Extensions. An uninstall you confirmed is the only place FreeSnitch removes its own service.",
-                                 "Flushes the shared puresnitch pf anchor and deletes its data, behind one authorization prompt.",
-                                 "Moves FreeSnitch to the Trash through Finder, which is what makes macOS remove the network extension.",
-                                 "Quits, when you press the button that says so."])
-            labelledList(title: "You do this",
-                         items: ["Authorize the single prompt macOS shows. Nothing here needs Terminal.",
-                                 "Restart the Mac if macOS reports that the extension goes away only after a restart."])
-            Toggle("Also delete the stored policy database", isOn: $flow.removeDatabase)
-            keptAndDeleted
+            stepRow("Turning off the network filter", done: flow.phase != .removingFilter,
+                    active: flow.phase == .removingFilter,
+                    note: flow.phase == .removingFilter && systemExtension.uninstallNeedsApproval
+                        ? "macOS is asking you to allow this in System Settings." : nil)
+            stepRow("Removing the helper and firewall rules",
+                    done: flow.phase == .movingToTrash,
+                    active: flow.phase == .removingHelper,
+                    note: flow.phase == .removingHelper ? "Enter your password when macOS asks." : nil)
+            stepRow("Moving FreeSnitch to the Trash", done: false,
+                    active: flow.phase == .movingToTrash, note: nil)
         }
     }
 
-    private var keptAndDeleted: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Deleted").font(.caption.bold())
-            bullet("\(appPath), the app bundle including the helper and the extension binaries")
-            bullet("\(supportPath)/Insights, the recorded traffic observations")
-            bullet("FreeSnitch's own files in your home folder: its group container, its application support folder and its preferences")
-            if flow.removeDatabase {
-                bullet("\(databasePath), your rules, profiles and blocklists. This file can exceed 300 MB. It cannot be recovered.")
+    private func stepRow(_ title: String, done: Bool, active: Bool, note: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Group {
+                if done {
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(Color(nsColor: .systemGreen))
+                } else if active {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "circle").foregroundColor(.secondary)
+                }
             }
-            Text("Kept").font(.caption.bold()).padding(.top, 4)
-            if !flow.removeDatabase {
-                bullet("\(databasePath), your rules, profiles and blocklists. Reinstalling FreeSnitch picks them up again.")
-            }
-            bullet("The puresnitch pf anchor file, emptied of every rule, because /etc/pf.conf still references it. Removing it while pf.conf points at it would strand your firewall configuration.")
-            bullet("Legacy PureSnitch user data, which FreeSnitch never touches.")
-        }
-        .font(.caption)
-        .foregroundColor(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var consent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Divider()
-            Toggle("I understand this turns off the FreeSnitch firewall on this Mac", isOn: $flow.acknowledged)
-                .toggleStyle(.checkbox)
-            Text(flow.acknowledged ? "You will be asked to confirm once more." : "Select the checkbox above first.")
-                .font(.caption).foregroundColor(.secondary)
-        }
-    }
-
-    // MARK: - After confirmation
-
-    private var progress: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: statusIcon).foregroundColor(statusTint)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(statusTitle).font(.subheadline.weight(.semibold))
-                    Text(statusDetail).font(.caption).foregroundColor(.secondary)
+            .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundColor(done || active ? .primary : .secondary)
+                if let note {
+                    Text(note).font(.caption).foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            HStack {
-                Button("Open Network Extensions") { systemExtension.openNetworkExtensionsSettings() }
-                Button("Open Login Items") { state.helper.openLoginItemsSettings() }
-            }
         }
     }
 
-    /// Reports the answer macOS gave, never the fact that a request was
-    /// accepted. `.deactivating` means no answer has arrived yet.
-    private var statusTitle: String {
-        switch systemExtension.uninstallState {
-        case .idle, .deactivating: return "Waiting for macOS to answer"
-        case .notInstalled: return "No extension was registered from this app"
-        case .pendingReboot: return "Deactivation finishes after a restart"
-        case .removed: return "macOS reports the extension is gone"
-        case .failed: return "macOS refused the deactivation"
+    @ViewBuilder
+    private func failureText(_ failure: UninstallFlowModel.Failure) -> some View {
+        switch failure {
+        case .filterKept(let reason):
+            failureHeadline(reason == SystemExtensionManager.noAnswer
+                            ? "macOS didn’t answer FreeSnitch’s request to remove its network filter"
+                            : "macOS didn’t let FreeSnitch remove its network filter")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac, but nothing else was removed. Try again, or quit and reopen FreeSnitch and turn Enforcement back on to keep using it.")
+                .fixedSize(horizontal: false, vertical: true)
+            reasonText(reason)
+        case .passwordCancelled:
+            failureHeadline("The password prompt was cancelled")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac. Try again to remove the rest.")
+                .fixedSize(horizontal: false, vertical: true)
+        case .helperKept(let reason):
+            failureHeadline("FreeSnitch couldn’t remove its helper and firewall rules")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac. Try again to remove the rest.")
+                .fixedSize(horizontal: false, vertical: true)
+            reasonText(reason)
+        case .appKept(let reason):
+            failureHeadline("FreeSnitch couldn’t move itself to the Trash")
+            Text("Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish.")
+                .fixedSize(horizontal: false, vertical: true)
+            reasonText(reason)
         }
     }
 
-    private var statusDetail: String {
-        switch systemExtension.uninstallState {
-        case .idle, .deactivating:
-            return "The deactivation request was submitted. That is not the same as removal, so nothing is claimed until the system reports back. Approving the prompt in System Settings, if one appears, lets it proceed."
-        case .notInstalled:
-            return "This build has no embedded system extension, or macOS holds no record for \(AppConstants.bundleIdNetExt). There is nothing to deactivate. The steps below still apply to the helper, the app, and the data."
-        case .pendingReboot:
-            return "macOS accepted the request but still holds a record for \(AppConstants.bundleIdNetExt). It is removed at the next restart. Until then `systemextensionsctl list` keeps showing it, and the app must stay where it is. Restart, then continue below."
-        case .removed:
-            return "A properties request finds no record for \(AppConstants.bundleIdNetExt) any more. Continue with the steps below."
-        case .failed(let message):
-            return "\(message) The extension is still registered. Do not delete the app yet: that leaves a registered extension whose bundle is gone. Retry after a restart, or check `systemextensionsctl list`."
-        }
+    private func failureHeadline(_ text: String) -> some View {
+        headline(text, icon: "exclamationmark.triangle.fill", tint: Color(nsColor: .systemOrange))
     }
 
-    private var statusIcon: String {
-        switch systemExtension.uninstallState {
-        case .idle, .deactivating: return "hourglass"
-        case .notInstalled: return "info.circle.fill"
-        case .pendingReboot: return "arrow.clockwise.circle.fill"
-        case .removed: return "checkmark.circle.fill"
-        case .failed: return "xmark.octagon.fill"
+    private func headline(_ text: String, icon: String, tint: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: icon).foregroundColor(tint)
+            Text(text).fixedSize(horizontal: false, vertical: true)
         }
+        .font(.headline)
     }
 
-    private var statusTint: Color {
-        switch systemExtension.uninstallState {
-        case .removed: return Color(nsColor: .systemGreen)
-        case .failed: return Color(nsColor: .systemRed)
-        default: return Color(nsColor: .systemYellow)
-        }
-    }
-
-    private var remainingSteps: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Divider()
-            switch flow.finishState {
-            case .idle:
-                Text("Finish removing FreeSnitch").font(.subheadline.weight(.semibold))
-                Text("FreeSnitch unregisters the privileged helper, flushes its firewall anchor, deletes its data and moves itself to the Trash. macOS asks you to authorize that once. Nothing here needs Terminal.")
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(flow.removeDatabase
-                     ? "Includes deleting \(databasePath). That is permanent."
-                     : "Keeps \(databasePath) so a reinstall finds your rules.")
-                    .font(.caption).foregroundColor(.secondary)
-            case .working:
-                ProgressView("Removing FreeSnitch…").controlSize(.small)
-            case .done:
-                Text("FreeSnitch has been removed").font(.subheadline.weight(.semibold))
-                Text("The helper is unregistered, the data is gone, and FreeSnitch is in your Trash. macOS removes the network extension as part of that move.")
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                step(1, "Check it worked: `systemextensionsctl list` should print no FreeSnitch row. If it still does, macOS did not complete the removal.")
-                step(2, "If a FreeSnitch row remains, open System Settings > General > Login Items & Extensions, click the i next to Network Extensions, and choose Delete Extension. A restart also clears records left in this state.")
-                step(3, "Quit FreeSnitch. The copy in your Trash is still running, and quitting is what removes its menu bar item.")
-            case .failed(let reason):
-                Text("FreeSnitch could not finish removing itself").font(.subheadline.weight(.semibold))
-                Text(reason)
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Or remove it by hand with these commands. They flush only the shared puresnitch anchor and never disable pf globally.")
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                commandBlock
-            }
-        }
+    /// What macOS said, kept apart from FreeSnitch's own sentence.
+    private func reasonText(_ reason: String) -> some View {
+        Text(reason)
+            .font(.caption).foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Footer
 
-    /// One row for the action that moves the flow on and the way out of it, so
-    /// the primary button is always in the same place.
     private var footer: some View {
         HStack(spacing: 10) {
+            if showsApprovalButton {
+                Button("Open System Settings") { systemExtension.openNetworkExtensionsSettings() }
+            }
+            Spacer(minLength: 8)
             if flow.canClose {
                 Button(flow.hasStarted ? "Close" : "Cancel") { flow.isPresented = false }
                     .keyboardShortcut(.cancelAction)
             }
-            if flow.hasStarted && flow.canClose {
-                Text("Closing keeps the uninstall where it is; Settings brings it back.")
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
             primaryAction
         }
     }
 
     @ViewBuilder
     private var primaryAction: some View {
-        if !flow.hasStarted {
-            Button("Uninstall FreeSnitch…", role: .destructive) { flow.confirming = true }
-                .disabled(!flow.acknowledged)
-        } else {
-            switch flow.finishState {
-            case .idle:
-                Button("Remove FreeSnitch") { flow.finish() }
-                    .keyboardShortcut(.defaultAction)
-            case .working:
-                ProgressView().controlSize(.small)
-            case .done:
-                Button("Quit FreeSnitch") { flow.quit() }
-                    .keyboardShortcut(.defaultAction)
-            case .failed:
-                Button("Try again") { flow.finish() }
-                    .keyboardShortcut(.defaultAction)
-            }
+        switch flow.phase {
+        case .ready:
+            Button("Uninstall…", role: .destructive) { flow.confirming = true }
+                .keyboardShortcut(.defaultAction)
+        case .removingFilter, .removingHelper, .movingToTrash:
+            EmptyView()
+        case .doneUntilRestart, .failed(.appKept):
+            Button("Quit FreeSnitch") { flow.quit() }
+                .keyboardShortcut(.defaultAction)
+        case .failed:
+            Button("Try Again") { flow.retry() }
+                .keyboardShortcut(.defaultAction)
         }
-    }
-
-    private var commandBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(commands)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.accentColor.opacity(0.08))
-                .cornerRadius(6)
-            HStack {
-                Button("Copy commands") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(commands, forType: .string)
-                }
-                Text(flow.removeDatabase
-                     ? "Includes deleting \(databasePath). That is permanent."
-                     : "Keeps \(databasePath) so a reinstall finds your rules.")
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    /// Fallback only, shown after the automated removal failed.
-    ///
-    /// This deliberately no longer mentions `Scripts/uninstall_freesnitch.sh`:
-    /// that file only exists in a source checkout, so telling someone who
-    /// installed from the DMG to run it was an instruction that could not be
-    /// followed. Order matters: the pf anchor is flushed while the app is
-    /// still on disk.
-    private var commands: String {
-        var lines = [
-            "sudo /sbin/pfctl -a puresnitch -F all",
-            "sudo /sbin/pfctl -a puresnitch -f /dev/null",
-            "sudo /bin/rm -rf \"\(supportPath)/Insights\"",
-        ]
-        if flow.removeDatabase {
-            lines.append("sudo /bin/rm -f \"\(databasePath)\"")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    // MARK: - Small pieces
-
-    private func labelledList(title: String, items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption.bold())
-            ForEach(items, id: \.self) { bullet($0) }
-        }
-        .font(.caption)
-        .foregroundColor(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func bullet(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text("•")
-            Text(text).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func step(_ number: Int, _ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("\(number).").font(.caption.monospacedDigit().bold())
-            Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundColor(.secondary)
     }
 }

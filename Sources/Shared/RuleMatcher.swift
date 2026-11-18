@@ -187,7 +187,32 @@ fileprivate struct PreparedIPPattern: Sendable {
     }
 }
 
+/// A rule's path covers the process at that path and everything inside it,
+/// such as the helpers in an app bundle. It is compared as a path, not as a
+/// string prefix: a rule for /usr/local/bin/node must not also match
+/// /usr/local/bin/nodemon, nor /usr/bin/ssh match /usr/bin/ssh-agent (#158).
+func processPathCovers(_ rulePath: String, _ processPath: String) -> Bool {
+    guard processPath.hasPrefix(rulePath) else { return false }
+    if rulePath.hasSuffix("/") { return true }
+    let rest = processPath.dropFirst(rulePath.count)
+    return rest.isEmpty || rest.first == "/"
+}
+
 extension Rule {
+    /// An address or CIDR in the hostname field of a rule that has no
+    /// address of its own (#307). The rule editor and the CLI accept one
+    /// there, and the pf anchor writes it as the address, so the matcher
+    /// compares it with the flow's address too. Otherwise a flow to that
+    /// address that macOS reports under a name would slip past the rule in
+    /// the Network Extension while pf still applied it.
+    public var addressInHostField: String? {
+        guard (remoteIP ?? "").isEmpty, let host = remoteHost, !host.isEmpty else { return nil }
+        switch PFHostValidator.kind(for: host) {
+        case .ip, .cidr: return host
+        case .hostname, nil: return nil
+        }
+    }
+
     /// The matcher knows an app only by its bundle id or path. A rule that
     /// carries nothing but a name reads as "this app" and matches every app
     /// (#157), so ingest refuses it while it is enabled and the Rules list
@@ -212,14 +237,44 @@ extension Rule {
     }
 }
 
+/// A rule's bundle id matches the signed one (#351). A deny rule also matches
+/// the id an unsigned Info.plist claims: a fake id can get a binary blocked,
+/// never let through, so a user's deny keeps blocking an unsigned app. An ask
+/// rule matched only by the claimed id can only make a verdict stricter: it
+/// turns an allow into an ask, never a deny into one (see
+/// `RuleMatcher.explainedDecision`). A rule that also names a path matches the
+/// claimed id whatever its action: the path already pins the binary, so it is
+/// never broader than the same rule without a bundle id. Rules made from
+/// alerts and the Monitor tree carry both, and an unsigned app keeps them.
+///
+/// An allow rule with no path also needs the same team to have signed the
+/// code as the app it was made for (#364): a Developer ID can sign any
+/// identifier, so the id alone does not say whose app it is. A rule that has
+/// not recorded a team yet matches by id alone. Whenever a claimed id counts
+/// (deny, ask, or a path that pins the binary), so does the id from any team:
+/// both can only make the verdict stricter or are already pinned by the path.
+fileprivate func bundleIdMatches(_ ruleBundleId: String, team ruleTeam: String?, _ connection: Connection,
+                                 trustingClaimed: Bool) -> Bool {
+    if trustingClaimed {
+        return connection.processBundleId == ruleBundleId || connection.claimedBundleId == ruleBundleId
+    }
+    guard connection.processBundleId == ruleBundleId else { return false }
+    guard let ruleTeam else { return true }
+    return connection.processTeamId == ruleTeam
+}
+
 fileprivate struct PreparedRule: Sendable {
     let action: RuleAction
     let expiresAt: Date?
     let direction: RuleDirection?
     let processBundleId: String?
+    let processTeamId: String?
     let processPath: String?
     let remotePort: Int?
     let remoteHost: PreparedHostPattern?
+    /// An address or CIDR typed into the hostname field, compared with the
+    /// flow's address as well as its host (#307).
+    let remoteHostAddress: PreparedIPPattern?
     let remoteIP: PreparedIPPattern?
 
     init(_ rule: Rule) {
@@ -227,21 +282,43 @@ fileprivate struct PreparedRule: Sendable {
         expiresAt = rule.expiresAt
         direction = rule.direction == .any ? nil : rule.direction
         processBundleId = rule.processBundleId.flatMap { $0.isEmpty ? nil : $0 }
+        processTeamId = rule.processTeamId.flatMap { $0.isEmpty ? nil : $0 }
         processPath = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
         remotePort = rule.remotePort.flatMap { $0 == 0 ? nil : $0 }
         remoteHost = rule.remoteHost.flatMap { $0.isEmpty ? nil : PreparedHostPattern($0) }
+        remoteHostAddress = rule.addressInHostField.map(PreparedIPPattern.init)
         remoteIP = rule.remoteIP.flatMap { $0.isEmpty ? nil : PreparedIPPattern($0) }
     }
 
-    var needsIPv4: Bool { remoteIP?.needsIPv4 ?? false }
-    var needsIPv6: Bool { remoteIP?.needsIPv6 ?? false }
+    var needsIPv4: Bool { (remoteIP?.needsIPv4 ?? false) || (remoteHostAddress?.needsIPv4 ?? false) }
+    var needsIPv6: Bool { (remoteIP?.needsIPv6 ?? false) || (remoteHostAddress?.needsIPv6 ?? false) }
 
     func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        matches(connection: connection, address: address,
+                trustingClaimedBundleId: action == .deny || processPath != nil)
+    }
+
+    /// True when the rule would match if the connection's bundle id were
+    /// vouched for: an allow or ask rule that misses only because the id is
+    /// claimed by an unsigned Info.plist (#351) or signed by another team than
+    /// the rule's (#364).
+    func matchesOnlyByClaimedBundleId(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        guard action != .deny, let processBundleId,
+              connection.claimedBundleId == processBundleId || connection.processBundleId == processBundleId,
+              !bundleIdMatches(processBundleId, team: processTeamId, connection, trustingClaimed: false) else { return false }
+        return matches(connection: connection, address: address, trustingClaimedBundleId: true)
+    }
+
+    private func matches(connection: Connection, address: PreparedConnectionAddress,
+                         trustingClaimedBundleId: Bool) -> Bool {
         if let direction, direction != connection.direction { return false }
-        if let processBundleId, (connection.processBundleId ?? "") != processBundleId { return false }
-        if let processPath, !connection.processPath.hasPrefix(processPath) { return false }
+        if let processBundleId,
+           !bundleIdMatches(processBundleId, team: processTeamId, connection,
+                            trustingClaimed: trustingClaimedBundleId) { return false }
+        if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
         if let remotePort, connection.remotePort != remotePort { return false }
-        if let remoteHost, !remoteHost.matches(connection.remoteHost) { return false }
+        if let remoteHost, !remoteHost.matches(connection.remoteHost),
+           !(remoteHostAddress?.matches(rawIP: connection.remoteIP, parsed: address) ?? false) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
         return true
     }
@@ -290,6 +367,14 @@ public struct RuleMatcher: Sendable {
     }
 
     public func decision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> RuleAction {
+        explainedDecision(for: c, prepared: prepared, defaultMode: defaultMode).action
+    }
+
+    /// The decision, plus the allow or ask rule that would have come first had
+    /// the connection's bundle id been signed rather than only claimed by its
+    /// Info.plist (#351), or signed by the rule's team (#364), so the caller
+    /// can say why the user was asked.
+    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> (action: RuleAction, skippedUnverified: Rule?) {
         // Expiry is the one predicate that cannot be precomputed, because it
         // depends on when the flow arrives rather than on the snapshot. It
         // stays a test inside the scan, which allocates nothing.
@@ -299,31 +384,56 @@ public struct RuleMatcher: Sendable {
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
+        // A rule that names the bundle id the Info.plist claims, but not the
+        // signed one (#351), or one another team signed (#364): an allow is
+        // skipped and reported, and an ask is kept as a floor, so the verdict
+        // found further down can be raised from allow to ask but never lowered.
+        let mayHaveSkipped = c.processBundleId != nil
+            || (c.claimedBundleId != nil && c.claimedBundleId != c.processBundleId)
+        var skipped: Rule?
+        var askFloor = false
+        var index = -1
         for r in prepared.compiled {
+            index += 1
             if let exp = r.expiresAt, exp < now { continue }
-            if r.matches(connection: c, address: address) { return r.action }
+            if r.matches(connection: c, address: address) {
+                return (askFloor && r.action == .allow ? .ask : r.action, skipped)
+            }
+            if mayHaveSkipped, r.matchesOnlyByClaimedBundleId(connection: c, address: address) {
+                if r.action == .ask {
+                    askFloor = true
+                } else if skipped == nil {
+                    skipped = prepared.ordered[index]
+                }
+            }
         }
 
         switch defaultMode {
-        case .alert: return .ask
-        case .silentAllow: return .allow
-        case .silentDeny: return .deny
+        case .alert: return (.ask, skipped)
+        case .silentAllow: return (askFloor ? .ask : .allow, skipped)
+        case .silentDeny: return (.deny, skipped)
         }
     }
 
     public func matches(rule r: Rule, connection c: Connection) -> Bool {
         if r.direction != .any && r.direction != c.direction { return false }
         if let bid = r.processBundleId, !bid.isEmpty {
-            if (c.processBundleId ?? "") != bid { return false }
+            // Deny and ask rules count a claimed id (an ask one only ever
+            // raises an allow to an ask), and so does any rule that also names
+            // a path; an allow with no path needs the signed id.
+            let pinnedByPath = !(r.processPath ?? "").isEmpty
+            let team = r.processTeamId.flatMap { $0.isEmpty ? nil : $0 }
+            if !bundleIdMatches(bid, team: team, c, trustingClaimed: r.action != .allow || pinnedByPath) { return false }
         }
         if let path = r.processPath, !path.isEmpty {
-            if c.processPath != path && !c.processPath.hasPrefix(path) { return false }
+            if !processPathCovers(path, c.processPath) { return false }
         }
         if let port = r.remotePort, port != 0 {
             if c.remotePort != port { return false }
         }
         if let host = r.remoteHost, !host.isEmpty {
-            if !hostMatches(pattern: host, host: c.remoteHost) { return false }
+            if !hostMatches(pattern: host, host: c.remoteHost),
+               !(r.addressInHostField.map { ipMatches(pattern: $0, ip: c.remoteIP) } ?? false) { return false }
         }
         if let ip = r.remoteIP, !ip.isEmpty {
             if !ipMatches(pattern: ip, ip: c.remoteIP) { return false }

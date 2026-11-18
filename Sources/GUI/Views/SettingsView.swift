@@ -301,6 +301,9 @@ struct SettingsView: View {
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
+        // The demo shares the installed app's bundle id: its login item is the
+        // real one (#389).
+        guard !DemoMode.isOn else { return }
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }

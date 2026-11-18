@@ -130,8 +130,12 @@ The old and new content filters must not run together. FreeSnitch checks for
 `/Applications/PureSnitch.app` and the old helper's LaunchDaemon every time it
 opens and offers to remove both (`Sources/GUI/App/LegacyPureSnitch.swift`):
 it stops the helper behind one password prompt (only when the helper is still
-there), moves the app to the Trash so
-macOS removes its system extension, and keeps PureSnitch's user data. From a
+there), moves the app to the Trash, and keeps PureSnitch's user data. Since
+macOS 15.3 the Trash may leave the old network extension running, and
+FreeSnitch cannot remove another app's extension, so it also checks
+`systemextensionsctl list` on every launch and, while PureSnitch's extension
+is still active, says where to delete it in System Settings > General > Login
+Items & Extensions, under Extensions. From a
 source checkout the same can be done by hand:
 
 ```sh

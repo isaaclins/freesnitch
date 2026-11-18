@@ -89,7 +89,9 @@ final class Counter: @unchecked Sendable {
 /// scheduled finish, as it would before the next flow on a real Mac.
 @discardableResult
 func flow(_ cache: BundleIdentifierCache, _ path: String) -> String? {
-    let answer = cache.cachedBundleId(forExecutablePath: path)
+    // The plist's identifier is the claimed one since #351 (no audit token
+    // here, so no signed identifier ever stands in front of it).
+    let answer = cache.cachedMetadata(forExecutablePath: path)?.claimedBundleIdentifier
     cache.waitForPendingResolves()
     return answer
 }
@@ -189,6 +191,7 @@ xcrun swiftc -O \
   -sdk "$(xcrun --show-sdk-path)" \
   -target arm64-apple-macos13.0 \
   -o "$TMP/build/run" \
+  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$ROOT/Sources/Shared/CodeSigningIdentity.swift" \
   "$TMP/cache.swift" "$TMP/main.swift"
 
 "$TMP/build/run" "$TMP/apps"

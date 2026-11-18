@@ -109,6 +109,37 @@ try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: readOnly.path)
 check(!ok(roResult), "a copy that keeps the download flag is reported as a failure")
 check((try? fm.contentsOfDirectory(atPath: roApps.path))?.isEmpty == true, "nothing is left in Applications after that failure")
 
+// #413: a move cut off mid-copy (crash, force quit) left its hidden staging
+// folder behind. The next move removes those, read-only insides included,
+// and nothing else in the folder.
+let leftApps = work.appendingPathComponent("LeftoverApplications", isDirectory: true)
+try! fm.createDirectory(at: leftApps, withIntermediateDirectories: true)
+let leftover = leftApps.appendingPathComponent(".FreeSnitch.app.partial-\(UUID().uuidString)", isDirectory: true)
+makeBundle(at: leftover, build: "35")
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: leftover.appendingPathComponent("Contents").path)
+let lookalikes = [".FreeSnitch.app.partial-notauuid", ".FreeSnitch.app.partial-\(UUID().uuidString.lowercased())",
+                  ".Other.app.partial-\(UUID().uuidString)", "FreeSnitch.app.partial-\(UUID().uuidString)", "Other.app"]
+for name in lookalikes { makeBundle(at: leftApps.appendingPathComponent(name), build: "1") }
+let outside = work.appendingPathComponent("Outside", isDirectory: true)
+makeBundle(at: outside, build: "1")
+let linked = ".FreeSnitch.app.partial-\(UUID().uuidString)"
+try! fm.createSymbolicLink(atPath: leftApps.appendingPathComponent(linked).path, withDestinationPath: outside.path)
+let leftDestination = leftApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+check(ok(InstallLocation.copyBundle(from: source, to: leftDestination)), "a move with a leftover staging folder present succeeds")
+check(!fm.fileExists(atPath: leftover.path), "the next move removes a leftover staging folder")
+check(Set(try! fm.contentsOfDirectory(atPath: leftApps.path)) == Set(lookalikes + [linked, "FreeSnitch.app"]),
+      "lookalike names, other apps and a symlinked staging name are all left alone")
+check(fm.fileExists(atPath: outside.appendingPathComponent("Contents/MacOS/FreeSnitch").path),
+      "the folder a symlinked staging name points to is untouched")
+let launchApps = work.appendingPathComponent("LaunchApplications", isDirectory: true)
+let launchLeftover = launchApps.appendingPathComponent(".FreeSnitch.app.partial-\(UUID().uuidString)", isDirectory: true)
+makeBundle(at: launchLeftover, build: "35")
+makeBundle(at: launchApps.appendingPathComponent("FreeSnitch.app"), build: "35")
+InstallLocation.removeLeftoverStaging(in: launchApps)
+check(try! fm.contentsOfDirectory(atPath: launchApps.path) == ["FreeSnitch.app"], "launch cleanup removes the leftover and keeps the installed app")
+InstallLocation.removeLeftoverStaging(in: work.appendingPathComponent("Missing", isDirectory: true))
+check(true, "a missing Applications folder is fine")
+
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
 
 // #400: only a downloaded copy is asked at launch. A build folder isn't.
@@ -120,6 +151,11 @@ makeBundle(at: devBuild, build: "35")
 check(InstallLocation.cameFromDownload(dlCopy, home: homeDir.path), "a copy in Downloads is asked about at launch")
 check(InstallLocation.cameFromDownload(source, home: homeDir.path), "a copy with the download flag is asked about at launch")
 check(!InstallLocation.cameFromDownload(devBuild, home: homeDir.path), "a contributor's build folder isn't asked about at launch")
+check(InstallLocation.shouldTrashOriginal(dlCopy, home: homeDir.path), "after a move, a Downloads copy goes to the Trash")
+check(!InstallLocation.shouldTrashOriginal(devBuild, home: homeDir.path), "after a move, a contributor's build output stays")
+check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: true), "a downloaded copy of an installed build offers Open It")
+check(!InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: false), "a build from a folder never quietly opens the installed copy")
+check(!InstallLocation.offersOpenInstalled(isOlder: true, sourceFromDownload: true), "a newer download over an older install says to replace it")
 check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: "/Users/x")
       && InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Applications/FreeSnitch.app"), home: "/Users/x")
       && !InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Downloads/FreeSnitch.app"), home: "/Users/x"),
@@ -127,12 +163,38 @@ check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeS
 
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
-let none = LegacyPureSnitch.detect { asked.append($0); return false }
+let none = LegacyPureSnitch.detect(listing: { nil }) { asked.append($0); return false }
 check(!none.any, "no PureSnitch, nothing offered")
 check(asked == ["/Applications/PureSnitch.app", "/Library/LaunchDaemons/io.isaaclins.puresnitch.helper.plist"],
       "detection checks exactly the old app and the old helper plist")
-check(LegacyPureSnitch.detect { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
+check(LegacyPureSnitch.detect(listing: { nil }) { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
       "a helper left behind without the app is still found")
+
+// Since macOS 15.3 the Trash may leave PureSnitch's extension running. It is
+// found on its own from `systemextensionsctl list`, and one already waiting
+// for the restart doesn't count.
+let activeListing = """
+1 extension(s)
+--- com.apple.system_extension.network_extension
+enabled\tactive\tteamID\tbundleID (version)\tname\t[state]
+*\t*\tBHAF4L4726\tio.isaaclins.puresnitch.netext (1.0/1)\tPureSnitchNetExt\t[activated enabled]
+"""
+let leavingListing = activeListing.replacingOccurrences(of: "[activated enabled]", with: "[terminated waiting to uninstall on reboot]")
+let freeSnitchOnly = activeListing.replacingOccurrences(of: "io.isaaclins.puresnitch.netext", with: "io.isaaclins.freesnitch.netext")
+check(LegacyPureSnitch.detect(listing: { activeListing }) { _ in false } == .init(app: false, daemon: false, extensionActive: true),
+      "a PureSnitch extension still active without its app is found")
+check(!LegacyPureSnitch.detect(listing: { leavingListing }) { _ in false }.any, "one waiting to be removed at restart isn't")
+check(!LegacyPureSnitch.detect(listing: { freeSnitchOnly }) { _ in false }.any, "FreeSnitch's own extension is never taken for PureSnitch's")
+check(LegacyPureSnitch.extensionOnlyText.contains("Login Items & Extensions") && LegacyPureSnitch.extensionOnlyText.contains("delete"),
+      "with only the extension left, the question says where to delete it")
+// A listing tool that hangs must not hold launch: it is given up after the
+// time limit and counts as "not seen".
+let listingStart = Date()
+let hung = LegacyPureSnitch.readExtensionListing(timeout: 1, tool: "/bin/sleep", arguments: ["30"])
+check(hung == nil && Date().timeIntervalSince(listingStart) < 3,
+      "a hanging extension listing is given up after its time limit")
+check(LegacyPureSnitch.readExtensionListing(timeout: 3, tool: "/bin/echo", arguments: ["io.isaaclins.puresnitch.netext"])?.contains("puresnitch") == true,
+      "a listing that answers in time is read")
 
 // #399: the question only promises a password prompt when the helper is part
 // of the removal, and only mentions the Trash when the app is there.
@@ -190,9 +252,9 @@ swiftc -O -o "$TMP/run" "$TMP/main.swift" "$TMP/stubs.swift" \
 # Static guards: the privileged removal never names FreeSnitch, and the
 # move never deletes the installed copy.
 script="$(awk '/private static let removeDaemon = """/ { on = 1; next } on && /^    """$/ { exit } on' "$ROOT/Sources/GUI/App/LegacyPureSnitch.swift")"
-printf '%s\n' "$script" | grep -q 'launchctl bootout system/io.isaaclins.puresnitch.helper' \
+grep -q 'launchctl bootout system/io.isaaclins.puresnitch.helper' <<<"$script" \
   || { echo "install location: FAIL: could not read the PureSnitch removal script" >&2; exit 1; }
-printf '%s\n' "$script" | grep -qi 'freesnitch' \
+grep -qi 'freesnitch' <<<"$script" \
   && { echo "install location: FAIL: the PureSnitch removal script names FreeSnitch" >&2; exit 1; }
 echo "install location: PASS: the PureSnitch removal script never names FreeSnitch"
 if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination|installed)' "$ROOT/Sources/GUI/App/InstallLocation.swift"; then
@@ -212,7 +274,7 @@ outside="$(awk '/func applicationDidFinishLaunching/ { skip = 1 } skip && /^    
 if printf '%s\n' "$outside" | grep -nE 'windowManager[.!]'; then
   echo "install location: FAIL: the window manager is used without a check outside launch setup" >&2; exit 1
 fi
-printf '%s\n' "$outside" | grep -q 'delegate.windowManager?.showPage' \
+grep -q 'delegate.windowManager?.showPage' <<<"$outside" \
   || { echo "install location: FAIL: could not find the menu commands to check" >&2; exit 1; }
 echo "install location: PASS: menu commands and reopen do nothing until the window manager exists"
 

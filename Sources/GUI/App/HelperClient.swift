@@ -169,6 +169,8 @@ final class HelperClient: NSObject, ObservableObject {
     /// System Settings.
     @discardableResult
     func unregisterDaemonForUninstall() -> String? {
+        // A demo never removes the real helper (#389).
+        guard !DemoMode.isOn else { return nil }
         guard let service else { return "SMAppService cannot manage the helper on this macOS version." }
         do {
             try service.unregister()
@@ -183,6 +185,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// silently no-ops (the root cause of "no rules / no traffic"). Requires a
     /// signed build; the user approves it in System Settings under Login Items.
     func registerDaemon() {
+        guard !DemoMode.isOn else { return }
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
@@ -198,7 +201,8 @@ final class HelperClient: NSObject, ObservableObject {
                 refreshInstallState()
             } catch {
                 let details = HelperRecovery.registrationErrorDetails(error)
-                installState = .failed(details)
+                installState = .failed(HelperRegistrationFailure.message(
+                    for: error, inApplications: Self.isInApplicationsFolder))
                 state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
             }
         case .guideApproval:
@@ -285,7 +289,7 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     private func repairHelperInternal() {
-        guard !isRepairing else { return }
+        guard !DemoMode.isOn, !isRepairing else { return }
         repairState = .inProgress
         guard Self.isInApplicationsFolder else {
             installState = .wrongLocation
@@ -340,7 +344,8 @@ final class HelperClient: NSObject, ObservableObject {
         } catch {
             let details = HelperRecovery.registrationErrorDetails(error)
             state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
-            finishRepairFailure("SMAppService could not register the absent helper: \(details). Open System Settings under General > Login Items & Extensions if approval is required, then try again.")
+            finishRepairFailure("FreeSnitch could not register the missing helper. " + HelperRegistrationFailure.message(
+                for: error, inApplications: Self.isInApplicationsFolder))
         }
     }
 
@@ -380,6 +385,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// afterwards hops back. Cancelling is not treated as a failure to shout
     /// about, because the user declining must be a normal outcome.
     private func performPrivilegedKickstart() {
+        guard !DemoMode.isOn else { return }
         let previous = versionState
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = PrivilegedRepair.kickstartHelper()
@@ -1160,6 +1166,11 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
             if message == AppConstants.profilePolicyChangedLogMessage {
                 self.state?.syncSharedRules()
                 ProfileClient.shared.refresh()
+            }
+            // Rules learned their app's signing team (#364): the extension
+            // needs the policy that carries it.
+            if message == AppConstants.ruleSigningTeamsLearnedLogMessage {
+                self.state?.syncSharedRules()
             }
         }
     }

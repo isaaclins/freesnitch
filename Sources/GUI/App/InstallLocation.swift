@@ -56,8 +56,9 @@ enum InstallLocation {
         guard !fm.fileExists(atPath: destination.path) else {
             return .failure(.failed("\(destination.path) already exists."))
         }
+        removeLeftoverStaging(in: destination.deletingLastPathComponent())
         let staging = destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(bundleName).partial-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("\(stagingPrefix)\(UUID().uuidString)", isDirectory: true)
         do {
             try fm.copyItem(at: source, to: staging)
             // A copy that keeps the flag would run translocated again, so it
@@ -71,6 +72,31 @@ enum InstallLocation {
         } catch {
             removeStaging(staging)
             return .failure(.failed(error.localizedDescription))
+        }
+    }
+
+    /// The hidden name a copy is staged under, followed by a UUID.
+    static let stagingPrefix = ".\(bundleName).partial-"
+
+    /// Whether `name` is one of the staging folders `copyBundle` makes:
+    /// exactly the prefix and an uppercase UUID, as `UUID().uuidString`
+    /// writes it. Anything else, even a close match, isn't ours.
+    static func isStagingName(_ name: String) -> Bool {
+        guard name.hasPrefix(stagingPrefix) else { return false }
+        let id = String(name.dropFirst(stagingPrefix.count))
+        return UUID(uuidString: id)?.uuidString == id
+    }
+
+    /// Removes staging folders a move left behind when the app crashed or was
+    /// force-quit mid-copy (#413). Only real folders with exactly the staging
+    /// name are touched, never a symlink and never anything else in `folder`.
+    static func removeLeftoverStaging(in folder: URL) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
+        for name in names where isStagingName(name) {
+            let leftover = folder.appendingPathComponent(name, isDirectory: true)
+            var info = stat()
+            guard lstat(leftover.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { continue }
+            removeStaging(leftover)
         }
     }
 
@@ -145,6 +171,22 @@ enum InstallLocation {
             || getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
     }
 
+    /// After a successful move, only a downloaded original is moved to the
+    /// Trash (Downloads clutter that would land here again). A disk image
+    /// can't be changed, and a contributor's build output stays where it is.
+    static func shouldTrashOriginal(_ original: URL, home: String = NSHomeDirectory()) -> Bool {
+        !isOnReadOnlyVolume(original) && cameFromDownload(original, home: home)
+    }
+
+    /// With a FreeSnitch already installed, "Open It" only makes sense for a
+    /// downloaded copy of the same or an older build. An older install, or a
+    /// build from a folder (a rebuilt build keeps its build number, so it can
+    /// be newer code than the installed one), gets "replace it in Finder"
+    /// instead of quietly opening the installed copy.
+    static func offersOpenInstalled(isOlder: Bool, sourceFromDownload: Bool) -> Bool {
+        !isOlder && sourceFromDownload
+    }
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -168,6 +210,11 @@ extension InstallLocation {
             NSApp.activate(ignoringOtherApps: true)
             _ = moveAlert().runModal()
             return false
+        }
+        // A move cut off mid-copy (crash, force quit) leaves its hidden
+        // staging folder behind; tidy those up whichever copy this is (#413).
+        for folder in ["/Applications", (NSHomeDirectory() as NSString).appendingPathComponent("Applications")] {
+            removeLeftoverStaging(in: URL(fileURLWithPath: folder, isDirectory: true))
         }
         guard !HelperClient.isInApplicationsFolder else { return false }
         // Already in Applications but quarantined and put there without
@@ -229,8 +276,8 @@ extension InstallLocation {
         switch chosen {
         case .existing(let installed, let isOlder):
             let alert = NSAlert()
-            if isOlder {
-                alert.messageText = "An older FreeSnitch is already in Applications"
+            if !offersOpenInstalled(isOlder: isOlder, sourceFromDownload: cameFromDownload(original)) {
+                alert.messageText = isOlder ? "An older FreeSnitch is already in Applications" : "FreeSnitch is already in Applications"
                 alert.informativeText = "FreeSnitch won't replace it for you, because that copy may be running the network filter. Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace."
                 alert.addButton(withTitle: "Show in Finder")
                 alert.addButton(withTitle: "Cancel")
@@ -260,10 +307,7 @@ extension InstallLocation {
                 }
                 return false
             case .success:
-                // A copy left in Downloads (or wherever it was) is clutter, and
-                // opening it later lands here again. A disk image can't be
-                // changed and is left.
-                if !isOnReadOnlyVolume(original) {
+                if shouldTrashOriginal(original) {
                     // Synchronous: the process quits right after this.
                     try? FileManager.default.trashItem(at: original, resultingItemURL: nil)
                 }
