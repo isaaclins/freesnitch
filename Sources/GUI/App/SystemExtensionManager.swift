@@ -216,9 +216,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// one and never submits a system extension request (#388).
     private var hasEmbeddedExtension: Bool {
         guard !demo else { return false }
-        let dir = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/SystemExtensions")
-        guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return false }
-        return urls.contains { $0.pathExtension == "systemextension" }
+        return InstallLocation.embedsSystemExtension(Bundle.main.bundleURL)
     }
 
     /// Activate the extension (no-op if this build doesn't embed one).
@@ -1076,7 +1074,12 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             let missing = (error as? OSSystemExtensionError)?.code == .extensionNotFound
             switch self.requestKind {
             case .activation:
-                self.fail("Extension activation failed: \(error.localizedDescription)")
+                if (error as? OSSystemExtensionError)?.code == .unsupportedParentBundleLocation {
+                    // Said plainly: macOS's own text doesn't say which folder (#412).
+                    self.fail("macOS only turns on the network filter when FreeSnitch runs from /Applications. Move FreeSnitch there and open it again.")
+                } else {
+                    self.fail("Extension activation failed: \(error.localizedDescription)")
+                }
             case .deactivation:
                 if missing {
                     self.uninstallState = .notInstalled

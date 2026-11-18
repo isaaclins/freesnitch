@@ -144,11 +144,10 @@ final class HelperClient: NSObject, ObservableObject {
     /// True when the bundle lives somewhere macOS will accept a background
     /// helper from. Launching straight off the mounted DMG is the single most
     /// common way this app ends up looking dead.
+    /// The rule lives in InstallLocation.isInApplications, so the move
+    /// question and registration always agree (#401).
     static var isInApplicationsFolder: Bool {
-        let path = Bundle.main.bundleURL.resolvingSymlinksInPath().path
-        if path.hasPrefix("/Applications/") { return true }
-        let userApps = (NSHomeDirectory() as NSString).appendingPathComponent("Applications") + "/"
-        return path.hasPrefix(userApps)
+        InstallLocation.isInApplications(Bundle.main.bundleURL)
     }
 
     static var hasBundledHelper: Bool {

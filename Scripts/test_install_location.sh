@@ -130,6 +130,31 @@ check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeS
       && !InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Downloads/FreeSnitch.app"), home: "/Users/x"),
       "Applications and ~/Applications count as installed, Downloads doesn't")
 
+// #412: macOS activates a system extension only from /Applications, so the
+// firewall build in ~/Applications is not installed. Real bundles, so the
+// rule reads the extension from the bundle itself, as the app does.
+let userApps = homeDir.appendingPathComponent("Applications", isDirectory: true)
+let firewallCopy = userApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+makeBundle(at: firewallCopy, build: "35")
+try! fm.createDirectory(at: firewallCopy.appendingPathComponent("Contents/Library/SystemExtensions/io.isaaclins.freesnitch.netext.systemextension"),
+                        withIntermediateDirectories: true)
+let monitorCopy = userApps.appendingPathComponent("Monitor/FreeSnitch.app", isDirectory: true)
+makeBundle(at: monitorCopy, build: "35")
+check(InstallLocation.embedsSystemExtension(firewallCopy) && !InstallLocation.embedsSystemExtension(monitorCopy),
+      "the firewall build is told apart from the monitor build by its embedded extension")
+check(!InstallLocation.isInApplications(firewallCopy, home: homeDir.path),
+      "a firewall build in ~/Applications doesn't count as installed")
+check(InstallLocation.isInApplications(monitorCopy, home: homeDir.path),
+      "a monitor build in ~/Applications still counts as installed")
+check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: homeDir.path, embedsSystemExtension: true),
+      "a firewall build in /Applications counts as installed")
+check(InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path),
+      "a firewall build in ~/Applications is asked to move at launch")
+check(!InstallLocation.shouldTrashOriginal(firewallCopy, home: homeDir.path),
+      "after a move, the ~/Applications copy stays, since its helper may still be registered")
+check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path)),
+      "a ~/Applications copy of an installed build offers to open the /Applications one")
+
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
 let none = LegacyPureSnitch.detect(listing: { nil }) { asked.append($0); return false }
