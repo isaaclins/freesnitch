@@ -189,7 +189,11 @@ extension InstallLocation {
 
     /// The installed copy macOS keeps running from a temporary location,
     /// worked out once: the running bundle doesn't change.
-    static let stuckInstalledCopy: URL? = translocatedInstalledCopy(original: translocatedOriginal(of: Bundle.main.bundleURL))
+    /// The demo never touches the real bundle; FREESNITCH_DEMO_STUCK=1 makes
+    /// it act as such a copy so the banner can be reviewed.
+    static let stuckInstalledCopy: URL? = isDemo
+        ? (ProcessInfo.processInfo.environment["FREESNITCH_DEMO_STUCK"] == "1" ? URL(fileURLWithPath: "/Applications/FreeSnitch.app") : nil)
+        : translocatedInstalledCopy(original: translocatedOriginal(of: Bundle.main.bundleURL))
 
     /// Says what the user has to do in Finder, since FreeSnitch can't.
     static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool, showInFinder: Bool = true) {
