@@ -22,9 +22,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// What macOS actually reported about removing the extension.
     ///
     /// Deactivation is a deliberate, user-initiated uninstall, never a repair
-    /// (see #24), and it commonly finishes only after a reboot. Accepting the
-    /// request is not success, so there is no state for "we asked": the value
-    /// only moves past `.deactivating` when the system answers.
+    /// (see #24). Accepting the request is not success, so there is no state
+    /// for "we asked": the value only moves past `.deactivating` when the
+    /// system answers.
+    ///
+    /// `.pendingReboot` is macOS's "terminated waiting to uninstall on
+    /// reboot": the extension process has stopped and, with the filter
+    /// configuration already removed, nothing filters any more. Only the
+    /// record stays until the next restart. That is a finished uninstall for
+    /// the user, not a step they still have to take (#391).
     enum UninstallState: Equatable {
         case idle
         case deactivating
@@ -32,7 +38,25 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case pendingReboot
         case removed
         case failed(String)
+
+        /// The extension no longer runs and no filter is left: the uninstall
+        /// may go on to remove the helper and the app.
+        var extensionIsGone: Bool {
+            switch self {
+            case .notInstalled, .pendingReboot, .removed: return true
+            case .idle, .deactivating, .failed: return false
+            }
+        }
     }
+
+    /// How long the uninstall waits for macOS to answer the deactivation
+    /// before macOS asks the person anything. Without a bound a
+    /// request macOS never answers left the uninstall waiting for good.
+    static let deactivationAnswerTimeout: TimeInterval = 120
+    /// Once macOS asks the person to allow the removal, they get this long.
+    static let approvalTimeout: TimeInterval = 600
+    static let noAnswer = "macOS did not answer in time."
+    static let filterSettingsKept = "macOS did not let FreeSnitch remove its network filter settings."
 
     private enum RequestKind {
         case activation
@@ -42,6 +66,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     @Published var status: Status = .idle
     @Published var uninstallState: UninstallState = .idle
+    /// macOS wants the person to allow removing the extension before it
+    /// answers, so the uninstall can say where.
+    @Published private(set) var uninstallNeedsApproval = false
     @Published var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
     )
@@ -51,6 +78,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private let log = OSLog(subsystem: AppConstants.bundleIdGUI, category: "sysext")
     private var bridge: AppCommunicationBridge?
     private var requestKind: RequestKind = .activation
+    /// Tells a timeout from an earlier attempt apart from the current one.
+    private var deactivationAttempt = 0
     private var filterConfigurationActive = false
     /// The boot-policy save cycle's decisions: queue, bounded retries of a
     /// failed save (#213), the enable request and cancellations (#310).
@@ -217,6 +246,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         OSSystemExtensionManager.shared.submitRequest(request)
     }
 
+    /// Replaces any running limit on the deactivation answer with a new one.
+    private func startDeactivationTimeout(after seconds: TimeInterval) {
+        deactivationAttempt &+= 1
+        let attempt = deactivationAttempt
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.deactivationAttempt == attempt, self.uninstallState == .deactivating else { return }
+            self.uninstallState = .failed(Self.noAnswer)
+        }
+    }
+
     /// Entry point for the uninstall flow in Settings. Under SIP the app is the
     /// only component macOS allows to deactivate this extension, so this is the
     /// real removal path, not a convenience wrapper.
@@ -233,11 +272,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             return
         }
         uninstallState = .deactivating
+        uninstallNeedsApproval = false
+        startDeactivationTimeout(after: Self.deactivationAnswerTimeout)
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
-            // answer to wait for. Still drop the filter configuration.
-            removeFilterConfiguration { }
-            uninstallState = .notInstalled
+            // answer to wait for. Still drop the filter configuration, and
+            // answer once that is done.
+            removeFilterConfiguration { [weak self] removed in
+                self?.uninstallState = removed ? .notInstalled : .failed(Self.filterSettingsKept)
+            }
             return
         }
         // Remove the filter configuration and WAIT for it, then deactivate.
@@ -249,8 +292,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // which is a large part of why uninstalling always ended in "waiting to
         // uninstall on reboot". And the deactivation request was submitted
         // without waiting for the asynchronous save, so the two raced.
-        removeFilterConfiguration { [weak self] in
+        removeFilterConfiguration { [weak self] removed in
             guard let self else { return }
+            // A filter configuration left in place keeps filtering with the
+            // user's rules. Going on would remove the app that controls it.
+            guard removed else {
+                self.uninstallState = .failed(Self.filterSettingsKept)
+                return
+            }
             self.requestKind = .deactivation
             let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: self.extensionIdentifier,
                                                                        queue: .main)
@@ -266,10 +315,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// re-approving anything. Removal is only correct when the user is taking
     /// FreeSnitch off the machine.
     ///
-    /// The completion runs on the main queue in every path, including the
-    /// failure paths: an uninstall that stalls because a preferences call
-    /// errored would be worse than one that continues and reports.
-    private func removeFilterConfiguration(completion: @escaping () -> Void) {
+    /// The completion runs on the main queue in every path and says whether no
+    /// configuration is left: removed now, or there was none. A failed read or
+    /// removal is false, so the uninstall stops instead of removing the app
+    /// that controls a filter that still runs (#391).
+    private func removeFilterConfiguration(completion: @escaping (Bool) -> Void) {
         unsavableLogged = false
         cancelPendingPersistence()
         filterTurnOffs &+= 1
@@ -277,13 +327,19 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
                 DispatchQueue.main.async {
-                    guard let self else { done(); completion(); return }
+                    guard let self else { done(); completion(false); return }
                     let mgr = NEFilterManager.shared()
                     if error != nil {
                         self.recordFilterDiagnostic(state: "unknown",
                                                     detail: "Could not read the content filter preferences while removing them.")
                         done()
-                        completion()
+                        completion(false)
+                        return
+                    }
+                    guard mgr.providerConfiguration != nil else {
+                        // Never installed, or already removed: nothing to do.
+                        done()
+                        completion(true)
                         return
                     }
                     mgr.removeFromPreferences { removeError in
@@ -304,7 +360,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 }
                             }
                             done()
-                            completion()
+                            completion(removeError == nil)
                         }
                     }
                 }
@@ -993,6 +1049,11 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                     self.uninstallState = .deactivating
                     self.checkExtensionPresence()
                 } else {
+                    // macOS's own answer that the removal is accepted and
+                    // completes at the next restart. The filter settings are
+                    // already confirmed removed before the request went out,
+                    // so nothing filters; taken as is rather than read back
+                    // through flags macOS doesn't document for this state.
                     self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
                     self.uninstallState = .pendingReboot
                 }
@@ -1025,9 +1086,13 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                 self.state?.appendLog(level: "info",
                                       message: "Network extension deactivation returned: \(error.localizedDescription)")
             case .properties:
-                // The system has no record left to describe. That is the only
-                // evidence available that the extension is actually gone.
-                self.uninstallState = missing ? .removed : .pendingReboot
+                // No record left to describe is the only evidence that the
+                // extension is gone. Any other failure means "cannot tell",
+                // which counts as still there: the uninstall must not remove
+                // the helper and the app on a guess.
+                self.uninstallState = missing
+                    ? .removed
+                    : .failed("macOS could not say whether the network extension stopped: \(error.localizedDescription)")
             }
         }
     }
@@ -1039,8 +1104,15 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             let records = properties.filter { $0.bundleIdentifier == self.extensionIdentifier }
             if records.isEmpty {
                 self.uninstallState = .removed
-            } else {
+            } else if records.allSatisfy({ $0.isUninstalling || !$0.isEnabled }) {
+                // "terminated waiting to uninstall on reboot". Either sign
+                // counts, since which flags macOS sets for that state is
+                // not documented: a record that is neither being uninstalled
+                // nor disabled is the only one still running. The filter
+                // settings are already removed by now, so nothing filters.
                 self.uninstallState = .pendingReboot
+            } else {
+                self.uninstallState = .failed("macOS still lists the network extension as installed.")
             }
         }
     }
@@ -1048,6 +1120,10 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
     nonisolated func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         Task { @MainActor in
             guard self.requestKind != .deactivation else {
+                self.uninstallNeedsApproval = true
+                // Waiting on the person now: give them a longer limit, but
+                // never none, or the window-less brew run would wait forever.
+                self.startDeactivationTimeout(after: Self.approvalTimeout)
                 // Removal can need approval too. Do not repaint the firewall
                 // status as "waiting to be switched on" while the user is
                 // switching it off.

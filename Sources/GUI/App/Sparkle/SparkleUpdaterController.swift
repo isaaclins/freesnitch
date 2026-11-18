@@ -11,7 +11,9 @@ final class SparkleUpdaterController {
 
     init() {
         standardController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            // The window-less run brew starts to remove the network
+            // extension starts nothing else (#391).
+            startingUpdater: !CommandLine.arguments.contains(AppDelegate.removeNetworkExtensionArgument),
             updaterDelegate: nil,
             userDriverDelegate: nil
         )

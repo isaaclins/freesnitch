@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 @main
 struct FreeSnitchApp: App {
@@ -105,7 +106,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    /// Started by `brew uninstall --cask freesnitch` (`open -n -W FreeSnitch.app
+    /// --args --remove-network-extension`): only this app may deactivate its
+    /// own network extension, so Homebrew asks it to. This run shows no
+    /// window, starts nothing else, removes the filter and the extension, and
+    /// exits 0 once macOS confirmed the extension is stopped, 1 otherwise.
+    /// `open -W` does not pass that status or the error text on, so the cask
+    /// reads the extension list itself afterwards and decides from that.
+    /// Homebrew removes the helper, the pf anchor and the app itself (#391).
+    static let removeNetworkExtensionArgument = "--remove-network-extension"
+    private var removalAnswer: AnyCancellable?
+
+    private func removeNetworkExtensionAndExit() {
+        NSApp.setActivationPolicy(.accessory)
+        removalAnswer = systemExtension.$uninstallState
+            .receive(on: DispatchQueue.main)
+            .sink { answer in
+                switch answer {
+                case .idle, .deactivating:
+                    return
+                case .failed(let reason):
+                    FileHandle.standardError.write(Data("FreeSnitch could not remove its network extension: \(reason)\n".utf8))
+                    exit(1)
+                case .notInstalled, .pendingReboot, .removed:
+                    exit(0)
+                }
+            }
+        systemExtension.deactivateForUninstall()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains(Self.removeNetworkExtensionArgument) {
+            removeNetworkExtensionAndExit()
+            return
+        }
         state.applyDockIconPolicy()
         windowManager = WindowManager(state: state, systemExtension: systemExtension)
         menubar = MenubarController(state: state, systemExtension: systemExtension, windows: windowManager)
@@ -154,6 +188,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "insights": self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
+                case "uninstall":
+                    self.windowManager.showSettings()
+                    self.windowManager.uninstallModel.present()
+                    // Walks through the steps by itself, so each screen can
+                    // be captured without clicking through the dialog.
+                    if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL"] != nil {
+                        self.windowManager.uninstallModel.begin()
+                    }
                 case "popover": self.menubar.showPopover()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
@@ -362,6 +404,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notice: nil,
             canUndo: false)
         ProfileClient.shared.adoptDemoSnapshot(snapshot)
+    }
+
+    /// Once the bundle is gone (the uninstall moved it to the Trash, or it was
+    /// dragged there), quitting ends the process outright from every path,
+    /// the menu bar and ⌘Q included: the orderly shutdown from a bundle that
+    /// is no longer there is where 1.1.0 hung until Force Quit (#391).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if !FileManager.default.fileExists(atPath: Bundle.main.bundlePath) {
+            menubar?.removeStatusItem()
+            exit(0)
+        }
+        return .terminateNow
     }
 
     /// The status item is the last visible trace of the app, so it goes before

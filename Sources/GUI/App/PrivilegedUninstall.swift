@@ -50,19 +50,15 @@ enum PrivilegedUninstall {
     /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite'" with administrator privileges
     """
 
-    /// Hand the app bundle to Finder instead of deleting it.
+    /// Move the app bundle to the Trash instead of deleting it.
     ///
-    /// This is the whole reason the privileged script above no longer touches
-    /// `/Applications/FreeSnitch.app`. Moving an app that hosts a system
-    /// extension to the Trash **through Finder** is what triggers macOS's own
-    /// extension removal. Objective Development document exactly this for
-    /// Little Snitch, and warn in the same breath not to remove such an app
-    /// "by any other means (like Terminal ...) because otherwise macOS won't
-    /// remove the system extension".
-    ///
-    /// `/bin/rm -rf` on the bundle, which is what this used to do, is that
-    /// forbidden path: it takes the app away and leaves the extension
-    /// installed, which is the opposite of uninstalling.
+    /// The network extension is already stopped by the time this runs: the
+    /// uninstall only gets here after macOS answered the deactivation request.
+    /// Moving the app to the Trash used to be what made macOS remove an
+    /// embedded system extension too, and Objective Development still tell
+    /// Little Snitch users to uninstall that way, but since macOS 15.3 it no
+    /// longer does. The explicit deactivation before this is the removal; the
+    /// Trash keeps the app recoverable rather than deleted outright.
     static func trashApplicationBundle(completion: @escaping (String?) -> Void) {
         // A demo never moves the real app to the Trash (#389).
         guard !DemoMode.isOn else { completion(nil); return }
@@ -108,5 +104,8 @@ enum PrivilegedUninstall {
         for target in targets {
             try? FileManager.default.removeItem(at: target)
         }
+        // The preferences daemon keeps its own copy and would write the plist
+        // back; dropping the domain is what actually forgets it.
+        UserDefaults.standard.removePersistentDomain(forName: AppConstants.bundleIdGUI)
     }
 }
