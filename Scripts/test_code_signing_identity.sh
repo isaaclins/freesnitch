@@ -674,7 +674,7 @@ expect(migrated.count == 1 && migrated[0].processBundleId == "com.google.Chrome"
        && migrated[0].hitCount == 3, "an existing rule survives the new column, with no team yet")
 var bound = migrated[0]
 bound.processTeamId = chromeTeam
-try! store.upsertRule(bound)
+_ = try! store.mutatePolicy { draft in draft.rules = draft.rules.map { $0.id == bound.id ? bound : $0 } }
 expect(store.allRules().first?.processTeamId == chromeTeam, "a learned team is stored")
 expect((try? RuleStore(path: dbPath))?.allRules().first?.processTeamId == chromeTeam,
        "opening the store again keeps the column and the team")

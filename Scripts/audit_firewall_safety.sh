@@ -266,7 +266,7 @@ for ingest_func in 'func addRule[(]' 'func reloadRules[(]'; do
     }
   ' "$HELPER")"
   reason_line="$(printf '%s\n' "$ingest_body" | grep -nF 'rejectionReason(for:' | head -1 | cut -d: -f1 || true)"
-  persist_line="$(printf '%s\n' "$ingest_body" | grep -nE 'store\.upsertRule|mutatePolicy' | head -1 | cut -d: -f1 || true)"
+  persist_line="$(printf '%s\n' "$ingest_body" | grep -nF 'mutatePolicy' | head -1 | cut -d: -f1 || true)"
   [[ -n "$reason_line" && -n "$persist_line" ]] \
     || fail "a helper rule ingest path stores rules without an address rejection check"
   (( reason_line < persist_line )) \
@@ -1402,6 +1402,12 @@ require_text "$FILTER" "received.generation < current.generation" \
   "the extension does not reject a lower-generation live snapshot before assignment"
 require_text "$FILTER" "received.generation == current.generation" \
   "the extension does not check equal-generation split-brain content"
+# A store method that changes rules outside mutatePolicy keeps the policy
+# generation, and republishing under an old generation is refused by the
+# extension as split-brain, which stops filtering (#438).
+if grep -nE 'public func (upsertRule|deleteRule|insertRule|replaceRules)\b' "$RULE_STORE"; then
+  fail "RuleStore exposes a rule write that does not advance the policy generation; use mutatePolicy"
+fi
 require_text "$FILTER" "setSnapshotLocked(accepted)" \
   "the extension does not assign only after the generation gate"
 generation_check_line="$(grep -nF 'received.generation < current.generation' "$FILTER" | head -1 | cut -d: -f1 || true)"

@@ -563,10 +563,6 @@ public final class RuleStore: @unchecked Sendable {
         for rule in rules { try upsertRuleLocked(rule) }
     }
 
-    public func upsertRule(_ r: Rule) throws {
-        try queue.sync { try upsertRuleLocked(r) }
-    }
-
     private func upsertRuleLocked(_ r: Rule) throws {
         let sql = """
         INSERT OR REPLACE INTO rules(
@@ -597,14 +593,6 @@ public final class RuleStore: @unchecked Sendable {
             if let l = r.lastUsedAt { sqlite3_bind_double(stmt, 19, l.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 19) }
             sqlite3_bind_int(stmt, 20, Int32(r.hitCount))
             bindOpt(stmt, 21, r.processTeamId)
-        }
-    }
-
-    public func deleteRule(id: UUID) throws {
-        try queue.sync {
-            try executeLocked("DELETE FROM rules WHERE id=?;") { stmt in
-                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
-            }
         }
     }
 
