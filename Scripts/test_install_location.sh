@@ -250,3 +250,13 @@ printf '%s\n' "$outside" | grep -q 'delegate.windowManager?.showPage' \
   || { echo "install location: FAIL: could not find the menu commands to check" >&2; exit 1; }
 echo "install location: PASS: menu commands and reopen do nothing until the window manager exists"
 
+
+# #375: every helper-repair message for the wrong location goes through the
+# one advice that knows about a stuck installed copy, so none of them tells
+# someone whose copy is already in Applications to move it there.
+if grep -n '"Move FreeSnitch to /Applications' "$ROOT/Sources/GUI/App/HelperClient.swift"; then
+  echo "install location: FAIL: a repair message gives move advice without checking for a stuck installed copy" >&2; exit 1
+fi
+[ "$(grep -c 'InstallLocation.wrongLocationRepairAdvice' "$ROOT/Sources/GUI/App/HelperClient.swift")" -ge 2 ] \
+  || { echo "install location: FAIL: could not find both repair messages to check" >&2; exit 1; }
+echo "install location: PASS: helper repair gives reinstall advice for a stuck installed copy"

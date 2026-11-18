@@ -235,6 +235,14 @@ extension InstallLocation {
         ? (ProcessInfo.processInfo.environment["FREESNITCH_DEMO_STUCK"] == "1" ? URL(fileURLWithPath: "/Applications/FreeSnitch.app") : nil)
         : translocatedInstalledCopy(original: translocatedOriginal(of: Bundle.main.bundleURL))
 
+    /// What the helper repair says when FreeSnitch isn't running from
+    /// Applications. A stuck installed copy needs a reinstall, not a move.
+    static var wrongLocationRepairAdvice: String {
+        stuckInstalledCopy == nil
+            ? "Move FreeSnitch to /Applications before registering the helper."
+            : "macOS runs FreeSnitch from a temporary copy. Move it from Applications to the Trash in Finder, drag it in again from the disk image, then register the helper."
+    }
+
     /// Says what the user has to do in Finder, since FreeSnitch can't.
     static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool, showInFinder: Bool = true) {
         NSApp.activate(ignoringOtherApps: true)
@@ -244,7 +252,7 @@ extension InstallLocation {
         let why = flagCleared
             ? "macOS still runs the copy in Applications from a temporary location"
             : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
-        alert.informativeText = "\(why), so it can't install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+        alert.informativeText = "\(why), so FreeSnitch can't install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
         alert.addButton(withTitle: "Show in Finder")
         alert.addButton(withTitle: "Not Now")
         if alert.runModal() == .alertFirstButtonReturn, showInFinder {
