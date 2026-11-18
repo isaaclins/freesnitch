@@ -1076,7 +1076,7 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             case .activation:
                 if (error as? OSSystemExtensionError)?.code == .unsupportedParentBundleLocation {
                     // Said plainly: macOS's own text doesn't say which folder (#412).
-                    self.fail("macOS only turns on the network filter when FreeSnitch runs from /Applications. Move FreeSnitch there and open it again.")
+                    self.fail("macOS only turns on the network filter when FreeSnitch runs from the main Applications folder (/Applications). Put FreeSnitch there and open it from there.")
                 } else {
                     self.fail("Extension activation failed: \(error.localizedDescription)")
                 }
