@@ -1323,17 +1323,17 @@ struct RulesManagerView: View {
     }
 
     /// An edited rule keeps its id, so the helper stores it in place of the
-    /// old one, the same write Enable, Disable and Applies To make. The edit
-    /// goes over the rule as it is now, not as it was when the sheet opened,
-    /// so a change made elsewhere meanwhile (a learned team, a profile move)
-    /// is not undone, and a rule removed meanwhile is not brought back.
+    /// old one, the same write Enable, Disable and Applies To make. Only the
+    /// fields the user changed are written, over the rule as it is now, so a
+    /// change made elsewhere meanwhile (a toggle or profile move from the CLI,
+    /// a learned team) is not undone, and a removed rule is not brought back.
     private func saveEdit(_ edit: RuleEdit, to original: Rule) {
         guard let current = state.rules.first(where: { $0.id == original.id }) else {
             showError("Could not save the changes to \(Self.describe(original))",
                       "The rule was removed while you were editing it.")
             return
         }
-        let rule = edit.applied(to: current)
+        let rule = edit.applied(to: current, openedWith: original)
         state.helper.addRule(rule) { ok, message in
             guard ok else {
                 showError("Could not save the changes to \(Self.describe(rule))",

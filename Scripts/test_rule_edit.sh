@@ -109,13 +109,22 @@ let anyApp = edit(saved, process: .anyApp).applied(to: saved)
 guard anyApp.processPath == nil, anyApp.processName == nil else { fail("removing the app kept it") }
 pass("a new app, no app and a cleared port are saved, and the moved rule matches the new app")
 
-// The edit goes over the rule as it is at save time: a team learned while the
-// sheet was open is kept.
-var learnedMeanwhile = original
-learnedMeanwhile.processTeamId = "FGHIJ67890"
-let late = edit(original, action: .allow).applied(to: learnedMeanwhile)
-guard late.processTeamId == "FGHIJ67890" else { fail("a team learned while the sheet was open was undone") }
-pass("an edit applies over the current rule, not the snapshot the sheet opened with")
+// Only what the user changed is written, over the rule as it is at save time:
+// a team learned, a toggle or a profile move made elsewhere (the CLI) while
+// the sheet was open stays. A field the user did change wins.
+var meanwhile = original
+meanwhile.processTeamId = "FGHIJ67890"
+meanwhile.enabled = false
+meanwhile.profile = "Work"
+let late = edit(original, action: .allow).applied(to: meanwhile, openedWith: original)
+guard late.processTeamId == "FGHIJ67890", !late.enabled, late.profile == "Work", late.action == .allow else {
+    fail("a change made while the sheet was open was undone: \(late)")
+}
+var reEnabled = edit(original, action: .allow)
+reEnabled.profile = "Cafe"
+let both = reEnabled.applied(to: meanwhile, openedWith: original)
+guard both.profile == "Cafe", !both.enabled else { fail("the user's own profile change lost, or an untouched toggle was reverted") }
+pass("an edit writes only the fields the user changed, over the current rule")
 
 // The edit is still a valid rule for the transport the helper checks.
 do { try RuleTransportBoundary.validate(rule: saved) } catch { fail("the edited rule is refused: \(error)") }
@@ -136,7 +145,7 @@ xcrun swiftc -O \
 
 # The sheet uses this merge, and every way into it is wired.
 SRC="$ROOT/Sources/GUI/Views/RulesManager.swift"
-grep -Fq 'edit.applied(to: current)' "$SRC" || { echo 'rule edit: FAIL: the sheet does not use RuleEdit' >&2; exit 1; }
+grep -Fq 'edit.applied(to: current, openedWith: original)' "$SRC" || { echo 'rule edit: FAIL: the sheet does not use RuleEdit' >&2; exit 1; }
 grep -Fq 'Button("Edit Rule\u{2026}")' "$SRC" || { echo 'rule edit: FAIL: no Edit Rule item in the context menu' >&2; exit 1; }
 grep -Fq 'if let existingRule, processBundleID == (existingRule.processBundleId ?? "")' "$SRC" || { echo 'rule edit: FAIL: choosing another app keeps the old bundle id' >&2; exit 1; }
 grep -Fq 'primaryAction:' "$SRC" || { echo 'rule edit: FAIL: double-click does not open the editor' >&2; exit 1; }

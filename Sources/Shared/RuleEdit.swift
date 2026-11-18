@@ -44,8 +44,18 @@ public struct RuleEdit: Equatable, Sendable {
         self.enabled = enabled
     }
 
+    /// The rule as the sheet leaves it, when it opened on that same rule.
     public func applied(to original: Rule) -> Rule {
-        var rule = original
+        applied(to: original, openedWith: original)
+    }
+
+    /// Writes only what the user changed in the sheet, compared with the
+    /// rule it opened with, over the rule as it is now. Something changed
+    /// elsewhere while the sheet was open (a toggle or profile move from the
+    /// CLI, a learned signing team) stays, unless the user changed that same
+    /// field in the sheet.
+    public func applied(to current: Rule, openedWith snapshot: Rule) -> Rule {
+        var rule = current
         switch process {
         case .unchanged: break
         case .app(let path, let name):
@@ -55,21 +65,22 @@ public struct RuleEdit: Equatable, Sendable {
             rule.processPath = nil
             rule.processName = nil
         }
-        rule.processBundleId = bundleId
-        // The signing team belongs to the bundle id the rule was made for. A
-        // new bundle id has to learn its own team, never inherit the old one.
-        if rule.processBundleId != original.processBundleId {
-            rule.processTeamId = nil
+        if bundleId != snapshot.processBundleId {
+            rule.processBundleId = bundleId
+            // The signing team belongs to the bundle id the rule was made
+            // for. A new bundle id has to learn its own team, never inherit
+            // the old one.
+            if rule.processBundleId != current.processBundleId { rule.processTeamId = nil }
         }
-        rule.remoteHost = remoteHost
-        rule.remoteIP = remoteIP
-        rule.remotePort = remotePort
-        rule.direction = direction
-        rule.action = action
-        rule.scope = scope
-        rule.profile = profile
-        rule.notes = notes
-        rule.enabled = enabled
+        if remoteHost != snapshot.remoteHost { rule.remoteHost = remoteHost }
+        if remoteIP != snapshot.remoteIP { rule.remoteIP = remoteIP }
+        if remotePort != snapshot.remotePort { rule.remotePort = remotePort }
+        if direction != snapshot.direction { rule.direction = direction }
+        if action != snapshot.action { rule.action = action }
+        if scope != snapshot.scope { rule.scope = scope }
+        if profile != snapshot.profile { rule.profile = profile }
+        if notes != snapshot.notes { rule.notes = notes }
+        if enabled != snapshot.enabled { rule.enabled = enabled }
         return rule
     }
 }
