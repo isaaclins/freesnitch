@@ -1717,7 +1717,9 @@ struct RuleEditorView: View {
                             Text(RuleApplication.notAnAppDetail).font(.caption).foregroundColor(.red)
                         }
                         Text(app == nil
-                             ? "Choose an app or drop one here. Without one, the rule applies to every app."
+                             ? (processBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? "Choose an app or drop one here. Without one, the rule applies to every app."
+                                : "Applies to the app with the bundle ID below. Choose the app to cover the helpers inside it too.")
                              : "Covers the app and the helpers inside it. Web pages shown in Apple's web views, as in Safari or Mail, load through a macOS process outside the app.")
                             .font(.caption).foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
