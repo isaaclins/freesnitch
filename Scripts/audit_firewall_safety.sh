@@ -1408,6 +1408,18 @@ require_text "$FILTER" "received.generation == current.generation" \
 if grep -nE 'public func (upsertRule|deleteRule|insertRule|replaceRules)\b' "$RULE_STORE"; then
   fail "RuleStore exposes a rule write that does not advance the policy generation; use mutatePolicy"
 fi
+# Same policy or not is decided by one shared definition that leaves out usage
+# counters. Comparing whole rules made a resend after a counted match look like
+# split-brain, and filtering stopped (#438).
+require_text "$FILTER" "!SharedRuleBridge.PolicyContent.same(received, current)" \
+  "the extension's split-brain check does not use the shared policy content"
+require_text "$BRIDGE" "guard PolicyContent.same(current, received) else {" \
+  "the live snapshot gate does not use the shared policy content"
+require_text "$BRIDGE" "let rules = PolicyContent.rules(snapshot.rules)" \
+  "the watermark digest does not use the shared policy content"
+if grep -nE '\.rules[[:space:]]*(==|!=)' "$FILTER" "$BRIDGE"; then
+  fail "a policy comparison uses whole rules, usage counters included; use SharedRuleBridge.PolicyContent"
+fi
 require_text "$FILTER" "setSnapshotLocked(accepted)" \
   "the extension does not assign only after the generation gate"
 generation_check_line="$(grep -nF 'received.generation < current.generation' "$FILTER" | head -1 | cut -d: -f1 || true)"
