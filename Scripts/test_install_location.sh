@@ -288,7 +288,7 @@ echo "install location: PASS: a copy outside Applications shows Move before Repa
 helper_swift="$ROOT/Sources/GUI/App/HelperClient.swift"
 awk '/func reregisterAfterCopy/ { inside = 1 } inside && /unregister/ { bad = 1 } inside && /^    }$/ { inside = 0 } END { exit bad ? 1 : 0 }' "$helper_swift" \
   && grep -q 'if isInUserApplications(original) {' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
-  && grep -A2 'case .alreadyEnabled:' "$helper_swift" | grep -q 'takeReregisterRequest' \
+  && grep -A4 'let reregister = InstallLocation.takeReregisterRequest()' "$helper_swift" | grep -q 'case .alreadyEnabled:' \
   || { echo "install location: FAIL: the copy out of ~/Applications doesn't hand the helper over, or the handover can unregister" >&2; exit 1; }
 echo "install location: PASS: a copy out of ~/Applications registers the helper again from /Applications, without unregistering"
 app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"

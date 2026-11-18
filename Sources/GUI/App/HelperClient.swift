@@ -187,10 +187,12 @@ final class HelperClient: NSObject, ObservableObject {
         guard !DemoMode.isOn else { return }
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
+        // Read and cleared on every launch, so it can't linger (#418).
+        let reregister = InstallLocation.takeReregisterRequest()
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
         case .alreadyEnabled:
             installState = .enabled
-            if InstallLocation.takeReregisterRequest() {
+            if reregister {
                 reregisterAfterCopy(service)
             }
         case .register:
