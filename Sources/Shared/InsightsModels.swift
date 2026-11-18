@@ -573,6 +573,11 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
     /// Bundle identifier when known, otherwise the executable path. Required
     /// for `.destinations`.
     public let appIdentity: String?
+    /// A destination as the store keys it: the name when one was asked for,
+    /// otherwise the address. Only for `.apps`, where it narrows the list to
+    /// the apps that reached this one destination, so a shared address can be
+    /// traced back to every app behind it (#435).
+    public let destinationKey: String?
     public let since: Date
     public let until: Date
     public let limit: Int
@@ -580,6 +585,7 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
 
     public init(kind: InsightsQueryKind,
                 appIdentity: String? = nil,
+                destinationKey: String? = nil,
                 since: Date,
                 until: Date = Date(),
                 limit: Int = 50,
@@ -587,6 +593,7 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.kind = kind
         self.appIdentity = appIdentity
+        self.destinationKey = destinationKey
         self.since = since
         self.until = until
         self.limit = limit
@@ -620,6 +627,12 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
         if let appIdentity {
             guard !appIdentity.isEmpty, appIdentity.utf8.count <= InsightsLimits.maxPathLength else {
                 throw InsightsValidationError.invalidField("appIdentity")
+            }
+        }
+        if let destinationKey {
+            guard kind == .apps, !destinationKey.isEmpty,
+                  destinationKey.utf8.count <= InsightsLimits.maxHostLength else {
+                throw InsightsValidationError.invalidField("destinationKey")
             }
         }
         if kind == .destinations {

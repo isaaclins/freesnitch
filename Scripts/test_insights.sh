@@ -206,6 +206,33 @@ struct InsightsHarness {
         equal(rollupSegment?.otherAppCount, 2, "correlation also works on the rollup path")
         equal(rollupSegment?.resolvedDomain, "api.segment.io", "the DNS join also works on the rollup path")
 
+        // MARK: the apps behind one shared destination (#435)
+        let sharedRaw = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: segmentIP,
+                                                            since: now.addingTimeInterval(-day), limit: 50))
+        equal(sharedRaw.apps.map(\.appIdentity), ["com.beeper.app", "com.slack.app", "com.apple.Notes"],
+              "a shared address lists every app that reached it, busiest first")
+        equal(sharedRaw.apps.map(\.connectionCount), [3, 2, 1], "each app keeps its own count for that address")
+        equal(sharedRaw.apps.first?.processPath, "/Applications/Beeper.app", "the app behind a shared address carries its path")
+        let bareRaw = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: bareIP,
+                                                          since: now.addingTimeInterval(-day), limit: 50))
+        equal(bareRaw.apps.map(\.appIdentity), ["com.beeper.app"], "an address one app reached names only that app")
+        let sharedRollup = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: segmentIP,
+                                                               since: now.addingTimeInterval(-300 * day), limit: 50))
+        equal(sharedRollup.source, .dailyRollups, "the shared-address list past 14 days comes from rollups")
+        equal(sharedRollup.apps.map(\.appIdentity), ["com.beeper.app", "com.slack.app", "com.apple.Notes"],
+              "rollups name the apps behind a shared address too, not only a count")
+        equal(sharedRollup.apps.first?.connectionCount, 4, "the rollup count for one app includes its old event")
+        let injected = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: "' OR 1=1 --",
+                                                           since: now.addingTimeInterval(-day), limit: 50))
+        check(injected.apps.isEmpty, "a destination key is bound, never spliced into the query")
+        expectThrow("a destination key on a query other than apps") {
+            _ = try store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.beeper.app",
+                                                destinationKey: segmentIP, since: now.addingTimeInterval(-day), limit: 50))
+        }
+        expectThrow("an empty destination key") {
+            _ = try store.report(for: InsightsQuery(kind: .apps, destinationKey: "", since: now.addingTimeInterval(-day), limit: 50))
+        }
+
         // MARK: query bounds
         expectThrow("a page size of zero") {
             _ = try store.report(for: InsightsQuery(kind: .apps, since: now.addingTimeInterval(-day), limit: 0))
