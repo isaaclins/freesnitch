@@ -8,7 +8,12 @@ final class AppState: ObservableObject {
     /// Honest first-launch default. The helper's persisted policy replaces this
     /// as soon as it connects; until then the UI must not imply a fresh install
     /// is blocking when it is allowing and learning.
-    @Published var mode: AppMode = .silentAllow
+    /// The mode the helper enforces: the active profile's. Until the helper
+    /// first answers, it is the last mode the helper reported, not a guess, so
+    /// Insights does not claim Silent Allow on launch while Alert is in force
+    /// (#452).
+    @Published var mode: AppMode = AppPreferences.string(forKey: AppPreferences.Key.mode)
+        .flatMap(AppMode.init(rawValue:)) ?? .silentAllow
     @Published var connections: [Connection] = []
     @Published var rules: [Rule] = []
     @Published var profiles: [Profile] = []
@@ -480,8 +485,16 @@ final class AppState: ObservableObject {
 
     /// The status response is only a reachability hint. Refreshing the
     /// persisted mode also fetches the helper's complete authoritative policy.
+    /// Takes the mode from the helper's status, which is the active profile's
+    /// mode and so the one the helper enforces. It is shown at once and does
+    /// not wait for the full rule snapshot: when that snapshot could not be
+    /// fetched, the app kept showing its launch default while another mode was
+    /// enforced (#452). The snapshot is still requested so the extension gets
+    /// the new policy.
     func adoptPersistedMode(_ m: AppMode) {
         guard mode != m else { return }
+        mode = m
+        AppPreferences.set(m.rawValue, forKey: AppPreferences.Key.mode, notify: false)
         syncSharedRules()
     }
 
