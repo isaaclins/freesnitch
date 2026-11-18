@@ -33,14 +33,17 @@ expect(denied.contains("Operation not permitted") && denied.contains("SMAppServi
 expect(denied.contains("Allow in the Background"), "switched-off helper points at Login Items")
 
 expect(msg("kSMErrorDomainFramework", 11, "Launch denied", true).contains("Allow in the Background"), "launch denied by user points at Login Items")
-expect(msg("SMAppServiceErrorDomain", 3, "Invalid signature", true).contains("signed release again"), "bad signature says reinstall")
+expect(msg("kSMErrorDomainFramework", 3, "Invalid signature", true).contains("signed release again"), "bad signature says reinstall")
 expect(msg("SMAppServiceErrorDomain", 108, "Unable to read plist", true).contains("declaration"), "unreadable plist says reinstall")
 
 expect(!msg("SMAppServiceErrorDomain", 3, "No such process", true).contains("signed"), "code 3 that isn't a signature error gets no signature advice")
-expect(msg("SMAppServiceErrorDomain", 9, "Job must be enabled", true).contains("Allow in the Background"), "must-be-enabled points at Login Items")
+expect(msg("kSMErrorDomainFramework", 9, "Job must be enabled", true).contains("Allow in the Background"), "must-be-enabled points at Login Items")
 expect(!msg("kSMErrorDomainLaunchd", 11, "Resource deadlock avoided", true).contains("Allow in the Background"), "launchd errno codes get no kSMError advice")
+expect(!msg("SMAppServiceErrorDomain", 11, "Resource deadlock avoided", true).contains("Allow in the Background"), "errno-style codes in SMAppServiceErrorDomain get no kSMError advice")
+expect(!msg("SMAppServiceErrorDomain", 1, "Something else", true).contains("Allow in the Background"), "code 1 only means switched off when macOS says not permitted")
 let fallback = msg("SMAppServiceErrorDomain", 1, "The operation couldn't be completed. (SMAppServiceErrorDomain error 1.)", true)
 expect(fallback.components(separatedBy: "SMAppServiceErrorDomain").count == 2, "fallback description doesn't repeat the domain and code")
+expect(fallback.contains("error 1.) Retry.") && !fallback.contains(".)."), "fallback description ends cleanly")
 
 let other = msg("NSPOSIXErrorDomain", 5, "Input/output error.", true)
 expect(!other.contains(move), "unrelated error: no move advice")
