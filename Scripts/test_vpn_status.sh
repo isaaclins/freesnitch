@@ -98,6 +98,10 @@ struct Verify {
         check("the DNS line names the domains that bypass FreeSnitch",
               VPNStatus.dnsSummary(work, routesThroughProxy: true)
                 == "Lookups for corp.example, git.example go to Work, so FreeSnitch's DNS blocking doesn't apply to those names.")
+        check("with the Mac not pointed at FreeSnitch a split-DNS VPN owns no DNS, so the general advice stays",
+              VPNStatus.dnsOwner(work) == nil)
+        check("and the domain sentence is still there to add to it",
+              VPNStatus.dnsSummary(work, routesThroughProxy: false)?.hasPrefix("Lookups for corp.example") == true)
 
         // 6. A full-tunnel VPN app with no name set and its own resolver,
         //    while the user had set the Mac's DNS to FreeSnitch: the VPN wins.

@@ -118,7 +118,7 @@ public enum VPNStatus {
         guard let first = vpns.first else { return nil }
         let names = vpns.count == 1 ? "\(first.displayName) is" : "\(vpns.count) VPNs are"
         return "\(names) connected. Your rules still apply to every app's connections through the tunnel. "
-            + "If the VPN stops connecting while FreeSnitch is on, check that the VPN app is not denied in Rules."
+            + "If the VPN stops connecting while FreeSnitch is on, check that neither the VPN app nor its network extension is denied in Rules."
     }
 
     /// What the connected VPNs mean for FreeSnitch's DNS protection, or nil

@@ -290,14 +290,18 @@ struct SettingsView: View {
             return ("Yes", "This Mac's DNS server is FreeSnitch, which filters lookups and forwards the rest over HTTPS. "
                     + (vpnDNS ?? "A DNS profile, VPN or DNS app can still take some or all lookups elsewhere."))
         }
-        if let vpnDNS {
+        // Only a VPN that takes every lookup replaces the advice below. A
+        // split-DNS one takes just its domains, so the rest still bypass
+        // FreeSnitch the ordinary way and the advice stands.
+        if let vpnDNS, VPNStatus.dnsOwner(network.vpns) != nil {
             return ("No", vpnDNS)
         }
         let servers = systemResolvers.isEmpty
             ? "the resolver your network or a DNS app provides"
             : systemResolvers.joined(separator: ", ")
         return ("No",
-                "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that. Set it back before you turn enforcement off or remove FreeSnitch, or this Mac cannot look up names.")
+                "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that. Set it back before you turn enforcement off or remove FreeSnitch, or this Mac cannot look up names."
+                + (vpnDNS.map { " " + $0 } ?? ""))
     }
 
     /// "Tailscale (utun4)", one per connected VPN.
