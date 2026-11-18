@@ -80,6 +80,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// The pending turn-on follows the filter being turned on in System
     /// Settings, so it must not turn it on against a later turn-off there.
     private var turnOnFromSettings = false
+    /// The status shows a turn-on that was given up because the helper had
+    /// no rules. Turning the filter off in System Settings afterwards means
+    /// not filtering, not that failure (#382).
+    private var abandonedTurnOnShown = false
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
@@ -117,7 +121,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // Turned off or removed in System Settings: nothing filters, so
             // stop saying the firewall is active (#361). Only a firewall shown
             // as on changes; approval or a turn-on in progress keep their state.
-            if filterConfigurationActive && !persistenceCycle.enableRequested {
+            // A turn-on shown as failed for lack of rules counts too (#382).
+            if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {
                 showNotFiltering()
             }
         case .saveCurrentRules:
@@ -310,6 +315,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func enableFilter(fromSettings: Bool = false) {
         turnOnFromSettings = fromSettings
+        abandonedTurnOnShown = false
         // A snapshot kept for a retry is never the policy activation saves:
         // only the helper's fresh answer below may enable the filter.
         dropScheduledSave()
@@ -758,6 +764,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// then (#335). A build without the extension stays "unsupported".
     private func showNotFiltering() {
         filterConfigurationActive = false
+        abandonedTurnOnShown = false
         if status != .unsupported { status = .idle }
     }
 
@@ -887,7 +894,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {
-            fail("filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")")
+            let message = "filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")"
+            if turnOnFromSettings {
+                reportAbandonedSettingsTurnOn(message)
+            } else {
+                failAbandonedTurnOn(message)
+            }
             return
         }
         guard filterConfigurationActive else { return }
@@ -897,6 +909,46 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         let detail = snapshotStatus.message ?? "no snapshot has been received"
         status = .failed("filter snapshot unavailable: \(detail)")
+    }
+
+    /// The helper gave no rules for a turn-on that followed the filter being
+    /// turned on in System Settings. Changes made there are not read while a
+    /// turn-on is pending, so it may have been turned off or removed there
+    /// again meanwhile: then the filter is off as the user set it, and the
+    /// app says not filtering instead of a failed turn-on (#382). Read in its
+    /// turn on the preferences line, so it sees every earlier save.
+    private func reportAbandonedSettingsTurnOn(_ message: String) {
+        turnOnFromSettings = false
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); return }
+                    let mgr = NEFilterManager.shared()
+                    let configured = mgr.providerConfiguration != nil
+                    let enabled = mgr.isEnabled
+                    done()
+                    // A newer turn-on reports the state itself.
+                    guard !self.persistenceCycle.enableRequested else { return }
+                    if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: error != nil,
+                                                            configured: configured, enabled: enabled) {
+                        self.failAbandonedTurnOn(message)
+                        return
+                    }
+                    self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))
+                    // Approval or an activation started meanwhile keep their state.
+                    guard self.status != .needsApproval && self.status != .activating else { return }
+                    self.showNotFiltering()
+                    self.state?.appendLog(level: "info",
+                                          message: "Firewall not filtering: the helper sent no rules to turn it on with, "
+                                              + "and the filter was turned off or removed in System Settings meanwhile.")
+                }
+            }
+        }
+    }
+
+    private func failAbandonedTurnOn(_ message: String) {
+        fail(message)
+        abandonedTurnOnShown = true
     }
 
     private func fail(_ message: String) {
