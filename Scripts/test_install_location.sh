@@ -190,9 +190,9 @@ swiftc -O -o "$TMP/run" "$TMP/main.swift" "$TMP/stubs.swift" \
 # Static guards: the privileged removal never names FreeSnitch, and the
 # move never deletes the installed copy.
 script="$(awk '/private static let removeDaemon = """/ { on = 1; next } on && /^    """$/ { exit } on' "$ROOT/Sources/GUI/App/LegacyPureSnitch.swift")"
-printf '%s\n' "$script" | grep -q 'launchctl bootout system/io.isaaclins.puresnitch.helper' \
+grep -q 'launchctl bootout system/io.isaaclins.puresnitch.helper' <<<"$script" \
   || { echo "install location: FAIL: could not read the PureSnitch removal script" >&2; exit 1; }
-printf '%s\n' "$script" | grep -qi 'freesnitch' \
+grep -qi 'freesnitch' <<<"$script" \
   && { echo "install location: FAIL: the PureSnitch removal script names FreeSnitch" >&2; exit 1; }
 echo "install location: PASS: the PureSnitch removal script never names FreeSnitch"
 if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination|installed)' "$ROOT/Sources/GUI/App/InstallLocation.swift"; then
@@ -212,7 +212,7 @@ outside="$(awk '/func applicationDidFinishLaunching/ { skip = 1 } skip && /^    
 if printf '%s\n' "$outside" | grep -nE 'windowManager[.!]'; then
   echo "install location: FAIL: the window manager is used without a check outside launch setup" >&2; exit 1
 fi
-printf '%s\n' "$outside" | grep -q 'delegate.windowManager?.showPage' \
+grep -q 'delegate.windowManager?.showPage' <<<"$outside" \
   || { echo "install location: FAIL: could not find the menu commands to check" >&2; exit 1; }
 echo "install location: PASS: menu commands and reopen do nothing until the window manager exists"
 
