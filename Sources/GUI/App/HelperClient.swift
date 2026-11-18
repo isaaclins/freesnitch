@@ -169,6 +169,8 @@ final class HelperClient: NSObject, ObservableObject {
     /// System Settings.
     @discardableResult
     func unregisterDaemonForUninstall() -> String? {
+        // A demo never removes the real helper (#389).
+        guard !DemoMode.isOn else { return nil }
         guard let service else { return "SMAppService cannot manage the helper on this macOS version." }
         do {
             try service.unregister()
@@ -183,6 +185,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// silently no-ops (the root cause of "no rules / no traffic"). Requires a
     /// signed build; the user approves it in System Settings under Login Items.
     func registerDaemon() {
+        guard !DemoMode.isOn else { return }
         guard Self.isInApplicationsFolder else { installState = .wrongLocation; return }
         guard let service else { installState = .notRegistered; return }
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
@@ -285,7 +288,7 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     private func repairHelperInternal() {
-        guard !isRepairing else { return }
+        guard !DemoMode.isOn, !isRepairing else { return }
         repairState = .inProgress
         guard Self.isInApplicationsFolder else {
             installState = .wrongLocation
@@ -380,6 +383,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// afterwards hops back. Cancelling is not treated as a failure to shout
     /// about, because the user declining must be a normal outcome.
     private func performPrivilegedKickstart() {
+        guard !DemoMode.isOn else { return }
         let previous = versionState
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = PrivilegedRepair.kickstartHelper()

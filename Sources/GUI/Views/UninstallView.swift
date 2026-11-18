@@ -58,7 +58,6 @@ final class UninstallFlowModel: ObservableObject {
     private let state: AppState
     private let systemExtension: SystemExtensionManager
     private var extensionAnswer: AnyCancellable?
-    private let demo = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1"
 
     init(state: AppState, systemExtension: SystemExtensionManager) {
         self.state = state
@@ -91,9 +90,15 @@ final class UninstallFlowModel: ObservableObject {
     func present() { isPresented = true }
 
     /// The one confirmed action. Everything after it runs by itself.
-    func start() {
+    func begin() {
+        guard !DemoMode.isOn else {
+            // Sample data only: the steps are shown, nothing is turned off or
+            // removed on this Mac (#389).
+            phase = .removingFilter
+            runDemo()
+            return
+        }
         phase = .removingFilter
-        if demo { runDemo(); return }
         // Enforcement first: the pf anchor and the DNS proxy belong to the
         // helper, and the user asked for the firewall to stop. This is the
         // same path the Enforcement toggle uses.
@@ -102,7 +107,7 @@ final class UninstallFlowModel: ObservableObject {
         }
         state.appendLog(level: "info", message: "Uninstall: turning off and removing the network filter.")
         if systemExtension.uninstallState.extensionIsGone {
-            removeHelperAndData()
+            finish()
             return
         }
         systemExtension.deactivateForUninstall()
@@ -111,14 +116,14 @@ final class UninstallFlowModel: ObservableObject {
     func retry() {
         guard case .failed(let failure) = phase else { return }
         switch failure {
-        case .filterKept: start()
-        case .passwordCancelled, .helperKept: removeHelperAndData()
+        case .filterKept: begin()
+        case .passwordCancelled, .helperKept: finish()
         case .appKept: quit()
         }
     }
 
     private func extensionAnswered(_ answer: SystemExtensionManager.UninstallState) {
-        guard phase == .removingFilter, !demo else { return }
+        guard phase == .removingFilter, !DemoMode.isOn else { return }
         switch answer {
         case .idle, .deactivating:
             return
@@ -126,7 +131,7 @@ final class UninstallFlowModel: ObservableObject {
             state.appendLog(level: "error", message: "Uninstall: macOS kept the network extension: \(reason)")
             phase = .failed(.filterKept(reason))
         case .notInstalled, .pendingReboot, .removed:
-            removeHelperAndData()
+            finish()
         }
     }
 
@@ -138,9 +143,14 @@ final class UninstallFlowModel: ObservableObject {
     /// off is a request the helper may time out on or roll back; if the
     /// password prompt is then cancelled, a helper still registered is what
     /// can clear the rules left in pf (#391).
-    private func removeHelperAndData() {
+    func finish() {
+        guard !DemoMode.isOn else {
+            // The helper, the data and the app of a real install stay; the
+            // demo walks the steps in runDemo (#389).
+            phase = .removingHelper
+            return
+        }
         phase = .removingHelper
-        if demo { return }
         let alsoDatabase = removeDatabase
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = PrivilegedUninstall.run(removingDatabase: alsoDatabase)
@@ -175,11 +185,11 @@ final class UninstallFlowModel: ObservableObject {
                 self.phase = .failed(.appKept(problem))
                 return
             }
-            self.finish()
+            self.wrapUp()
         }
     }
 
-    private func finish() {
+    private func wrapUp() {
         if systemExtension.uninstallState == .pendingReboot {
             phase = .doneUntilRestart
         } else {
@@ -275,7 +285,7 @@ struct UninstallFlowSheet: View {
         .confirmationDialog("Uninstall FreeSnitch?",
                             isPresented: $flow.confirming,
                             titleVisibility: .visible) {
-            Button("Uninstall", role: .destructive) { flow.start() }
+            Button("Uninstall", role: .destructive) { flow.begin() }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("FreeSnitch stops protecting this Mac right away.")

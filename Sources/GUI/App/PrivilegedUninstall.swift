@@ -60,6 +60,8 @@ enum PrivilegedUninstall {
     /// longer does. The explicit deactivation before this is the removal; the
     /// Trash keeps the app recoverable rather than deleted outright.
     static func trashApplicationBundle(completion: @escaping (String?) -> Void) {
+        // A demo never moves the real app to the Trash (#389).
+        guard !DemoMode.isOn else { completion(nil); return }
         let bundleURL = Bundle.main.bundleURL
         NSWorkspace.shared.recycle([bundleURL]) { _, error in
             DispatchQueue.main.async {
@@ -70,6 +72,8 @@ enum PrivilegedUninstall {
 
     /// Blocks on the authorization prompt; call it off the main thread.
     static func run(removingDatabase: Bool) -> Result<Void, Failure> {
+        // A demo never runs the privileged removal (#389).
+        guard !DemoMode.isOn else { return .success(()) }
         let source = removingDatabase ? removeDatabase : keepDatabase
         guard let appleScript = NSAppleScript(source: source) else {
             return .failure(.failed("The uninstall could not be prepared."))
@@ -89,6 +93,8 @@ enum PrivilegedUninstall {
     /// asking for a password to delete files the user already owns would be
     /// theatre.
     static func removeUserData() {
+        // A demo never deletes the real install's data (#389).
+        guard !DemoMode.isOn else { return }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let targets = [
             home.appendingPathComponent("Library/Group Containers/BHAF4L4726.io.isaaclins.freesnitch"),

@@ -156,7 +156,7 @@ final class NetMonitor: @unchecked Sendable {
     private func readBundleID(forPath path: String) -> String? {
         var p = path
         if let r = p.range(of: ".app/", options: .backwards) { p = String(p[..<r.upperBound]) }
-        let plist = (p as NSString).appendingPathComponent("Contents/Info.plist")
+        let plist = AppBundleIdentity.infoPlistPath(forAppPath: p)
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)) else { return nil }
         guard let d = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
         return d["CFBundleIdentifier"] as? String
@@ -243,15 +243,24 @@ final class NetMonitor: @unchecked Sendable {
     /// times updated the menu bar every ten seconds or more (#156).
     private func startTrafficSampling() {
         let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now(), repeating: .seconds(1), leeway: .milliseconds(100))
+        t.schedule(deadline: .now(), repeating: NetMonitor.trafficSampleInterval, leeway: .milliseconds(100))
         t.setEventHandler { [weak self] in self?.sampleTraffic() }
         t.resume()
         trafficTimer = t
     }
 
+    /// How often the live speed is sampled (#156).
+    static let trafficSampleInterval: DispatchTimeInterval = .seconds(1)
+
     private func sampleTraffic() {
-        let now = ProcessInfo.processInfo.systemUptime
-        let totals = NetMonitor.interfaceTotals()
+        recordTraffic(NetMonitor.interfaceTotals(), at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// One tick of the live speed: the rate since the previous reading, from
+    /// the uptime the reading was taken at, so a tick that fires late on a
+    /// busy Mac still reports bytes per second. Runs on `queue`; the time is a
+    /// parameter so a test can drive it without waiting on a real clock.
+    func recordTraffic(_ totals: [String: InterfaceTotals], at now: TimeInterval) {
         let previous = lastInterfaceTotals
         let dt = now - lastTrafficUptime
         lastInterfaceTotals = totals

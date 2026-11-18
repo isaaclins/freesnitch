@@ -192,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Walks through the steps by itself, so each screen can
                     // be captured without clicking through the dialog.
                     if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL"] != nil {
-                        self.windowManager.uninstallModel.start()
+                        self.windowManager.uninstallModel.begin()
                     }
                 case "popover": self.menubar.showPopover()
                 // The connection alert is the app's most consequential screen
