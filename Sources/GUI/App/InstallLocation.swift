@@ -186,6 +186,10 @@ enum InstallLocation {
 
     /// How to put a stuck installed copy back so macOS runs it from
     /// Applications again, for the way it was installed (#375, #407).
+    /// A brew reinstall leaves a copy owned by this user, so even if Homebrew
+    /// keeps the download flag on it, FreeSnitch can clear the flag itself on
+    /// the next launch and reopen once (offerMoveAtLaunch). Not checked on a
+    /// real Mac.
     static func reinstallSteps(homebrew: Bool) -> String {
         homebrew
             ? "Reinstall it with brew reinstall --cask freesnitch in Terminal."
@@ -302,6 +306,8 @@ extension InstallLocation {
         // The demo's banner only shows the button; it never moves anything.
         guard !isDemo else { return false }
         // Opening the installed copy would only run this same copy again.
+        // Defensive: launch and the banner already route a stuck copy to the
+        // explanation, so nothing should reach this today.
         if let installed = stuckInstalledCopy {
             explainStuckInstalledCopy(installed, flagCleared: clearQuarantine(at: installed))
             return false

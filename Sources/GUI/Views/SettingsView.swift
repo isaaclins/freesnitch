@@ -297,7 +297,7 @@ struct SettingsView: View {
         case .wrongLocation:
             return InstallLocation.stuckInstalledCopy == nil
                 ? "Move FreeSnitch to /Applications"
-                : "macOS runs it from a temporary copy; put it into /Applications again"
+                : "Runs from a temporary copy. Reinstall it in Applications"
         case .notFound: return "Registration record missing"
         case .failed(let m): return "Failed: \(m)"
         }
