@@ -130,8 +130,11 @@ struct RulesManagerView: View {
         .onChange(of: searchText) { _ in openBlocklistMatchCount = nil }
         .sheet(item: $ruleEditorRequest) { request in
             RuleEditorView(initialApp: request.app,
+                           existingRule: request.rule,
                            profiles: profileClient.profiles,
-                           activeProfileName: profileClient.activeProfileName) { rule in addRule(rule) }
+                           activeProfileName: profileClient.activeProfileName) { rule in
+                if request.rule == nil { addRule(rule) } else { saveEdit(rule) }
+            }
         }
         // Dropping an app anywhere on the page starts a rule for it (#143).
         .onDrop(of: [.fileURL], isTargeted: $appDropTargeted) { providers in
@@ -796,6 +799,12 @@ struct RulesManagerView: View {
         // at, exactly like the Finder (#78).
         .contextMenu(forSelectionType: Rule.ID.self) { ids in
             rulesContextMenu(for: ids)
+        } primaryAction: { ids in
+            // Double-click (or Return) on one rule opens it for editing, the
+            // way a Finder row opens its item (#433).
+            if ids.count == 1, let rule = state.rules.first(where: { ids.contains($0.id) }) {
+                openRuleEditor(editing: rule)
+            }
         }
         // A Mac table answers the Delete key and Command-C. Without these the
         // only way to remove a rule was the mouse (#116).
@@ -804,10 +813,6 @@ struct RulesManagerView: View {
     }
 
     /// Every item here calls the same function the corresponding button does.
-    ///
-    /// There is no Edit item because this app has no rule editor to open: the
-    /// sheet only creates rules. Adding one from a context menu would be a new
-    /// feature hiding in a menu, not the menu offering what the UI already has.
     @ViewBuilder
     private func rulesContextMenu(for ids: Set<Rule.ID>) -> some View {
         let rules = state.rules.filter { ids.contains($0.id) }
@@ -815,6 +820,11 @@ struct RulesManagerView: View {
             Button("New Rule…") { openRuleEditor(for: nil) }
                 .disabled(!state.helperConnected)
         } else {
+            if rules.count == 1, let rule = rules.first {
+                Button("Edit Rule\u{2026}") { openRuleEditor(editing: rule) }
+                    .disabled(!state.helperConnected)
+                Divider()
+            }
             if rules.contains(where: { !$0.enabled }) {
                 Button("Enable") {
                     for rule in rules where !rule.enabled { toggleRule(rule) }
@@ -1081,14 +1091,43 @@ struct RulesManagerView: View {
             // the only thing standing on the bare window background, which read
             // as a black strip pasted under the inspector.
             Section {
-                HStack {
-                    Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
-                    Spacer()
-                    Button("Remove\u{2026}", role: .destructive) { confirmRemoval(of: [r.id]) }
+                // One row when the inspector is wide enough, else Edit on a
+                // row of its own, so no button is ever cut off (#433).
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        editButton(r)
+                        enableButton(r)
+                        Spacer()
+                        removeButton(r)
+                    }
+                    VStack(alignment: .leading) {
+                        editButton(r)
+                        HStack {
+                            enableButton(r)
+                            Spacer()
+                            removeButton(r)
+                        }
+                    }
                 }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func editButton(_ r: Rule) -> some View {
+        Button("Edit\u{2026}") { openRuleEditor(editing: r) }
+            .disabled(!state.helperConnected)
+            .fixedSize()
+    }
+
+    private func enableButton(_ r: Rule) -> some View {
+        Button(r.enabled ? "Disable" : "Enable") { toggleRule(r) }
+            .fixedSize()
+    }
+
+    private func removeButton(_ r: Rule) -> some View {
+        Button("Remove\u{2026}", role: .destructive) { confirmRemoval(of: [r.id]) }
+            .fixedSize()
     }
 
     @ViewBuilder
@@ -1269,7 +1308,29 @@ struct RulesManagerView: View {
             showError("Rules can't be added yet", "Approve the FreeSnitch helper before adding rules.")
             return
         }
-        ruleEditorRequest = RuleEditorRequest(app: app)
+        ruleEditorRequest = RuleEditorRequest(app: app, rule: nil)
+    }
+
+    /// The same sheet as Add Rule, filled in with the rule (#433).
+    private func openRuleEditor(editing rule: Rule) {
+        guard state.helperConnected else {
+            showError("Rules can't be changed yet", "Approve the FreeSnitch helper before changing rules.")
+            return
+        }
+        ruleEditorRequest = RuleEditorRequest(app: nil, rule: rule)
+    }
+
+    /// An edited rule keeps its id, so the helper stores it in place of the
+    /// old one, the same write Enable, Disable and Applies To make.
+    private func saveEdit(_ rule: Rule) {
+        state.helper.addRule(rule) { ok, message in
+            guard ok else {
+                showError("Could not save the changes to \(Self.describe(rule))",
+                          message ?? "The helper rejected the change and did not say why.")
+                return
+            }
+            state.refreshRules()
+        }
     }
 
     private func addRule(_ rule: Rule) {
@@ -1611,6 +1672,8 @@ private struct RuleJSONDocument: FileDocument {
 struct RuleEditorRequest: Identifiable {
     let id = UUID()
     let app: RuleApplication?
+    /// The rule being edited, or nil for a new one (#433).
+    let rule: Rule?
 }
 
 struct RuleApplication: Equatable {
@@ -1679,6 +1742,8 @@ struct RuleApplication: Equatable {
 private struct RuleEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let initialApp: RuleApplication?
+    /// Set when the sheet edits a rule instead of making one (#433).
+    let existingRule: Rule?
     let profiles: [Profile]
     let activeProfileName: String
     let onSave: (Rule) -> Void
@@ -1686,6 +1751,11 @@ private struct RuleEditorView: View {
     /// independent, and that default is what keeps profiles small.
     @State private var appliesTo = Profile.alwaysName
     @State private var app: RuleApplication?
+    /// While editing, the rule's own process stays as it was until the user
+    /// chooses another app or removes it. Rebuilding it from the file would
+    /// change it: an alert rule names the executable, not the bundle, and an
+    /// app that was moved or deleted could not be loaded at all.
+    @State private var keepsOriginalProcess = false
     @State private var appDropTargeted = false
     @State private var dropRejected = false
     @State private var processBundleID = ""
@@ -1700,7 +1770,7 @@ private struct RuleEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add Rule")
+            Text(existingRule == nil ? "Add Rule" : "Edit Rule")
                 .font(.title2.weight(.semibold))
             Form {
                 Section {
@@ -1712,7 +1782,7 @@ private struct RuleEditorView: View {
                         if dropRejected {
                             Text(RuleApplication.notAnAppDetail).font(.caption).foregroundColor(.red)
                         }
-                        Text(app == nil
+                        Text(!hasProcess
                              ? "Choose an app or drop one here. Without one, the rule applies to every app."
                              : "Covers the app and the helpers inside it. Web pages shown in Apple's web views, as in Safari or Mail, load through a macOS process outside the app.")
                             .font(.caption).foregroundColor(.secondary)
@@ -1760,7 +1830,7 @@ private struct RuleEditorView: View {
                 // behaves (#116).
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Add") { save() }
+                Button(existingRule == nil ? "Add" : "Save") { save() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
@@ -1773,7 +1843,28 @@ private struct RuleEditorView: View {
                 if let dropped { pick(dropped) } else { dropRejected = true }
             }
         }
-        .onAppear { if let initialApp { pick(initialApp) } }
+        .onAppear {
+            if let existingRule { load(existingRule) }
+            if let initialApp { pick(initialApp) }
+        }
+    }
+
+    private var hasProcess: Bool {
+        app != nil || keepsOriginalProcess
+    }
+
+    private func load(_ rule: Rule) {
+        keepsOriginalProcess = !(rule.processPath ?? "").isEmpty || !(rule.processName ?? "").isEmpty
+        processBundleID = rule.processBundleId ?? ""
+        remoteHost = rule.remoteHost ?? ""
+        remoteIP = rule.remoteIP ?? ""
+        remotePort = rule.remotePort.map { $0 > 0 ? String($0) : "" } ?? ""
+        direction = rule.direction
+        action = rule.action
+        scope = rule.scope
+        enabled = rule.enabled
+        notes = rule.notes ?? ""
+        appliesTo = rule.profile
     }
 
     private var applicationRow: some View {
@@ -1791,11 +1882,30 @@ private struct RuleEditorView: View {
                 }
                 Spacer(minLength: 8)
                 Button("Remove") { self.app = nil }
+            } else if keepsOriginalProcess, let rule = existingRule {
+                if let icon = AppIcon.resolve(bundleId: rule.processBundleId,
+                                              path: rule.processPath,
+                                              name: rule.processName) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 32, height: 32)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(rule.displayProcessName)
+                    if let path = rule.processPath, !path.isEmpty {
+                        Text(path)
+                            .font(.caption).foregroundColor(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 8)
+                Button("Remove") { keepsOriginalProcess = false }
             } else {
                 Text("Any app").foregroundColor(.secondary)
                 Spacer(minLength: 8)
             }
-            Button(app == nil ? "Choose…" : "Change…") {
+            Button(hasProcess ? "Change…" : "Choose…") {
                 if let chosen = RuleApplication.choose() { pick(chosen) }
             }
         }
@@ -1808,6 +1918,7 @@ private struct RuleEditorView: View {
     /// that app's traffic, which is what the Process scope means.
     private func pick(_ chosen: RuleApplication) {
         app = chosen
+        keepsOriginalProcess = false
         dropRejected = false
         let noDestination = [remoteHost, remoteIP, remotePort]
             .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1817,10 +1928,15 @@ private struct RuleEditorView: View {
     private var canSave: Bool {
         let hasMatch = [processBundleID, remoteHost, remoteIP]
             .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        return app != nil || hasMatch || !remotePort.isEmpty
+        return hasProcess || hasMatch || !remotePort.isEmpty
     }
 
     private func save() {
+        if let existingRule {
+            onSave(edited(existingRule))
+            dismiss()
+            return
+        }
         let rule = Rule(
             processBundleId: optionalValue(processBundleID),
             processPath: app?.processPath,
@@ -1837,6 +1953,29 @@ private struct RuleEditorView: View {
         )
         onSave(rule)
         dismiss()
+    }
+
+    /// What the sheet shows, written over the rule it edits.
+    private func edited(_ original: Rule) -> Rule {
+        let process: RuleEdit.Process
+        if keepsOriginalProcess {
+            process = .unchanged
+        } else if let app {
+            process = .app(path: app.processPath, name: app.name)
+        } else {
+            process = .anyApp
+        }
+        return RuleEdit(process: process,
+                        bundleId: optionalValue(processBundleID),
+                        remoteHost: optionalValue(remoteHost),
+                        remoteIP: optionalValue(remoteIP),
+                        remotePort: Int(remotePort),
+                        direction: direction,
+                        action: action,
+                        scope: scope,
+                        profile: appliesTo,
+                        notes: optionalValue(notes),
+                        enabled: enabled).applied(to: original)
     }
 
     private func optionalValue(_ value: String) -> String? {
