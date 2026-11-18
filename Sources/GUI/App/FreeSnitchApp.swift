@@ -210,6 +210,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "monitor": self.windowManager.showNetworkMonitor()
                 case "rules": self.windowManager.showRulesManager()
                 case "insights": self.windowManager.showInsights()
+                // Insights' Silent Allow banner, for review (#434).
+                case "insights-silent-allow":
+                    self.state.mode = .silentAllow
+                    self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
                 case "cli": self.windowManager.showCommandLineSettings()

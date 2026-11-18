@@ -1129,6 +1129,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             try batch.validate(payloadBytes: observationBatch.count)
             recentNames.note(batch.observations)
             learnSigningTeams(from: batch.observations)
+            recordRuleHits(batch.ruleHits)
+            guard !batch.observations.isEmpty else {
+                reply(true, nil)
+                return
+            }
             enqueueObservations(batch.observations, reply: reply)
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
@@ -1137,6 +1142,20 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     private struct NothingLearned: Error {}
+
+    /// Adds the extension's rule matches to each rule's hit count and
+    /// last-used time (#434). Usage counters are not policy: this changes no
+    /// generation and sends nothing to the extension. Kept even when Insights
+    /// recording is off, because it is a property of the rule, not a record of
+    /// connections. A rule deleted since the match is skipped.
+    private func recordRuleHits(_ hits: [RuleHit]?) {
+        guard let hits, !hits.isEmpty else { return }
+        do {
+            try store.recordRuleHits(hits)
+        } catch {
+            PSLog.error(PSLog.helper, "Rule hit counts could not be saved: \(error.localizedDescription)")
+        }
+    }
 
     /// Records the team that signed an app on the rules for its bundle id that
     /// do not know it yet (#364), the first time the extension sees that app

@@ -357,6 +357,29 @@ final class AppState: ObservableObject {
         syncSharedRules()
     }
 
+    /// Brings each rule's hit count and last-used time up to date from the
+    /// helper (#434), without touching policy: nothing is sent to the
+    /// extension and no generation changes. Rules the helper no longer has
+    /// are left to the next `refreshRules()`.
+    func refreshRuleUsage() {
+        helper.listRules { [weak self] fresh in
+            guard let self, !fresh.isEmpty else { return }
+            var stored: [UUID: Rule] = [:]
+            for rule in fresh { stored[rule.id] = rule }
+            var updated = self.rules
+            var changed = false
+            for index in updated.indices {
+                guard let latest = stored[updated[index].id],
+                      latest.hitCount != updated[index].hitCount || latest.lastUsedAt != updated[index].lastUsedAt
+                else { continue }
+                updated[index].hitCount = latest.hitCount
+                updated[index].lastUsedAt = latest.lastUsedAt
+                changed = true
+            }
+            if changed { self.rules = updated }
+        }
+    }
+
     /// Ask the helper for its authoritative mode, rules, and generation before
     /// either live delivery or boot persistence. No caller supplies policy
     /// content to this method.
