@@ -146,8 +146,11 @@ final class UninstallFlowModel: ObservableObject {
     func finish() {
         guard !DemoMode.isOn else {
             // The helper, the data and the app of a real install stay; the
-            // demo walks the steps in runDemo (#389).
+            // demo only walks the remaining steps (#389).
             phase = .removingHelper
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.phase = .doneUntilRestart
+            }
             return
         }
         phase = .removingHelper
@@ -370,7 +373,7 @@ struct UninstallFlowSheet: View {
             failureHeadline(reason == SystemExtensionManager.noAnswer
                             ? "macOS didn’t answer FreeSnitch’s request to remove its network filter"
                             : "macOS didn’t let FreeSnitch remove its network filter")
-            Text("FreeSnitch is turned off and isn’t protecting this Mac. Nothing else was removed. Try again, and if it keeps failing, restart your Mac and try once more. To keep using FreeSnitch instead, quit and reopen it, then turn Enforcement back on in Settings.")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac, but nothing else was removed. Try again, or quit and reopen FreeSnitch and turn Enforcement back on to keep using it.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)
         case .passwordCancelled:

@@ -246,14 +246,6 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         OSSystemExtensionManager.shared.submitRequest(request)
     }
 
-    /// Entry point for the uninstall flow in Settings. Under SIP the app is the
-    /// only component macOS allows to deactivate this extension, so this is the
-    /// real removal path, not a convenience wrapper.
-    ///
-    /// It touches the extension and the content filter only. Unregistering the
-    /// privileged helper is a later step of the same flow, and that flow is the
-    /// only place FreeSnitch is allowed to do it: unregistering the service
-    /// outside an uninstall the user confirmed is the failure #24 was filed for.
     /// Replaces any running limit on the deactivation answer with a new one.
     private func startDeactivationTimeout(after seconds: TimeInterval) {
         deactivationAttempt &+= 1
@@ -264,6 +256,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// Entry point for the uninstall flow in Settings. Under SIP the app is the
+    /// only component macOS allows to deactivate this extension, so this is the
+    /// real removal path, not a convenience wrapper.
+    ///
+    /// It touches the extension and the content filter only. Unregistering the
+    /// privileged helper is a later step of the same flow, and that flow is the
+    /// only place FreeSnitch is allowed to do it: unregistering the service
+    /// outside an uninstall the user confirmed is the failure #24 was filed for.
     func deactivateForUninstall() {
         // The demo's uninstall screen walks through the steps on sample data:
         // the real extension and filter configuration stay as they are (#389).

@@ -69,13 +69,16 @@ case "${1:-}" in
   list)
     printf '1 extension(s)\n'
     if [[ "${FAKE_EXT_PRESENT:-0}" == "1" ]]; then
-      printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\t[activated enabled]\n'
+      printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tbundleID (version)\tname\t[state]\n*\t*\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\tFreeSnitch\t[activated enabled]\n'
     fi
     if [[ "${FAKE_EXT_STOPPED:-0}" == "1" ]]; then
-      printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\t[terminated waiting to uninstall on reboot]\n'
+      printf -- '--- com.apple.system_extension.network_extension\n\t\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\tFreeSnitch\t[terminated waiting to uninstall on reboot]\n'
     fi
     if [[ "${FAKE_EXT_VALIDATING:-0}" == "1" ]]; then
       printf -- '--- com.apple.system_extension.network_extension\n*\t*\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\t[validating by category]\n'
+    fi
+    if [[ "${FAKE_EXT_DISABLED:-0}" == "1" ]]; then
+      printf -- '--- com.apple.system_extension.network_extension\n\t\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\tFreeSnitch\t[activated disabled]\n'
     fi
     [[ "${FAKE_LIST_FAILS:-0}" == "1" ]] && exit 1
     exit 0
@@ -153,6 +156,7 @@ run_uninstall() {
     FAKE_EXT_STOPPED="${FAKE_EXT_STOPPED:-0}" \
     FAKE_LIST_FAILS="${FAKE_LIST_FAILS:-0}" \
     FAKE_EXT_VALIDATING="${FAKE_EXT_VALIDATING:-0}" \
+    FAKE_EXT_DISABLED="${FAKE_EXT_DISABLED:-0}" \
     FAKE_HELPER_RUNNING="${FAKE_HELPER_RUNNING:-0}" \
     FAKE_SYSEXT_REFUSAL="${FAKE_SYSEXT_REFUSAL:-0}" \
     bash "$UNINSTALL" "$@" >"$out_file" 2>&1
@@ -272,6 +276,12 @@ test_stopped_extension_record() {
   unset FAKE_EXT_STOPPED
   (( RUN_STATUS == 0 )) || fail "a stopped extension record held the uninstall up: $RUN_OUTPUT"
   [[ -d "$root/Applications/FreeSnitch.app" ]] && fail "the app was kept although the extension no longer runs"
+
+  root="$(make_fake_root disabled-record)"
+  export FAKE_EXT_DISABLED=1
+  run_uninstall disabled-record --yes
+  unset FAKE_EXT_DISABLED
+  (( RUN_STATUS == 0 )) || fail "a disabled extension record held the uninstall up: $RUN_OUTPUT"
 
   root="$(make_fake_root validating)"
   export FAKE_EXT_VALIDATING=1
