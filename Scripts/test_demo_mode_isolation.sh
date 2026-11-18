@@ -87,8 +87,8 @@ mutate_and_expect_failure removes-user-data "$PRIV" \
 mutate_and_expect_failure trashes-app "$PRIV" \
   '        guard !DemoMode.isOn else { completion(nil); return }' ''
 mutate_and_expect_failure uninstall-begin-acts "$UNINSTALL" \
-  $'        startedAt = Date()\n        guard !DemoMode.isOn else {' \
-  $'        startedAt = Date()\n        if false {'
+  $'    func begin() {\n        guard !DemoMode.isOn else {' \
+  $'    func begin() {\n        if false {'
 mutate_and_expect_failure uninstall-finish-acts "$UNINSTALL" \
   $'    func finish() {\n        guard !DemoMode.isOn else {' \
   $'    func finish() {\n        if false {'

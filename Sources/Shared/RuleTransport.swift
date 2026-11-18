@@ -24,6 +24,8 @@ public enum RuleTransportBoundary {
     public static let maximumBootSnapshotRuleCount = 800
 
     public static let maximumProcessBundleIDBytes = 256
+    /// A team id is ten characters; the bound only keeps junk out.
+    public static let maximumTeamIdLength = 64
     public static let maximumProcessPathBytes = 4096
     public static let maximumProcessNameBytes = 256
     public static let maximumRemoteHostBytes = 255
@@ -101,8 +103,23 @@ public enum RuleTransportBoundary {
         }
     }
 
+    /// A team id as Apple issues it (ten upper-case letters and digits), or
+    /// `"apple"`, the signer recorded for Apple's own code
+    /// (`CodeSigningIdentity.appleTeam`, spelled out so this file stands alone).
+    public static func isWellFormedTeamId(_ team: String) -> Bool {
+        if team == "apple" { return true }
+        return team.utf8.count == 10 && team.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) }
+    }
+
     public static func validate(rule: Rule) throws {
         try validateLength(rule.processBundleId, field: "processBundleId", maximum: maximumProcessBundleIDBytes)
+        try validateLength(rule.processTeamId, field: "processTeamId", maximum: maximumTeamIdLength)
+        // A malformed team could never match, so the rule would silently
+        // never apply (#364).
+        if let team = rule.processTeamId, !team.isEmpty, !isWellFormedTeamId(team) {
+            throw ValidationError.invalidField(field: "processTeamId",
+                                               reason: "expected a ten-character Apple team id or \"apple\"")
+        }
         try validateLength(rule.processPath, field: "processPath", maximum: maximumProcessPathBytes)
         try validateLength(rule.processName, field: "processName", maximum: maximumProcessNameBytes)
         try validateLength(rule.remoteHost, field: "remoteHost", maximum: maximumRemoteHostBytes)

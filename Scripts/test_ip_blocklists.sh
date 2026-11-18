@@ -12,7 +12,8 @@
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
 #      Deny rules that name an app are never written to pf (issue #155), nor
-#      are denies that name a hostname and an address (issue #302).
+#      are denies that name a hostname and an address (issue #302), and the
+#      anchor follows the matcher's priority order (issue #181).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -82,6 +83,60 @@ func checkPFSyntax(_ name: String, _ anchor: String, _ checks: Checks) {
             checks.expect(false, "\(name): could not keep the anchor for pfctl: \(error)")
         }
     }
+}
+
+/// pf's decision for one outgoing TCP/UDP packet: the anchor's lines, then
+/// `after` (rules after the anchor in /etc/pf.conf). Last match wins, a quick
+/// match stops, and a tag sticks to the packet even when a later rule decides
+/// (pf.conf(5), `tag`). Only the outgoing forms the anchor writes are read;
+/// a line this can't read fails the check instead of being skipped.
+func pfDecidesOut(_ anchor: String, to address: String, port: Int, feed: [String], after: [String] = []) -> String? {
+    let feedSet = IPBlocklistSet(entries: feed)
+    var decision = "pass"
+    var tag: String?
+    let lines = anchor.split(separator: "\n").map(String.init) + after
+    for line in lines where line.hasPrefix("pass out") || line.hasPrefix("block out") {
+        var words = line.split(separator: " ").map(String.init)
+        let verb = words.removeFirst()
+        words.removeFirst() // out
+        var quick = false
+        if words.first == "quick" { quick = true; words.removeFirst() }
+        if Array(words.prefix(5)) == ["proto", "{", "tcp", "udp", "}"] { words.removeFirst(5) }
+        guard words.first == "to", words.count >= 2 else { return nil }
+        let host = words[1]
+        words.removeFirst(2)
+        var rulePort: Int?
+        if words.first == "port" {
+            guard words.count >= 2 else { return nil }
+            if words[1] == "{" {
+                guard let close = words.firstIndex(of: "}") else { return nil }
+                let ports = words[2..<close].compactMap(Int.init)
+                if !ports.contains(port) { continue }
+                words.removeFirst(close + 1)
+            } else {
+                guard let p = Int(words[1]) else { return nil }
+                rulePort = p
+                words.removeFirst(2)
+            }
+        }
+        var setsTag: String?
+        var unlessTagged: String?
+        while !words.isEmpty {
+            if words.count >= 2, words[0] == "tag" { setsTag = words[1]; words.removeFirst(2) }
+            else if words.count >= 3, words[0] == "!", words[1] == "tagged" { unlessTagged = words[2]; words.removeFirst(3) }
+            else { return nil }
+        }
+        let hostMatches: Bool
+        if host == "any" { hostMatches = true }
+        else if host == "<\(PFManager.ipBlocklistTable)>" { hostMatches = feedSet.contains(address) }
+        else { hostMatches = IPBlocklistSet(entries: [host]).contains(address) }
+        guard hostMatches, rulePort == nil || rulePort == port else { continue }
+        if let unlessTagged, tag == unlessTagged { continue }
+        if let setsTag { tag = setsTag }
+        decision = verb
+        if quick { return decision }
+    }
+    return decision
 }
 
 /// The outgoing half of a user's deny.
@@ -243,7 +298,7 @@ struct IPBlocklistHarness {
         let passIndex = anchor.range(of: "pass out quick proto { tcp udp } to any port 53")?.lowerBound
         let blockIndex = anchor.range(of: "block out quick proto { tcp udp } to <freesnitch_ipblock>")?.lowerBound
         checks.expect(passIndex != nil && blockIndex != nil && passIndex! < blockIndex!,
-                      "the DNS and DHCP passes must precede the feed block, since every rule here is quick")
+                      "the DNS and DHCP passes must precede the feed block, since they and the feed block are quick")
         let plain = pf.renderAnchor(rules: [])
         checkPFSyntax("plain", plain, checks)
         checks.expect(!plain.contains("freesnitch_ipblock"),
@@ -267,7 +322,7 @@ struct IPBlocklistHarness {
             checks.expect(!appScoped.contains(leaked),
                           "a deny rule that names an app must not be written to pf, but the anchor carries \(leaked)")
         }
-        checks.expect(appScoped.contains("pass out quick proto { tcp udp } to 198.51.100.21"),
+        checks.expect(appScoped.contains("pass out proto { tcp udp } to 198.51.100.21 tag freesnitch_app_allow\n"),
                       "an app's allow rule must still reach pf, so the feed cannot block what the user allowed")
         checks.expect(blocks(appScoped, "to 198.51.100.20"),
                       "a name alone identifies no app for the matcher, so pf must treat the rule as every app's too")
@@ -283,9 +338,9 @@ struct IPBlocklistHarness {
         // A rule that names a hostname and an address matches only when both
         // fit, but pf sees only the address (issue #302). A deny written as
         // the address would block every name on it, so it stays out of pf and
-        // the refusal is reported. An allow still goes out as the address: a
-        // pass can only block less, and the feed must not block what the user
-        // allowed.
+        // the refusal is reported. An allow still goes out as the address,
+        // without quick like an app's allow (#183), so the feed cannot block
+        // what the user allowed.
         var hostAndAddressRefusals: [String] = []
         let hostAndAddress = pf.renderAnchor(rules: [
             Rule(remoteHost: "tracker.example.com", remoteIP: "198.51.100.40", action: .deny, scope: .ip),
@@ -302,14 +357,92 @@ struct IPBlocklistHarness {
         checks.expect(hostAndAddressRefusals.count == 2
                       && hostAndAddressRefusals.allSatisfy { $0.contains("names hostname") },
                       "both skipped hostname-and-address denies must be reported, got \(hostAndAddressRefusals)")
-        checks.expect(hostAndAddress.contains("pass out quick proto { tcp udp } to 198.51.100.41"),
+        checks.expect(hostAndAddress.contains("pass out proto { tcp udp } to 198.51.100.41 tag"),
                       "an allow that names a hostname and an address must still reach pf as the address")
-        checks.expect(hostAndAddress.contains("block out quick proto { tcp udp } to 198.51.100.42"),
+        checks.expect(blocks(hostAndAddress, "to 198.51.100.42"),
                       "a deny with an address and no hostname must still be written to pf")
         let hostAllowIndex = hostAndAddress.range(of: "to 198.51.100.41")?.lowerBound
         let hostFeedIndex = hostAndAddress.range(of: "to <freesnitch_ipblock>")?.lowerBound
         checks.expect(hostAllowIndex != nil && hostFeedIndex != nil && hostAllowIndex! < hostFeedIndex!,
                       "the hostname-and-address allow must come before the feed's block")
+
+        // pf stops at the first quick line that matches, so the lines must
+        // come in the matcher's order. A lower-priority deny must never
+        // override a higher-priority allow (issue #181), and equal priorities
+        // keep the order the snapshot delivered them in, as in the matcher.
+        func position(_ needle: String, in text: String) -> String.Index? {
+            text.range(of: needle)?.lowerBound
+        }
+        let wideDeny = Rule(remoteIP: "203.0.113.0/24", action: .deny, scope: .ip, priority: 50)
+        let firefoxAllow = Rule(processPath: "/Applications/Firefox.app/", remoteIP: "203.0.113.7",
+                                action: .allow, scope: .ip, priority: 100)
+        let everyAppAllow = Rule(remoteIP: "203.0.113.8", action: .allow, scope: .ip, priority: 100)
+        let ranked = pf.renderAnchor(rules: [wideDeny, firefoxAllow, everyAppAllow])
+        checkPFSyntax("ranked", ranked, checks)
+        let wideIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: ranked)
+        let everyAppPass = position("pass out quick proto { tcp udp } to 203.0.113.8", in: ranked)
+        checks.expect(everyAppPass != nil && wideIndex != nil && everyAppPass! < wideIndex!,
+                      "a higher-priority allow for every app must come before a lower-priority deny that covers it")
+        // An app's allow has no quick (#313, #328): pf would apply it to every
+        // app, so a later block still wins. The order must not turn it into a
+        // quick pass that beats the deny for every app.
+        checks.expect(!ranked.contains("pass out quick proto { tcp udp } to 203.0.113.7"),
+                      "an app's allow must stay without quick, whatever its priority")
+        checks.expect(ranked.contains("pass out proto { tcp udp } to 203.0.113.7 tag"),
+                      "an app's allow is still written, tagged for the address feed")
+        // An allow with both a hostname and an address reaches pf as the
+        // address alone, wider than the matcher, which needs both. Hoisted
+        // as a quick pass it would let other names on that address past a
+        // lower-priority deny, so it is written like an app's allow.
+        let namedAllow = Rule(remoteHost: "allowed.example", remoteIP: "203.0.113.9",
+                              action: .allow, scope: .ip, priority: 100)
+        let namedRanked = pf.renderAnchor(rules: [wideDeny, namedAllow])
+        checkPFSyntax("named-ranked", namedRanked, checks)
+        checks.expect(!namedRanked.contains("pass out quick proto { tcp udp } to 203.0.113.9"),
+                      "an allow with a hostname and an address must not become a quick pass ahead of the deny")
+        checks.expect(namedRanked.contains("pass out proto { tcp udp } to 203.0.113.9 tag"),
+                      "an allow with a hostname and an address is still written, tagged for the address feed")
+        var outranked = wideDeny
+        outranked.priority = 200
+        let denyFirst = pf.renderAnchor(rules: [everyAppAllow, outranked])
+        checkPFSyntax("deny-first", denyFirst, checks)
+        let outrankedIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: denyFirst)
+        let lowerAllowIndex = position("pass out quick proto { tcp udp } to 203.0.113.8", in: denyFirst)
+        checks.expect(outrankedIndex != nil && lowerAllowIndex != nil && outrankedIndex! < lowerAllowIndex!,
+                      "a higher-priority deny must still come before a lower-priority allow")
+        let tiedDeny = Rule(remoteIP: "198.51.100.0/24", action: .deny, scope: .ip)
+        let tiedAllow = Rule(remoteIP: "198.51.100.4", action: .allow, scope: .ip)
+        let tieProbe = Connection(pid: 501, processName: "curl", processPath: "/usr/bin/curl", remoteHost: "198.51.100.4",
+                                  remoteIP: "198.51.100.4", remotePort: 443, direction: .outgoing)
+        for order in [[tiedDeny, tiedAllow], [tiedAllow, tiedDeny]] {
+            let tied = pf.renderAnchor(rules: order)
+            let blockAt = position("block out quick proto { tcp udp } to 198.51.100.0/24", in: tied)
+            let passAt = position("pass out quick proto { tcp udp } to 198.51.100.4", in: tied)
+            let pfFirst: RuleAction? = (blockAt != nil && passAt != nil) ? (blockAt! < passAt! ? .deny : .allow) : nil
+            let matcherSays = RuleMatcher().decision(for: tieProbe, rules: order, defaultMode: .alert)
+            checks.expect(pfFirst == matcherSays,
+                          "with equal priorities pf must pick what the matcher picks, got pf \(String(describing: pfFirst)) and matcher \(matcherSays)")
+        }
+        // Ask rules stay out of pf. The address feeds live only in pf, after
+        // the user's rules, so an ask written as a pass would turn the feeds
+        // off for its whole address or port, for every app (issue #181).
+        // A disabled allow stays out too, and the deny is still written.
+        let askAndDisabled = pf.renderAnchor(rules: [
+            Rule(remoteIP: "198.51.100.9", action: .allow, scope: .ip, priority: 900, enabled: false),
+            Rule(remoteIP: "198.51.100.9", action: .ask, scope: .ip, priority: 800),
+            Rule(remotePort: 8444, action: .ask, scope: .port),
+            Rule(remoteIP: "198.51.100.9", action: .deny, scope: .ip)
+        ])
+        checks.expect(!askAndDisabled.contains("pass out quick proto { tcp udp } to 198.51.100.9"),
+                      "neither an ask rule nor a disabled allow may pass 198.51.100.9 in pf")
+        checks.expect(!askAndDisabled.contains("8444"),
+                      "a port-only ask rule must not reach pf, where it would pass the whole port past the feeds")
+        checks.expect(askAndDisabled.contains("block out quick proto { tcp udp } to 198.51.100.9"),
+                      "the deny behind the ask rule is still written")
+        let feedSet = IPBlocklistSet(entries: ["198.51.100.0/24"])
+        let askedFeed = pf.renderAnchor(rules: [Rule(remotePort: 443, action: .ask, scope: .port)], ipBlocklist: feedSet)
+        checks.expect(!askedFeed.contains("port 443") && askedFeed.contains("<freesnitch_ipblock>"),
+                      "an ask rule on a port must leave the address feed blocking that port")
 
         // An address typed into the hostname field (no remoteIP) is written
         // to pf as that address, so the matcher must apply it to every flow
@@ -487,6 +620,65 @@ struct IPBlocklistHarness {
                       "an incoming allow must never name this Mac's own side with to")
         checks.expect(!passLines.contains { $0.hasPrefix("pass quick") },
                       "an allow must always name its direction, so to and from mean the remote peer")
+
+        // pf can't tell apps apart, so an app's incoming allow written with
+        // quick would let that peer reach every app on any local port, past
+        // later blocks in /etc/pf.conf (#313). It stays in pf only for the
+        // feed: without quick any later block wins, and when nothing blocks
+        // the peer, the state it keeps lets this Mac's replies past the feed.
+        // An app's outgoing allow drops quick too (#328) and tags its packets
+        // instead, so the feed's quick block lets them by; see the pf walk
+        // below.
+        let appAllows = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.example.server", remoteIP: "203.0.113.60", remotePort: 51010,
+                 direction: .incoming, action: .allow, scope: .ip),
+            Rule(processPath: "/Applications/Example.app/Contents/MacOS/Example", remoteIP: "203.0.113.61",
+                 direction: .any, action: .allow, scope: .ip),
+            Rule(processBundleId: "", processPath: "", remoteIP: "203.0.113.62", direction: .incoming, action: .allow, scope: .ip)
+        ], ipBlocklist: IPBlocklistSet(entries: ["203.0.113.60", "203.0.113.61"]), resolverAddresses: resolvers)
+        checkPFSyntax("app-incoming-allows", appAllows, checks)
+        let appPasses = appAllows.split(separator: "\n").map(String.init).filter { $0.hasPrefix("pass") }
+        checks.expect(appPasses.contains("pass in proto { tcp udp } from 203.0.113.60 port 51010")
+                        && !appPasses.contains { $0.hasPrefix("pass in quick") && $0.contains("203.0.113.60") },
+                      "an app's incoming allow must be written without quick, got \(appPasses)")
+        checks.expect(appPasses.contains("pass in proto { tcp udp } from 203.0.113.61")
+                        && !appPasses.contains { $0.hasPrefix("pass in quick") && $0.contains("203.0.113.61") }
+                        && appPasses.contains("pass out proto { tcp udp } to 203.0.113.61 tag freesnitch_app_allow")
+                        && !appPasses.contains { $0.contains("quick") && $0.contains("203.0.113.61") },
+                      "an app's allow both ways must be written without quick on both halves, got \(appPasses)")
+        checks.expect(appPasses.contains("pass in quick proto { tcp udp } from 203.0.113.62"),
+                      "empty app fields are no app, so that incoming allow keeps quick, got \(appPasses)")
+        checks.expect(appAllows.contains("block out quick proto { tcp udp } to <freesnitch_ipblock>"),
+                      "the feed must still be in the anchor next to an app's incoming allow")
+
+        // #328: what pf decides for an outgoing packet. The anchor is walked
+        // the way pf walks it (last match wins, quick stops, a tag stays on
+        // the packet even when a later rule decides), followed by a block in
+        // /etc/pf.conf after the anchor.
+        let outgoing = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.example.client", remoteIP: "203.0.113.70", remotePort: 443,
+                 direction: .outgoing, action: .allow, scope: .ip),
+            Rule(remoteIP: "203.0.113.71", remotePort: 443, direction: .outgoing, action: .allow, scope: .ip)
+        ], ipBlocklist: IPBlocklistSet(entries: ["203.0.113.0/24"]), resolverAddresses: resolvers)
+        checkPFSyntax("app-outgoing-allows", outgoing, checks)
+        checks.expect(outgoing.contains("pass out proto { tcp udp } to 203.0.113.70 port 443 tag freesnitch_app_allow\n"),
+                      "an app's outgoing allow must be written without quick and tag its packets, got \(outgoing)")
+        checks.expect(outgoing.contains("pass out quick proto { tcp udp } to 203.0.113.71 port 443\n"),
+                      "an allow for every app keeps quick, as the user asked for every app")
+        checks.expect(outgoing.contains("block out quick proto { tcp udp } to <freesnitch_ipblock> ! tagged freesnitch_app_allow\n"),
+                      "the feed's block must let an app allow's tagged packets by")
+        let laterBlock = "block out quick proto { tcp udp } to 203.0.113.70"
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.70", port: 443, feed: ["203.0.113.0/24"]) == "pass",
+                      "the feed must not block what an app's allow lets out")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.70", port: 443, feed: ["203.0.113.0/24"], after: [laterBlock]) == "block",
+                      "a block after the anchor in /etc/pf.conf must still win over an app's outgoing allow")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.70", port: 80, feed: ["203.0.113.0/24"]) == "block",
+                      "the feed must still block the same address on a port the allow doesn't name")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.72", port: 443, feed: ["203.0.113.0/24"]) == "block",
+                      "the feed must still block every other address in it")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.71", port: 443, feed: ["203.0.113.0/24"],
+                                   after: ["block out quick proto { tcp udp } to 203.0.113.71"]) == "pass",
+                      "an allow for every app keeps quick, so it still decides before /etc/pf.conf")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again

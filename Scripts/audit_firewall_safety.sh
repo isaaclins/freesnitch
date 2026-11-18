@@ -146,7 +146,7 @@ require_text "$RULE_MATCHER" "inet_pton(AF_INET6" \
 # stay a scan over the already ordered array.
 require_text "$RULE_MATCHER" "public struct PreparedRuleSet" \
   "the precomputed rule order is missing, so every flow pays a filter and a sort again"
-verdict_body="$(swift_function_body "$RULE_MATCHER" 'func decision(for c: Connection, prepared:')"
+verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for c: Connection, prepared:')"
 [[ -n "$verdict_body" ]] || fail "the shared matcher has no prepared-rule verdict path to audit"
 for forbidden in '.sorted' '.filter' '.map('; do
   if printf '%s\n' "$verdict_body" | grep -Fq -- "$forbidden"; then
@@ -667,7 +667,7 @@ fi
 # A verdict must never wait on the filesystem. The bundle identifier comes from
 # a bounded in-memory cache, and the Info.plist read happens on a background
 # queue, so a cold page cache or a slow volume cannot become filter latency.
-require_text "$FILTER" "bundleIdentifierCache.cachedBundleId(forExecutablePath: path)" \
+require_text "$FILTER" "let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path," \
   "the verdict path no longer answers bundle identifiers from the bounded cache"
 require_text "$FILTER" "capacity: Int = 512" \
   "the bundle identifier cache capacity is not explicit and bounded"
@@ -675,8 +675,8 @@ require_text "$FILTER" "resolveQueue.async" \
   "bundle identifier plist reads are not handed to a background queue"
 require_text "$FILTER" "private let lock: UnsafeMutablePointer<os_unfair_lock_s>" \
   "the bundle identifier cache does not hold its lock at a stable address"
-bundle_id_body="$(awk '
-  /private func bundleIdForApp\(atPath path: String\)/ {
+connection_body="$(awk '
+  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, version: String\?, signatureChecked: Bool\)/ {
     active = 1
     depth = 0
   }
@@ -688,9 +688,19 @@ bundle_id_body="$(awk '
     if (depth == 0) exit
   }
 ' "$FILTER")"
-[[ -n "$bundle_id_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
-if printf '%s\n' "$bundle_id_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization'; then
-  fail "the verdict path reads and parses an Info.plist synchronously"
+[[ -n "$connection_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
+if printf '%s\n' "$connection_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization|SecStaticCode|SecCodeCopy'; then
+  fail "the verdict path reads an Info.plist or checks a signature synchronously"
+fi
+
+# A rule's bundle id comes from the process's code signature, never from an
+# unsigned Info.plist anyone can write next to a binary (#351).
+require_text "$FILTER" "CodeSigningIdentity.resolve(executablePath:" \
+  "the extension no longer takes bundle identifiers from the code signature"
+require_text "$ROOT/Sources/Helper/NetMonitor.swift" "CodeSigningIdentity.resolve(executablePath:" \
+  "the monitor no longer takes bundle identifiers from the code signature"
+if grep -Fq 'CFBundleIdentifier' "$ROOT/Sources/Helper/NetMonitor.swift"; then
+  fail "the monitor reads a bundle identifier from an unsigned Info.plist"
 fi
 
 # A flow can reach handleNewFlow with no destination at all: the SDK states
@@ -948,7 +958,7 @@ fi
 # FreeSnitch, its helper, and loopback are safety-critical exemptions. They
 # must be decided before the general matcher can pause or drop the flow.
 own_line="$(grep -nF 'if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }' "$FILTER" | head -1 | cut -d: -f1 || true)"
-matcher_line="$(grep -nF 'matcher.decision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
+matcher_line="$(grep -nF 'matcher.explainedDecision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
 [[ -n "$own_line" ]] || fail "own-traffic and loopback exemption is missing"
 [[ -n "$matcher_line" ]] || fail "the extension no longer invokes the shared matcher"
 if (( own_line >= matcher_line )); then
@@ -1254,7 +1264,7 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q "rm -rf '/Application
   fail "the privileged uninstall deletes the app bundle, which strands the system extension"
 fi
 require_text "$PRIVILEGED_UNINSTALL" "NSWorkspace.shared.recycle" \
-  "the uninstall does not hand the app bundle to Finder, so macOS will not remove the system extension"
+  "the uninstall deletes the app bundle instead of moving it to the Trash"
 require_text "$UNINSTALL_VIEW" "trashApplicationBundle" \
   "the uninstall screen never moves the app to the Trash"
 # Uninstall must REMOVE the content filter configuration, not merely disable
@@ -1267,12 +1277,45 @@ require_text "$SYSEXT_MANAGER" "removeFromPreferences" \
 # Look at the whole function body, and check for the WRONG call rather than
 # only for the right one: a six-line window still matched the early-return
 # branch's call and let a reverted uninstall path pass.
-UNINSTALL_BODY=$(rg -A24 'func deactivateForUninstall' "$SYSEXT_MANAGER")
+UNINSTALL_BODY=$(awk '/func deactivateForUninstall/,/^    }$/' "$SYSEXT_MANAGER")
 if ! rg -q 'removeFilterConfiguration' <<<"$UNINSTALL_BODY"; then
   fail "uninstall no longer removes the filter configuration before deactivating the extension"
 fi
 if rg -q 'disableFilter\(' <<<"$UNINSTALL_BODY"; then
   fail "uninstall only disables the filter configuration, so macOS keeps the extension record until a reboot"
+fi
+# The deactivation must be submitted only after the configuration removal
+# answered, inside its completion, never next to it.
+if ! printf '%s\n' "$UNINSTALL_BODY" | awk '/removeFilterConfiguration \{ \[weak self\] removed in/ { inside = 1 } inside && /guard removed else/ { gated = 1 } gated && /deactivationRequest/ { found = 1 } END { exit !found }'; then
+  fail "uninstall submits the extension deactivation without waiting for the filter configuration removal, or after it failed"
+fi
+# The uninstall removes the helper and the app only after macOS answered the
+# deactivation with the extension stopped (#391): removing them while the
+# extension still runs strands it.
+UNINSTALL_ANSWER=$(awk '/private func extensionAnswered/,/^    }$/' "$UNINSTALL_VIEW")
+if ! printf '%s\n' "$UNINSTALL_ANSWER" | rg -q 'case \.failed' \
+   || printf '%s\n' "$UNINSTALL_ANSWER" | awk '/case \.failed/,/case \.notInstalled/' | rg -q 'finish\(\)'; then
+  fail "the uninstall removes the helper and the app although macOS kept the network extension"
+fi
+# A filter configuration removal that failed must stop the uninstall: the
+# filter would keep running with the user's rules and no app left (#391).
+if ! awk '/private func removeFilterConfiguration/,/^    }$/' "$SYSEXT_MANAGER" | rg -q 'completion\(removeError == nil\)'; then
+  fail "the filter configuration removal reports success whether or not it worked"
+fi
+# The helper is unregistered only after the privileged step flushed the pf
+# anchor: if that step is cancelled, the helper is what can still clear pf.
+if ! awk '/^    func finish\(\)/,/^    }$/' "$UNINSTALL_VIEW" \
+     | awk '/case \.success:/ { ok = 1 } /unregisterDaemonForUninstall/ { found = ok; exit } END { exit !found }'; then
+  fail "the uninstall unregisters the helper before the pf anchor is flushed"
+fi
+# The finished uninstall ends the process outright: NSApp.terminate from a
+# bundle already in the Trash hung 1.1.0 until it was force quit (#391).
+if ! awk '/^    func quit\(\)/,/^    }$/' "$UNINSTALL_VIEW" | rg -q '^\s*exit\(0\)'; then
+  fail "the uninstall's quit no longer exits the process outright"
+fi
+# The uninstall screen talks to people, not developers (#391).
+if rg -v '^[[:space:]]*//' "$UNINSTALL_VIEW" | rg -q 'Text\(.*(systemextensionsctl|System Integrity|sudo |io\.isaaclins|bundleId)'; then
+  fail "the uninstall screen shows a terminal command, a bundle id or SIP talk"
 fi
 # Turning enforcement off is NOT an uninstall: that path must keep the
 # configuration installed so it can be switched back on without re-approval.
@@ -1519,17 +1562,22 @@ require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
 # stay in, so an address feed never blocks what the user allowed.
 anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
-printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }' \
-  || fail "the pf anchor renders disabled or expired rules, so a temporary deny keeps blocking after it ran out"
-printf '%s\n' "$anchor_body" | grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }' \
-  || fail "the pf anchor no longer filters deny rules through reachesPF"
-printf '%s\n' "$anchor_body" | grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }' \
-  || fail "the pf anchor no longer filters allow rules through reachesPF"
+# A quick line stops pf at the first match, so the lines must follow the matcher's order
+# (PreparedRuleSet: enabled rules, priority first) or a lower-priority deny
+# overrides a higher-priority allow (issue #181).
+printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = PreparedRuleSet(rules: rules).ordered.filter { !PFManager.hasExpired($0, at: now) }' \
+  || fail "the pf anchor no longer renders the matcher's order of enabled, unexpired rules, so pf and the extension can disagree"
+printf '%s\n' "$anchor_body" | grep -Fq 'let renderedRules = liveRules.filter { PFManager.reachesPF($0) }' \
+  || fail "the pf anchor no longer filters the rules it renders through reachesPF"
+[[ "$(printf '%s\n' "$anchor_body" | grep -c 'pfLines(')" -eq 1 ]] \
+  || fail "the pf anchor renders rules in more than one pass, which ignores rule priority"
 reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
 printf '%s\n' "$reaches_body" | grep -Fq 'case .deny: return !namesAnApp(rule)' \
   || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
 printf '%s\n' "$reaches_body" | grep -Fq 'case .allow: return true' \
   || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
+printf '%s\n' "$reaches_body" | grep -Fq 'case .ask: return false' \
+  || fail "the pf anchor renders ask rules as passes, which turns the address feeds off for their whole address or port"
 if printf '%s\n' "$anchor_body" | grep -Eq 'for [a-z]+ in rules\b'; then
   fail "the pf anchor renders the unfiltered rule set somewhere"
 fi
@@ -1604,4 +1652,4 @@ printf '%s\n' "$unload_body" | grep -Fq -- '"-F", "all"' \
 printf '%s\n' "$unload_body" | grep -Eq 'removeItem|"-d"' \
   && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'

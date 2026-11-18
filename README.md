@@ -59,20 +59,13 @@ FreeSnitch keeps updating itself, so a plain `brew upgrade` skips it; `brew upgr
 - Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
 - Later versions arrive through the built-in Sparkle updater.
 
-1. Open the disk image and drag FreeSnitch to **Applications**. It has to live there, see below.
+1. Open the disk image and drag FreeSnitch to **Applications**. If you open it from the disk image or Downloads instead, FreeSnitch offers to move itself there.
 2. Open FreeSnitch and allow its helper in **System Settings > General > Login Items & Extensions > Allow in the Background**.
 3. When macOS asks, allow the FreeSnitch system extension in System Settings. That is the part that filters per process.
 
-To check the download before you open it:
+The release page shows the SHA-256 of every file and carries a `SHA256SUMS.txt`, if you want to check a download with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder you saved it to. Opening it is already checked by macOS, because the app is signed and notarized.
 
-```console
-$ shasum -a 256 ~/Downloads/FreeSnitch-1.1.0.dmg
-f15857e6e328936b1623cfe309c1d7a357d1150f77fbe2e24a8ed7c1650382cd
-```
-
-Coming from PureSnitch? Run `Scripts/uninstall_puresnitch.sh` first. The old and new content filters must not run together.
-
-**FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from a mounted disk image or from Downloads, so drag it across before opening it. FreeSnitch will tell you if you forget.
+Coming from PureSnitch? FreeSnitch notices an old PureSnitch install when it opens and offers to remove it. The old and new content filters must not run together.
 
 On first launch the app registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings > General > Login Items & Extensions > Allow in the Background**. Until that switch is on, macOS blocks the helper and the app cannot see traffic. The window updates on its own once you approve it, with no relaunch needed.
 
@@ -106,19 +99,19 @@ xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Relea
 open build/Build/Products/Release/FreeSnitch.app
 ```
 
-This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release.
+This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release. Opened from the build folder, its banner has a Move to Applications button; if a FreeSnitch is already installed, it never overwrites that copy.
 
 ## Uninstall
 
-Start in the app: **FreeSnitch > Settings > Uninstall**. Under System Integrity Protection, which is on by default, the app is the only component macOS lets deactivate the FreeSnitch system extension. `systemextensionsctl uninstall` answers `At this time, this tool cannot be used if System Integrity Protection is enabled.` even for root, so a script cannot do this part.
+Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor and deletes its data behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
 
-The Uninstall tab asks you to confirm twice, then turns enforcement off, disables the content filter, and requests deactivation of the network extension. macOS usually finishes that only after a restart, and the app reports what the system actually answers rather than claiming success when the request was accepted.
+macOS often keeps a stopped extension listed until the next restart. Nothing of FreeSnitch runs or filters by then, so there is no need to restart for it; the app says so in one sentence when it happens.
 
-What is left needs administrator rights and is yours to do:
+Only FreeSnitch itself can remove its network extension: with System Integrity Protection on, `systemextensionsctl uninstall` refuses even for root, and since macOS 15.3 moving the app to the Trash no longer removes it either.
 
-1. Switch FreeSnitch off in **System Settings > General > Login Items & Extensions**. That is what removes the privileged helper. FreeSnitch never unregisters its own service for you, because doing that silently is how a working install gets broken (see #24).
-2. Restart if the app says the deactivation finishes after a restart.
-3. Run the script, which does the file and `pf` work with its guards in place:
+Installed with Homebrew? From 1.2.0 on, `brew uninstall --cask freesnitch` works on its own. It asks FreeSnitch to remove its network extension first (macOS may ask you to allow that), then stops the helper and empties the `pf` anchor. `--zap` also deletes your rules and settings.
+
+From a source checkout, after removing the extension in the app, the script does the file and `pf` work with its guards in place:
 
 ```bash
 sudo bash Scripts/uninstall_freesnitch.sh --yes
@@ -126,11 +119,7 @@ sudo bash Scripts/uninstall_freesnitch.sh --yes
 sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
 ```
 
-The script refuses to remove the app while macOS still holds a record for the extension, or while the helper is still running from that bundle. Without `--remove-database` it keeps `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds your rules and can exceed 300 MB, so a reinstall finds them again. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
-
-Without a checkout, the Uninstall tab shows and copies the equivalent commands.
-
-Installed with Homebrew? Use the Uninstall tab in the app and restart, then run `brew uninstall --cask freesnitch` instead of the script. It stops the helper and empties the `pf` anchor the same way, and `--zap` also deletes your rules and settings. It refuses while macOS still lists the extension.
+It refuses to remove the app while the extension is still active, or while the helper is still running from that bundle. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
 
 ## Why this exists
 
@@ -213,7 +202,7 @@ Live up and down throughput when enabled, a five-minute traffic graph, a top-pro
 Four parts make up the monitoring and enforcement path:
 
 1. **DNS interception.** When Enforcement is enabled, a local DNS proxy on `127.0.0.1:53` answers queries sent to it. Blocklisted domains return NXDOMAIN. Everything else forwards over DoH to the resolver of your choice. This is the only blocklist enforcement path: the Network Extension and `pfctl` do not receive blocklist entries, so hardcoded IP connections and names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH, are not covered.
-2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports that apply to every app. A deny rule that names an app is never written there, because `pf` cannot tell apps apart; the Network Extension enforces it per process. An app's allow rule is, so an address feed never blocks what you allowed. Every rule is written for its own direction and names the other end of the connection. An outgoing rule becomes `to` that address and port, an incoming rule becomes `from` it, and a rule for both directions becomes both lines. Every line in the anchor is `quick`, so a pass with no direction would also match the other direction and skip a block in `/etc/pf.conf`. That's why none is written. An incoming allow with only a port and no address stays with the Network Extension, because in `pf` it would let anyone using that source port reach every port on your Mac.
+2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports that apply to every app. A deny rule that names an app is never written there, because `pf` cannot tell apps apart; the Network Extension enforces it per process. An app's allow rule is, so an address feed never blocks what you allowed. Every rule is written for its own direction and names the other end of the connection. An outgoing rule becomes `to` that address and port, an incoming rule becomes `from` it, and a rule for both directions becomes both lines. A pass with no direction would also match the other direction, where `to` and `from` name your Mac's own side, and skip a block in `/etc/pf.conf`. That's why none is written. An incoming allow with only a port and no address stays with the Network Extension, because in `pf` it would let anyone using that source port reach every port on your Mac. Because `pf` would apply an app's allow to every app, it is written without `quick`, so a block after the anchor in `/etc/pf.conf` still wins. An incoming allow keeps the state that lets your Mac's replies to that peer past an address feed; an outgoing allow tags its packets, and the feed lets tagged packets by. `pf` still can't tell apps apart, so the feed lets any app reach the address and port you allowed for one app. Ask rules stay out, so the address feeds still apply to what the extension asks about. The rules are written in the matcher's priority order, so a higher-priority allow for every app comes before a lower-priority deny that covers it. An app's allow, or an allow with both a hostname and an address, is written without `quick`, because `pf` would apply it more widely than you asked. So in `pf` a lower-priority deny for every app still wins over it. The same goes for an app's allow for anywhere, octet wildcards and hostname rules, which have no `pf` line. A temporary rule leaves the anchor when it expires.
 3. **Process and connection observability.** `nettop -P -L 0 -x -J bytes_in,bytes_out` is parsed continuously for per-process bandwidth. `lsof -i -n -P -F pcnT` snapshots active connections every two seconds. Both feed the GUI's process list and world map. The menu bar speed and the traffic graph come from the network interfaces' byte counters, read once a second.
 4. **Per-process filtering.** In the firewall flavour, the Network System Extension evaluates each new socket flow against the shared rule set and can allow, drop, or pause it for a GUI decision.
 

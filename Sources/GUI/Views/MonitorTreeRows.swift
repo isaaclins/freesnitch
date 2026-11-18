@@ -188,12 +188,12 @@ struct MonitorTreeList: View {
 
     private func decide(_ action: RuleAction, app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.app(app) else { return }
-        controller.apply(action, to: target, processName: app.name, state: state)
+        controller.apply(action, to: target, processName: app.name, teamID: app.teamID, state: state)
     }
 
     private func decide(_ action: RuleAction, destination: MonitorDestinationNode, app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.destination(destination, in: app) else { return }
-        controller.apply(action, to: target, processName: app.name, state: state)
+        controller.apply(action, to: target, processName: app.name, teamID: app.teamID, state: state)
     }
 
     /// Delete on a selected row removes the rule behind it, through the same
