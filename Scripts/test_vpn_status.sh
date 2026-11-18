@@ -69,6 +69,16 @@ struct Verify {
         check("the rules line says rules still apply in the tunnel",
               VPNStatus.rulesSummary(ts)?.hasPrefix("Tailscale is connected. Your rules still apply") == true)
 
+        // 2b. The same, with a global configuration id that doesn't name the
+        //     service: the empty match domain and the servers still say it
+        //     takes every lookup.
+        var unnamedSource = store
+        unnamedSource[VPNStatus.globalDNSKey] = [
+            "ServerAddresses": ["100.100.100.100", "fd7a:115c:a1e0::53"], "__CONFIGURATION_ID__": "Default: 0",
+        ]
+        check("Tailscale owns DNS without the service id in the global entry",
+              VPNStatus.dnsOwner(VPNStatus.connectedVPNs(in: unnamedSource))?.displayName == "Tailscale")
+
         // 3. Tailscale without MagicDNS: connected, but DNS stays with Wi-Fi.
         var noDNS = store
         noDNS.removeValue(forKey: "State:/Network/Service/\(tailscale)/DNS")

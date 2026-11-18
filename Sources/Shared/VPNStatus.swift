@@ -3,8 +3,8 @@ import Foundation
 /// A VPN that is connected right now, and what it does to name lookups (#424).
 ///
 /// Read from the system's network state rather than guessed from interface
-/// names alone: a VPN set up through macOS (Tailscale, WireGuard, the VPN apps
-/// built on Network Extension, and the built-in IKEv2/L2TP ones) is a network
+/// names alone: a VPN set up through macOS (Tailscale, WireGuard and the VPN
+/// apps built on Network Extension) is a network
 /// service with a `VPN` entry and, once connected, an interface. An `utun`
 /// interface on its own is not a VPN: macOS opens several for iCloud Private
 /// Relay, Back to My Mac leftovers and Continuity.
@@ -76,13 +76,17 @@ public enum VPNStatus {
             let setup = store["Setup:/Network/Service/\(serviceID)"] as? [String: Any]
             let dns = store["\(base)/DNS"] as? [String: Any]
             let servers = (dns?["ServerAddresses"] as? [String]) ?? []
-            let match = (dns?["SupplementalMatchDomains"] as? [String] ?? [])
+            let rawMatch = (dns?["SupplementalMatchDomains"] as? [String] ?? [])
                 .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")) }
-                .filter { !$0.isEmpty }
+            // An empty match domain is the VPN claiming the default resolver,
+            // as Tailscale does with MagicDNS on.
+            let claimsDefault = rawMatch.contains("")
+            let match = rawMatch.filter { !$0.isEmpty }
             let fromThisService = !globalSource.isEmpty && globalSource.contains(serviceID)
-            // Same servers only counts for a VPN that claims no domains: a
-            // split-DNS VPN may push the very resolver the user set anyway.
-            let sameServers = match.isEmpty && !servers.isEmpty && !globalServers.isEmpty
+            // Same servers only counts for a VPN that claims no domains or
+            // the default resolver: a split-DNS VPN may push the very
+            // resolver the user set anyway.
+            let sameServers = (match.isEmpty || claimsDefault) && !servers.isEmpty && !globalServers.isEmpty
                 && globalServers.isSubset(of: Set(servers))
             result.append(ActiveVPN(name: setup?["UserDefinedName"] as? String,
                                     interface: interface,
