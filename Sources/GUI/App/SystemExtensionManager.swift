@@ -22,9 +22,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// What macOS actually reported about removing the extension.
     ///
     /// Deactivation is a deliberate, user-initiated uninstall, never a repair
-    /// (see #24), and it commonly finishes only after a reboot. Accepting the
-    /// request is not success, so there is no state for "we asked": the value
-    /// only moves past `.deactivating` when the system answers.
+    /// (see #24). Accepting the request is not success, so there is no state
+    /// for "we asked": the value only moves past `.deactivating` when the
+    /// system answers.
+    ///
+    /// `.pendingReboot` is macOS's "terminated waiting to uninstall on
+    /// reboot": the extension process has stopped and, with the filter
+    /// configuration already removed, nothing filters any more. Only the
+    /// record stays until the next restart. That is a finished uninstall for
+    /// the user, not a step they still have to take (#391).
     enum UninstallState: Equatable {
         case idle
         case deactivating
@@ -32,7 +38,25 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case pendingReboot
         case removed
         case failed(String)
+
+        /// The extension no longer runs and no filter is left: the uninstall
+        /// may go on to remove the helper and the app.
+        var extensionIsGone: Bool {
+            switch self {
+            case .notInstalled, .pendingReboot, .removed: return true
+            case .idle, .deactivating, .failed: return false
+            }
+        }
     }
+
+    /// How long the uninstall waits for macOS to answer the deactivation
+    /// before macOS asks the person anything. Without a bound a
+    /// request macOS never answers left the uninstall waiting for good.
+    static let deactivationAnswerTimeout: TimeInterval = 120
+    /// Once macOS asks the person to allow the removal, they get this long.
+    static let approvalTimeout: TimeInterval = 600
+    static let noAnswer = "macOS did not answer in time."
+    static let filterSettingsKept = "macOS did not let FreeSnitch remove its network filter settings."
 
     private enum RequestKind {
         case activation
@@ -42,6 +66,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     @Published var status: Status = .idle
     @Published var uninstallState: UninstallState = .idle
+    /// macOS wants the person to allow removing the extension before it
+    /// answers, so the uninstall can say where.
+    @Published private(set) var uninstallNeedsApproval = false
     @Published var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         "Network extension IPC is not connected."
     )
@@ -51,6 +78,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private let log = OSLog(subsystem: AppConstants.bundleIdGUI, category: "sysext")
     private var bridge: AppCommunicationBridge?
     private var requestKind: RequestKind = .activation
+    /// Tells a timeout from an earlier attempt apart from the current one.
+    private var deactivationAttempt = 0
     private var filterConfigurationActive = false
     /// The boot-policy save cycle's decisions: queue, bounded retries of a
     /// failed save (#213), the enable request and cancellations (#310).
@@ -66,7 +95,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Every load-then-save on the shared NEFilterManager (boot-policy saves,
     /// turning the filter off, removing it, restarting it) waits here for the
     /// one before it, so the last thing asked for is what gets saved (#309).
-    private let filterPreferences = FilterPreferencesLine()
+    /// Closed in demo mode: the demo never touches the real filter (#388).
+    private let filterPreferences: FilterPreferencesLine
+    /// `FREESNITCH_DEMO=1`: sample data only. Nothing here reads or saves the
+    /// content filter configuration or submits a system extension request, so
+    /// a demo on a Mac where FreeSnitch is installed leaves it alone (#388).
+    private let demo: Bool
     private var persistenceWorkItem: DispatchWorkItem?
     /// Whether the filter is turned off (by the app, or in System Settings) or
     /// has no configuration, as last seen. A failed boot-policy save then has no
@@ -80,13 +114,19 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// The pending turn-on follows the filter being turned on in System
     /// Settings, so it must not turn it on against a later turn-off there.
     private var turnOnFromSettings = false
+    /// The status shows a turn-on that was given up because the helper had
+    /// no rules. Turning the filter off in System Settings afterwards means
+    /// not filtering, not that failure (#382).
+    private var abandonedTurnOnShown = false
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
     private var filterRestartInFlight = false
 
-    init(state: AppState) {
+    init(state: AppState, demo: Bool = DemoMode.isOn) {
         self.state = state
+        self.demo = demo
+        self.filterPreferences = FilterPreferencesLine(closed: demo)
         super.init()
         state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
             self?.recordSnapshotStatus(snapshotStatus)
@@ -94,6 +134,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
             self?.requestPersistedSnapshot(snapshot)
         }
+        // The demo shows sample data: what System Settings does to the real
+        // filter is none of its business, and reacting to it could save the
+        // demo's rules into the real filter (#388).
+        guard !demo else { return }
         // The filter can be turned on or off in System Settings too. Without
         // this, a failure before the next save cycle's load (an encode over
         // the size limit, or a failed load) would go by a stale answer (#321).
@@ -117,7 +161,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // Turned off or removed in System Settings: nothing filters, so
             // stop saying the firewall is active (#361). Only a firewall shown
             // as on changes; approval or a turn-on in progress keep their state.
-            if filterConfigurationActive && !persistenceCycle.enableRequested {
+            // A turn-on shown as failed for lack of rules counts too (#382).
+            if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {
                 showNotFiltering()
             }
         case .saveCurrentRules:
@@ -167,7 +212,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// False in demo mode, so the demo treats this build like the monitor-only
+    /// one and never submits a system extension request (#388).
     private var hasEmbeddedExtension: Bool {
+        guard !demo else { return false }
         let dir = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/SystemExtensions")
         guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return false }
         return urls.contains { $0.pathExtension == "systemextension" }
@@ -198,6 +246,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         OSSystemExtensionManager.shared.submitRequest(request)
     }
 
+    /// Replaces any running limit on the deactivation answer with a new one.
+    private func startDeactivationTimeout(after seconds: TimeInterval) {
+        deactivationAttempt &+= 1
+        let attempt = deactivationAttempt
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.deactivationAttempt == attempt, self.uninstallState == .deactivating else { return }
+            self.uninstallState = .failed(Self.noAnswer)
+        }
+    }
+
     /// Entry point for the uninstall flow in Settings. Under SIP the app is the
     /// only component macOS allows to deactivate this extension, so this is the
     /// real removal path, not a convenience wrapper.
@@ -207,12 +265,22 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// only place FreeSnitch is allowed to do it: unregistering the service
     /// outside an uninstall the user confirmed is the failure #24 was filed for.
     func deactivateForUninstall() {
+        // The demo's uninstall screen walks through the steps on sample data:
+        // the real extension and filter configuration stay as they are (#389).
+        guard !demo else {
+            uninstallState = .removed
+            return
+        }
         uninstallState = .deactivating
+        uninstallNeedsApproval = false
+        startDeactivationTimeout(after: Self.deactivationAnswerTimeout)
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
-            // answer to wait for. Still drop the filter configuration.
-            removeFilterConfiguration { }
-            uninstallState = .notInstalled
+            // answer to wait for. Still drop the filter configuration, and
+            // answer once that is done.
+            removeFilterConfiguration { [weak self] removed in
+                self?.uninstallState = removed ? .notInstalled : .failed(Self.filterSettingsKept)
+            }
             return
         }
         // Remove the filter configuration and WAIT for it, then deactivate.
@@ -224,8 +292,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // which is a large part of why uninstalling always ended in "waiting to
         // uninstall on reboot". And the deactivation request was submitted
         // without waiting for the asynchronous save, so the two raced.
-        removeFilterConfiguration { [weak self] in
+        removeFilterConfiguration { [weak self] removed in
             guard let self else { return }
+            // A filter configuration left in place keeps filtering with the
+            // user's rules. Going on would remove the app that controls it.
+            guard removed else {
+                self.uninstallState = .failed(Self.filterSettingsKept)
+                return
+            }
             self.requestKind = .deactivation
             let request = OSSystemExtensionRequest.deactivationRequest(forExtensionWithIdentifier: self.extensionIdentifier,
                                                                        queue: .main)
@@ -241,10 +315,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// re-approving anything. Removal is only correct when the user is taking
     /// FreeSnitch off the machine.
     ///
-    /// The completion runs on the main queue in every path, including the
-    /// failure paths: an uninstall that stalls because a preferences call
-    /// errored would be worse than one that continues and reports.
-    private func removeFilterConfiguration(completion: @escaping () -> Void) {
+    /// The completion runs on the main queue in every path and says whether no
+    /// configuration is left: removed now, or there was none. A failed read or
+    /// removal is false, so the uninstall stops instead of removing the app
+    /// that controls a filter that still runs (#391).
+    private func removeFilterConfiguration(completion: @escaping (Bool) -> Void) {
         unsavableLogged = false
         cancelPendingPersistence()
         filterTurnOffs &+= 1
@@ -252,13 +327,19 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
                 DispatchQueue.main.async {
-                    guard let self else { done(); completion(); return }
+                    guard let self else { done(); completion(false); return }
                     let mgr = NEFilterManager.shared()
                     if error != nil {
                         self.recordFilterDiagnostic(state: "unknown",
                                                     detail: "Could not read the content filter preferences while removing them.")
                         done()
-                        completion()
+                        completion(false)
+                        return
+                    }
+                    guard mgr.providerConfiguration != nil else {
+                        // Never installed, or already removed: nothing to do.
+                        done()
+                        completion(true)
                         return
                     }
                     mgr.removeFromPreferences { removeError in
@@ -279,7 +360,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 }
                             }
                             done()
-                            completion()
+                            completion(removeError == nil)
                         }
                     }
                 }
@@ -310,6 +391,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func enableFilter(fromSettings: Bool = false) {
         turnOnFromSettings = fromSettings
+        abandonedTurnOnShown = false
         // A snapshot kept for a retry is never the policy activation saves:
         // only the helper's fresh answer below may enable the filter.
         dropScheduledSave()
@@ -502,7 +584,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                             mgr.providerConfiguration = loadedConfiguration
                             mgr.localizedDescription = loadedDescription
                         }
-                        let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)
+                        // Turned on or off in System Settings after the load:
+                        // the system refused to write back what was loaded (#368).
+                        let changedOutside = Self.changedOutside(saveError)
+                        let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil,
+                                                                     changedOutside: changedOutside)
                         self.endPersistenceTurn()
                         // Turned off or removed while this enabling save
                         // was running: the turn-off is saved after it, so
@@ -519,7 +605,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                   message: "The filter was turned off while it was being turned on; it stays off.")
                         }
                         if let saveError {
-                            if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
+                            if changedOutside && result.runAgainNow {
+                                // Saved again below onto what the user set.
+                                os_log("The filter settings changed outside FreeSnitch during a boot policy save; saving the rules again onto them: %{public}@",
+                                       log: self.log, type: .info, saveError.sentence)
+                            } else if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
                                 // A removal while the filter isn't in use: no
                                 // banner was shown for it, so none for this.
                                 os_log("Removing the saved boot policy failed: %{public}@", log: self.log, type: .info,
@@ -584,6 +674,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// The system refused a save because the filter preferences changed after
+    /// they were loaded, for example the filter was turned on or off in System
+    /// Settings (#368).
+    static func changedOutside(_ error: Error?) -> Bool {
+        error.map { ($0 as NSError).domain == NEFilterErrorDomain && ($0 as NSError).code == NEFilterManagerError.configurationStale.rawValue } ?? false
     }
 
     /// The save cycle's turn on `filterPreferences` is over: the next
@@ -743,6 +840,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// then (#335). A build without the extension stays "unsupported".
     private func showNotFiltering() {
         filterConfigurationActive = false
+        abandonedTurnOnShown = false
         if status != .unsupported { status = .idle }
     }
 
@@ -872,7 +970,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {
-            fail("filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")")
+            let message = "filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")"
+            if turnOnFromSettings {
+                reportAbandonedSettingsTurnOn(message)
+            } else {
+                failAbandonedTurnOn(message)
+            }
             return
         }
         guard filterConfigurationActive else { return }
@@ -882,6 +985,46 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         let detail = snapshotStatus.message ?? "no snapshot has been received"
         status = .failed("filter snapshot unavailable: \(detail)")
+    }
+
+    /// The helper gave no rules for a turn-on that followed the filter being
+    /// turned on in System Settings. Changes made there are not read while a
+    /// turn-on is pending, so it may have been turned off or removed there
+    /// again meanwhile: then the filter is off as the user set it, and the
+    /// app says not filtering instead of a failed turn-on (#382). Read in its
+    /// turn on the preferences line, so it sees every earlier save.
+    private func reportAbandonedSettingsTurnOn(_ message: String) {
+        turnOnFromSettings = false
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); return }
+                    let mgr = NEFilterManager.shared()
+                    let configured = mgr.providerConfiguration != nil
+                    let enabled = mgr.isEnabled
+                    done()
+                    // A newer turn-on reports the state itself.
+                    guard !self.persistenceCycle.enableRequested else { return }
+                    if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: error != nil,
+                                                            configured: configured, enabled: enabled) {
+                        self.failAbandonedTurnOn(message)
+                        return
+                    }
+                    self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))
+                    // Approval or an activation started meanwhile keep their state.
+                    guard self.status != .needsApproval && self.status != .activating else { return }
+                    self.showNotFiltering()
+                    self.state?.appendLog(level: "info",
+                                          message: "Firewall not filtering: the helper sent no rules to turn it on with, "
+                                              + "and the filter was turned off or removed in System Settings meanwhile.")
+                }
+            }
+        }
+    }
+
+    private func failAbandonedTurnOn(_ message: String) {
+        fail(message)
+        abandonedTurnOnShown = true
     }
 
     private func fail(_ message: String) {
@@ -906,6 +1049,11 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                     self.uninstallState = .deactivating
                     self.checkExtensionPresence()
                 } else {
+                    // macOS's own answer that the removal is accepted and
+                    // completes at the next restart. The filter settings are
+                    // already confirmed removed before the request went out,
+                    // so nothing filters; taken as is rather than read back
+                    // through flags macOS doesn't document for this state.
                     self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
                     self.uninstallState = .pendingReboot
                 }
@@ -938,9 +1086,13 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                 self.state?.appendLog(level: "info",
                                       message: "Network extension deactivation returned: \(error.localizedDescription)")
             case .properties:
-                // The system has no record left to describe. That is the only
-                // evidence available that the extension is actually gone.
-                self.uninstallState = missing ? .removed : .pendingReboot
+                // No record left to describe is the only evidence that the
+                // extension is gone. Any other failure means "cannot tell",
+                // which counts as still there: the uninstall must not remove
+                // the helper and the app on a guess.
+                self.uninstallState = missing
+                    ? .removed
+                    : .failed("macOS could not say whether the network extension stopped: \(error.localizedDescription)")
             }
         }
     }
@@ -952,8 +1104,15 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             let records = properties.filter { $0.bundleIdentifier == self.extensionIdentifier }
             if records.isEmpty {
                 self.uninstallState = .removed
-            } else {
+            } else if records.allSatisfy({ $0.isUninstalling || !$0.isEnabled }) {
+                // "terminated waiting to uninstall on reboot". Either sign
+                // counts, since which flags macOS sets for that state is
+                // not documented: a record that is neither being uninstalled
+                // nor disabled is the only one still running. The filter
+                // settings are already removed by now, so nothing filters.
                 self.uninstallState = .pendingReboot
+            } else {
+                self.uninstallState = .failed("macOS still lists the network extension as installed.")
             }
         }
     }
@@ -961,6 +1120,10 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
     nonisolated func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         Task { @MainActor in
             guard self.requestKind != .deactivation else {
+                self.uninstallNeedsApproval = true
+                // Waiting on the person now: give them a longer limit, but
+                // never none, or the window-less brew run would wait forever.
+                self.startDeactivationTimeout(after: Self.approvalTimeout)
                 // Removal can need approval too. Do not repaint the firewall
                 // status as "waiting to be switched on" while the user is
                 // switching it off.

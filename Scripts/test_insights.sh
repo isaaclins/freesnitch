@@ -349,6 +349,82 @@ struct InsightsHarness {
         equal(overview().rawObservationCount, 1, "nothing is recorded while the off switch is off")
         try! store.setRecordingEnabled(true)
 
+        // MARK: coverage by an existing rule (#316)
+        // A proposal for an address must count as covered when an enabled rule
+        // already covers that address the way the matcher would, so Insights
+        // does not offer a rule that is already there.
+        func addressProposal(_ ip: String) -> InsightsProposedRule {
+            InsightsProposedRule(appIdentity: "com.beeper.app", appDisplayName: "Beeper",
+                                 processBundleId: "com.beeper.app", processPath: "/Applications/Beeper.app",
+                                 domain: nil, remoteIP: ip, connectionCount: 3, otherAppCount: 0, lastSeen: nil)
+        }
+        let expandedV6 = addressProposal("2001:0db8:0000:0000:0000:0000:0000:0070")
+        check(expandedV6.isCovered(by: [Rule(processBundleId: "com.beeper.app", remoteIP: "2001:db8::70", action: .deny)]),
+              "an IPv6 address rule covers a proposal for the same address spelled out in full")
+        check(addressProposal("2001:db8::70").isCovered(by: [Rule(remoteIP: "2001:0db8::0070", action: .deny)]),
+              "an IPv6 address rule covers a proposal for the same address spelled another way")
+        check(addressProposal("203.0.113.70").isCovered(by: [Rule(processBundleId: "com.beeper.app", remoteIP: "203.0.113.0/24", action: .deny)]),
+              "a range rule covers a proposal for an address inside it")
+        check(expandedV6.isCovered(by: [Rule(remoteIP: "2001:db8::/32", action: .deny)]),
+              "an IPv6 range rule covers a proposal for an address inside it")
+        check(addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.*", action: .deny)]),
+              "a wildcard address rule covers a proposal for an address it matches")
+        check(addressProposal("203.0.113.70").isCovered(by: [Rule(remoteHost: "203.0.113.70", action: .deny)]),
+              "an address in the hostname field covers a proposal for that address")
+        check(expandedV6.isCovered(by: [Rule(remoteHost: "2001:db8::70", action: .deny)]),
+              "an IPv6 address in the hostname field covers a proposal for that address in another spelling")
+        check(addressProposal("198.51.100.9").isCovered(by: [Rule(remoteHost: "198.51.100.0/24", action: .deny)]),
+              "a range in the hostname field covers a proposal for an address inside it")
+        check(addressProposal("2001:db8::70").isCovered(by: [Rule(processBundleId: "com.beeper.app",
+                                                                  remoteHost: "2001:db8::70", remoteIP: "2001:db8::70",
+                                                                  action: .deny)]),
+              "a rule Insights itself wrote for the address still covers it")
+        check(!addressProposal("203.0.114.1").isCovered(by: [Rule(remoteIP: "203.0.113.0/24", action: .deny)]),
+              "a range rule does not cover an address outside it")
+        check(!addressProposal("2001:db8::71").isCovered(by: [Rule(remoteIP: "2001:db8::70", action: .deny)]),
+              "an IPv6 address rule does not cover a different address")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.0/24", action: .deny, enabled: false)]),
+              "a disabled rule covers nothing")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(processBundleId: "com.other.app", remoteIP: "203.0.113.0/24", action: .deny)]),
+              "a rule for another app does not cover this app's proposal")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteHost: "cdn.example.com", action: .deny)]),
+              "a hostname rule does not cover an address proposal")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteHost: "203.0.113.70", remoteIP: "203.0.113.80", action: .deny)]),
+              "a rule with its own address is compared by that address, not the hostname field")
+        let domainProposal = InsightsProposedRule(appIdentity: "com.beeper.app", appDisplayName: "Beeper",
+                                                  processBundleId: "com.beeper.app", processPath: nil,
+                                                  domain: "api.example.com", remoteIP: nil, connectionCount: 1,
+                                                  otherAppCount: 0, lastSeen: nil)
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "API.example.com", action: .deny)]),
+              "a domain proposal is still covered by the same name in any case")
+        check(!domainProposal.isCovered(by: [Rule(remoteIP: "203.0.113.0/24", action: .deny)]),
+              "an address rule does not cover a domain proposal")
+
+        // #331: a rule only covers a proposal when it would match every
+        // outgoing connection the proposal stands for.
+        let coverageNow = Date()
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 443, action: .deny)], now: coverageNow),
+              "a port-only rule does not cover a domain proposal")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.70", remotePort: 443, action: .deny)], now: coverageNow),
+              "a port-only rule does not cover an address proposal")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 0, action: .deny)], now: coverageNow),
+              "port 0 means any port and still covers")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", direction: .incoming, action: .deny)], now: coverageNow),
+              "an incoming-only rule does not cover an outgoing proposal")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.0/24", direction: .incoming, action: .deny)], now: coverageNow),
+              "an incoming-only range rule does not cover an outgoing address proposal")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", direction: .any, action: .deny)], now: coverageNow),
+              "a rule for both directions covers an outgoing proposal")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", action: .deny,
+                                                  expiresAt: coverageNow.addingTimeInterval(-60))], now: coverageNow),
+              "an expired rule does not cover a proposal")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", action: .deny,
+                                                 expiresAt: coverageNow.addingTimeInterval(3600))], now: coverageNow),
+              "a rule that has not expired yet still covers")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 443, action: .deny),
+                                            Rule(remoteHost: "api.example.com", action: .deny)], now: coverageNow),
+              "a full rule next to a port-only rule still covers")
+
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {
             FileHandle.standardError.write(Data("insights harness: \(failures) failure(s)\n".utf8))

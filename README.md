@@ -103,15 +103,15 @@ This build needs no system extension approval, because it has no extension to ap
 
 ## Uninstall
 
-Start in the app: **FreeSnitch > Settings > Uninstall**. Under System Integrity Protection, which is on by default, the app is the only component macOS lets deactivate the FreeSnitch system extension. `systemextensionsctl uninstall` answers `At this time, this tool cannot be used if System Integrity Protection is enabled.` even for root, so a script cannot do this part.
+Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor and deletes its data behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
 
-The Uninstall tab asks you to confirm twice, then turns enforcement off, disables the content filter, and requests deactivation of the network extension. macOS usually finishes that only after a restart, and the app reports what the system actually answers rather than claiming success when the request was accepted.
+macOS often keeps a stopped extension listed until the next restart. Nothing of FreeSnitch runs or filters by then, so there is no need to restart for it; the app says so in one sentence when it happens.
 
-What is left needs administrator rights and is yours to do:
+Only FreeSnitch itself can remove its network extension: with System Integrity Protection on, `systemextensionsctl uninstall` refuses even for root, and since macOS 15.3 moving the app to the Trash no longer removes it either.
 
-1. Switch FreeSnitch off in **System Settings > General > Login Items & Extensions**. That is what removes the privileged helper. FreeSnitch never unregisters its own service for you, because doing that silently is how a working install gets broken (see #24).
-2. Restart if the app says the deactivation finishes after a restart.
-3. Run the script, which does the file and `pf` work with its guards in place:
+Installed with Homebrew? From 1.2.0 on, `brew uninstall --cask freesnitch` works on its own. It asks FreeSnitch to remove its network extension first (macOS may ask you to allow that), then stops the helper and empties the `pf` anchor. `--zap` also deletes your rules and settings.
+
+From a source checkout, after removing the extension in the app, the script does the file and `pf` work with its guards in place:
 
 ```bash
 sudo bash Scripts/uninstall_freesnitch.sh --yes
@@ -119,11 +119,7 @@ sudo bash Scripts/uninstall_freesnitch.sh --yes
 sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
 ```
 
-The script refuses to remove the app while macOS still holds a record for the extension, or while the helper is still running from that bundle. Without `--remove-database` it keeps `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds your rules and can exceed 300 MB, so a reinstall finds them again. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
-
-Without a checkout, the Uninstall tab shows and copies the equivalent commands.
-
-Installed with Homebrew? Use the Uninstall tab in the app and restart, then run `brew uninstall --cask freesnitch` instead of the script. It stops the helper and empties the `pf` anchor the same way, and `--zap` also deletes your rules and settings. It refuses while macOS still lists the extension.
+It refuses to remove the app while the extension is still active, or while the helper is still running from that bundle. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
 
 ## Why this exists
 
@@ -206,7 +202,7 @@ Live up and down throughput when enabled, a five-minute traffic graph, a top-pro
 Four parts make up the monitoring and enforcement path:
 
 1. **DNS interception.** When Enforcement is enabled, a local DNS proxy on `127.0.0.1:53` answers queries sent to it. Blocklisted domains return NXDOMAIN. Everything else forwards over DoH to the resolver of your choice. This is the only blocklist enforcement path: the Network Extension and `pfctl` do not receive blocklist entries, so hardcoded IP connections and names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH, are not covered.
-2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports that apply to every app. A deny rule that names an app is never written there, because `pf` cannot tell apps apart; the Network Extension enforces it per process. An app's allow rule is, so an address feed never blocks what you allowed.
+2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports that apply to every app. A deny rule that names an app is never written there, because `pf` cannot tell apps apart; the Network Extension enforces it per process. An app's allow rule is, so an address feed never blocks what you allowed. Every rule is written for its own direction and names the other end of the connection. An outgoing rule becomes `to` that address and port, an incoming rule becomes `from` it, and a rule for both directions becomes both lines. A pass with no direction would also match the other direction, where `to` and `from` name your Mac's own side, and skip a block in `/etc/pf.conf`. That's why none is written. An incoming allow with only a port and no address stays with the Network Extension, because in `pf` it would let anyone using that source port reach every port on your Mac. Because `pf` would apply an app's allow to every app, it is written without `quick`, so a block after the anchor in `/etc/pf.conf` still wins. An incoming allow keeps the state that lets your Mac's replies to that peer past an address feed; an outgoing allow tags its packets, and the feed lets tagged packets by. `pf` still can't tell apps apart, so the feed lets any app reach the address and port you allowed for one app.
 3. **Process and connection observability.** `nettop -P -L 0 -x -J bytes_in,bytes_out` is parsed continuously for per-process bandwidth. `lsof -i -n -P -F pcnT` snapshots active connections every two seconds. Both feed the GUI's process list and world map. The menu bar speed and the traffic graph come from the network interfaces' byte counters, read once a second.
 4. **Per-process filtering.** In the firewall flavour, the Network System Extension evaluates each new socket flow against the shared rule set and can allow, drop, or pause it for a GUI decision.
 
