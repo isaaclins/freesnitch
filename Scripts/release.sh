@@ -863,13 +863,13 @@ assert_only_version_files_changed() {
 # checked before the release commit: a failure here stops the release before
 # anything is tagged or pushed (#376).
 write_checksums() {
-  local sum_file hash name
+  local sum_file sum_line name
   : >"$SUMS_PATH"
   for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
     assert_file "$sum_file"
-    hash="$(shasum -a 256 "$sum_file" | awk '{print $1}')"
-    [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die "could not compute the SHA-256 of $sum_file"
-    printf '%s  %s\n' "$hash" "$(basename "$sum_file")" >>"$SUMS_PATH"
+    sum_line="$(shasum -a 256 "$sum_file")" || die "could not compute the SHA-256 of $sum_file"
+    [[ "$sum_line" =~ ^[0-9a-f]{64}\  ]] || die "unexpected shasum output for $sum_file"
+    printf '%s  %s\n' "${sum_line%% *}" "$(basename "$sum_file")" >>"$SUMS_PATH"
   done
 
   [[ "$(wc -l <"$SUMS_PATH" | tr -d ' ')" == "2" ]] || die "$SUMS_PATH must list exactly two files"

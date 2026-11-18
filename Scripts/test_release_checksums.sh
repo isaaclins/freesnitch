@@ -88,6 +88,8 @@ broken_shasum() { printf '#!/usr/bin/env bash\nexit 1\n' >"$1/bin/shasum"; chmod
 if run_tail shasum-fails broken_shasum; then
   fail "release continued although shasum failed"
 fi
+grep -q 'could not compute the SHA-256' "$WORK/shasum-fails/out.log" || \
+  fail "a failing shasum did not say why the release stopped: $(cat "$WORK/shasum-fails/out.log")"
 grep -Eq '^git (commit|tag|push)|^gh release' "$WORK/shasum-fails/calls.log" && \
   fail "release committed, tagged or pushed after a checksum failure: $(cat "$WORK/shasum-fails/calls.log")"
 
