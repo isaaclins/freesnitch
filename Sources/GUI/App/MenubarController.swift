@@ -201,7 +201,9 @@ final class MenubarController {
                     break
                 }
             case .idle:
-                return "Firewall not filtering yet"
+                // Also the state after the filter was turned off or removed
+                // (#335), where "yet" would promise it comes back.
+                return "Firewall not filtering"
             }
             return "Firewall not filtering"
         }

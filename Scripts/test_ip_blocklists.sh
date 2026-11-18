@@ -15,8 +15,11 @@
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
-#      and lookup cost does not scale with the number of entries.
-#   6. A feed of more than 100k entries loads and answers within a sane time.
+#      and a lookup takes at most floor(log2(n)) + 1 search steps, counted, not timed.
+#   6. A feed of more than 100k entries loads fully and answers correctly. The
+#      load and lookup times are printed, and only checked against a limit when
+#      FREESNITCH_BENCH=1 is set, so a busy machine cannot fail the harness
+#      (issue #356). Lookup cost is already bounded by the counted steps in 5.
 #   7. Every anchor rendered above is valid pf: each rule line is checked
 #      against the grammar here, and parsed by `pfctl -n` (parse only, nothing
 #      is loaded) wherever pfctl can run. One line pf refuses makes it refuse
@@ -328,8 +331,8 @@ struct IPBlocklistHarness {
         checks.expect(blocks(bothWays, "to 203.0.113.41 port 8080")
                         && blocks(bothWays, "to any port 8081"),
                       "a deny in both directions must block going out")
-        // Both ways means incoming connections from that address too, which
-        // a SYN-only outgoing line no longer stops by dropping replies.
+        // Both ways means new incoming connections from the remote side too,
+        // blocked by their own line rather than only by dropped replies.
         for remote in ["from 203.0.113.41 port 8080", "from any port 8081"] {
             checks.expect(bothWays.contains("block in quick proto tcp \(remote) flags S/SA\n")
                             && bothWays.contains("block in quick proto udp \(remote)\n"),
@@ -509,6 +512,9 @@ struct IPBlocklistHarness {
                       "an address feed must never appear in the domain blocklist table")
 
         // 8. Size and time. A feed of this size is ordinary for this data.
+        // Wall-clock limits only apply in the opt-in benchmark (issue #356):
+        // timing depends on the machine's load, not on the code.
+        let benchmark = ProcessInfo.processInfo.environment["FREESNITCH_BENCH"] == "1"
         let bigEntries = generatedEntries(120_000)
         let buildStart = Date()
         let big = IPBlocklistSet(entries: bigEntries)
@@ -516,7 +522,9 @@ struct IPBlocklistHarness {
         checks.expect(big.acceptedEntryCount == 120_000, "the large feed must load fully, got \(big.acceptedEntryCount)")
         checks.expect(big.rangeCount == 120_000, "non-adjacent networks must stay distinct ranges, got \(big.rangeCount)")
         checks.expect(!big.truncated, "120k entries is below the bound and must not be truncated")
-        checks.expect(buildSeconds < 20, "loading 120k entries took \(buildSeconds)s, which is not a sane load time")
+        if benchmark {
+            checks.expect(buildSeconds < 20, "loading 120k entries took \(buildSeconds)s, which is not a sane load time")
+        }
         checks.note(String(format: "loaded 120000 entries in %.3fs", buildSeconds))
 
         var hits = 0
@@ -532,7 +540,9 @@ struct IPBlocklistHarness {
         let lookupSeconds = Date().timeIntervalSince(lookupStart)
         checks.expect(hits == 100_000, "every address inside a /25 must hit, got \(hits)")
         checks.expect(misses == 100_000, "every address outside a /25 must miss, got \(misses)")
-        checks.expect(lookupSeconds < 5, "200k lookups took \(lookupSeconds)s, which is not a sane lookup time")
+        if benchmark {
+            checks.expect(lookupSeconds < 5, "200k lookups took \(lookupSeconds)s, which is not a sane lookup time")
+        }
         checks.note(String(format: "200000 string lookups in %.3fs", lookupSeconds))
 
         // Bounded: the ceiling truncates instead of growing without limit.
@@ -561,19 +571,54 @@ struct IPBlocklistHarness {
         checks.expect(typedGrowth < 64 * 1024,
                       "50k typed lookups grew the heap by \(typedGrowth) bytes, so the lookup path is allocating")
 
-        // Lookup cost must not scale with the set. Same probes, 12 entries
-        // against 120k entries.
+        // Lookup cost must not scale with the set. Counted in binary-search
+        // steps, not wall-clock time, so a busy machine cannot fail it
+        // (issue #326). A bounded search over n ranges takes at most
+        // floor(log2(n)) + 1 steps, whatever the probe.
+        func maxSteps(_ count: Int) -> Int {
+            count <= 0 ? 0 : (Int.bitWidth - count.leadingZeroBitCount)
+        }
         let tiny = IPBlocklistSet(entries: generatedEntries(12))
-        let tinyStart = Date()
-        for address in addresses { _ = tiny.contains(ipv4: address) }
-        let tinySeconds = Date().timeIntervalSince(tinyStart)
-        let bigStart = Date()
-        for address in addresses { _ = big.contains(ipv4: address) }
-        let bigSeconds = Date().timeIntervalSince(bigStart)
-        let ratio = tinySeconds > 0 ? bigSeconds / tinySeconds : 0
-        checks.expect(ratio < 12,
-                      String(format: "a 10000x larger set cost %.1fx more per lookup, which is not a bounded search", ratio))
-        checks.note(String(format: "50000 typed lookups: %.4fs over 12 entries, %.4fs over 120000 entries", tinySeconds, bigSeconds))
+        let missesV4: [UInt32] = [0, 1, 0x2100_0000 - 1, UInt32.max, 0x2100_0080, 0x2300_0000]
+        var tinyWorst = 0
+        var bigWorst = 0
+        var bigTotal = 0
+        var stepHits = 0
+        for address in addresses + missesV4 {
+            tinyWorst = max(tinyWorst, tiny.lookupProbes(ipv4: address).probes)
+            let result = big.lookupProbes(ipv4: address)
+            bigWorst = max(bigWorst, result.probes)
+            bigTotal += result.probes
+            if result.found { stepHits += 1 }
+        }
+        checks.expect(stepHits == 50_000, "the counting lookup must agree with the plain one, got \(stepHits)")
+        checks.expect(tinyWorst <= maxSteps(tiny.rangeCount),
+                      "a lookup over \(tiny.rangeCount) ranges took \(tinyWorst) steps, more than \(maxSteps(tiny.rangeCount))")
+        checks.expect(bigWorst <= maxSteps(big.rangeCount),
+                      "a lookup over \(big.rangeCount) ranges took \(bigWorst) steps, more than \(maxSteps(big.rangeCount)), which is not a bounded search")
+        checks.expect(bigWorst >= maxSteps(big.rangeCount) - 1,
+                      "a lookup over \(big.rangeCount) ranges took only \(bigWorst) steps, so the step counter is not counting")
+
+        let v6Big = IPBlocklistSet(entries: (0..<4_096).map { String(format: "2001:db8:%x::/48", $0 * 2) })
+        var v6Worst = 0
+        var v6Hits = 0
+        let v6Probes = ["::1", "2001:db7:ffff::1", "ffff::1"] + (0..<8_192).map { String(format: "2001:db8:%x::1", $0) }
+        for text in v6Probes {
+            if let probe = IPBlocklistAddress.ipv6(text) {
+                let result = v6Big.lookupProbes(ipv6: probe)
+                v6Worst = max(v6Worst, result.probes)
+                if result.found { v6Hits += 1 }
+            } else {
+                checks.expect(false, "the IPv6 probe \(text) must parse")
+            }
+        }
+        checks.expect(v6Big.rangeCount == 4_096, "distinct IPv6 /48s must stay distinct ranges, got \(v6Big.rangeCount)")
+        checks.expect(v6Hits == 4_096, "every even IPv6 /48 probe must hit and every odd one miss, got \(v6Hits) hits")
+        checks.expect(v6Worst >= maxSteps(v6Big.rangeCount) - 1,
+                      "an IPv6 lookup over \(v6Big.rangeCount) ranges took only \(v6Worst) steps, so the step counter is not counting")
+        checks.expect(v6Worst <= maxSteps(v6Big.rangeCount),
+                      "an IPv6 lookup over \(v6Big.rangeCount) ranges took \(v6Worst) steps, more than \(maxSteps(v6Big.rangeCount))")
+        checks.note("lookup steps: at most \(tinyWorst) over \(tiny.rangeCount) ranges, at most \(bigWorst) over \(big.rangeCount) ranges (\(String(format: "%.2f", Double(bigTotal) / Double(addresses.count + missesV4.count))) average), at most \(v6Worst) over \(v6Big.rangeCount) IPv6 ranges")
 
         checks.finish("real sources")
     }
@@ -608,6 +653,11 @@ if [[ -x "$PFCTL" ]] && "$PFCTL" -n -f "$TMP/pf-probe.conf" >/dev/null 2>&1; the
   # A failed write is an assertion failure above, so every anchor is here.
   [[ "$parsed" -gt 0 ]] || { printf 'ip blocklist harness: FAIL: no rendered anchor reached pfctl\n' >&2; exit 1; }
   printf 'ip blocklist harness: pfctl -n parsed all %d rendered anchors\n' "$parsed"
+elif [[ "${CI:-}" == "true" ]]; then
+  # CI runs on macOS, where pfctl -n must work: a runner that cannot run it
+  # must not turn the parse check into a silent pass.
+  printf 'ip blocklist harness: FAIL: pfctl -n cannot run on this CI runner, so no anchor was parsed\n' >&2
+  exit 1
 else
   printf 'ip blocklist harness: pfctl -n cannot run here; the grammar checks stand in for it\n'
 fi
