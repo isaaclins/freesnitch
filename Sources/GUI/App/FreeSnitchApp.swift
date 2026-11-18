@@ -383,7 +383,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        windowManager.showMainWindow()
+        // Not set yet while the launch-time move question is on screen.
+        windowManager?.showMainWindow()
         return true
     }
 }
