@@ -34,11 +34,32 @@ public enum AppBundleIdentity {
     /// and then frozen for the lifetime of the process.
     public static let running: String? = current
 
+    /// The containing app as it was when this process started. A helper keeps
+    /// running from the copy that registered it, so this is the copy whose
+    /// code is executing, wherever the user opened FreeSnitch from (#418).
+    public static let runningAppPath: String? = containingAppURL?.path
+
+    /// The helper's app copy when it is known to differ from `thisAppPath`,
+    /// otherwise nil. Both paths are compared with symlinks resolved, so the
+    /// same copy reached through a link is not a different copy. An unknown
+    /// path proves nothing, like `isStale`.
+    public static func otherCopy(helperAppPath: String?, thisAppPath: String?) -> String? {
+        guard let helperAppPath, !helperAppPath.isEmpty,
+              let thisAppPath, !thisAppPath.isEmpty else { return nil }
+        let canonical: (String) -> String = {
+            URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        return canonical(helperAppPath) == canonical(thisAppPath) ? nil : helperAppPath
+    }
+
     /// Forces the running identity to be resolved now, at process start, rather
     /// than on whichever later call happens to ask first. Call this before any
     /// work that could outlive an update.
     @discardableResult
-    public static func captureRunningIdentity() -> String? { running }
+    public static func captureRunningIdentity() -> String? {
+        _ = runningAppPath
+        return running
+    }
 
     /// A running process is stale only when both identities are known and they
     /// differ. An unknown value proves nothing, and a firewall that cries wolf
@@ -132,5 +153,17 @@ public enum AppBundleIdentity {
         return String(cString: buffer).isEmpty
             ? nil
             : URL(fileURLWithPath: String(cString: buffer))
+    }
+}
+
+/// What FreeSnitch says when its helper runs from another app copy (#418).
+/// One text for the app's banner and for `freesnitch doctor`.
+public enum HelperOtherCopyMessage {
+    public static func detail(other: String, this: String) -> String {
+        "macOS is running FreeSnitch's helper from \(other), the copy that set it up, not from this copy at \(this). Updates to this copy don't reach the helper, and Repair Helper would only restart the other copy. \(keep(other: other))"
+    }
+
+    public static func keep(other: String) -> String {
+        "Keep \(other) where it is for now: if it is deleted, FreeSnitch loses its helper, which runs the traffic monitor and the firewall rules."
     }
 }

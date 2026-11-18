@@ -13,7 +13,13 @@ struct HelperBanner: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let info = BannerInfo(installState: state.helperInstallState,
+            // A helper running from another copy explains a version mismatch
+            // too, and there Repair Helper would only restart that other copy,
+            // so this banner replaces the helper banner below (#418).
+            if let info = BannerInfo(helperOtherCopy: state.helperOtherCopyPath,
+                                     thisCopy: Bundle.main.bundleURL.path) {
+                banner(info)
+            } else if let info = BannerInfo(installState: state.helperInstallState,
                                      connected: state.helperConnected,
                                      needsRepair: state.helperNeedsRepair,
                                      versionState: state.helperVersionState,
@@ -67,6 +73,21 @@ private struct BannerInfo {
     let title: String
     let detail: String
     let action: BannerAction?
+
+    /// launchd runs the helper from the copy that registered it. After
+    /// FreeSnitch is moved or copied to /Applications, that can be an older
+    /// copy the user no longer opens (#418). Nothing here changes the
+    /// registration: unregistering an enabled helper can remove it (#24).
+    init?(helperOtherCopy: String?, thisCopy: String) {
+        guard let other = helperOtherCopy else { return nil }
+        icon = "square.on.square"
+        tint = Color.orange
+        title = "The helper runs from another copy of FreeSnitch"
+        detail = HelperOtherCopyMessage.detail(other: other, this: thisCopy)
+        action = BannerAction(title: "Show in Finder") { _, _ in
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: other)])
+        }
+    }
 
     /// Returns nil when everything is healthy, so there is no banner or noise.
     init?(installState: HelperInstallState,

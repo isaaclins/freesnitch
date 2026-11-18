@@ -1029,6 +1029,10 @@ final class CLIRunner {
             let expectedIdentity = CLIAppBundle.expectedBuildIdentity
             let versionMatches = AppConstants.identityMatches(reported: status.version, expected: expectedIdentity)
             findings.append(DoctorFinding(id: "helper_version", state: versionMatches ? "ok" : "problem", message: versionMatches ? "The helper process is running \(status.version), which is the installed build." : "The helper process is running \(status.version), but the installed build is \(expectedIdentity). Helper-side fixes are not active until the running process is replaced.", action: versionMatches ? "No action needed." : "The helper is still registered. Do not unregister it; run: \(AppConstants.helperKickstartCommand)", exitCode: versionMatches ? nil : CLIExitCode.helperVersionMismatch.rawValue))
+            if let other = AppBundleIdentity.otherCopy(helperAppPath: status.appPath,
+                                                       thisAppPath: AppBundleIdentity.containingAppURL?.path) {
+                findings.append(DoctorFinding(id: "helper_copy", state: "problem", message: HelperOtherCopyMessage.detail(other: other, this: AppBundleIdentity.containingAppURL?.path ?? "unknown"), action: "Do not unregister the helper. " + HelperOtherCopyMessage.keep(other: other), exitCode: nil))
+            }
             return
         }
         let reachable = error?.exitCode == .helperVersionMismatch
