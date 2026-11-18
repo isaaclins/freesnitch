@@ -221,12 +221,21 @@ enum InstallLocation {
     static var stuckCopyButton: String { isHomebrewInstall ? "Copy Command" : "Show in Finder" }
 
     /// What the stuck-copy button does. The demo only shows the button.
+    /// `confirm` says the command was copied when nothing else on screen
+    /// would show it (the banner); the explanation closes instead.
     @MainActor
-    static func stuckCopyAction(_ installed: URL) {
+    static func stuckCopyAction(_ installed: URL, confirm: Bool = false) {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" else { return }
         if isHomebrewInstall {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(brewReinstallCommand, forType: .string)
+            if confirm {
+                let alert = NSAlert()
+                alert.messageText = "Command copied"
+                alert.informativeText = "Paste it into Terminal and press Return. FreeSnitch reopens from Applications when you open it again."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
         } else {
             NSWorkspace.shared.activateFileViewerSelecting([installed])
         }
@@ -301,7 +310,8 @@ extension InstallLocation {
             : "macOS runs FreeSnitch from a temporary copy. \(reinstallAdvice) Then register the helper."
     }
 
-    /// Says what the user has to do in Finder, since FreeSnitch can't.
+    /// Says what the user has to do (in Finder, or in Terminal for a
+    /// Homebrew install), since FreeSnitch can't.
     static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()

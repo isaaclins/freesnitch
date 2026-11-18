@@ -132,7 +132,7 @@ private struct BannerInfo {
             detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. \(InstallLocation.reinstallAdvice)"
             action = BannerAction(title: InstallLocation.stuckCopyButton) { _, _ in
                 if let installed = InstallLocation.stuckInstalledCopy {
-                    InstallLocation.stuckCopyAction(installed)
+                    InstallLocation.stuckCopyAction(installed, confirm: true)
                 }
             }
         case .wrongLocation:
