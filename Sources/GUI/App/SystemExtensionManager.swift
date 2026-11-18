@@ -924,9 +924,13 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                 self.state?.appendLog(level: "info",
                                       message: "Network extension deactivation returned: \(error.localizedDescription)")
             case .properties:
-                // The system has no record left to describe. That is the only
-                // evidence available that the extension is actually gone.
-                self.uninstallState = missing ? .removed : .pendingReboot
+                // No record left to describe is the only evidence that the
+                // extension is gone. Any other failure means "cannot tell",
+                // which counts as still there: the uninstall must not remove
+                // the helper and the app on a guess.
+                self.uninstallState = missing
+                    ? .removed
+                    : .failed("macOS could not say whether the network extension stopped: \(error.localizedDescription)")
             }
         }
     }
@@ -938,8 +942,11 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             let records = properties.filter { $0.bundleIdentifier == self.extensionIdentifier }
             if records.isEmpty {
                 self.uninstallState = .removed
-            } else {
+            } else if records.allSatisfy({ $0.isUninstalling }) {
+                // "terminated waiting to uninstall on reboot".
                 self.uninstallState = .pendingReboot
+            } else {
+                self.uninstallState = .failed("macOS still lists the network extension as installed.")
             }
         }
     }

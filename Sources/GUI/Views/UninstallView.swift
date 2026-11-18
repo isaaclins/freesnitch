@@ -255,7 +255,7 @@ struct UninstallFlowSheet: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
             // While a step runs there is nothing to press, so no button row.
-            if !flow.isWorking {
+            if !flow.isWorking || showsApprovalButton {
                 Divider()
                 footer
                     .padding(.horizontal, 20)
@@ -273,6 +273,12 @@ struct UninstallFlowSheet: View {
         } message: {
             Text("FreeSnitch stops protecting this Mac right away.")
         }
+    }
+
+    /// While macOS waits for the person to allow the removal, the way there
+    /// is the one thing to press.
+    private var showsApprovalButton: Bool {
+        flow.phase == .removingFilter && systemExtension.uninstallNeedsApproval
     }
 
     @ViewBuilder
@@ -296,7 +302,7 @@ struct UninstallFlowSheet: View {
             steps
         case .doneUntilRestart:
             headline("FreeSnitch is uninstalled", icon: "checkmark.circle.fill", tint: Color(nsColor: .systemGreen))
-            Text("FreeSnitch isn’t running or filtering anything now. macOS clears the last trace of its network filter the next time you restart, so there’s no need to restart for this.")
+            Text("FreeSnitch isn’t filtering anything now. macOS finishes removing its network filter the next time you restart. You don’t need to restart for this.")
                 .fixedSize(horizontal: false, vertical: true)
         case .failed(let failure):
             failureText(failure)
@@ -390,7 +396,7 @@ struct UninstallFlowSheet: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            if case .removingFilter = flow.phase, systemExtension.uninstallNeedsApproval {
+            if showsApprovalButton {
                 Button("Open System Settings") { systemExtension.openNetworkExtensionsSettings() }
             }
             Spacer(minLength: 8)
@@ -410,10 +416,7 @@ struct UninstallFlowSheet: View {
                 .keyboardShortcut(.defaultAction)
         case .removingFilter, .removingHelper, .movingToTrash:
             EmptyView()
-        case .doneUntilRestart:
-            Button("Quit FreeSnitch") { flow.quit() }
-                .keyboardShortcut(.defaultAction)
-        case .failed(.appKept):
+        case .doneUntilRestart, .failed(.appKept):
             Button("Quit FreeSnitch") { flow.quit() }
                 .keyboardShortcut(.defaultAction)
         case .failed:
