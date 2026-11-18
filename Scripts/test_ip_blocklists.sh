@@ -279,6 +279,71 @@ struct IPBlocklistHarness {
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
 
+        // An address typed into the hostname field (no remoteIP) is written
+        // to pf as that address, so the matcher must apply it to every flow
+        // to that address, including one macOS reports under a name. Then pf
+        // and the Network Extension agree on what the rule covers (#307).
+        let addressInHost = [
+            Rule(remoteHost: "203.0.113.70", action: .deny, scope: .domain),
+            Rule(remoteHost: "198.51.100.0/24", remotePort: 8443, action: .deny, scope: .domain),
+            Rule(remoteHost: "2001:db8::70", action: .deny, scope: .domain),
+            Rule(remoteHost: "203.0.113.71", action: .allow, scope: .domain),
+            Rule(remoteHost: "tracker.example.com", action: .deny, scope: .domain)
+        ]
+        let addressInHostAnchor = pf.renderAnchor(rules: addressInHost)
+        checks.expect(addressInHostAnchor.contains("block out quick proto { tcp udp } to 203.0.113.70"),
+                      "an address in the hostname field of a deny is written to pf as that address")
+        checks.expect(addressInHostAnchor.contains("block out quick proto { tcp udp } to 198.51.100.0/24 port 8443"),
+                      "a range in the hostname field of a deny is written to pf as that range")
+        checks.expect(addressInHostAnchor.contains("pass out quick proto { tcp udp } to 203.0.113.71"),
+                      "an address in the hostname field of an allow is written to pf as that address")
+        checks.expect(!addressInHostAnchor.contains("tracker.example.com"),
+                      "a real hostname must still stay out of pf")
+        let matcher = RuleMatcher()
+        let preparedAddressInHost = PreparedRuleSet(rules: addressInHost)
+        func verdict(host: String, ip: String, port: Int = 443) -> (RuleAction, RuleAction) {
+            let flow = Connection(pid: 1, processName: "curl", processPath: "/usr/bin/curl",
+                                  remoteHost: host, remoteIP: ip, remotePort: port)
+            return (matcher.decision(for: flow, prepared: preparedAddressInHost, defaultMode: .silentAllow),
+                    matcher.decision(for: flow, rules: addressInHost, defaultMode: .silentAllow))
+        }
+        func expectVerdict(_ expected: RuleAction, host: String, ip: String, port: Int = 443, _ why: String) {
+            let (prepared, unprepared) = verdict(host: host, ip: ip, port: port)
+            checks.expect(prepared == expected && unprepared == expected,
+                          "\(why): expected \(expected), prepared \(prepared), unprepared \(unprepared)")
+            let flow = Connection(pid: 1, processName: "curl", processPath: "/usr/bin/curl",
+                                  remoteHost: host, remoteIP: ip, remotePort: port)
+            let single = addressInHost.first { matcher.matches(rule: $0, connection: flow) }?.action ?? .allow
+            checks.expect(single == expected,
+                          "\(why): matches(rule:connection:) gave \(single)")
+        }
+        expectVerdict(.deny, host: "cdn.example.com", ip: "203.0.113.70",
+                      "a flow to the address that arrives under a name must match the deny, as pf blocks it")
+        expectVerdict(.deny, host: "203.0.113.70", ip: "203.0.113.70",
+                      "a flow to the address with no name must still match the deny")
+        expectVerdict(.deny, host: "api.example.net", ip: "198.51.100.9", port: 8443,
+                      "a named flow inside the range on the rule's port must match the deny")
+        expectVerdict(.allow, host: "api.example.net", ip: "198.51.100.9", port: 443,
+                      "a flow inside the range on another port must not match the deny")
+        expectVerdict(.deny, host: "v6.example.com", ip: "2001:0db8:0000:0000:0000:0000:0000:0070",
+                      "an IPv6 address in the hostname field must match the flow's address in any spelling")
+        expectVerdict(.allow, host: "cdn.example.com", ip: "203.0.113.72",
+                      "a named flow to another address must not match the address deny")
+        expectVerdict(.deny, host: "tracker.example.com", ip: "203.0.113.99",
+                      "a hostname rule must still match by name")
+        expectVerdict(.allow, host: "other.example.com", ip: "203.0.113.99",
+                      "a hostname rule must not match by address")
+        let allowFirst = [
+            Rule(remoteHost: "203.0.113.71", action: .allow, scope: .domain, priority: 200),
+            Rule(remoteIP: "203.0.113.0/24", action: .deny, scope: .ip)
+        ]
+        let namedToAllowed = Connection(pid: 1, processName: "curl", processPath: "/usr/bin/curl",
+                                        remoteHost: "cdn.example.com", remoteIP: "203.0.113.71", remotePort: 443)
+        checks.expect(matcher.decision(for: namedToAllowed, rules: allowFirst, defaultMode: .silentDeny) == .allow,
+                      "an address in the hostname field of an allow must match a named flow, as pf passes it")
+        checks.expect(Rule(remoteHost: "203.0.113.70", remoteIP: "203.0.113.80", action: .deny).addressInHostField == nil,
+                      "a rule with its own address keeps the hostname field as a name")
+
         // A user's deny can never take DHCP or DHCPv6 away, whatever the
         // direction (issue #186). The refusal is reported, not silent.
         var refusedPorts: [String] = []
