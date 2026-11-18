@@ -87,13 +87,35 @@ let movedStored = store(moved, into: rules).first(where: { $0.id == original.id 
 guard movedStored.processTeamId == nil else { fail("the helper gave the old team to a new bundle id") }
 pass("a changed bundle id drops the old signing team")
 
-// Choosing another app or "any app" rewrites the process; clearing the port works.
-let rechosen = edit(saved, process: .app(path: "/Applications/Other.app/", name: "Other"), port: .some(nil)).applied(to: saved)
+// Choosing another app: the sheet clears the old app's bundle id (pick()), so
+// the rule matches the new app by its path, helpers inside it included.
+let rechosen = edit(saved, process: .app(path: "/Applications/Other.app/", name: "Other"),
+                    bundleId: .some(nil), port: .some(nil)).applied(to: saved)
 guard rechosen.processPath == "/Applications/Other.app/", rechosen.processName == "Other",
+      rechosen.processBundleId == nil, rechosen.processTeamId == nil,
       rechosen.remotePort == nil else { fail("a chosen app or cleared port was not saved: \(rechosen)") }
+let rechosenRules = store(rechosen, into: rules)
+let otherAppHelper = Connection(pid: 2, processName: "Other Helper",
+                                processPath: "/Applications/Other.app/Contents/Frameworks/Other Helper.app/Contents/MacOS/Other Helper",
+                                processBundleId: "com.other.helper", processTeamId: "ZZZZZ99999",
+                                remoteHost: "example.com", remoteIP: "93.184.216.34", remotePort: 8443)
+guard matcher.decision(for: otherAppHelper, rules: rechosenRules, defaultMode: .alert) == .allow else {
+    fail("a rule moved to another app does not match that app")
+}
+guard matcher.decision(for: connection, rules: rechosenRules, defaultMode: .alert) == .ask else {
+    fail("a rule moved to another app still matches the old one")
+}
 let anyApp = edit(saved, process: .anyApp).applied(to: saved)
 guard anyApp.processPath == nil, anyApp.processName == nil else { fail("removing the app kept it") }
-pass("a new app, no app and a cleared port are saved")
+pass("a new app, no app and a cleared port are saved, and the moved rule matches the new app")
+
+// The edit goes over the rule as it is at save time: a team learned while the
+// sheet was open is kept.
+var learnedMeanwhile = original
+learnedMeanwhile.processTeamId = "FGHIJ67890"
+let late = edit(original, action: .allow).applied(to: learnedMeanwhile)
+guard late.processTeamId == "FGHIJ67890" else { fail("a team learned while the sheet was open was undone") }
+pass("an edit applies over the current rule, not the snapshot the sheet opened with")
 
 // The edit is still a valid rule for the transport the helper checks.
 do { try RuleTransportBoundary.validate(rule: saved) } catch { fail("the edited rule is refused: \(error)") }
@@ -114,7 +136,8 @@ xcrun swiftc -O \
 
 # The sheet uses this merge, and every way into it is wired.
 SRC="$ROOT/Sources/GUI/Views/RulesManager.swift"
-grep -Fq '.applied(to: original)' "$SRC" || { echo 'rule edit: FAIL: the sheet does not use RuleEdit' >&2; exit 1; }
+grep -Fq 'edit.applied(to: current)' "$SRC" || { echo 'rule edit: FAIL: the sheet does not use RuleEdit' >&2; exit 1; }
 grep -Fq 'Button("Edit Rule\u{2026}")' "$SRC" || { echo 'rule edit: FAIL: no Edit Rule item in the context menu' >&2; exit 1; }
+grep -Fq 'if let existingRule, processBundleID == (existingRule.processBundleId ?? "")' "$SRC" || { echo 'rule edit: FAIL: choosing another app keeps the old bundle id' >&2; exit 1; }
 grep -Fq 'primaryAction:' "$SRC" || { echo 'rule edit: FAIL: double-click does not open the editor' >&2; exit 1; }
 echo 'rule edit: PASS: the sheet, the menu item and double-click are wired'

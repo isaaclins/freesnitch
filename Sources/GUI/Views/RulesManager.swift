@@ -132,9 +132,11 @@ struct RulesManagerView: View {
             RuleEditorView(initialApp: request.app,
                            existingRule: request.rule,
                            profiles: profileClient.profiles,
-                           activeProfileName: profileClient.activeProfileName) { rule in
-                if request.rule == nil { addRule(rule) } else { saveEdit(rule) }
-            }
+                           activeProfileName: profileClient.activeProfileName,
+                           onSave: { rule in addRule(rule) },
+                           onEdit: { edit in
+                               if let original = request.rule { saveEdit(edit, to: original) }
+                           })
         }
         // Dropping an app anywhere on the page starts a rule for it (#143).
         .onDrop(of: [.fileURL], isTargeted: $appDropTargeted) { providers in
@@ -1321,8 +1323,17 @@ struct RulesManagerView: View {
     }
 
     /// An edited rule keeps its id, so the helper stores it in place of the
-    /// old one, the same write Enable, Disable and Applies To make.
-    private func saveEdit(_ rule: Rule) {
+    /// old one, the same write Enable, Disable and Applies To make. The edit
+    /// goes over the rule as it is now, not as it was when the sheet opened,
+    /// so a change made elsewhere meanwhile (a learned team, a profile move)
+    /// is not undone, and a rule removed meanwhile is not brought back.
+    private func saveEdit(_ edit: RuleEdit, to original: Rule) {
+        guard let current = state.rules.first(where: { $0.id == original.id }) else {
+            showError("Could not save the changes to \(Self.describe(original))",
+                      "The rule was removed while you were editing it.")
+            return
+        }
+        let rule = edit.applied(to: current)
         state.helper.addRule(rule) { ok, message in
             guard ok else {
                 showError("Could not save the changes to \(Self.describe(rule))",
@@ -1747,6 +1758,7 @@ private struct RuleEditorView: View {
     let profiles: [Profile]
     let activeProfileName: String
     let onSave: (Rule) -> Void
+    let onEdit: (RuleEdit) -> Void
     /// New rules default to Always. Roughly all rules are location
     /// independent, and that default is what keeps profiles small.
     @State private var appliesTo = Profile.alwaysName
@@ -1920,6 +1932,12 @@ private struct RuleEditorView: View {
         app = chosen
         keepsOriginalProcess = false
         dropRejected = false
+        // The bundle id an edited rule came with belongs to its old app. Kept
+        // next to a new app, the rule would need both to match and so would
+        // match nothing. A new app is matched by its path, as in Add Rule.
+        if let existingRule, processBundleID == (existingRule.processBundleId ?? "") {
+            processBundleID = ""
+        }
         let noDestination = [remoteHost, remoteIP, remotePort]
             .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         if noDestination { scope = .process }
@@ -1932,8 +1950,8 @@ private struct RuleEditorView: View {
     }
 
     private func save() {
-        if let existingRule {
-            onSave(edited(existingRule))
+        if existingRule != nil {
+            onEdit(edit)
             dismiss()
             return
         }
@@ -1955,8 +1973,8 @@ private struct RuleEditorView: View {
         dismiss()
     }
 
-    /// What the sheet shows, written over the rule it edits.
-    private func edited(_ original: Rule) -> Rule {
+    /// What the sheet shows, to be written over the rule it edits.
+    private var edit: RuleEdit {
         let process: RuleEdit.Process
         if keepsOriginalProcess {
             process = .unchanged
@@ -1975,7 +1993,7 @@ private struct RuleEditorView: View {
                         scope: scope,
                         profile: appliesTo,
                         notes: optionalValue(notes),
-                        enabled: enabled).applied(to: original)
+                        enabled: enabled)
     }
 
     private func optionalValue(_ value: String) -> String? {
