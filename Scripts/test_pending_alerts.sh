@@ -79,7 +79,7 @@ struct PendingAlertHarness {
                            host: String = "api.example.com",
                            ip: String = "203.0.113.10",
                            port: Int = 443,
-                           askedAt: Date = Date(),
+                           askedAt: Date = clock,
                            lifetime: TimeInterval = 30) -> PendingAlertDescriptor {
         PendingAlertDescriptor(id: id,
                                processName: process,
@@ -94,34 +94,45 @@ struct PendingAlertHarness {
                                expiresAt: askedAt.addingTimeInterval(lifetime))
     }
 
+    /// A registry whose expiry timers never fire on their own, so a slow
+    /// machine cannot expire an alert in the middle of a check about answering
+    /// it. Expiry has its own checks below.
+    /// One fixed instant every check reads the registry at, so no check
+    /// depends on how much real time passed while the harness ran.
+    static let clock = Date()
+
+    static func heldRegistry() -> PendingAlertRegistry {
+        PendingAlertRegistry { _, _ in }
+    }
+
     static func main() {
         // MARK: a registered alert is listed with a stable id
         do {
-            let registry = PendingAlertRegistry()
-            let first = descriptor(askedAt: Date().addingTimeInterval(-2))
+            let registry = heldRegistry()
+            let first = descriptor(askedAt: clock.addingTimeInterval(-2))
             let second = descriptor(process: "Slack", host: "", ip: "203.0.113.20")
             let log = ResolutionLog()
-            equal(registry.register(first, onResolve: log.append), .registered, "the first alert is queued")
-            equal(registry.register(second, onResolve: log.append), .registered, "the second alert is queued")
-            equal(registry.pending().map(\.id), [first.id, second.id], "alerts are listed oldest first")
-            equal(registry.pending().map(\.id), [first.id, second.id], "the listed ids are stable across reads")
+            equal(registry.register(first, now: clock, onResolve: log.append), .registered, "the first alert is queued")
+            equal(registry.register(second, now: clock, onResolve: log.append), .registered, "the second alert is queued")
+            equal(registry.pending(now: clock).map(\.id), [first.id, second.id], "alerts are listed oldest first")
+            equal(registry.pending(now: clock).map(\.id), [first.id, second.id], "the listed ids are stable across reads")
             equal(registry.count, 2, "both alerts are outstanding")
             equal(log.count, 0, "listing an alert does not resolve it")
-            let listed = registry.pending().first!
+            let listed = registry.pending(now: clock).first!
             equal(listed.processName, "Beeper", "the listing carries the process")
             equal(listed.destination, "api.example.com", "the listing carries the destination name")
             equal(listed.remoteIP, "203.0.113.10", "the listing carries the address")
             equal(listed.remotePort, 443, "the listing carries the port")
-            equal(registry.pending().last?.destination, "203.0.113.20",
+            equal(registry.pending(now: clock).last?.destination, "203.0.113.20",
                   "an alert with no name shows the address as its destination, never an invented name")
         }
 
         // MARK: allow and deny each resolve exactly once
         for allow in [true, false] {
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             let alert = descriptor()
             let log = ResolutionLog()
-            _ = registry.register(alert, onResolve: log.append)
+            _ = registry.register(alert, now: clock, onResolve: log.append)
             let outcome = registry.answer(id: alert.id, allow: allow, by: .cli)
             equal(outcome, .answered(alert), "answering \(allow ? "allow" : "deny") reports the answered alert")
             equal(log.count, 1, "answering \(allow ? "allow" : "deny") resolves the flow exactly once")
@@ -130,7 +141,7 @@ struct PendingAlertHarness {
             equal(log.first?.flowVerdict, allow, "the verdict applied to the flow is the one that was given")
             equal(log.first?.answeredBy, .cli, "the resolution names the command line as the answerer")
             equal(registry.count, 0, "an answered alert leaves the registry")
-            equal(registry.pending().count, 0, "an answered alert is no longer listed")
+            equal(registry.pending(now: clock).count, 0, "an answered alert is no longer listed")
 
             // MARK: a second answer is refused with the specific reason
             let again = registry.answer(id: alert.id, allow: !allow, by: .cli)
@@ -144,10 +155,10 @@ struct PendingAlertHarness {
 
         // MARK: the app answering first wins, and the CLI is told so
         do {
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             let alert = descriptor()
             let log = ResolutionLog()
-            _ = registry.register(alert, onResolve: log.append)
+            _ = registry.register(alert, now: clock, onResolve: log.append)
             _ = registry.withdraw(id: alert.id)
             equal(log.count, 1, "an app answer resolves the registration exactly once")
             equal(log.first?.kind, .withdrawn, "the app answer withdraws the entry")
@@ -161,10 +172,10 @@ struct PendingAlertHarness {
 
         // MARK: concurrent answers resolve the flow exactly once
         do {
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             let alert = descriptor()
             let log = ResolutionLog()
-            _ = registry.register(alert, onResolve: log.append)
+            _ = registry.register(alert, now: clock, onResolve: log.append)
             let lock = NSLock()
             var answered = 0
             var alreadyAnswered = 0
@@ -183,11 +194,11 @@ struct PendingAlertHarness {
 
         // MARK: an unknown id is its own specific outcome
         do {
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             equal(registry.answer(id: UUID(), allow: true, by: .cli), .unknown,
                   "an id that never existed is reported as unknown, not as already answered")
             let alert = descriptor()
-            _ = registry.register(alert) { _ in }
+            _ = registry.register(alert, now: clock) { _ in }
             _ = registry.answer(id: alert.id, allow: true, by: .cli)
             guard case .alreadyAnswered = registry.answer(id: alert.id, allow: true, by: .cli) else {
                 check(false, "a known id is never reported as unknown")
@@ -202,7 +213,7 @@ struct PendingAlertHarness {
                   "a registry entry expires strictly before the flow's ask timeout")
             check(PendingAlertRegistry.defaultDecision,
                   "an unanswered or unanswerable alert falls back to the fail-open default")
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             let now = Date()
             // A caller asking for ten minutes is clamped, not trusted.
             let greedy = descriptor(askedAt: now, lifetime: 600)
@@ -218,33 +229,91 @@ struct PendingAlertHarness {
                   "the reported remaining time never exceeds the maximum lifetime")
         }
 
-        // MARK: an alert nobody answers expires on its own, once
+        // MARK: an alert expires at its deadline on an injected clock
+        // The registry's timer is replaced by one the harness fires itself,
+        // and every read passes its own time, so nothing here waits on or
+        // races the real clock.
         do {
-            let registry = PendingAlertRegistry()
-            let alert = descriptor(lifetime: 0.4)
+            var scheduled: [(after: TimeInterval, fire: () -> Void)] = []
+            let registry = PendingAlertRegistry { after, fire in scheduled.append((after, fire)) }
+            let now = Date()
+            let alert = descriptor(askedAt: now, lifetime: 10)
             let log = ResolutionLog()
-            _ = registry.register(alert, onResolve: log.append)
-            equal(registry.count, 1, "the short-lived alert is outstanding")
-            Thread.sleep(forTimeInterval: 1.2)
-            equal(log.count, 1, "an unanswered alert is resolved exactly once by its own timeout")
+            _ = registry.register(alert, now: now, onResolve: log.append)
+            equal(scheduled.map(\.after), [10], "the expiry timer is set for the alert's own deadline")
+            equal(registry.pending(now: now.addingTimeInterval(9.9)).map(\.id), [alert.id],
+                  "an alert is still answerable just before its deadline")
+            equal(log.count, 0, "nothing resolves an alert before its deadline")
+            registry.expireDueEntries(now: now.addingTimeInterval(10))
+            equal(log.count, 1, "an unanswered alert is resolved exactly once at its deadline")
             equal(log.first?.kind, .expired, "the unanswered alert resolves as expired")
             check(log.first?.flowVerdict == nil,
                   "expiry carries no verdict, so the caller resumes with the fail-open default")
             equal(registry.count, 0, "an expired alert leaves the registry")
-            equal(registry.pending().count, 0, "an expired alert is never listed as answerable")
-            guard case .expired = registry.answer(id: alert.id, allow: false, by: .cli) else {
+            equal(registry.pending(now: now.addingTimeInterval(11)).count, 0,
+                  "an expired alert is never listed as answerable")
+            scheduled.forEach { $0.fire() }
+            equal(log.count, 1, "the timer firing after a sweep does not resolve the alert again")
+            guard case .expired = registry.answer(id: alert.id, allow: false, by: .cli,
+                                                  now: now.addingTimeInterval(11)) else {
                 check(false, "answering an expired alert reports that it expired")
                 exit(1)
             }
             pass("answering an expired alert reports that it expired")
         }
 
-        // MARK: a past deadline is refused rather than queued
+        // MARK: the expiry timer alone resolves an unanswered alert, once
+        do {
+            var scheduled: [() -> Void] = []
+            let registry = PendingAlertRegistry { _, fire in scheduled.append(fire) }
+            let alert = descriptor()
+            let log = ResolutionLog()
+            _ = registry.register(alert, now: clock, onResolve: log.append)
+            equal(scheduled.count, 1, "registering an alert sets one expiry timer")
+            scheduled.forEach { $0() }
+            equal(log.count, 1, "the expiry timer resolves an unanswered alert exactly once")
+            equal(log.first?.kind, .expired, "the expiry timer resolves it as expired")
+            equal(registry.count, 0, "the expiry timer removes the alert from the registry")
+            scheduled.forEach { $0() }
+            equal(log.count, 1, "a timer that fires twice does not resolve the alert twice")
+
+            let answered = descriptor()
+            let answeredLog = ResolutionLog()
+            scheduled = []
+            _ = registry.register(answered, now: clock, onResolve: answeredLog.append)
+            _ = registry.answer(id: answered.id, allow: false, by: .cli)
+            scheduled.forEach { $0() }
+            equal(answeredLog.count, 1, "the timer of an answered alert does not resolve it again")
+            equal(answeredLog.first?.kind, .answered, "an answered alert keeps its answer when its timer fires")
+        }
+
+        // MARK: the real expiry queue fires
+        // The harness waits for the resolution itself instead of sleeping a
+        // guessed time, so a busy machine only makes it slower, never wrong.
+        // The deadline is there only so a timer that never fires fails the
+        // run instead of hanging it.
         do {
             let registry = PendingAlertRegistry()
+            let alert = descriptor(lifetime: 0.2)
             let log = ResolutionLog()
-            let stale = descriptor(askedAt: Date().addingTimeInterval(-120), lifetime: 30)
-            equal(registry.register(stale, onResolve: log.append),
+            let resolved = DispatchSemaphore(value: 0)
+            _ = registry.register(alert, now: alert.askedAt) { resolution in
+                log.append(resolution)
+                resolved.signal()
+            }
+            check(resolved.wait(timeout: .now() + 120) == .success,
+                  "the real expiry queue resolves an unanswered alert")
+            equal(log.count, 1, "the real expiry queue resolves it exactly once")
+            equal(log.first?.kind, .expired, "the real expiry queue resolves it as expired")
+            equal(registry.count, 0, "the real expiry queue removes it from the registry")
+        }
+
+        // MARK: a past deadline is refused rather than queued
+        do {
+            let registry = heldRegistry()
+            let log = ResolutionLog()
+            let stale = descriptor(askedAt: clock.addingTimeInterval(-120), lifetime: 30)
+            equal(registry.register(stale, now: clock, onResolve: log.append),
                   .resolvedImmediately(log.first ?? .expired()),
                   "an alert whose budget already ran out is never queued")
             equal(log.first?.kind, .expired, "it resolves immediately as expired")
@@ -253,17 +322,17 @@ struct PendingAlertHarness {
 
         // MARK: the registry is bounded and overflow does not queue
         do {
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             let log = ResolutionLog()
             var queued: [UUID] = []
             for _ in 0..<PendingAlertLimits.capacity {
                 let alert = descriptor()
                 queued.append(alert.id)
-                equal(registry.register(alert, onResolve: log.append), .registered, "an alert below the bound is queued")
+                equal(registry.register(alert, now: clock, onResolve: log.append), .registered, "an alert below the bound is queued")
             }
             equal(registry.count, PendingAlertLimits.capacity, "the registry fills to exactly its capacity")
             let overflowing = descriptor()
-            let admission = registry.register(overflowing, onResolve: log.append)
+            let admission = registry.register(overflowing, now: clock, onResolve: log.append)
             equal(admission, .resolvedImmediately(.overflow(at: log.first?.at ?? Date())),
                   "past the bound the registration resolves immediately instead of queueing")
             equal(log.count, 1, "the overflowing registration resolved exactly once")
@@ -271,24 +340,24 @@ struct PendingAlertHarness {
             check(log.first?.flowVerdict == nil,
                   "overflow carries no verdict, so the caller resumes with the fail-open default")
             equal(registry.count, PendingAlertLimits.capacity, "the bound is not exceeded")
-            check(!registry.pending().contains { $0.id == overflowing.id },
+            check(!registry.pending(now: clock).contains { $0.id == overflowing.id },
                   "an overflowing alert is never listed as answerable")
             // A duplicate id is the same non-queueing path: never replace a
             // live entry, because that would strand the first flow.
             let duplicate = descriptor(id: queued[0])
             let duplicateLog = ResolutionLog()
-            _ = registry.register(duplicate, onResolve: duplicateLog.append)
+            _ = registry.register(duplicate, now: clock, onResolve: duplicateLog.append)
             equal(duplicateLog.count, 1, "a duplicate id resolves immediately instead of replacing a live entry")
             equal(duplicateLog.first?.kind, .overflow, "a duplicate id takes the non-queueing path")
         }
 
         // MARK: a client that goes away takes its alerts with it
         do {
-            let registry = PendingAlertRegistry()
+            let registry = heldRegistry()
             let owner = AlertOwner()
             let log = ResolutionLog()
             let alert = descriptor()
-            _ = registry.register(alert, ownerKey: ObjectIdentifier(owner), onResolve: log.append)
+            _ = registry.register(alert, ownerKey: ObjectIdentifier(owner), now: clock, onResolve: log.append)
             registry.withdrawAll(ownerKey: ObjectIdentifier(owner))
             equal(log.count, 1, "a disconnected client's alert is resolved exactly once")
             equal(registry.count, 0, "a disconnected client leaves nothing answerable behind")
