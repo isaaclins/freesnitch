@@ -173,6 +173,10 @@ check(InstallLocation.reinstallSteps(homebrew: true).contains("brew reinstall --
       "a Homebrew install is told to reinstall with brew, not to use a disk image")
 check(InstallLocation.reinstallSteps(homebrew: false).contains("disk image"),
       "a disk image install keeps the drag-in-again advice")
+check(InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: true)
+      && !InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: false)
+      && !InstallLocation.homebrewRouteApplies(homebrew: false, flagCleared: true),
+      "the brew advice is only given for a Homebrew copy whose flag this user could clear; another account's copy gets the disk image advice")
 check(InstallLocation.reinstallSteps(homebrew: true).contains(InstallLocation.brewReinstallCommand),
       "the Homebrew advice names the same command its Copy Command button copies")
 
@@ -284,5 +288,6 @@ banner="$ROOT/Sources/GUI/Views/HelperBanner.swift"
 grep -q 'title = InstallLocation.stuckCopyTitle' "$banner" \
   && grep -q 'BannerAction(title: InstallLocation.stuckCopyButton)' "$banner" \
   && grep -q 'alert.addButton(withTitle: stuckCopyButton)' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+  && grep -q 'alert.messageText = usesHomebrewRoute ? stuckCopyTitle' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
   || { echo "install location: FAIL: the stuck-copy title or button doesn't follow the install route" >&2; exit 1; }
 echo "install location: PASS: the stuck-copy title and button follow the install route"

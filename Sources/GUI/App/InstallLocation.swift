@@ -191,10 +191,9 @@ enum InstallLocation {
 
     /// How to put a stuck installed copy back so macOS runs it from
     /// Applications again, for the way it was installed (#375, #407).
-    /// A brew reinstall leaves a copy owned by this user, so even if Homebrew
-    /// keeps the download flag on it, FreeSnitch can clear the flag itself on
-    /// the next launch and reopen once (offerMoveAtLaunch). Not checked on a
-    /// real Mac.
+    /// The Homebrew advice is only given for a copy this user owns whose flag
+    /// is already gone (homebrewRouteApplies). Whether a brew reinstall then
+    /// gets it out of translocation is not checked on a real Mac.
     static func reinstallSteps(homebrew: Bool) -> String {
         homebrew
             ? "Reinstall it with \(brewReinstallCommand) in Terminal."
@@ -210,15 +209,39 @@ enum InstallLocation {
         return installedWithHomebrew()
     }()
 
-    static var reinstallAdvice: String { reinstallSteps(homebrew: isHomebrewInstall) }
+    /// Whether the Homebrew advice can help (#380 review): only when this
+    /// user could clear the flag, i.e. owns the copy. A copy whose flag stays
+    /// belongs to another account, whose Homebrew this user can't run
+    /// either, so it gets the Finder and disk image advice.
+    static func homebrewRouteApplies(homebrew: Bool, flagCleared: Bool) -> Bool {
+        homebrew && flagCleared
+    }
+
+    static func hasQuarantine(_ url: URL) -> Bool {
+        getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+    }
+
+    /// The route for this Mac's stuck copy. The demo follows
+    /// FREESNITCH_DEMO_HOMEBREW alone.
+    @MainActor
+    static var usesHomebrewRoute: Bool {
+        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" { return isHomebrewInstall }
+        guard let installed = stuckInstalledCopy else { return false }
+        return homebrewRouteApplies(homebrew: isHomebrewInstall, flagCleared: !hasQuarantine(installed))
+    }
+
+    @MainActor
+    static var reinstallAdvice: String { reinstallSteps(homebrew: usesHomebrewRoute) }
 
     /// The stuck-copy title and button, matched to the advice (#408): a
     /// Homebrew install is fixed in Terminal, so its button copies the
     /// command; a disk image install is fixed in Finder.
+    @MainActor
     static var stuckCopyTitle: String {
-        isHomebrewInstall ? "Reinstall FreeSnitch with Homebrew" : "Put FreeSnitch into Applications again"
+        usesHomebrewRoute ? "Reinstall FreeSnitch with Homebrew" : "Put FreeSnitch into Applications again"
     }
-    static var stuckCopyButton: String { isHomebrewInstall ? "Copy Command" : "Show in Finder" }
+    @MainActor
+    static var stuckCopyButton: String { usesHomebrewRoute ? "Copy Command" : "Show in Finder" }
 
     /// What the stuck-copy button does. The demo only shows the button.
     /// `confirm` says the command was copied when nothing else on screen
@@ -226,7 +249,7 @@ enum InstallLocation {
     @MainActor
     static func stuckCopyAction(_ installed: URL, confirm: Bool = false) {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" else { return }
-        if isHomebrewInstall {
+        if usesHomebrewRoute {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(brewReinstallCommand, forType: .string)
             if confirm {
@@ -265,7 +288,8 @@ extension InstallLocation {
                 NSApp.activate(ignoringOtherApps: true)
                 _ = moveAlert().runModal()
             case "stuck":
-                explainStuckInstalledCopy(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), flagCleared: false)
+                // The Homebrew advice only goes with a cleared flag, as for real.
+                explainStuckInstalledCopy(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), flagCleared: isHomebrewInstall)
             default: break
             }
             return false
@@ -316,7 +340,7 @@ extension InstallLocation {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "macOS is running FreeSnitch from a temporary copy"
+        alert.messageText = usesHomebrewRoute ? stuckCopyTitle : "macOS is running FreeSnitch from a temporary copy"
         let why = flagCleared
             ? "macOS still runs the copy in Applications from a temporary location"
             : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
@@ -347,7 +371,7 @@ extension InstallLocation {
         // explanation, so nothing should reach this today. It only explains;
         // the one automatic clear-and-reopen belongs to launch.
         if let installed = stuckInstalledCopy {
-            let flagGone = getxattr(installed.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) < 0
+            let flagGone = !hasQuarantine(installed)
             explainStuckInstalledCopy(installed, flagCleared: flagGone)
             return false
         }
