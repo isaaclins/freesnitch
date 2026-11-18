@@ -614,6 +614,10 @@ expect(decide(teamImpostor, [learned[0]]).0 == .ask && decide(realChrome, [learn
 let fromObservation = RuleSigningTeam.Sighting(FlowObservation(connection: realChrome))
 expect(fromObservation == Sighting(bundleId: "com.google.Chrome", team: chromeTeam, processPath: chromeExe),
        "an observation from the extension carries the team")
+var junkTeam = realChrome
+junkTeam.processTeamId = "not a team"
+expect(RuleSigningTeam.Sighting(FlowObservation(connection: junkTeam)) == nil,
+       "an observation with a malformed team teaches nothing, so it never reaches the store")
 expect(RuleSigningTeam.Sighting(FlowObservation(connection: spoof)) == nil,
        "an unsigned claim never teaches a team")
 let roundTrip = try! FreeSnitchWireCodec.decode(FlowObservation.self,

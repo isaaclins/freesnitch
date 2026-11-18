@@ -25,7 +25,7 @@ public enum RuleSigningTeam {
 
         public init?(_ observation: FlowObservation) {
             guard let bundleId = observation.processBundleId, !bundleId.isEmpty,
-                  let team = observation.processTeamId, !team.isEmpty else { return nil }
+                  let team = observation.processTeamId, isWellFormed(team) else { return nil }
             self.init(bundleId: bundleId, team: team, processPath: observation.processPath)
         }
     }
