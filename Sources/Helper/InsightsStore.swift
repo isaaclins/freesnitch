@@ -47,6 +47,7 @@ final class InsightsStore: @unchecked Sendable {
                 for observation in observations {
                     try insertLocked(observation)
                     try rollupLocked(observation)
+                    try recordSigningTeamLocked(observation)
                 }
                 try executeLocked("COMMIT;")
                 try verifyDatabaseFilesLocked()
@@ -100,6 +101,14 @@ final class InsightsStore: @unchecked Sendable {
                 try executeLocked("DELETE FROM versioned_rollups WHERE utc_day < ?;") { statement in
                     try self.bindText(statement, index: 1, value: dayCutoff)
                 }
+                // A team is only kept while the app still has history for it
+                // to guard. Once every contact has aged out there is nothing
+                // left that it could make known.
+                try executeLocked("""
+                    DELETE FROM app_signing_teams
+                    WHERE app_identity NOT IN (SELECT app_identity FROM daily_rollups)
+                      AND app_identity NOT IN (SELECT \(Self.appIdentitySQL) FROM flow_observations);
+                    """)
                 try executeLocked("COMMIT;")
                 try verifyDatabaseFilesLocked()
             } catch {
@@ -210,6 +219,11 @@ final class InsightsStore: @unchecked Sendable {
                     PRIMARY KEY(app_identity, destination_key, utc_day)
                 );
                 CREATE INDEX IF NOT EXISTS idx_insights_rollup_day ON daily_rollups(utc_day);
+                CREATE TABLE IF NOT EXISTS app_signing_teams (
+                    app_identity TEXT PRIMARY KEY,
+                    team_id TEXT NOT NULL,
+                    first_seen REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -309,6 +323,22 @@ final class InsightsStore: @unchecked Sendable {
                     try self.bindText(statement, index: 4, value: self.utcDay(for: observation.observedAt))
                 }
         }
+    }
+
+    /// Keeps the first team seen signing each bundle id (#372), the same
+    /// first-sighting rule bundle-id rules learn their team by (#364). A
+    /// later process with that id from another team never replaces it, so its
+    /// own flows cannot make the app's destinations its own.
+    private func recordSigningTeamLocked(_ observation: FlowObservation) throws {
+        guard let bundleId = observation.processBundleId, !bundleId.isEmpty,
+              let team = observation.processTeamId, !team.isEmpty else { return }
+        try executeLocked("""
+            INSERT OR IGNORE INTO app_signing_teams(app_identity,team_id,first_seen) VALUES (?,?,?);
+            """) { statement in
+                try self.bindText(statement, index: 1, value: bundleId)
+                try self.bindText(statement, index: 2, value: team)
+                try self.bindDouble(statement, index: 3, value: observation.observedAt.timeIntervalSince1970)
+            }
     }
 
     private func addColumnIfMissingLocked(table: String, column: String) throws {
@@ -951,7 +981,21 @@ extension InsightsStore {
             }
             let truncated = contacts.count > InsightsLimits.maxContactCount
             if truncated { contacts.removeLast() }
-            let snapshot = InsightsContactSnapshot(contacts: contacts, preparedAt: now, truncated: truncated)
+            // Unlike contacts, teams are not truncated: a missing team would
+            // let any signer use that app's contacts, so too many is an error
+            // and Alert mode keeps asking.
+            var appTeams: [String: String] = [:]
+            try queryLocked("SELECT app_identity, team_id FROM app_signing_teams LIMIT ?;", bind: { statement in
+                try self.bindInt(statement, index: 1, value: Int32(InsightsLimits.maxContactCount + 1))
+            }) { statement in
+                guard let app = self.columnText(statement, index: 0),
+                      let team = self.columnText(statement, index: 1) else {
+                    throw InsightsValidationError.invalidContactSnapshot("stored team")
+                }
+                appTeams[app] = team
+            }
+            let snapshot = InsightsContactSnapshot(contacts: contacts, appTeams: appTeams,
+                                                   preparedAt: now, truncated: truncated)
             try snapshot.validate(now: now)
             return snapshot
         }
