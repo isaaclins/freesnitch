@@ -30,6 +30,10 @@ readonly INSIGHTS="${SUPPORT}/Insights"
 readonly DATABASE="${SUPPORT}/freesnitch.sqlite"
 readonly HELPER_PLIST="${APP}/Contents/Library/LaunchDaemons/${HELPER_LABEL}.plist"
 readonly PF_ANCHOR="${TEST_ROOT}/etc/pf.anchors/puresnitch"
+# The `freesnitch` command link Settings > Command Line installs (#423), and
+# the one target it may point at.
+readonly COMMAND_LINK="${TEST_ROOT}/usr/local/bin/freesnitch"
+readonly COMMAND_TARGET="/Applications/FreeSnitch.app/Contents/Helpers/freesnitch"
 
 assume_yes=0
 remove_database=0
@@ -148,7 +152,7 @@ assert_exact_path() {
   local path="$1"
   [[ -n "$path" && "$path" == /* ]] || die "refusing a non-absolute path: $path"
   case "$path" in
-    "$APP"|"$SUPPORT"|"$INSIGHTS"|"$DATABASE"|"$HELPER_PLIST"|"$PF_ANCHOR") ;;
+    "$APP"|"$SUPPORT"|"$INSIGHTS"|"$DATABASE"|"$HELPER_PLIST"|"$PF_ANCHOR"|"$COMMAND_LINK") ;;
     *) die "refusing an unexpected uninstall path: $path" ;;
   esac
 }
@@ -164,6 +168,8 @@ assert_fixed_paths() {
   [[ "${DATABASE#"$TEST_ROOT"}" == "/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] || die "policy database guard changed"
   [[ "${HELPER_PLIST#"$TEST_ROOT"}" == "/Applications/FreeSnitch.app/Contents/Library/LaunchDaemons/io.isaaclins.freesnitch.helper.plist" ]] || die "helper plist guard changed"
   [[ "${PF_ANCHOR#"$TEST_ROOT"}" == "/etc/pf.anchors/puresnitch" ]] || die "PF anchor guard changed"
+  [[ "${COMMAND_LINK#"$TEST_ROOT"}" == "/usr/local/bin/freesnitch" ]] || die "command link guard changed"
+  [[ "$COMMAND_TARGET" == "/Applications/FreeSnitch.app/Contents/Helpers/freesnitch" ]] || die "command target guard changed"
   [[ "$APP_BUNDLE_ID" == "io.isaaclins.freesnitch" && "$NETEXT_BUNDLE_ID" == "io.isaaclins.freesnitch.netext" ]] || die "bundle identifier guard changed"
   [[ "$HELPER_LABEL" == "io.isaaclins.freesnitch.helper" ]] || die "helper label guard changed"
   [[ "$TEAM_ID" == "BHAF4L4726" ]] || die "team identifier guard changed"
@@ -192,6 +198,19 @@ safe_remove_database() {
     log "Removed $path"
   else
     log "Path already absent: $path"
+  fi
+}
+
+# Only a symlink to the tool inside the app is FreeSnitch's. Anything else at
+# that path, a file or a link elsewhere, is the user's and stays.
+remove_command_link() {
+  local path="$COMMAND_LINK"
+  assert_exact_path "$path"
+  if [[ -L "$path" && "$(readlink "$path")" == "$COMMAND_TARGET" ]]; then
+    run_privileged rm -f -- "$path"
+    log "Removed $path"
+  elif [[ -e "$path" || -L "$path" ]]; then
+    log "Left $path alone: it is not FreeSnitch's command link."
   fi
 }
 
@@ -330,6 +349,7 @@ main() {
   else
     log "Kept $DATABASE with your rules, profiles and blocklists. Rerun with --remove-database to delete it."
   fi
+  remove_command_link
   safe_remove_directory "$APP"
   log "FreeSnitch uninstall complete. Legacy PureSnitch user data was not touched."
 }

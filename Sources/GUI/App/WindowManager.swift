@@ -71,6 +71,12 @@ final class WindowManager {
 
     func showSettings() { show(.settings) }
 
+    /// Help > Command-Line Tool: Settings, on the pane that sets it up (#423).
+    func showCommandLineSettings() {
+        mainModel.settingsPane = .commandLine
+        show(.settings)
+    }
+
     /// Every entry point lands here: switch the existing window to the page
     /// and focus it. A second window is never created.
     func showPage(_ page: MainPage) { show(page) }

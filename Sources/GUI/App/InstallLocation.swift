@@ -385,8 +385,29 @@ enum InstallLocation {
     ///
     /// `sourceFromDownload` also covers a copy in ~/Applications: that one is
     /// an installed release, not a contributor's newer build.
-    static func offersOpenInstalled(isOlder: Bool, sourceFromDownload: Bool) -> Bool {
-        !isOlder && sourceFromDownload
+    ///
+    /// The installed copy must also be the same build flavour. The firewall
+    /// build and the monitor-only build share build numbers, so opening the
+    /// other one would quietly swap firewall for monitor or back, and the
+    /// network filter would never come (#417).
+    static func offersOpenInstalled(isOlder: Bool, sourceFromDownload: Bool, sameFlavour: Bool = true) -> Bool {
+        !isOlder && sourceFromDownload && sameFlavour
+    }
+
+    /// What the "already in Applications" question says when it doesn't offer
+    /// Open It: which build is installed and how to replace it.
+    static func replaceMessage(isOlder: Bool, sourceIsFirewall: Bool, installedIsFirewall: Bool) -> (title: String, text: String) {
+        let howTo = "Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace."
+        guard sourceIsFirewall != installedIsFirewall else {
+            return (isOlder ? "An older FreeSnitch is already in Applications" : "FreeSnitch is already in Applications",
+                    "FreeSnitch won't replace it for you, because that copy may be running the network filter. " + howTo)
+        }
+        if sourceIsFirewall {
+            return ("Applications has the monitor-only FreeSnitch",
+                    "The copy in Applications is the build without the network filter, so opening it would leave per-app filtering off. This copy is the firewall build. " + howTo)
+        }
+        return ("Applications has the firewall build of FreeSnitch",
+                "The copy in Applications is the build with the network filter. This copy is the monitor-only build, so replacing it turns per-app filtering off. To keep filtering, open FreeSnitch from Applications instead. To replace it anyway: " + howTo)
     }
 
     /// The disk image case: there is no original to tidy up there.
@@ -532,9 +553,13 @@ extension InstallLocation {
         switch chosen {
         case .existing(let installed, let isOlder):
             let alert = NSAlert()
-            if !offersOpenInstalled(isOlder: isOlder, sourceFromDownload: asksAtLaunch(original)) {
-                alert.messageText = isOlder ? "An older FreeSnitch is already in Applications" : "FreeSnitch is already in Applications"
-                alert.informativeText = "FreeSnitch won't replace it for you, because that copy may be running the network filter. Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace."
+            let sourceIsFirewall = embedsSystemExtension(running)
+            let installedIsFirewall = embedsSystemExtension(installed)
+            if !offersOpenInstalled(isOlder: isOlder, sourceFromDownload: asksAtLaunch(original),
+                                    sameFlavour: sourceIsFirewall == installedIsFirewall) {
+                let message = replaceMessage(isOlder: isOlder, sourceIsFirewall: sourceIsFirewall, installedIsFirewall: installedIsFirewall)
+                alert.messageText = message.title
+                alert.informativeText = message.text
                 alert.addButton(withTitle: "Show in Finder")
                 alert.addButton(withTitle: "Cancel")
                 if alert.runModal() == .alertFirstButtonReturn {

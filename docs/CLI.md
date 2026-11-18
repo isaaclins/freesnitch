@@ -7,14 +7,19 @@ FreeSnitch. The executable is shipped inside the application bundle:
 /Applications/FreeSnitch.app/Contents/Helpers/freesnitch
 ```
 
-A release build should expose that path through a symlink or shell alias if a
-short `freesnitch` command is desired. Do not copy the binary out of the app
-bundle. Its signature and identifier are part of the XPC trust boundary.
+Do not copy the binary out of the app bundle. Its signature and identifier are
+part of the XPC trust boundary.
 
 ### Run it from anywhere
 
-Pick one of these. Both keep the executable inside the bundle, so the signature
-and identifier the helper checks stay intact.
+The easiest way: open **FreeSnitch > Settings > Command Line** (also under
+**Help > Command-Line Tool…**) and press **Install Command…**. FreeSnitch asks
+for your password once and creates the symlink below. The same page removes it
+again, and uninstalling FreeSnitch removes it too. It never replaces a
+`/usr/local/bin/freesnitch` it did not create.
+
+To do it by hand, pick one of these. Both keep the executable inside the
+bundle, so the signature and identifier the helper checks stay intact.
 
 Symlink into a directory that is already on your `PATH`:
 
