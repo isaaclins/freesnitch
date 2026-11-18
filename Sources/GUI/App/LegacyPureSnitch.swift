@@ -15,15 +15,56 @@ import Foundation
 enum LegacyPureSnitch {
     static let app = URL(fileURLWithPath: "/Applications/PureSnitch.app", isDirectory: true)
     static let daemonPlist = URL(fileURLWithPath: "/Library/LaunchDaemons/io.isaaclins.puresnitch.helper.plist")
+    static let extensionBundleID = "io.isaaclins.puresnitch.netext"
 
     struct Found: Equatable {
         var app: Bool
         var daemon: Bool
-        var any: Bool { app || daemon }
+        /// macOS still runs PureSnitch's network extension. Since macOS 15.3
+        /// moving the app to the Trash no longer reliably removes it (see
+        /// PrivilegedUninstall.trashApplicationBundle), and FreeSnitch can't
+        /// deactivate another app's extension, so this is checked on its own
+        /// and the user is pointed to System Settings while it stays.
+        var extensionActive: Bool = false
+        var any: Bool { app || daemon || extensionActive }
     }
 
-    static func detect(fileExists: (String) -> Bool = FileManager.default.fileExists(atPath:)) -> Found {
-        Found(app: fileExists(app.path), daemon: fileExists(daemonPlist.path))
+    static func detect(listing: () -> String? = readExtensionListing,
+                       fileExists: (String) -> Bool = FileManager.default.fileExists(atPath:)) -> Found {
+        Found(app: fileExists(app.path),
+              daemon: fileExists(daemonPlist.path),
+              extensionActive: listing().map(extensionStillActive(in:)) ?? false)
+    }
+
+    /// `systemextensionsctl list` needs no privileges. nil when it can't run,
+    /// which counts as "not seen": the app and plist checks still apply.
+    static func readExtensionListing() -> String? {
+        let tool = "/usr/bin/systemextensionsctl"
+        guard FileManager.default.isExecutableFile(atPath: tool) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = ["list"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// True when a listed PureSnitch extension is still active. One that is
+    /// already terminated or waiting to be removed at the next restart doesn't
+    /// count: a restart finishes that by itself.
+    static func extensionStillActive(in listing: String) -> Bool {
+        listing.components(separatedBy: .newlines)
+            .filter { $0.contains(extensionBundleID) }
+            .map { $0.lowercased() }
+            .contains { line in
+                let leaving = line.contains("terminated") || line.contains("uninstall")
+                    || line.contains("deactivated") || line.contains("disabled")
+                return !leaving && (line.contains("activated") || line.contains("enabled"))
+            }
     }
 
     /// Stops the old helper and removes its launchd plist, behind one
@@ -60,10 +101,9 @@ enum LegacyPureSnitch {
         return .removed
     }
 
-    /// Hands PureSnitch.app to Finder's Trash, the same way
-    /// PrivilegedUninstall.trashApplicationBundle does: moving an app that
-    /// hosts a system extension to the Trash through Finder is what makes
-    /// macOS remove that extension too. A plain file move or rm doesn't.
+    /// Hands PureSnitch.app to Finder's Trash. On older macOS that also made
+    /// macOS remove its system extension; since 15.3 it may not, which is why
+    /// `extensionActive` is checked separately on every launch.
     @MainActor
     static func trashApp(completion: @escaping (Outcome) -> Void) {
         NSWorkspace.shared.recycle([app]) { _, error in
@@ -90,8 +130,12 @@ enum LegacyPureSnitch {
         default:
             action = "FreeSnitch can move PureSnitch to the Trash."
         }
-        return "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. \(action) Your PureSnitch data is kept. A restart finishes removing its network extension."
+        return "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. \(action) Your PureSnitch data is kept."
     }
+
+    /// Only the extension is left: FreeSnitch can't remove another app's
+    /// extension, so it says exactly where the user can.
+    static let extensionOnlyText = "PureSnitch's app is gone, but macOS is still running its network extension, and its filter and FreeSnitch's must not run together. If you just removed PureSnitch, restart your Mac first. If it is still there after that, open System Settings > General > Login Items & Extensions > Network Extensions, click the info button next to PureSnitch and choose Delete."
 
     /// Asks at launch when an old install is present. Shown on every launch
     /// until it is gone, because both filters running together is a real
@@ -105,11 +149,25 @@ enum LegacyPureSnitch {
     @MainActor
     static func offerRemovalAtLaunch(then continueStartup: @escaping @MainActor () -> Void) {
         let demoPreview = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1"
+        let demoWindow = ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"]
         if demoPreview {
-            guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "puresnitch" else { return continueStartup() }
+            guard demoWindow == "puresnitch" || demoWindow == "puresnitch-extension" else { return continueStartup() }
         }
-        let found = demoPreview ? Found(app: true, daemon: true) : detect()
+        let found = demoPreview
+            ? (demoWindow == "puresnitch-extension" ? Found(app: false, daemon: false, extensionActive: true) : Found(app: true, daemon: true))
+            : detect()
         guard found.any else { return continueStartup() }
+
+        if !found.app && !found.daemon {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "PureSnitch's network filter is still on"
+            alert.informativeText = extensionOnlyText
+            alert.addButton(withTitle: "Open Network Extensions")
+            alert.addButton(withTitle: "Not Now")
+            if alert.runModal() == .alertFirstButtonReturn, !demoPreview { openNetworkExtensionsSettings() }
+            return continueStartup()
+        }
 
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
@@ -145,6 +203,14 @@ enum LegacyPureSnitch {
     }
 
     @MainActor
+    private static func openNetworkExtensionsSettings() {
+        for raw in ["x-apple.systempreferences:com.apple.LoginItems-Settings.extension?NetworkExtensions",
+                    "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"] {
+            if let url = URL(string: raw), NSWorkspace.shared.open(url) { return }
+        }
+    }
+
+    @MainActor
     private static func report(_ outcome: Outcome) {
         let alert = NSAlert()
         switch outcome {
@@ -152,7 +218,7 @@ enum LegacyPureSnitch {
             return
         case .removed:
             alert.messageText = "PureSnitch was removed"
-            alert.informativeText = "Restart your Mac when it suits you; macOS finishes removing PureSnitch's network extension then."
+            alert.informativeText = "Restart your Mac when it suits you; that finishes removing PureSnitch's network extension. If macOS keeps it, FreeSnitch tells you where to delete it in System Settings."
         case .failed(let reason):
             alert.alertStyle = .warning
             alert.messageText = "PureSnitch could not be removed"

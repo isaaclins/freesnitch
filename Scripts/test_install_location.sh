@@ -127,12 +127,30 @@ check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeS
 
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
-let none = LegacyPureSnitch.detect { asked.append($0); return false }
+let none = LegacyPureSnitch.detect(listing: { nil }) { asked.append($0); return false }
 check(!none.any, "no PureSnitch, nothing offered")
 check(asked == ["/Applications/PureSnitch.app", "/Library/LaunchDaemons/io.isaaclins.puresnitch.helper.plist"],
       "detection checks exactly the old app and the old helper plist")
-check(LegacyPureSnitch.detect { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
+check(LegacyPureSnitch.detect(listing: { nil }) { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
       "a helper left behind without the app is still found")
+
+// Since macOS 15.3 the Trash may leave PureSnitch's extension running. It is
+// found on its own from `systemextensionsctl list`, and one already waiting
+// for the restart doesn't count.
+let activeListing = """
+1 extension(s)
+--- com.apple.system_extension.network_extension
+enabled\tactive\tteamID\tbundleID (version)\tname\t[state]
+*\t*\tBHAF4L4726\tio.isaaclins.puresnitch.netext (1.0/1)\tPureSnitchNetExt\t[activated enabled]
+"""
+let leavingListing = activeListing.replacingOccurrences(of: "[activated enabled]", with: "[terminated waiting to uninstall on reboot]")
+let freeSnitchOnly = activeListing.replacingOccurrences(of: "io.isaaclins.puresnitch.netext", with: "io.isaaclins.freesnitch.netext")
+check(LegacyPureSnitch.detect(listing: { activeListing }) { _ in false } == .init(app: false, daemon: false, extensionActive: true),
+      "a PureSnitch extension still active without its app is found")
+check(!LegacyPureSnitch.detect(listing: { leavingListing }) { _ in false }.any, "one waiting to be removed at restart isn't")
+check(!LegacyPureSnitch.detect(listing: { freeSnitchOnly }) { _ in false }.any, "FreeSnitch's own extension is never taken for PureSnitch's")
+check(LegacyPureSnitch.extensionOnlyText.contains("Network Extensions") && LegacyPureSnitch.extensionOnlyText.contains("Delete"),
+      "with only the extension left, the question says where to delete it")
 
 // #399: the question only promises a password prompt when the helper is part
 // of the removal, and only mentions the Trash when the app is there.
