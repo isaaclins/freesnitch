@@ -13,6 +13,9 @@ final class NetMonitor: @unchecked Sendable {
     /// Signed bundle id per process (pid and its executable path), so a
     /// binary swapped in at a path never inherits an earlier process's id.
     private var bundleIDs: [Int32: (path: String, id: String?)] = [:]
+    /// Processes whose signature could not be read, and when to try again, so
+    /// an app updated on disk while it runs is not checked on every poll.
+    private var bundleIDRetry: [Int32: (path: String, after: Date)] = [:]
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.netmon", qos: .utility)
 
     var onConnections: (([Connection]) -> Void)?
@@ -154,9 +157,12 @@ final class NetMonitor: @unchecked Sendable {
     private func bundleID(forPath path: String, pid: Int32) -> String? {
         guard !path.isEmpty, pid > 0 else { return nil }
         if let cached = bundleIDs[pid], cached.path == path { return cached.id }
+        if let retry = bundleIDRetry[pid], retry.path == path, retry.after > Date() { return nil }
         if bundleIDs.count > 1024 { bundleIDs.removeAll() }
+        if bundleIDRetry.count > 1024 { bundleIDRetry.removeAll() }
         switch CodeSigningIdentity.resolve(executablePath: path, auditToken: nil, pid: pid, fileFallback: false) {
         case .unavailable:
+            bundleIDRetry[pid] = (path, Date().addingTimeInterval(60))
             return nil
         case .noBundle:
             bundleIDs[pid] = (path, nil)

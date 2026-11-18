@@ -1043,8 +1043,10 @@ final class BundleIdentifierCache: @unchecked Sendable {
         /// when the code's signature is not one rules may trust.
         var signed: [CDHash: String?] = [:]
         var signedOrder: [CDHash] = []
-        /// When a signature check last could not read a signature at all.
-        var signatureUnavailableAtNanos: UInt64?
+        /// When a signature check may run again after one that could not read
+        /// a signature at all, and how many such checks failed in a row.
+        var signatureRetryAfterNanos: UInt64?
+        var signatureFailures = 0
     }
 
     let capacity: Int
@@ -1136,7 +1138,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
         let entry = entries[path]
         let known: String?? = hash.flatMap { entry?.signed[$0] }
         let plistDue = entry.map { now >= $0.plistRefreshAfterNanos } ?? true
-        let retryDue = entry?.signatureUnavailableAtNanos.map { now &- $0 >= failureRetryNanos } ?? true
+        let retryDue = entry?.signatureRetryAfterNanos.map { now >= $0 } ?? true
         let checkDue = hash != nil && known == nil && retryDue
         let shouldRefresh = !pending.contains(path) && pending.count < capacity && (plistDue || checkDue)
         if shouldRefresh { pending.insert(path) }
@@ -1201,8 +1203,12 @@ final class BundleIdentifierCache: @unchecked Sendable {
             case .unavailable:
                 // No signature could be read for this process (it exited, or
                 // its app was updated on disk while it ran). That is no
-                // answer: try again after `failureRetryInterval`.
-                entry.signatureUnavailableAtNanos = now
+                // answer: try again, backing off like a failed plist read,
+                // since an app updated under a running process can only be
+                // checked once it is relaunched.
+                entry.signatureFailures += 1
+                let shift = UInt64(min(entry.signatureFailures - 1, 20))
+                entry.signatureRetryAfterNanos = now &+ min(failureRetryNanos << shift, lifetimeNanos)
             case .noBundle, .resolved:
                 if entry.signed.updateValue(identity.bundleIdentifier, forKey: hash) == nil {
                     entry.signedOrder.append(hash)
@@ -1210,13 +1216,19 @@ final class BundleIdentifierCache: @unchecked Sendable {
                         entry.signed.removeValue(forKey: entry.signedOrder.removeFirst())
                     }
                 }
-                entry.signatureUnavailableAtNanos = nil
+                entry.signatureRetryAfterNanos = nil
+                entry.signatureFailures = 0
             }
         }
         insertLocked(path, entry: entry)
         os_unfair_lock_unlock(lock)
 
-        // Log outside the lock: once when a plist starts failing, once when it recovers.
+        // Log outside the lock: once when a path's code starts failing its
+        // signature check, and once when a plist starts failing or recovers.
+        if case .unavailable? = identity, entry.signatureFailures == 1 {
+            PSLog.error(PSLog.netext,
+                        "Could not check the code signature of \(path) (the app may have been updated on disk while it runs). Until it can be checked, only deny and ask rules match it by bundle id; checking again with growing gaps.")
+        }
         switch outcome {
         case .failed(let reason)? where entry.plistFailures == 1:
             let kept = entry.plist?.bundleIdentifier.map { "keeps answering '\($0)'" }

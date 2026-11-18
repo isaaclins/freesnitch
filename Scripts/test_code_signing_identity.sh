@@ -296,6 +296,24 @@ retrying.waitForPendingResolves()
 expect(box.calls == 2 && retrying.cachedBundleId(forExecutablePath: path) == "com.example.gone",
        "an unreadable signature is checked again after a second, not after the whole lifetime")
 
+// An app updated on disk under a running process can't be checked until it
+// is relaunched: checked again with growing gaps, not every second.
+let stuck = Box()
+let stuckClock = Clock()
+let stuckCache = BundleIdentifierCache(entryLifetime: 300, read: { _ in .read(nil) }, identify: { _, _ in
+    stuck.calls += 1
+    return .unavailable
+}, codeHash: { _ in h1 }, clock: { stuckClock.nanos })
+let stuckPath = "/Applications/Updated.app/Contents/MacOS/Updated"
+// Ten flows a second for a minute.
+for _ in 0..<600 {
+    _ = stuckCache.cachedMetadata(forExecutablePath: stuckPath)
+    stuckCache.waitForPendingResolves()
+    stuckClock.nanos += 100_000_000
+}
+// Checks at 0, 1, 3, 7, 15, 31 s: 6 in 60 s.
+expect(stuck.calls == 6, "a signature that stays unreadable is checked with growing gaps (\(stuck.calls) checks for 600 flows)")
+
 // The cache keeps the plist's id apart, as the claimed one.
 let claiming = BundleIdentifierCache(read: plistOnly, identify: { _, _ in .resolved(nil) })
 _ = claiming.cachedMetadata(forExecutablePath: fakeSafari)
