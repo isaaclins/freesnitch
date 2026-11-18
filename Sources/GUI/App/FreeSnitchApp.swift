@@ -406,8 +406,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProfileClient.shared.adoptDemoSnapshot(snapshot)
     }
 
-    /// The status item is the last visible trace of the app, so it goes before
-    /// the process does rather than at whatever moment AppKit gets around to it.
     /// Once the bundle is gone (the uninstall moved it to the Trash, or it was
     /// dragged there), quitting ends the process outright from every path,
     /// the menu bar and ⌘Q included: the orderly shutdown from a bundle that
@@ -420,6 +418,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
+    /// The status item is the last visible trace of the app, so it goes before
+    /// the process does rather than at whatever moment AppKit gets around to it.
     func applicationWillTerminate(_ notification: Notification) {
         menubar?.removeStatusItem()
     }

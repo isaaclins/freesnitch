@@ -110,13 +110,13 @@ This build needs no system extension approval, because it has no extension to ap
 
 ## Uninstall
 
-Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, removes the privileged helper, empties its `pf` anchor and deletes its data behind one password prompt, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
+Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor and deletes its data behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
 
 macOS often keeps a stopped extension listed until the next restart. Nothing of FreeSnitch runs or filters by then, so there is no need to restart for it; the app says so in one sentence when it happens.
 
 Only FreeSnitch itself can remove its network extension: with System Integrity Protection on, `systemextensionsctl uninstall` refuses even for root, and since macOS 15.3 moving the app to the Trash no longer removes it either.
 
-Installed with Homebrew? `brew uninstall --cask freesnitch` works on its own. It asks FreeSnitch to remove its network extension first (macOS may ask you to allow that), then stops the helper and empties the `pf` anchor. `--zap` also deletes your rules and settings.
+Installed with Homebrew? From 1.2.0 on, `brew uninstall --cask freesnitch` works on its own. It asks FreeSnitch to remove its network extension first (macOS may ask you to allow that), then stops the helper and empties the `pf` anchor. `--zap` also deletes your rules and settings.
 
 From a source checkout, after removing the extension in the app, the script does the file and `pf` work with its guards in place:
 

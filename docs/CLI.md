@@ -308,8 +308,8 @@ operation, not an uninstall of FreeSnitch, and it never removes the helper.
 The CLI has no uninstall command, and that is deliberate: under System Integrity
 Protection only the app can deactivate the system extension, because
 `systemextensionsctl uninstall` refuses to run at all. Settings > Uninstall in
-the app removes everything by itself, and `brew uninstall --cask freesnitch`
-asks the app to remove the extension. From a source checkout, after removing
+the app removes everything by itself, and from 1.2.0 on `brew uninstall --cask
+freesnitch` asks the app to remove the extension. From a source checkout, after removing
 the extension in the app, the script does the rest:
 
 ```sh
