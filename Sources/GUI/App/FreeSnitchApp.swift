@@ -212,6 +212,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "move-banner":
                     self.state.helperInstallState = .wrongLocation
                     self.windowManager.showNetworkMonitor()
+                // The banner a copy shows when the helper runs from another
+                // copy of FreeSnitch (#418), for review.
+                case "other-copy-banner":
+                    self.state.helperOtherCopyPath = NSHomeDirectory() + "/Applications/FreeSnitch.app"
+                    self.windowManager.showNetworkMonitor()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
                 // without this it is the one screen nobody can review before it

@@ -13,7 +13,16 @@ struct HelperBanner: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let info = BannerInfo(installState: state.helperInstallState,
+            // A helper running from another copy explains a version mismatch
+            // too, and there Repair Helper would only restart that other copy,
+            // so this banner replaces the helper banner below (#418).
+            // A copy outside Applications shows Move first: that is the step
+            // that helps it, and the other copy's warning would hide it.
+            if state.helperInstallState != .wrongLocation,
+               let info = BannerInfo(helperOtherCopy: state.helperOtherCopyPath,
+                                     thisCopy: InstallLocation.runningOriginal.path) {
+                banner(info)
+            } else if let info = BannerInfo(installState: state.helperInstallState,
                                      connected: state.helperConnected,
                                      needsRepair: state.helperNeedsRepair,
                                      versionState: state.helperVersionState,
@@ -68,13 +77,30 @@ private struct BannerInfo {
     let detail: String
     let action: BannerAction?
 
+    /// launchd runs the helper from the copy that registered it. After
+    /// FreeSnitch is moved or copied to /Applications, that can be an older
+    /// copy the user no longer opens (#418). Nothing here changes the
+    /// registration: unregistering an enabled helper can remove it (#24).
+    init?(helperOtherCopy: String?, thisCopy: String) {
+        guard let other = helperOtherCopy else { return nil }
+        icon = "square.on.square"
+        tint = Color.orange
+        title = "The helper runs from another copy of FreeSnitch"
+        detail = HelperOtherCopyMessage.detail(other: other, this: thisCopy)
+        action = BannerAction(title: "Show in Finder") { _, _ in
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: other)])
+        }
+    }
+
     /// Returns nil when everything is healthy, so there is no banner or noise.
     init?(installState: HelperInstallState,
           connected: Bool,
           needsRepair: Bool,
           versionState: HelperVersionState,
           repairState: HelperRepairState) {
-        if case .mismatch(let helperVersion, let appVersion) = versionState {
+        // A copy outside Applications shows the Move banner first: Repair
+        // can't work from there (its location guard refuses), moving can (#412).
+        if case .mismatch(let helperVersion, let appVersion) = versionState, installState != .wrongLocation {
             icon = "wrench.and.screwdriver.fill"
             tint = Color.orange
             title = "The running helper is not the installed build"
@@ -126,9 +152,15 @@ private struct BannerInfo {
         case .wrongLocation:
             icon = "arrow.down.app.fill"
             tint = Color.red
-            title = "Move FreeSnitch to your Applications folder"
-            detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there."
-            action = BannerAction(title: "Move to Applications") { _, _ in
+            let fromHome = InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
+            if fromHome {
+                title = "Copy FreeSnitch to the main Applications folder"
+                detail = InstallLocation.userApplicationsReason + " FreeSnitch can copy itself there and reopen."
+            } else {
+                title = "Move FreeSnitch to your Applications folder"
+                detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there."
+            }
+            action = BannerAction(title: fromHome ? "Copy to Applications" : "Move to Applications") { _, _ in
                 InstallLocation.moveToApplications()
             }
         case .notFound:

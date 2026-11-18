@@ -741,7 +741,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             blockedToday: dns.statistics.blocked,
             mode: policy.mode,
             policyGeneration: policy.generation,
-            installedVersion: Self.installedVersion
+            installedVersion: Self.installedVersion,
+            appPath: AppBundleIdentity.runningAppPath
         )
         reply((try? FreeSnitchWireCodec.encode(s)) ?? Data())
     }
