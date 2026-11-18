@@ -759,6 +759,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 draft.activeProfileMode = m
             }
             reply(true, nil)
+            // The active profile's mode changed. Every open app window
+            // refreshes its mode and its Profiles page, so a mode set from the
+            // command line shows up there too (#452).
+            broadcast { client in
+                client.notifyLog(level: "info", message: AppConstants.profilePolicyChangedLogMessage)
+            }
         } catch {
             reply(false, "could not persist mode: \(error)")
         }

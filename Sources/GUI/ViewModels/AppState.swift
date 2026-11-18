@@ -5,10 +5,12 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
-    /// Honest first-launch default. The helper's persisted policy replaces this
-    /// as soon as it connects; until then the UI must not imply a fresh install
-    /// is blocking when it is allowing and learning.
-    @Published var mode: AppMode = .silentAllow
+    /// The mode the helper enforces: the active profile's. Until the helper
+    /// first answers, it is the last mode the helper reported, not a guess, so
+    /// Insights does not claim Silent Allow on launch while Alert is in force
+    /// (#452).
+    @Published var mode: AppMode = AppPreferences.string(forKey: AppPreferences.Key.mode)
+        .flatMap(AppMode.init(rawValue:)) ?? .silentAllow
     @Published var connections: [Connection] = []
     @Published var rules: [Rule] = []
     @Published var profiles: [Profile] = []
@@ -159,6 +161,12 @@ final class AppState: ObservableObject {
     /// Only the newest helper getter response may update the GUI cache or
     /// publish a snapshot. This protects against out-of-order XPC replies.
     private var snapshotRequestSequence: UInt64 = 0
+    /// Whether the latest snapshot request is still waiting for its answer.
+    /// The status ping leaves it alone instead of replacing it (#452).
+    private var snapshotFetchInFlight = false
+    /// The last snapshot failure written to the log. The ping retries every
+    /// few seconds, and the same failure is logged once, not on every retry.
+    private var lastSnapshotFailure: String?
     /// Prepared by the helper from retained Insights history. This cache is
     /// memory-only on the alert path; an unavailable or stale classifier asks.
     private var contactClassifier = InsightsContactClassifier(snapshot: nil)
@@ -386,14 +394,20 @@ final class AppState: ObservableObject {
     func syncSharedRules() {
         snapshotRequestSequence &+= 1
         let request = snapshotRequestSequence
+        snapshotFetchInFlight = true
         helper.authoritativeSnapshot { [weak self] snapshot, error in
             guard let self, request == self.snapshotRequestSequence else { return }
+            self.snapshotFetchInFlight = false
             guard let snapshot else {
                 let message = error ?? "The helper did not return an authoritative rule snapshot."
                 self.publishFilterSnapshotStatus(.unavailable(message))
-                self.appendLog(level: "error", message: message)
+                if message != self.lastSnapshotFailure {
+                    self.lastSnapshotFailure = message
+                    self.appendLog(level: "error", message: message)
+                }
                 return
             }
+            self.lastSnapshotFailure = nil
 
             self.mode = snapshot.mode
             self.rules = snapshot.rules
@@ -453,6 +467,8 @@ final class AppState: ObservableObject {
     /// consequential control looked broken (#128). Both are written, in the
     /// order that leaves them consistent if the second call fails.
     func setMode(_ m: AppMode) {
+        // A helper from 1.1.0 or older writes only the global mode, so the
+        // app still writes the profile's itself until that helper is updated.
         if let profile = ProfileClient.shared.activeProfile, profile.mode != m {
             var updated = profile
             updated.mode = m
@@ -478,11 +494,24 @@ final class AppState: ObservableObject {
         return "Changing the mode here changes it for the \(name) profile, which is active."
     }
 
-    /// The status response is only a reachability hint. Refreshing the
-    /// persisted mode also fetches the helper's complete authoritative policy.
-    func adoptPersistedMode(_ m: AppMode) {
-        guard mode != m else { return }
-        syncSharedRules()
+    /// Takes the mode from the helper's status, which is the active profile's
+    /// mode and so the one the helper enforces. It is shown at once and does
+    /// not wait for the full rule snapshot: when that snapshot could not be
+    /// fetched, the app kept showing its launch default while another mode was
+    /// enforced (#452). The snapshot is fetched again on every ping until the
+    /// app holds the one for the status's generation, because that snapshot is
+    /// what the extension enforces.
+    func adoptHelperStatus(mode statusMode: AppMode, generation: UInt64?) {
+        let sync = EnforcedModeSync.decide(statusMode: statusMode,
+                                           statusGeneration: generation,
+                                           shownMode: mode,
+                                           snapshotGeneration: authoritativeSnapshotGeneration,
+                                           fetchInFlight: snapshotFetchInFlight)
+        if let shown = sync.showMode {
+            mode = shown
+            AppPreferences.set(shown.rawValue, forKey: AppPreferences.Key.mode, notify: false)
+        }
+        if sync.fetchSnapshot { syncSharedRules() }
     }
 
     func updateConnections(_ conns: [Connection]) {
