@@ -12,6 +12,9 @@ final class PFManager: @unchecked Sendable {
     /// than one rule per entry, so a feed of a hundred thousand networks stays
     /// one pf object instead of a hundred thousand rules.
     static let ipBlocklistTable = "freesnitch_ipblock"
+    /// The tag an app's outgoing allow puts on its packets, so the address
+    /// feed can let them through without that allow being `quick` (#328).
+    static let appAllowTag = "freesnitch_app_allow"
 
     private let stateLock = NSLock()
     private var ipBlocklist: IPBlocklistSet = .empty
@@ -278,6 +281,7 @@ final class PFManager: @unchecked Sendable {
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed. An app's incoming")
         lines.append("# allow is written without quick: it keeps state for the replies, and a later block still wins.")
+        lines.append("# An app's outgoing allow is also written without quick; it tags its packets so the feed lets them by.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
@@ -334,11 +338,15 @@ final class PFManager: @unchecked Sendable {
     /// It is emitted last on purpose. The user's own rules come first, and
     /// all but one kind are `quick`, so they decide before the feed is
     /// consulted and a feed can never override a decision the user made. The
-    /// exception is an app's incoming allow, written without `quick` (#313):
-    /// the feed only blocks outgoing traffic, and that pass keeps state,
+    /// exception is an app's allow, written without `quick` (#313, #328).
+    /// The feed only blocks outgoing traffic. An incoming pass keeps state,
     /// which pf checks before any rule, so the replies to that peer still
-    /// get past the feed. The passes that precede the block are the bypasses
-    /// that no feed may cross: DNS, DHCP, and the configured resolvers.
+    /// get past the feed. An outgoing pass tags its packets, and the feed's
+    /// block skips tagged packets: pf keeps a tag even when a later rule
+    /// decides (pf.conf(5), `tag`), so the allowed traffic gets past the
+    /// feed while a block after the anchor in /etc/pf.conf still wins.
+    /// The passes that precede the block are the bypasses that no feed may
+    /// cross: DNS, DHCP, and the configured resolvers.
     /// Loopback is already covered by the `set skip on lo0` at the top of
     /// the anchor.
     private func ipBlocklistLines(_ set: IPBlocklistSet, resolverAddresses: [String]) -> [String] {
@@ -361,7 +369,7 @@ final class PFManager: @unchecked Sendable {
             lines.append("pass out quick to \(resolver)")
         }
         lines.append("table <\(PFManager.ipBlocklistTable)> persist { \(entries.joined(separator: ", ")) }")
-        lines.append("block out quick proto { tcp udp } to <\(PFManager.ipBlocklistTable)>")
+        lines.append("block out quick proto { tcp udp } to <\(PFManager.ipBlocklistTable)> ! tagged \(PFManager.appAllowTag)")
         return lines
     }
 
@@ -452,7 +460,16 @@ final class PFManager: @unchecked Sendable {
             }
             var passes: [String] = []
             if r.direction != .incoming {
-                passes.append("pass out quick proto { tcp udp }" + target)
+                // pf applies an app's allow to every app, so its outgoing
+                // half drops quick too: a block after this anchor in
+                // /etc/pf.conf still wins (#328). Without quick the feed's
+                // quick block would win, so the pass tags its packets and
+                // the feed lets tagged packets by, see ipBlocklistLines.
+                if PFManager.namesAnApp(r) {
+                    passes.append("pass out proto { tcp udp }" + target + " tag \(PFManager.appAllowTag)")
+                } else {
+                    passes.append("pass out quick proto { tcp udp }" + target)
+                }
             }
             if r.direction != .outgoing {
                 if destination != nil {

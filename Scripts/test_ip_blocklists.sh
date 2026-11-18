@@ -83,6 +83,60 @@ func checkPFSyntax(_ name: String, _ anchor: String, _ checks: Checks) {
     }
 }
 
+/// pf's decision for one outgoing TCP/UDP packet: the anchor's lines, then
+/// `after` (rules after the anchor in /etc/pf.conf). Last match wins, a quick
+/// match stops, and a tag sticks to the packet even when a later rule decides
+/// (pf.conf(5), `tag`). Only the outgoing forms the anchor writes are read;
+/// a line this can't read fails the check instead of being skipped.
+func pfDecidesOut(_ anchor: String, to address: String, port: Int, feed: [String], after: [String] = []) -> String? {
+    let feedSet = IPBlocklistSet(entries: feed)
+    var decision = "pass"
+    var tag: String?
+    let lines = anchor.split(separator: "\n").map(String.init) + after
+    for line in lines where line.hasPrefix("pass out") || line.hasPrefix("block out") {
+        var words = line.split(separator: " ").map(String.init)
+        let verb = words.removeFirst()
+        words.removeFirst() // out
+        var quick = false
+        if words.first == "quick" { quick = true; words.removeFirst() }
+        if Array(words.prefix(5)) == ["proto", "{", "tcp", "udp", "}"] { words.removeFirst(5) }
+        guard words.first == "to", words.count >= 2 else { return nil }
+        let host = words[1]
+        words.removeFirst(2)
+        var rulePort: Int?
+        if words.first == "port" {
+            guard words.count >= 2 else { return nil }
+            if words[1] == "{" {
+                guard let close = words.firstIndex(of: "}") else { return nil }
+                let ports = words[2..<close].compactMap(Int.init)
+                if !ports.contains(port) { continue }
+                words.removeFirst(close + 1)
+            } else {
+                guard let p = Int(words[1]) else { return nil }
+                rulePort = p
+                words.removeFirst(2)
+            }
+        }
+        var setsTag: String?
+        var unlessTagged: String?
+        while !words.isEmpty {
+            if words.count >= 2, words[0] == "tag" { setsTag = words[1]; words.removeFirst(2) }
+            else if words.count >= 3, words[0] == "!", words[1] == "tagged" { unlessTagged = words[2]; words.removeFirst(3) }
+            else { return nil }
+        }
+        let hostMatches: Bool
+        if host == "any" { hostMatches = true }
+        else if host == "<\(PFManager.ipBlocklistTable)>" { hostMatches = feedSet.contains(address) }
+        else { hostMatches = IPBlocklistSet(entries: [host]).contains(address) }
+        guard hostMatches, rulePort == nil || rulePort == port else { continue }
+        if let unlessTagged, tag == unlessTagged { continue }
+        if let setsTag { tag = setsTag }
+        decision = verb
+        if quick { return decision }
+    }
+    return decision
+}
+
 /// The outgoing half of a user's deny.
 func blocks(_ anchor: String, _ target: String) -> Bool {
     anchor.contains("block out quick proto { tcp udp } \(target)\n")
@@ -266,7 +320,7 @@ struct IPBlocklistHarness {
             checks.expect(!appScoped.contains(leaked),
                           "a deny rule that names an app must not be written to pf, but the anchor carries \(leaked)")
         }
-        checks.expect(appScoped.contains("pass out quick proto { tcp udp } to 198.51.100.21"),
+        checks.expect(appScoped.contains("pass out proto { tcp udp } to 198.51.100.21 tag freesnitch_app_allow\n"),
                       "an app's allow rule must still reach pf, so the feed cannot block what the user allowed")
         checks.expect(blocks(appScoped, "to 198.51.100.20"),
                       "a name alone identifies no app for the matcher, so pf must treat the rule as every app's too")
@@ -461,8 +515,9 @@ struct IPBlocklistHarness {
         // later blocks in /etc/pf.conf (#313). It stays in pf only for the
         // feed: without quick any later block wins, and when nothing blocks
         // the peer, the state it keeps lets this Mac's replies past the feed.
-        // An app's outgoing allow keeps quick, or the feed's quick block
-        // after it would win.
+        // An app's outgoing allow drops quick too (#328) and tags its packets
+        // instead, so the feed's quick block lets them by; see the pf walk
+        // below.
         let appAllows = pf.renderAnchor(rules: [
             Rule(processBundleId: "com.example.server", remoteIP: "203.0.113.60", remotePort: 51010,
                  direction: .incoming, action: .allow, scope: .ip),
@@ -477,12 +532,42 @@ struct IPBlocklistHarness {
                       "an app's incoming allow must be written without quick, got \(appPasses)")
         checks.expect(appPasses.contains("pass in proto { tcp udp } from 203.0.113.61")
                         && !appPasses.contains { $0.hasPrefix("pass in quick") && $0.contains("203.0.113.61") }
-                        && appPasses.contains("pass out quick proto { tcp udp } to 203.0.113.61"),
-                      "an app's allow both ways must keep quick only on its outgoing half, got \(appPasses)")
+                        && appPasses.contains("pass out proto { tcp udp } to 203.0.113.61 tag freesnitch_app_allow")
+                        && !appPasses.contains { $0.contains("quick") && $0.contains("203.0.113.61") },
+                      "an app's allow both ways must be written without quick on both halves, got \(appPasses)")
         checks.expect(appPasses.contains("pass in quick proto { tcp udp } from 203.0.113.62"),
                       "empty app fields are no app, so that incoming allow keeps quick, got \(appPasses)")
         checks.expect(appAllows.contains("block out quick proto { tcp udp } to <freesnitch_ipblock>"),
                       "the feed must still be in the anchor next to an app's incoming allow")
+
+        // #328: what pf decides for an outgoing packet. The anchor is walked
+        // the way pf walks it (last match wins, quick stops, a tag stays on
+        // the packet even when a later rule decides), followed by a block in
+        // /etc/pf.conf after the anchor.
+        let outgoing = pf.renderAnchor(rules: [
+            Rule(processBundleId: "com.example.client", remoteIP: "203.0.113.70", remotePort: 443,
+                 direction: .outgoing, action: .allow, scope: .ip),
+            Rule(remoteIP: "203.0.113.71", remotePort: 443, direction: .outgoing, action: .allow, scope: .ip)
+        ], ipBlocklist: IPBlocklistSet(entries: ["203.0.113.0/24"]), resolverAddresses: resolvers)
+        checkPFSyntax("app-outgoing-allows", outgoing, checks)
+        checks.expect(outgoing.contains("pass out proto { tcp udp } to 203.0.113.70 port 443 tag freesnitch_app_allow\n"),
+                      "an app's outgoing allow must be written without quick and tag its packets, got \(outgoing)")
+        checks.expect(outgoing.contains("pass out quick proto { tcp udp } to 203.0.113.71 port 443\n"),
+                      "an allow for every app keeps quick, as the user asked for every app")
+        checks.expect(outgoing.contains("block out quick proto { tcp udp } to <freesnitch_ipblock> ! tagged freesnitch_app_allow\n"),
+                      "the feed's block must let an app allow's tagged packets by")
+        let laterBlock = "block out quick proto { tcp udp } to 203.0.113.70"
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.70", port: 443, feed: ["203.0.113.0/24"]) == "pass",
+                      "the feed must not block what an app's allow lets out")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.70", port: 443, feed: ["203.0.113.0/24"], after: [laterBlock]) == "block",
+                      "a block after the anchor in /etc/pf.conf must still win over an app's outgoing allow")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.70", port: 80, feed: ["203.0.113.0/24"]) == "block",
+                      "the feed must still block the same address on a port the allow doesn't name")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.72", port: 443, feed: ["203.0.113.0/24"]) == "block",
+                      "the feed must still block every other address in it")
+        checks.expect(pfDecidesOut(outgoing, to: "203.0.113.71", port: 443, feed: ["203.0.113.0/24"],
+                                   after: ["block out quick proto { tcp udp } to 203.0.113.71"]) == "pass",
+                      "an allow for every app keeps quick, so it still decides before /etc/pf.conf")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again
