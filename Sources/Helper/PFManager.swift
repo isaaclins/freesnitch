@@ -276,7 +276,8 @@ final class PFManager: @unchecked Sendable {
         lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it. An incoming allow")
         lines.append("# with only a port is left to the Network Extension; from any port N would open every local port.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
-        lines.append("# which only this anchor enforces, never block what the user allowed.")
+        lines.append("# which only this anchor enforces, never block what the user allowed. An app's incoming")
+        lines.append("# allow is written without quick: it keeps state for the replies, and a later block still wins.")
         lines.append("set block-policy drop")
         lines.append("set skip on lo0")
 
@@ -330,12 +331,16 @@ final class PFManager: @unchecked Sendable {
 
     /// The address feed section (issue #51).
     ///
-    /// It is emitted last on purpose. Every rule in this anchor is `quick`, so
-    /// the user's own rules, including their allow rules, are consulted first
-    /// and a feed can never override a decision the user made. The passes that
-    /// precede the block are the bypasses that no feed may cross: DNS, DHCP,
-    /// and the configured resolvers. Loopback is already covered by the
-    /// `set skip on lo0` at the top of the anchor.
+    /// It is emitted last on purpose. The user's own rules come first, and
+    /// all but one kind are `quick`, so they decide before the feed is
+    /// consulted and a feed can never override a decision the user made. The
+    /// exception is an app's incoming allow, written without `quick` (#313):
+    /// the feed only blocks outgoing traffic, and that pass keeps state,
+    /// which pf checks before any rule, so the replies to that peer still
+    /// get past the feed. The passes that precede the block are the bypasses
+    /// that no feed may cross: DNS, DHCP, and the configured resolvers.
+    /// Loopback is already covered by the `set skip on lo0` at the top of
+    /// the anchor.
     private func ipBlocklistLines(_ set: IPBlocklistSet, resolverAddresses: [String]) -> [String] {
         let entries = set.pfTableEntries()
         guard !entries.isEmpty else { return [] }
@@ -451,7 +456,13 @@ final class PFManager: @unchecked Sendable {
             }
             if r.direction != .outgoing {
                 if destination != nil {
-                    passes.append("pass in quick proto { tcp udp } from" + host)
+                    // pf applies an app's allow to every app (#313), so its
+                    // incoming half drops quick: a block after this anchor
+                    // still wins (one before it still loses, #327), and its
+                    // state lets the replies past the feed, see
+                    // ipBlocklistLines.
+                    let quick = PFManager.namesAnApp(r) ? "" : " quick"
+                    passes.append("pass in\(quick) proto { tcp udp } from" + host)
                 } else {
                     onRejected?(r, "the incoming half of an allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port; only the outgoing half is written")
                 }
