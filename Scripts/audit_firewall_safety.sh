@@ -1413,8 +1413,10 @@ fi
 # Same policy or not is decided by one shared definition that leaves out usage
 # counters. Comparing whole rules made a resend after a counted match look like
 # split-brain, and filtering stopped (#438).
-require_text "$FILTER" "!SharedRuleBridge.PolicyContent.same(received, current)" \
+require_text "$FILTER" "let comparable, !SharedRuleBridge.PolicyContent.same(received, comparable)" \
   "the extension's split-brain check does not use the shared policy content"
+require_text "$FILTER" "LiveSnapshotGate(current: legacyBootGeneration ? nil : comparable)" \
+  "the extension's gate does not check a live resend against the saved boot policy (#455)"
 require_text "$BRIDGE" "guard PolicyContent.same(current, received) else {" \
   "the live snapshot gate does not use the shared policy content"
 require_text "$BRIDGE" "let rules = PolicyContent.rules(snapshot.rules)" \
