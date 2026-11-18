@@ -199,6 +199,10 @@ public struct PendingAlertDescriptor: Codable, Sendable, Equatable, Identifiable
     public let processName: String
     public let processPath: String
     public let processBundleId: String?
+    /// The team that signed `processBundleId` (#364). A rule made from this
+    /// alert records it, so another team's binary with the same identifier
+    /// does not get the answer.
+    public let processTeamId: String?
     public let remoteHost: String
     public let remoteIP: String
     public let remotePort: Int
@@ -211,6 +215,7 @@ public struct PendingAlertDescriptor: Codable, Sendable, Equatable, Identifiable
                 processName: String,
                 processPath: String,
                 processBundleId: String?,
+                processTeamId: String? = nil,
                 remoteHost: String,
                 remoteIP: String,
                 remotePort: Int,
@@ -222,6 +227,7 @@ public struct PendingAlertDescriptor: Codable, Sendable, Equatable, Identifiable
         self.processName = processName
         self.processPath = processPath
         self.processBundleId = processBundleId
+        self.processTeamId = processTeamId
         self.remoteHost = remoteHost
         self.remoteIP = remoteIP
         self.remotePort = remotePort
@@ -236,6 +242,7 @@ public struct PendingAlertDescriptor: Codable, Sendable, Equatable, Identifiable
                   processName: connection.processName,
                   processPath: connection.processPath,
                   processBundleId: connection.processBundleId,
+                  processTeamId: connection.processTeamId,
                   remoteHost: connection.remoteHost,
                   remoteIP: connection.remoteIP,
                   remotePort: connection.remotePort,
@@ -263,6 +270,7 @@ public struct PendingAlertDescriptor: Codable, Sendable, Equatable, Identifiable
                                processName: processName,
                                processPath: processPath,
                                processBundleId: processBundleId,
+                               processTeamId: processTeamId,
                                remoteHost: remoteHost,
                                remoteIP: remoteIP,
                                remotePort: remotePort,
@@ -278,7 +286,8 @@ public struct PendingAlertDescriptor: Codable, Sendable, Equatable, Identifiable
         }
         guard processName.count <= 512, processPath.count <= 1024,
               remoteHost.count <= 512, remoteIP.count <= 128,
-              (processBundleId?.count ?? 0) <= 512, protocolName.count <= 32 else {
+              (processBundleId?.count ?? 0) <= 512, (processTeamId?.count ?? 0) <= 64,
+              protocolName.count <= 32 else {
             throw PendingAlertError.invalidDescriptor("a descriptor field exceeds its length bound")
         }
     }
@@ -475,6 +484,7 @@ public enum PendingAlertRuleFactory {
                     "this alert carries no application identity, so a process-scoped rule would match nothing")
             }
             return Rule(processBundleId: descriptor.processBundleId,
+                        processTeamId: descriptor.processTeamId,
                         processPath: descriptor.processPath.isEmpty ? nil : descriptor.processPath,
                         processName: descriptor.processName.isEmpty ? nil : descriptor.processName,
                         direction: descriptor.direction,
@@ -490,6 +500,7 @@ public enum PendingAlertRuleFactory {
                     "this alert has no resolvable host name, so a domain-scoped rule would match nothing; use --scope ip")
             }
             return Rule(processBundleId: descriptor.processBundleId,
+                        processTeamId: descriptor.processTeamId,
                         processPath: descriptor.processPath.isEmpty ? nil : descriptor.processPath,
                         processName: descriptor.processName.isEmpty ? nil : descriptor.processName,
                         remoteHost: descriptor.remoteHost,
@@ -507,6 +518,7 @@ public enum PendingAlertRuleFactory {
                     "this alert has no usable remote address, so an address-scoped rule would match nothing")
             }
             return Rule(processBundleId: descriptor.processBundleId,
+                        processTeamId: descriptor.processTeamId,
                         processPath: descriptor.processPath.isEmpty ? nil : descriptor.processPath,
                         processName: descriptor.processName.isEmpty ? nil : descriptor.processName,
                         remoteIP: descriptor.remoteIP,
@@ -523,6 +535,7 @@ public enum PendingAlertRuleFactory {
                     "this alert carries no remote port, so a port-scoped rule would match nothing")
             }
             return Rule(processBundleId: descriptor.processBundleId,
+                        processTeamId: descriptor.processTeamId,
                         processPath: descriptor.processPath.isEmpty ? nil : descriptor.processPath,
                         processName: descriptor.processName.isEmpty ? nil : descriptor.processName,
                         remotePort: descriptor.remotePort,

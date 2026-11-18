@@ -95,6 +95,9 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     public let observedAt: Date
     public let pid: Int32
     public let processBundleId: String?
+    /// The team that signed `processBundleId` (#364). The helper records it on
+    /// rules for that id that do not know their team yet (`RuleSigningTeam`).
+    public let processTeamId: String?
     public let processPath: String
     public let processName: String
     /// Marketing version plus build from the containing app's Info.plist.
@@ -114,6 +117,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         self.observedAt = observedAt
         self.pid = connection.pid
         self.processBundleId = connection.processBundleId
+        self.processTeamId = connection.processTeamId
         self.processPath = connection.processPath
         self.processName = connection.processName
         self.processVersion = AppVersionIdentity(processVersion)?.value
@@ -127,7 +131,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, observedAt, pid, processBundleId, processPath, processName,
+        case schemaVersion, id, observedAt, pid, processBundleId, processTeamId, processPath, processName,
              processVersion, remoteHost, remoteIP, remotePort, direction, protocolName, bytesIn, bytesOut
     }
 
@@ -138,6 +142,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         observedAt = try c.decode(Date.self, forKey: .observedAt)
         pid = try c.decode(Int32.self, forKey: .pid)
         processBundleId = try c.decodeIfPresent(String.self, forKey: .processBundleId)
+        processTeamId = try c.decodeIfPresent(String.self, forKey: .processTeamId)
         processPath = try c.decode(String.self, forKey: .processPath)
         processName = try c.decode(String.self, forKey: .processName)
         processVersion = try c.decodeIfPresent(String.self, forKey: .processVersion)
@@ -157,6 +162,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         try c.encode(observedAt, forKey: .observedAt)
         try c.encode(pid, forKey: .pid)
         try c.encodeIfPresent(processBundleId, forKey: .processBundleId)
+        try c.encodeIfPresent(processTeamId, forKey: .processTeamId)
         try c.encode(processPath, forKey: .processPath)
         try c.encode(processName, forKey: .processName)
         try c.encodeIfPresent(processVersion, forKey: .processVersion)
@@ -180,6 +186,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         }
         guard pid >= 0 else { throw InsightsValidationError.invalidField("pid") }
         try validateLength(processBundleId, InsightsLimits.maxBundleIDLength, "processBundleId")
+        try validateLength(processTeamId, RuleTransportBoundary.maximumTeamIdLength, "processTeamId")
         try validateLength(processVersion, InsightsLimits.maxVersionLength, "processVersion")
         try validateLength(processPath, InsightsLimits.maxPathLength, "processPath")
         try validateLength(processName, InsightsLimits.maxNameLength, "processName")

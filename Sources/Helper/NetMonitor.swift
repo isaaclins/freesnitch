@@ -12,7 +12,7 @@ final class NetMonitor: @unchecked Sendable {
     private var nettopGeneration = 0
     /// Signed bundle id per process (pid and its executable path), so a
     /// binary swapped in at a path never inherits an earlier process's id.
-    private var bundleIDs: [Int32: (path: String, id: String?)] = [:]
+    private var bundleIDs: [Int32: (path: String, id: CodeSigningIdentity.SignedBundle?)] = [:]
     /// Processes whose signature could not be read, and when to try again, so
     /// an app updated on disk while it runs is not checked on every poll.
     private var bundleIDRetry: [Int32: (path: String, after: Date)] = [:]
@@ -114,7 +114,8 @@ final class NetMonitor: @unchecked Sendable {
             pid: pid,
             processName: name,
             processPath: path,
-            processBundleId: bundle,
+            processBundleId: bundle?.identifier,
+            processTeamId: bundle?.team,
             localPort: lport,
             remoteHost: rip,
             remoteIP: rip,
@@ -154,7 +155,7 @@ final class NetMonitor: @unchecked Sendable {
     /// It is checked for the running process and cached per process; a
     /// lookup that could not read any signature is not cached, so the next
     /// poll tries again.
-    private func bundleID(forPath path: String, pid: Int32) -> String? {
+    private func bundleID(forPath path: String, pid: Int32) -> CodeSigningIdentity.SignedBundle? {
         guard !path.isEmpty, pid > 0 else { return nil }
         if let cached = bundleIDs[pid], cached.path == path { return cached.id }
         if let retry = bundleIDRetry[pid], retry.path == path, retry.after > Date() { return nil }
@@ -167,9 +168,9 @@ final class NetMonitor: @unchecked Sendable {
         case .noBundle:
             bundleIDs[pid] = (path, nil)
             return nil
-        case .resolved(let id):
-            bundleIDs[pid] = (path, id)
-            return id
+        case .resolved(let signed):
+            bundleIDs[pid] = (path, signed)
+            return signed
         }
     }
 

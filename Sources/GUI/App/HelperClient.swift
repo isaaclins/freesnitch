@@ -1167,6 +1167,11 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
                 self.state?.syncSharedRules()
                 ProfileClient.shared.refresh()
             }
+            // Rules learned their app's signing team (#364): the extension
+            // needs the policy that carries it.
+            if message == AppConstants.ruleSigningTeamsLearnedLogMessage {
+                self.state?.syncSharedRules()
+            }
         }
     }
 }

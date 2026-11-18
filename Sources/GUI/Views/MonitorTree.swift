@@ -113,6 +113,9 @@ struct MonitorAppNode: Identifiable, Hashable, Sendable {
     /// The bundle to take the row's icon from when it is not the process's.
     var iconPath: String? = nil
     var isWebContent = false
+    /// The team that signed every connection in this row (#364), so a rule
+    /// made here records it. Nil when unknown or when the row mixes signers.
+    var teamID: String? = nil
 }
 
 struct MonitorTreeSnapshot: Sendable {
@@ -280,6 +283,8 @@ enum MonitorTreeBuilder {
         var name: String
         var bundleID: String?
         var path: String?
+        var teams = Set<String>()
+        var unsignedSeen = false
         var connectionCount: Int = 0
         var deniedCount: Int = 0
         var traffic = MonitorTrafficTotals()
@@ -308,6 +313,7 @@ enum MonitorTreeBuilder {
             app.traffic.add(bytesIn: connection.bytesIn, bytesOut: connection.bytesOut)
             if app.bundleID == nil { app.bundleID = MonitorTreeKey.normalized(connection.processBundleId) }
             if app.path == nil { app.path = MonitorTreeKey.normalized(connection.processPath) }
+            if let team = MonitorTreeKey.normalized(connection.processTeamId) { app.teams.insert(team) } else { app.unsignedSeen = true }
 
             if var destination = app.destinations[destinationKey] {
                 destination.connectionCount += 1
@@ -391,7 +397,8 @@ enum MonitorTreeBuilder {
                                            order: order.rank(of: appKey) ?? .max,
                                            displayName: presentation?.title,
                                            iconPath: presentation?.iconPath,
-                                           isWebContent: presentation?.isWebContent ?? false))
+                                           isWebContent: presentation?.isWebContent ?? false,
+                                           teamID: app.teams.count == 1 && !app.unsignedSeen ? app.teams.first : nil))
         }
         appNodes.sort { $0.order < $1.order }
         let hiddenAppCount = max(0, appNodes.count - MonitorTreeLimits.maxApps)
@@ -593,6 +600,7 @@ enum MonitorRuleDraft {
 
     static func rule(for target: MonitorRuleTarget,
                      processName: String?,
+                     teamID: String? = nil,
                      action: RuleAction,
                      profile: String,
                      existing: Rule?) -> Rule? {
@@ -605,6 +613,7 @@ enum MonitorRuleDraft {
             return rule
         }
         return Rule(processBundleId: target.processBundleID,
+                    processTeamId: target.processBundleID == nil ? nil : teamID,
                     processPath: target.processPath,
                     processName: MonitorTreeKey.normalized(processName),
                     remoteHost: target.remoteHost,
