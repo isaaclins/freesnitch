@@ -228,7 +228,10 @@ extension Rule {
 /// never let through, so a user's deny keeps blocking an unsigned app. An ask
 /// rule matched only by the claimed id can only make a verdict stricter: it
 /// turns an allow into an ask, never a deny into one (see
-/// `RuleMatcher.explainedDecision`).
+/// `RuleMatcher.explainedDecision`). A rule that also names a path matches the
+/// claimed id whatever its action: the path already pins the binary, so it is
+/// never broader than the same rule without a bundle id. Rules made from
+/// alerts and the Monitor tree carry both, and an unsigned app keeps them.
 fileprivate func bundleIdMatches(_ ruleBundleId: String, _ connection: Connection, trustingClaimed: Bool) -> Bool {
     if connection.processBundleId == ruleBundleId { return true }
     return trustingClaimed && connection.claimedBundleId == ruleBundleId
@@ -259,7 +262,8 @@ fileprivate struct PreparedRule: Sendable {
     var needsIPv6: Bool { remoteIP?.needsIPv6 ?? false }
 
     func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
-        matches(connection: connection, address: address, trustingClaimedBundleId: action == .deny)
+        matches(connection: connection, address: address,
+                trustingClaimedBundleId: action == .deny || processPath != nil)
     }
 
     /// True when the rule would match if the connection's unsigned bundle id
@@ -377,8 +381,10 @@ public struct RuleMatcher: Sendable {
         if r.direction != .any && r.direction != c.direction { return false }
         if let bid = r.processBundleId, !bid.isEmpty {
             // Deny and ask rules count a claimed id (an ask one only ever
-            // raises an allow to an ask); an allow needs the signed id.
-            if !bundleIdMatches(bid, c, trustingClaimed: r.action != .allow) { return false }
+            // raises an allow to an ask), and so does any rule that also names
+            // a path; an allow with no path needs the signed id.
+            let pinnedByPath = !(r.processPath ?? "").isEmpty
+            if !bundleIdMatches(bid, c, trustingClaimed: r.action != .allow || pinnedByPath) { return false }
         }
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }

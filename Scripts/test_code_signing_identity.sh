@@ -465,6 +465,32 @@ expect(decide(unsignedApp, [askUnsigned], .silentAllow).0 == .ask,
 expect(decide(unsignedApp, [allowUnsigned]).0 == .ask,
        "an allow rule for an unsigned app's own id now alerts (the one change in behaviour)")
 
+// Allow and ask rules that also name a path (what alerts and the Monitor tree
+// write) keep matching an unsigned app at that path: no broader than a
+// path-only rule.
+let homebrewedPath = "/Applications/Homebrewed.app/Contents/MacOS/Homebrewed"
+let allowUnsignedAtPath = Rule(processBundleId: "org.example.homebrewed", processPath: homebrewedPath,
+                               action: .allow, priority: 100)
+expect(decide(unsignedApp, [allowUnsignedAtPath], .silentDeny).0 == .allow,
+       "an unsigned app keeps its allow rule made with its bundle id and path, even in Silent Deny mode")
+expect(matcher.matches(rule: allowUnsignedAtPath, connection: unsignedApp),
+       "the one-rule matcher agrees on the id+path allow")
+let impostor = flow(signed: nil, claimed: "org.example.homebrewed", path: "/Users/someone/Downloads/Homebrewed.app/Contents/MacOS/Homebrewed")
+expect(decide(impostor, [allowUnsignedAtPath], .silentDeny).0 == .deny,
+       "the same claimed id from another path does not get that allow")
+expect(!matcher.matches(rule: allowUnsignedAtPath, connection: impostor),
+       "the one-rule matcher agrees the impostor path does not match")
+let askUnsignedAtPath = Rule(processBundleId: "org.example.homebrewed", processPath: homebrewedPath,
+                             action: .ask, priority: 100)
+let allowAll = Rule(processPath: "/Applications/", action: .allow, priority: 50)
+expect(decide(unsignedApp, [askUnsignedAtPath, allowAll]).0 == .ask,
+       "an id+path ask rule for an unsigned app still asks")
+let spoofSafariAtRealPath = flow(signed: nil, claimed: "com.apple.Safari", path: "/tmp/x/Safari.app/Contents/MacOS/Safari")
+let allowSafariAtRealPath = Rule(processBundleId: "com.apple.Safari", processPath: "/Applications/Safari.app/Contents/MacOS/Safari",
+                                 action: .allow, priority: 100)
+expect(decide(spoofSafariAtRealPath, [allowSafariAtRealPath], .silentDeny).0 == .deny,
+       "a fake Safari elsewhere does not get Safari's id+path allow")
+
 // Deny direction.
 expect(decide(realSafari, [denySafari]).0 == .deny, "the signed app still gets its deny rule")
 expect(decide(spoof, [denySafari]).0 == .deny,
