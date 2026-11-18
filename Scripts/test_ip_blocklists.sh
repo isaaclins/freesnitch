@@ -218,16 +218,24 @@ struct IPBlocklistHarness {
             "0.0.0.0", "0.0.0.0/0", "::/0", "255.255.255.255",
             "10.0.0.0/8", "172.16.0.0/12", "192.168.1.0/24", "169.254.0.0/16",
             "224.0.0.0/4", "ff00::/8", "fe80::/10", "fc00::/7",
+            // FireHOL Level 1 lists the shared range Tailscale uses (#424).
+            "100.64.0.0/10", "100.90.0.0/16", "100.100.100.100", "198.18.0.0/15",
+            "fd7a:115c:a1e0::/48",
             "9.9.9.9", "203.0.113.9", "2606:4700::1"
         ]
         let hostile = IPBlocklistSet(entries: hostileEntries)
         checks.expect(hostile.acceptedEntryCount == 3, "only the three non-protected entries may enter the set, got \(hostile.acceptedEntryCount)")
         for refused in ["127.0.0.1", "127.0.0.53", "::1", "0.0.0.0", "255.255.255.255",
                         "10.1.2.3", "172.16.9.9", "192.168.1.4", "169.254.1.1",
-                        "224.0.0.251", "ff02::fb", "fe80::1", "fd00::1"] {
+                        "224.0.0.251", "ff02::fb", "fe80::1", "fd00::1",
+                        "100.90.249.60", "100.100.100.100", "100.127.255.254", "198.18.0.5", "198.19.255.1",
+                        "fd7a:115c:a1e0::53"] {
             checks.expect(!hostile.contains(refused), "a feed must never be able to block \(refused)")
         }
         checks.expect(hostile.contains("203.0.113.9"), "an ordinary public address from the feed must match")
+        let neighbours = IPBlocklistSet(entries: ["100.63.255.255", "100.128.0.1", "198.17.255.255", "198.20.0.1"])
+        checks.expect(neighbours.acceptedEntryCount == 4,
+                      "the addresses just outside the shared and benchmarking ranges must stay blockable, got \(neighbours.acceptedEntryCount)")
         checks.expect(hostile.contains("9.9.9.9"), "a public resolver address is in the set; the bypass, not the set, must protect it")
 
         let resolvers = ["9.9.9.9", "192.168.1.1", "2606:4700:4700::1111"]

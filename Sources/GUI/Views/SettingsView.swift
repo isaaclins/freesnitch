@@ -1,6 +1,5 @@
 import SwiftUI
 import ServiceManagement
-import SystemConfiguration
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
@@ -12,9 +11,11 @@ struct SettingsView: View {
     /// anything to apply.
     @State private var savedDoH = ""
     @State private var dohError: String?
-    @State private var systemResolvers: [String] = []
+    /// The resolvers macOS uses and the VPNs connected, kept current (#424).
+    @ObservedObject private var network = VPNMonitor.shared
+    private var systemResolvers: [String] { network.systemResolvers }
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var pane: Pane = .general
+    @State private var pane: Pane = DemoMode.settingsPane.flatMap(Pane.init(rawValue:)) ?? .general
 
     /// The parts of Settings. A page, not a window, so these are chosen in the
     /// content rather than by a `TabView` (#100).
@@ -56,16 +57,16 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 520, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
-        .onAppear { loadDoHUpstream(); systemResolvers = Self.currentSystemResolvers() }
+        .onAppear { loadDoHUpstream(); network.refresh() }
         .onChange(of: state.helperConnected) { connected in
             if connected { loadDoHUpstream() }
         }
-        .onChange(of: state.dnsProxyEnabled) { _ in systemResolvers = Self.currentSystemResolvers() }
-        .onChange(of: pane) { _ in systemResolvers = Self.currentSystemResolvers() }
+        .onChange(of: state.dnsProxyEnabled) { _ in network.refresh() }
+        .onChange(of: pane) { _ in network.refresh() }
         // Coming back from System Settings, where the tab sends you to change
         // the DNS server, has to show the new answer.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            systemResolvers = Self.currentSystemResolvers()
+            network.refresh()
         }
     }
 
@@ -109,6 +110,19 @@ struct SettingsView: View {
                             }
                             Button("Check Again") { state.helper.refreshInstallState(); state.helper.ping() }
                         }
+                    }
+                }
+                // What a connected VPN means for the rules, said next to the
+                // helper's status (#424). Only shown while one is connected.
+                if let summary = VPNStatus.rulesSummary(network.vpns) {
+                    Section("VPN") {
+                        LabeledContent("Connected") {
+                            Text(vpnList)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        Text(summary)
+                            .font(.caption).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Section("Menu bar") {
@@ -268,8 +282,16 @@ struct SettingsView: View {
         guard state.dnsProxyEnabled else {
             return ("No", "Enforcement is on, but the DNS proxy is not running.")
         }
+        // A VPN that brings its own DNS outranks the network's DNS server,
+        // so the general advice below would send the user to a setting that
+        // changes nothing while it is connected (#424).
+        let vpnDNS = VPNStatus.dnsSummary(network.vpns, routesThroughProxy: routesThroughProxy)
         if routesThroughProxy {
-            return ("Yes", "This Mac's DNS server is FreeSnitch, which filters lookups and forwards the rest over HTTPS. A DNS profile, VPN or DNS app can still take some or all lookups elsewhere.")
+            return ("Yes", "This Mac's DNS server is FreeSnitch, which filters lookups and forwards the rest over HTTPS. "
+                    + (vpnDNS ?? "A DNS profile, VPN or DNS app can still take some or all lookups elsewhere."))
+        }
+        if let vpnDNS {
+            return ("No", vpnDNS)
         }
         let servers = systemResolvers.isEmpty
             ? "the resolver your network or a DNS app provides"
@@ -278,12 +300,9 @@ struct SettingsView: View {
                 "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that. Set it back before you turn enforcement off or remove FreeSnitch, or this Mac cannot look up names.")
     }
 
-    /// The resolvers macOS is using right now, as the system reports them.
-    private static func currentSystemResolvers() -> [String] {
-        guard let store = SCDynamicStoreCreate(nil, "FreeSnitchSettings" as CFString, nil, nil),
-              let dns = SCDynamicStoreCopyValue(store, "State:/Network/Global/DNS" as CFString) as? [String: Any],
-              let servers = dns["ServerAddresses"] as? [String] else { return [] }
-        return servers
+    /// "Tailscale (utun4)", one per connected VPN.
+    private var vpnList: String {
+        network.vpns.map { "\($0.displayName) (\($0.interface))" }.joined(separator: ", ")
     }
 
     private var helperSummary: String {
@@ -381,10 +400,19 @@ struct SettingsView: View {
                 LabeledContent("Used by this Mac") {
                     Text(dnsUsage.status)
                 }
+                if !network.vpns.isEmpty {
+                    LabeledContent("VPN") {
+                        Text(vpnList)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
                 Text(dnsUsage.detail)
                     .font(.caption).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if state.dnsProxyEnabled != routesThroughProxy {
+                // Network Settings can't take DNS back from a VPN that
+                // brings its own, so the button would lead nowhere (#424).
+                if state.dnsProxyEnabled != routesThroughProxy,
+                   routesThroughProxy || VPNStatus.dnsOwner(network.vpns) == nil {
                     Button("Open Network Settings…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {
                             NSWorkspace.shared.open(url)

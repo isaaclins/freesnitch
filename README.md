@@ -300,7 +300,11 @@ There is no fixed roadmap here, and pretending otherwise ages badly. Direction i
 
 **Does it work alongside Pi-hole, AdGuard Home, or NextDNS?** Point FreeSnitch's DoH upstream at your own DoH endpoint. FreeSnitch can then provide a per-device enforcement layer on top of your network-wide blocker.
 
-**What about Tailscale, WireGuard, or ProtonVPN?** FreeSnitch's `PFManager` writes IP, CIDR, and port rules to the `puresnitch` anchor. It does not configure VPN interfaces. The DNS proxy handles queries sent to `127.0.0.1:53`; the current app does not change the Mac's system DNS settings.
+**What about Tailscale, WireGuard, or ProtonVPN?** They work next to FreeSnitch, and Settings shows which VPN is connected and what it means for you.
+- Per-app rules still apply inside the tunnel. The Network Extension sees each app's own connection before macOS sends it into the tunnel, so a rule for an app holds whether the connection leaves by Wi-Fi or by the VPN. The VPN app's own traffic is a connection of that app like any other: if the VPN stops connecting while FreeSnitch is on, check that the VPN app is not denied in Rules.
+- A VPN that brings its own DNS (Tailscale's MagicDNS, most VPN apps) takes priority over the Mac's DNS setting, so lookups go to the VPN's resolver and FreeSnitch's DNS blocking and DoH upstream don't apply while it is connected. Settings > DNS says so and names the VPN. In Tailscale, turning off Use Tailscale DNS Settings gives DNS back. A VPN that only answers for some domains (split DNS) takes just those names.
+- The address blocklists never block the shared range `100.64.0.0/10` (carrier NAT and Tailscale's addresses), private ranges such as `10.0.0.0/8`, or `198.18.0.0/15` that proxy VPNs hand out in their "fake IP" mode, so a feed that lists them can't cut off a tunnel.
+- FreeSnitch doesn't configure VPN interfaces and doesn't change the Mac's DNS settings.
 
 ## Project structure
 
