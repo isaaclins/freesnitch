@@ -370,7 +370,7 @@ struct UninstallFlowSheet: View {
             failureHeadline(reason == SystemExtensionManager.noAnswer
                             ? "macOS didn’t answer FreeSnitch’s request to remove its network filter"
                             : "macOS didn’t let FreeSnitch remove its network filter")
-            Text("FreeSnitch is turned off and isn’t protecting this Mac. Nothing else was removed. Try again, and if it keeps failing, restart your Mac and try once more. To keep FreeSnitch instead, reopen it and turn Enforcement back on in Settings.")
+            Text("FreeSnitch is turned off and isn’t protecting this Mac. Nothing else was removed. Try again, and if it keeps failing, restart your Mac and try once more. To keep using FreeSnitch instead, quit and reopen it, then turn Enforcement back on in Settings.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)
         case .passwordCancelled:

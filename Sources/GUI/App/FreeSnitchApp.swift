@@ -111,6 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// own network extension, so Homebrew asks it to. This run shows no
     /// window, starts nothing else, removes the filter and the extension, and
     /// exits 0 once macOS confirmed the extension is stopped, 1 otherwise.
+    /// `open -W` does not pass that status or the error text on, so the cask
+    /// reads the extension list itself afterwards and decides from that.
     /// Homebrew removes the helper, the pf anchor and the app itself (#391).
     static let removeNetworkExtensionArgument = "--remove-network-extension"
     private var removalAnswer: AnyCancellable?

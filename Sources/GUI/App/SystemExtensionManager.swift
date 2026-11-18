@@ -1049,8 +1049,8 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                     self.uninstallState = .deactivating
                     self.checkExtensionPresence()
                 } else {
-                    // Check this answer too: only a record macOS marks as
-                    // being uninstalled lets the uninstall go on.
+                    // Check this answer too: only a record that is stopped
+                    // or being uninstalled lets the uninstall go on.
                     self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
                     self.uninstallState = .deactivating
                     self.checkExtensionPresence()
@@ -1102,8 +1102,12 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             let records = properties.filter { $0.bundleIdentifier == self.extensionIdentifier }
             if records.isEmpty {
                 self.uninstallState = .removed
-            } else if records.allSatisfy({ $0.isUninstalling }) {
-                // "terminated waiting to uninstall on reboot".
+            } else if records.allSatisfy({ $0.isUninstalling || !$0.isEnabled }) {
+                // "terminated waiting to uninstall on reboot". Either sign
+                // counts, since which flags macOS sets for that state is
+                // not documented: a record that is neither being uninstalled
+                // nor disabled is the only one still running. The filter
+                // settings are already removed by now, so nothing filters.
                 self.uninstallState = .pendingReboot
             } else {
                 self.uninstallState = .failed("macOS still lists the network extension as installed.")
