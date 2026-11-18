@@ -400,6 +400,31 @@ struct InsightsHarness {
         check(!domainProposal.isCovered(by: [Rule(remoteIP: "203.0.113.0/24", action: .deny)]),
               "an address rule does not cover a domain proposal")
 
+        // #331: a rule only covers a proposal when it would match every
+        // outgoing connection the proposal stands for.
+        let coverageNow = Date()
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 443, action: .deny)], now: coverageNow),
+              "a port-only rule does not cover a domain proposal")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.70", remotePort: 443, action: .deny)], now: coverageNow),
+              "a port-only rule does not cover an address proposal")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 0, action: .deny)], now: coverageNow),
+              "port 0 means any port and still covers")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", direction: .incoming, action: .deny)], now: coverageNow),
+              "an incoming-only rule does not cover an outgoing proposal")
+        check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.0/24", direction: .incoming, action: .deny)], now: coverageNow),
+              "an incoming-only range rule does not cover an outgoing address proposal")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", direction: .any, action: .deny)], now: coverageNow),
+              "a rule for both directions covers an outgoing proposal")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", action: .deny,
+                                                  expiresAt: coverageNow.addingTimeInterval(-60))], now: coverageNow),
+              "an expired rule does not cover a proposal")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", action: .deny,
+                                                 expiresAt: coverageNow.addingTimeInterval(3600))], now: coverageNow),
+              "a rule that has not expired yet still covers")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 443, action: .deny),
+                                            Rule(remoteHost: "api.example.com", action: .deny)], now: coverageNow),
+              "a full rule next to a port-only rule still covers")
+
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {
             FileHandle.standardError.write(Data("insights harness: \(failures) failure(s)\n".utf8))
