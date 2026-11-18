@@ -148,21 +148,21 @@ do {
         expect(app.reported == expected, "\(name): reported \(app.reported), expected \(expected)")
         expect(mgr.storedEnabled == storedEnabled, "\(name): stored isEnabled \(mgr.storedEnabled)")
     }
-    let turnOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
+    let userTurnsOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
         app.turnOffs &+= 1   // disableFilter / removeFilterConfiguration
         app.enableRequested = false
         line.run { done in turnOff(mgr, done: done) }
     }
     run("nothing overtakes", between: { _, _, _ in }, expected: [.active], storedEnabled: true)
     run("save fails", saveFails: true, between: { _, _, _ in }, expected: [.failed], storedEnabled: true)
-    run("off while loading", between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off while loading", between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off while saving", between: { app, mgr, line in
         mgr.deliver("save load")
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
     }, expected: [.stayedOff], storedEnabled: false)
-    run("off, then the save fails", saveFails: true, between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off, then the save fails", saveFails: true, between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off then on again", between: { app, mgr, line in
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
         app.enableRequested = true // enableFilter: the next cycle reports
     }, expected: [.awaitReenable], storedEnabled: false)
     expect(FilterSaveCompletion.decide(enabling: false, turnOffsAtLoad: 0, turnOffsNow: 1,
@@ -349,7 +349,7 @@ mutate_and_expect_failure outside-off-keeps-active-status "$SEM" \
 mutate_and_expect_failure outside-off-hides-approval "$SEM" \
   'if filterConfigurationActive && !persistenceCycle.enableRequested {' 'if true {'
 mutate_and_expect_failure outside-on-stays-not-filtering "$SEM" \
-  $'            if hasEmbeddedExtension && status != .needsApproval && status != .activating {\n                enableFilter(fromSettings: true)' \
+  $'            if hasEmbeddedExtension && settingsTurnOnMayRun {\n                enableFilter(fromSettings: true)' \
   $'            if hasEmbeddedExtension {\n                state?.syncSharedRules()'
 mutate_and_expect_failure outside-on-skips-rules "$SEM" \
   $'            } else {\n                state?.syncSharedRules()\n            }' \
@@ -362,7 +362,13 @@ mutate_and_expect_failure settings-turn-on-overrides-off "$SEM" \
 mutate_and_expect_failure settings-turn-on-not-checked "$SEM" \
   'fromSettings: self.turnOnFromSettings,' 'fromSettings: false,'
 mutate_and_expect_failure settings-turn-on-skips-approval "$SEM" \
-  'if hasEmbeddedExtension && status != .needsApproval && status != .activating {' 'if hasEmbeddedExtension {'
+  '        default: return false' '        default: return true'
+mutate_and_expect_failure settings-turn-on-after-failed-activation "$SEM" \
+  '        case .failed: return turnOnFromSettings' '        case .failed: return true'
+mutate_and_expect_failure settings-turn-on-failure-sticks "$SEM" \
+  '        case .failed: return turnOnFromSettings' '        case .failed: return false'
+mutate_and_expect_failure activation-failure-counts-as-settings "$SEM" \
+  $'        // turn-on\'s (#383).\n        turnOnFromSettings = false' $'        // turn-on\'s (#383).'
 mutate_and_expect_failure settings-turn-on-not-marked "$SEM" \
   'enableFilter(fromSettings: true)' 'enableFilter()'
 printf 'filter off vs boot-policy save verification: PASS\n'
