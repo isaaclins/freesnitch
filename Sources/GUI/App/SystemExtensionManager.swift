@@ -77,6 +77,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// save that was already running can tell it was overtaken and must not
     /// report the firewall as active (#318).
     private var filterTurnOffs = 0
+    /// The pending turn-on follows the filter being turned on in System
+    /// Settings, so it must not turn it on against a later turn-off there.
+    private var turnOnFromSettings = false
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
@@ -111,10 +114,38 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case .clearBanner:
             // Nothing restarts with these rules while it is off.
             state?.clearFilterPersistenceFailure()
+            // Turned off or removed in System Settings: nothing filters, so
+            // stop saying the firewall is active (#361). Only a firewall shown
+            // as on changes; approval or a turn-on in progress keep their state.
+            if filterConfigurationActive && !persistenceCycle.enableRequested {
+                showNotFiltering()
+            }
         case .saveCurrentRules:
-            // Turned on outside the app: save the current rules again, as
-            // turning it on in the app does.
-            state?.syncSharedRules()
+            // Turned on outside the app: turn it on as activation at launch
+            // does, so the current rules are saved again and the firewall
+            // shows as active once that save went through (#361). A build
+            // without the extension only saves the rules, as before, and so
+            // does any state but "not filtering": an activation waiting for
+            // approval or running turns the filter on and reports the state
+            // itself, and after a failed activation the status stays failed
+            // until the extension really connects (#383).
+            if hasEmbeddedExtension && settingsTurnOnMayRun {
+                enableFilter(fromSettings: true)
+            } else {
+                state?.syncSharedRules()
+            }
+        }
+    }
+
+    /// Shown as not filtering, or an earlier turn-on from System Settings
+    /// failed (the helper gave no rules): turning it on there runs the
+    /// turn-on, so a failed one can be tried again. A failed activation is
+    /// not, it stays failed until the extension connects (#383).
+    private var settingsTurnOnMayRun: Bool {
+        switch status {
+        case .idle: return true
+        case .failed: return turnOnFromSettings
+        default: return false
         }
     }
 
@@ -149,6 +180,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             return
         }
         status = .activating
+        // A failure from here on is the activation's, not a System Settings
+        // turn-on's (#383).
+        turnOnFromSettings = false
         requestKind = .activation
         let request = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
@@ -274,7 +308,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     // MARK: - Content filter configuration
 
-    private func enableFilter() {
+    private func enableFilter(fromSettings: Bool = false) {
+        turnOnFromSettings = fromSettings
         // A snapshot kept for a retry is never the policy activation saves:
         // only the helper's fresh answer below may enable the filter.
         dropScheduledSave()
@@ -359,6 +394,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 // Before the cycle may drop it: a removal of the saved policy
                 // that fails while the filter isn't in use shows no banner (#349).
                 let removalQueued = self.persistenceCycle.queue.peekNewest == SharedRuleBridge.bootSnapshotRemoval
+                // Turned on in System Settings and turned off or removed there
+                // again before this load: what is set there wins, so this
+                // cycle neither turns it back on nor recreates it (#361).
+                if loadError == nil && self.persistenceCycle.enableRequested
+                    && !FilterOffState.turnOnStands(fromSettings: self.turnOnFromSettings,
+                                                    configured: mgr.providerConfiguration != nil,
+                                                    enabled: mgr.isEnabled) {
+                    self.persistenceCycle.dropEnableRequest()
+                }
                 let decision = self.persistenceCycle.afterLoad(
                     load, loadFailed: loadError != nil,
                     configurationExists: mgr.providerConfiguration != nil,
@@ -402,6 +446,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // warning no longer applies (#311).
                     self.state?.clearFilterPersistenceFailure()
                     self.filterOff.turnedOff(turnOnPending: false)
+                    // Removed outside the app before the change notice came:
+                    // nothing filters any more (#361).
+                    if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }
                     return
                 case .stop(.cancelledDuringLoad):
                     self.endPersistenceTurn()

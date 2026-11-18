@@ -35,7 +35,9 @@ struct FreeSnitchApp: App {
                 // you see and reordering the sidebar cannot make a shortcut lie.
                 ForEach(Array(MainPage.allCases.enumerated()), id: \.element.id) { index, page in
                     Button(page.title) {
-                        delegate.windowManager.showPage(page)
+                        // Optional: the window manager doesn't exist yet while
+                        // the launch-time move question is open (#403).
+                        delegate.windowManager?.showPage(page)
                     }
                     .keyboardShortcut(pageShortcut(index), modifiers: .command)
                 }
@@ -44,7 +46,7 @@ struct FreeSnitchApp: App {
             // field the current page shows rather than opening a find bar of
             // its own (#96).
             CommandGroup(after: .textEditing) {
-                Button("Find") { delegate.windowManager.focusSearch() }
+                Button("Find") { delegate.windowManager?.focusSearch() }
                     .keyboardShortcut("f", modifiers: .command)
             }
         }
@@ -130,11 +132,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // current mode and rules as soon as its XPC listener is available.
         state.syncSharedRules()
 
+        // An old PureSnitch install must not keep filtering next to this one,
+        // so this app's own filter starts only once that question is settled:
+        // at once for Not Now, after the removal when the user chose Remove.
+        //
         // Per-process firewall (Network System Extension). `activate()` is a
         // no-op unless this build embeds one. The monitor-only build does
         // not, so no extension approval prompt appears.
-        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
-            systemExtension.activate()
+        LegacyPureSnitch.offerRemovalAtLaunch { [systemExtension] in
+            if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
+                systemExtension.activate()
+            }
         }
 
         // A menu-bar-only app that shows nothing on first launch reads as
@@ -158,6 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
                 case "popover": self.menubar.showPopover()
+                // The banner a copy outside Applications shows, for review.
+                case "move-banner":
+                    self.state.helperInstallState = .wrongLocation
+                    self.windowManager.showNetworkMonitor()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
                 // without this it is the one screen nobody can review before it
@@ -167,9 +179,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-
-        // An old PureSnitch install must not keep filtering next to this one.
-        DispatchQueue.main.async { LegacyPureSnitch.offerRemovalAtLaunch() }
     }
 
     private func seedDemoAlert() {
@@ -377,7 +386,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        windowManager.showMainWindow()
+        // Not set yet while the launch-time move question is on screen.
+        windowManager?.showMainWindow()
         return true
     }
 }

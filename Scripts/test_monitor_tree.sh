@@ -47,7 +47,7 @@ done
 model_imports="$(grep -E '^import ' "$MODEL" | sort | tr '\n' ' ' | sed 's/ $//')"
 [[ "$model_imports" == "import Foundation" ]] \
   || fail "the grouping model imports more than Foundation ($model_imports); grouping must stay off the view layer"
-for symbol in NSImage 'AppState\.' 'HelperClient(' '@MainActor' ': View'; do
+for symbol in NSImage 'AppState\.' 'HelperClient\(' '@MainActor' ': View'; do
   if grep -nE "$symbol" "$MODEL" >/dev/null; then
     fail "the grouping model uses $symbol; grouping must stay off the view layer"
   fi
@@ -56,10 +56,10 @@ pass "the grouping model has no view layer and no reference to app or helper sta
 
 # 2. Ordering may never consult traffic. Sorting rows by bytes is what moves a
 #    row out from under the pointer between press and release.
-if grep -nE 'sorted[^\n]*(traffic|bytes|total)' "$MODEL" >/dev/null; then
+if grep -nE 'sorted.*(traffic|bytes|total)' "$MODEL" >/dev/null; then
   fail "the grouping model sorts by traffic"
 fi
-if grep -nE 'sorted[^\n]*(traffic|bytes|total)' "$ROWS" >/dev/null; then
+if grep -nE 'sorted.*(traffic|bytes|total)' "$ROWS" >/dev/null; then
   fail "the monitor rows sort by traffic"
 fi
 pass "no row ordering path sorts by traffic"
@@ -81,7 +81,7 @@ pass "decisions go through the helper ingest path and nothing is enforced from G
 
 # 4. A decision must be explicit. The only callers of the apply path are the
 #    row's own controls, never a tap on the row.
-if grep -nE 'onTapGesture[^\n]*(apply|decide)' "$ROWS" "$MONITOR" >/dev/null; then
+if grep -nE 'onTapGesture.*(apply|decide)' "$ROWS" "$MONITOR" >/dev/null; then
   fail "a decision can be triggered by tapping a row"
 fi
 pass "no row tap can make a decision"

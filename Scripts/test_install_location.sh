@@ -95,6 +95,20 @@ try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedApps.path)
 check(!ok(lockedResult), "a folder the user can't write to reports a failure")
 check(try! fm.contentsOfDirectory(atPath: lockedApps.path).isEmpty, "a failed copy leaves no partial bundle")
 
+// A bundle that arrives read-only keeps its flag on the copy. That copy must
+// not count as moved (it would run translocated again), and must not be left
+// behind half-made.
+let readOnly = work.appendingPathComponent("ReadOnly/FreeSnitch.app", isDirectory: true)
+makeBundle(at: readOnly, build: "35")
+_ = flag.withCString { setxattr(readOnly.path, "com.apple.quarantine", $0, strlen($0), 0, XATTR_NOFOLLOW) }
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: readOnly.path)
+let roApps = work.appendingPathComponent("ROApplications", isDirectory: true)
+try! fm.createDirectory(at: roApps, withIntermediateDirectories: true)
+let roResult = InstallLocation.copyBundle(from: readOnly, to: roApps.appendingPathComponent("FreeSnitch.app"))
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: readOnly.path)
+check(!ok(roResult), "a copy that keeps the download flag is reported as a failure")
+check((try? fm.contentsOfDirectory(atPath: roApps.path))?.isEmpty == true, "nothing is left in Applications after that failure")
+
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
 check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: "/Users/x")
       && InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Applications/FreeSnitch.app"), home: "/Users/x")
@@ -144,6 +158,45 @@ check(asked == ["/Applications/PureSnitch.app", "/Library/LaunchDaemons/io.isaac
 check(LegacyPureSnitch.detect { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
       "a helper left behind without the app is still found")
 
+// #399: the question only promises a password prompt when the helper is part
+// of the removal, and only mentions the Trash when the app is there.
+let both = LegacyPureSnitch.removalText(.init(app: true, daemon: true))
+let appOnly = LegacyPureSnitch.removalText(.init(app: true, daemon: false))
+let helperOnly = LegacyPureSnitch.removalText(.init(app: false, daemon: true))
+check(both.contains("password") && both.contains("Trash"), "app and helper: the question mentions the password and the Trash")
+check(!appOnly.contains("password") && appOnly.contains("Trash"), "app only: no password is promised")
+check(helperOnly.contains("password") && !helperOnly.contains("Trash"), "helper only: the password is mentioned, the Trash isn't")
+
+// Choosing Remove: FreeSnitch's own filter may only start once the removal
+// is done, and also when it failed, so the filter never stays off for good.
+@MainActor func runRemoval(helper: LegacyPureSnitch.Outcome, trash: LegacyPureSnitch.Outcome?, app: Bool) -> [String] {
+    var events: [String] = []
+    var done = false
+    LegacyPureSnitch.performRemoval(
+        .init(app: app, daemon: true),
+        removeHelper: { _ in Thread.sleep(forTimeInterval: 0.05); return helper },
+        trashApp: { completion in
+            events.append("trash")
+            DispatchQueue.main.async { completion(trash ?? .removed) }
+        },
+        report: { _ in events.append("report") },
+        then: { events.append("startup"); done = true })
+    events.append("returned")
+    let deadline = Date().addingTimeInterval(5)
+    while !done && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    return events
+}
+MainActor.assumeIsolated {
+    check(runRemoval(helper: .removed, trash: .removed, app: true) == ["returned", "trash", "report", "startup"],
+          "with Remove chosen, the filter starts only after PureSnitch went to the Trash and the result was shown")
+    check(runRemoval(helper: .failed("x"), trash: nil, app: true) == ["returned", "report", "startup"],
+          "a failed helper removal still lets the filter start, after saying so")
+    check(runRemoval(helper: .cancelled, trash: nil, app: true) == ["returned", "report", "startup"],
+          "a cancelled password prompt still lets the filter start")
+    check(runRemoval(helper: .removed, trash: .failed("y"), app: true) == ["returned", "trash", "report", "startup"],
+          "a failed move to the Trash still lets the filter start, after saying so")
+}
+
 exit(failures == 0 ? 0 : 1)
 SWIFT
 
@@ -170,3 +223,20 @@ if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination
   echo "install location: FAIL: the move can delete the installed copy" >&2; exit 1
 fi
 echo "install location: PASS: the move never deletes the installed copy"
+app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
+[ "$(grep -c 'systemExtension.activate()' "$app_swift")" = 1 ] \
+  && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \
+  || { echo "install location: FAIL: the filter can start outside the PureSnitch continuation" >&2; exit 1; }
+echo "install location: PASS: the filter starts only from the PureSnitch continuation"
+
+# #403: the move question can be open before the window manager exists, so
+# nothing outside applicationDidFinishLaunching may force-unwrap it: menu
+# commands, the Settings redirect and the reopen handler all go through `?.`.
+outside="$(awk '/func applicationDidFinishLaunching/ { skip = 1 } skip && /^    }$/ { skip = 0; next } !skip' "$app_swift")"
+if printf '%s\n' "$outside" | grep -nE 'windowManager[.!]'; then
+  echo "install location: FAIL: the window manager is used without a check outside launch setup" >&2; exit 1
+fi
+printf '%s\n' "$outside" | grep -q 'delegate.windowManager?.showPage' \
+  || { echo "install location: FAIL: could not find the menu commands to check" >&2; exit 1; }
+echo "install location: PASS: menu commands and reopen do nothing until the window manager exists"
+

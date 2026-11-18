@@ -131,7 +131,9 @@ private struct BannerInfo {
             title = "Put FreeSnitch into Applications again"
             detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
             action = BannerAction(title: "Show in Finder") { _, _ in
-                if let installed = InstallLocation.stuckInstalledCopy {
+                // The demo's banner only shows the button.
+                if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1",
+                   let installed = InstallLocation.stuckInstalledCopy {
                     NSWorkspace.shared.activateFileViewerSelecting([installed])
                 }
             }
