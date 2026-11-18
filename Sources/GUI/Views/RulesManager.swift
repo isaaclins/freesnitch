@@ -116,6 +116,14 @@ struct RulesManagerView: View {
         // blocklist, and the reverse.
         .onAppear { window.contentOwnsSearch = openBlocklist != nil }
         .onDisappear { window.contentOwnsSearch = false }
+        // Hits and Last used change while the page is open (#434). Only the
+        // counters are read; the rules themselves are not reloaded or resent.
+        .task {
+            while !Task.isCancelled {
+                state.refreshRuleUsage()
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
         .onChange(of: selectedCategory) { _ in
             openBlocklistMatchCount = nil
             let ownsSearch = openBlocklist != nil

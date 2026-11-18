@@ -171,7 +171,7 @@ verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for 
 # the whole Mac until someone answers (#422).
 # Only Apple's resolver at its system path gets that default, never any other
 # port-53 flow (#30): the path and the signature check must both hold.
-grep -Fq 'if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped) }' <<<"$verdict_body" \
+grep -Fq 'if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped, nil) }' <<<"$verdict_body" \
   || fail "the system resolver's default allow is missing or no longer needs both its path and its signature"
 require_text "$RULE_MATCHER" 'public static let systemResolverPath = "/usr/sbin/mDNSResponder"' \
   "the system resolver is no longer identified by its protected system path"
@@ -1536,8 +1536,8 @@ require_text "$GUI_HELPER" "payload.count <= InsightsLimits.maxReportBytes" \
   "the GUI decodes Insights data before bounding the response"
 require_text "$HELPER" "insightsQueryQueue.async" \
   "the helper runs Insights queries on its XPC connection queue"
-require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection is permitted" \
-  "Insights does not say plainly that Silent Allow blocks nothing"
+require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply" \
+  "Insights does not say plainly that Silent Allow only blocks what deny rules name (#434)"
 require_text "$RULE_STORE" "?? .silentAllow" \
   "a fresh rules database does not default honestly to Silent Allow"
 if grep -Eq 'URLSession|CFHost|GetAddrInfo|gethostby' "$INSIGHTS_STORE"; then
