@@ -223,6 +223,14 @@ extension Rule {
     }
 }
 
+/// A rule's bundle id matches the signed one (#351). A deny rule also matches
+/// the id an unsigned Info.plist claims: a fake id can get a binary blocked,
+/// never let through, so a user's deny keeps blocking an unsigned app.
+fileprivate func bundleIdMatches(_ ruleBundleId: String, _ connection: Connection, trustingClaimed: Bool) -> Bool {
+    if connection.processBundleId == ruleBundleId { return true }
+    return trustingClaimed && connection.claimedBundleId == ruleBundleId
+}
+
 fileprivate struct PreparedRule: Sendable {
     let action: RuleAction
     let expiresAt: Date?
@@ -248,8 +256,23 @@ fileprivate struct PreparedRule: Sendable {
     var needsIPv6: Bool { remoteIP?.needsIPv6 ?? false }
 
     func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        matches(connection: connection, address: address, trustingClaimedBundleId: action == .deny)
+    }
+
+    /// True when the rule would match if the connection's unsigned bundle id
+    /// were verified: an allow or ask rule skipped only for that reason.
+    func skippedForUnverifiedBundleId(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        guard action != .deny, let processBundleId,
+              connection.claimedBundleId == processBundleId,
+              connection.processBundleId != processBundleId else { return false }
+        return matches(connection: connection, address: address, trustingClaimedBundleId: true)
+    }
+
+    private func matches(connection: Connection, address: PreparedConnectionAddress,
+                         trustingClaimedBundleId: Bool) -> Bool {
         if let direction, direction != connection.direction { return false }
-        if let processBundleId, (connection.processBundleId ?? "") != processBundleId { return false }
+        if let processBundleId,
+           !bundleIdMatches(processBundleId, connection, trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
         if let remotePort, connection.remotePort != remotePort { return false }
         if let remoteHost, !remoteHost.matches(connection.remoteHost) { return false }
@@ -301,6 +324,13 @@ public struct RuleMatcher: Sendable {
     }
 
     public func decision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> RuleAction {
+        explainedDecision(for: c, prepared: prepared, defaultMode: defaultMode).action
+    }
+
+    /// The decision, plus the allow or ask rule that would have come first had
+    /// the connection's bundle id been signed rather than only claimed by its
+    /// Info.plist (#351), so the caller can say why the user was asked.
+    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> (action: RuleAction, skippedUnverified: Rule?) {
         // Expiry is the one predicate that cannot be precomputed, because it
         // depends on when the flow arrives rather than on the snapshot. It
         // stays a test inside the scan, which allocates nothing.
@@ -310,22 +340,29 @@ public struct RuleMatcher: Sendable {
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
+        let mayHaveSkipped = c.claimedBundleId != nil && c.claimedBundleId != c.processBundleId
+        var skipped: Rule?
+        var index = -1
         for r in prepared.compiled {
+            index += 1
             if let exp = r.expiresAt, exp < now { continue }
-            if r.matches(connection: c, address: address) { return r.action }
+            if r.matches(connection: c, address: address) { return (r.action, skipped) }
+            if mayHaveSkipped, skipped == nil, r.skippedForUnverifiedBundleId(connection: c, address: address) {
+                skipped = prepared.ordered[index]
+            }
         }
 
         switch defaultMode {
-        case .alert: return .ask
-        case .silentAllow: return .allow
-        case .silentDeny: return .deny
+        case .alert: return (.ask, skipped)
+        case .silentAllow: return (.allow, skipped)
+        case .silentDeny: return (.deny, skipped)
         }
     }
 
     public func matches(rule r: Rule, connection c: Connection) -> Bool {
         if r.direction != .any && r.direction != c.direction { return false }
         if let bid = r.processBundleId, !bid.isEmpty {
-            if (c.processBundleId ?? "") != bid { return false }
+            if !bundleIdMatches(bid, c, trustingClaimed: r.action == .deny) { return false }
         }
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }

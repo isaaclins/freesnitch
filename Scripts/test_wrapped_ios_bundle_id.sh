@@ -111,13 +111,14 @@ expect(BundleIdentifierCache.appBundlePath(forExecutablePath: loose.path) == nil
 // The whole path the extension takes for a flow: first sight queues the read,
 // the next flow from the same process sees the bundle id.
 let cache = BundleIdentifierCache()
-_ = cache.cachedBundleId(forExecutablePath: iosExecutable.path)
+_ = cache.cachedMetadata(forExecutablePath: iosExecutable.path)
 cache.waitForPendingResolves()
-expect(cache.cachedBundleId(forExecutablePath: iosExecutable.path) == "com.example.notespad",
+expect(cache.cachedMetadata(forExecutablePath: iosExecutable.path)?.claimedBundleIdentifier == "com.example.notespad",
        "the extension's cache answers a wrapped iOS app's bundle id")
 print("wrapped ios harness: all checks passed")
 SWIFT
 
 xcrun swiftc -swift-version 5 -O -o "$TMP/harness" \
-  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$TMP/cache.swift" "$TMP/main.swift"
+  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$ROOT/Sources/Shared/CodeSigningIdentity.swift" \
+  "$TMP/cache.swift" "$TMP/main.swift"
 "$TMP/harness" "$TMP/fixtures"

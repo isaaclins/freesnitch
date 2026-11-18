@@ -146,7 +146,7 @@ require_text "$RULE_MATCHER" "inet_pton(AF_INET6" \
 # stay a scan over the already ordered array.
 require_text "$RULE_MATCHER" "public struct PreparedRuleSet" \
   "the precomputed rule order is missing, so every flow pays a filter and a sort again"
-verdict_body="$(swift_function_body "$RULE_MATCHER" 'func decision(for c: Connection, prepared:')"
+verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for c: Connection, prepared:')"
 [[ -n "$verdict_body" ]] || fail "the shared matcher has no prepared-rule verdict path to audit"
 for forbidden in '.sorted' '.filter' '.map('; do
   if printf '%s\n' "$verdict_body" | grep -Fq -- "$forbidden"; then
@@ -596,7 +596,7 @@ fi
 # A verdict must never wait on the filesystem. The bundle identifier comes from
 # a bounded in-memory cache, and the Info.plist read happens on a background
 # queue, so a cold page cache or a slow volume cannot become filter latency.
-require_text "$FILTER" "bundleIdentifierCache.cachedBundleId(forExecutablePath: path)" \
+require_text "$FILTER" "let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path," \
   "the verdict path no longer answers bundle identifiers from the bounded cache"
 require_text "$FILTER" "capacity: Int = 512" \
   "the bundle identifier cache capacity is not explicit and bounded"
@@ -604,8 +604,8 @@ require_text "$FILTER" "resolveQueue.async" \
   "bundle identifier plist reads are not handed to a background queue"
 require_text "$FILTER" "private let lock: UnsafeMutablePointer<os_unfair_lock_s>" \
   "the bundle identifier cache does not hold its lock at a stable address"
-bundle_id_body="$(awk '
-  /private func bundleIdForApp\(atPath path: String\)/ {
+connection_body="$(awk '
+  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, version: String\?, signatureChecked: Bool\)/ {
     active = 1
     depth = 0
   }
@@ -617,9 +617,19 @@ bundle_id_body="$(awk '
     if (depth == 0) exit
   }
 ' "$FILTER")"
-[[ -n "$bundle_id_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
-if printf '%s\n' "$bundle_id_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization'; then
-  fail "the verdict path reads and parses an Info.plist synchronously"
+[[ -n "$connection_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
+if printf '%s\n' "$connection_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization|SecStaticCode|SecCodeCopy'; then
+  fail "the verdict path reads an Info.plist or checks a signature synchronously"
+fi
+
+# A rule's bundle id comes from the process's code signature, never from an
+# unsigned Info.plist anyone can write next to a binary (#351).
+require_text "$FILTER" "CodeSigningIdentity.resolve(executablePath:" \
+  "the extension no longer takes bundle identifiers from the code signature"
+require_text "$ROOT/Sources/Helper/NetMonitor.swift" "CodeSigningIdentity.resolve(executablePath:" \
+  "the monitor no longer takes bundle identifiers from the code signature"
+if grep -Fq 'CFBundleIdentifier' "$ROOT/Sources/Helper/NetMonitor.swift"; then
+  fail "the monitor reads a bundle identifier from an unsigned Info.plist"
 fi
 
 # A flow can reach handleNewFlow with no destination at all: the SDK states
@@ -877,7 +887,7 @@ fi
 # FreeSnitch, its helper, and loopback are safety-critical exemptions. They
 # must be decided before the general matcher can pause or drop the flow.
 own_line="$(grep -nF 'if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }' "$FILTER" | head -1 | cut -d: -f1 || true)"
-matcher_line="$(grep -nF 'matcher.decision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
+matcher_line="$(grep -nF 'matcher.explainedDecision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
 [[ -n "$own_line" ]] || fail "own-traffic and loopback exemption is missing"
 [[ -n "$matcher_line" ]] || fail "the extension no longer invokes the shared matcher"
 if (( own_line >= matcher_line )); then
