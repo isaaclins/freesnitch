@@ -398,7 +398,7 @@ require_text "$FILTER" "watermark.supersedes(decoded)" \
   "the extension can load a saved boot policy older than the last live policy it enforced"
 require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
   "the extension does not remember which live policy it last enforced"
-enable_body="$(awk '/private func enableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+enable_body="$(awk '/private func enableFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$enable_body" | grep -Fq 'persistenceCycle.requestEnable()' \
   || fail "turning the filter on can save a snapshot kept for a retry instead of the helper's fresh answer"
 disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
@@ -520,8 +520,28 @@ printf '%s\n' "$refresh_body" | grep -Fq 'fromOutside: true' \
   && printf '%s\n' "$refresh_body" | grep -Fq 'self.apply(change)' \
   || fail "turning the filter on in System Settings does not save the current rules again"
 apply_body="$(awk '/private func apply\(_ change: FilterOffState.Change\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
-printf '%s\n' "$apply_body" | grep -A3 -F 'case .saveCurrentRules:' | grep -Fq 'state?.syncSharedRules()' \
+save_current_body="$(printf '%s\n' "$apply_body" | awk '/case \.saveCurrentRules:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
+printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
   || fail "turning the filter on in System Settings does not save the current rules again"
+# Turned on there, the app turns it on as its own switch does, so the status
+# says active once the current rules are saved (#361).
+printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && settingsTurnOnMayRun {' \
+  || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
+may_run_body="$(awk '/private var settingsTurnOnMayRun: Bool/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$may_run_body" | grep -Fq 'case .idle: return true' \
+  && printf '%s\n' "$may_run_body" | grep -Fq 'case .failed: return turnOnFromSettings' \
+  && printf '%s\n' "$may_run_body" | grep -Fq 'default: return false' \
+  && grep -A3 -F 'status = .activating' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'turnOnFromSettings = false' \
+  || fail "a turn-on from System Settings runs during approval or after a failed activation, or a failed one can't be tried again (#383)"
+grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
+    | tr -d '\n' | grep -Eq '!FilterOffState\.turnOnStands\(fromSettings: self\.turnOnFromSettings, +configured: mgr\.providerConfiguration != nil, +enabled: mgr\.isEnabled\) \{ +self\.persistenceCycle\.dropEnableRequest\(\)' \
+  && grep -Fq 'enableFilter(fromSettings: true)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "a turn-on that follows System Settings turns the filter back on after it was turned off there again (#361)"
+clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
+printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if filterConfigurationActive && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
+  || fail "turning the filter off in System Settings leaves the app saying the firewall is active (#361)"
+grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' \
+  || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"
 printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \
   || fail "finding the filter off leaves an earlier could-not-save banner up"
 printf '%s\n' "$enable_body" | grep -Fq 'filterOff.turnedOn()' \
