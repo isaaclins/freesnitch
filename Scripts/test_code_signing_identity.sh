@@ -520,6 +520,6 @@ SWIFT
 SHARED=()
 while IFS= read -r file; do SHARED+=("$file"); done < <(find "$ROOT/Sources/Shared" -name '*.swift' | sort)
 xcrun swiftc -swift-version 5 -O -o "$TMP/harness" "${SHARED[@]}" "$TMP/cache.swift" "$TMP/main.swift" -lsqlite3
-OWN_CDHASH="$(codesign -dvvv "$TMP/harness" 2>&1 | sed -n 's/^CDHash=//p' | head -1)"
+OWN_CDHASH="$(codesign -dvvv "$TMP/harness" 2>&1 | sed -n 's/^CDHash=//p' | sed -n 1p)"
 "$TMP/harness" "$FAKES" "$SWAPPED" "${DROPPED:-$TMP/none}" "$FAKE_PID" "${CURL_IN_SAFARI:-$TMP/none}" "$OWN_CDHASH" \
   "${FINDER_PID:-0}" "$DEVID_PID" "$DEVID_PATH" "$DEVID_ID"

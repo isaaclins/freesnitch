@@ -468,9 +468,9 @@ assert_signed_by_team() {
   local target="$1"
   local details
   details="$(codesign -dv --verbose=4 "$target" 2>&1 || true)"
-  printf '%s\n' "$details" | grep -Fq "TeamIdentifier=$TEAM_ID" || \
+  grep -Fq "TeamIdentifier=$TEAM_ID" <<<"$details" || \
     die "$target is not signed by team $TEAM_ID"
-  printf '%s\n' "$details" | grep -Fq "Authority=$SIGN_ID" || \
+  grep -Fq "Authority=$SIGN_ID" <<<"$details" || \
     die "$target is not signed with $SIGN_ID"
 }
 
@@ -495,11 +495,11 @@ assert_framework_code_signatures() {
 
     macho_count=$((macho_count + 1))
     details="$(codesign -dvvv "$candidate" 2>&1 || true)"
-    printf '%s\n' "$details" | grep -Fq "TeamIdentifier=$TEAM_ID" || \
+    grep -Fq "TeamIdentifier=$TEAM_ID" <<<"$details" || \
       die "$candidate is not signed by team $TEAM_ID"
-    printf '%s\n' "$details" | grep -Fq "Authority=$SIGN_ID" || \
+    grep -Fq "Authority=$SIGN_ID" <<<"$details" || \
       die "$candidate is not signed with $SIGN_ID"
-    printf '%s\n' "$details" | grep -Eq '^Timestamp=' || \
+    grep -Eq '^Timestamp=' <<<"$details" || \
       die "$candidate signature has no secure timestamp"
   done < <(find "$frameworks_dir" -type f -print0)
 
