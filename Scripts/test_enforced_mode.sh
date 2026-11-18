@@ -73,6 +73,11 @@ grep -Fq 'EnforcedModeSync.decide(' <<<"$adopt_body" \
   || fail "adoptHelperStatus no longer uses EnforcedModeSync"
 grep -Fq 'if sync.fetchSnapshot { syncSharedRules() }' <<<"$adopt_body" \
   || fail "adoptHelperStatus no longer fetches the snapshot when the decision says so"
+grep -Fq 'fetchInFlight: snapshotFetchInFlight' <<<"$adopt_body" \
+  || fail "adoptHelperStatus no longer tells the decision that a fetch is running"
+sync_body="$(function_body "$APPSTATE" 'func syncSharedRules(')"
+grep -Fq 'if message != self.lastSnapshotFailure {' <<<"$sync_body" \
+  || fail "a snapshot failure is logged again on every retry"
 grep -Fq 'self?.state?.adoptHelperStatus(mode: status.mode, generation: status.policyGeneration)' "$CLIENT" \
   || fail "the status ping no longer hands the helper's mode and generation to the app"
 grep -Eq '@Published var mode: AppMode = \.silentAllow$' "$APPSTATE" \
@@ -200,14 +205,23 @@ pass("a mode change only touches the active profile")
 struct App {
     var shown: AppMode = .silentAllow
     var snapshotGeneration: UInt64? = nil
+    var inFlight = false
     var fetches = 0
-    mutating func ping(mode: AppMode, generation: UInt64?, fetchWorks: Bool) {
+    /// One status ping. A fetch it starts answers before the next ping,
+    /// unless `answersBeforeNextPing` is false (a slow helper).
+    mutating func ping(mode: AppMode, generation: UInt64?, fetchWorks: Bool, answersBeforeNextPing: Bool = true) {
         let sync = EnforcedModeSync.decide(statusMode: mode, statusGeneration: generation,
-                                           shownMode: shown, snapshotGeneration: snapshotGeneration)
+                                           shownMode: shown, snapshotGeneration: snapshotGeneration,
+                                           fetchInFlight: inFlight)
         if let m = sync.showMode { shown = m }
         guard sync.fetchSnapshot else { return }
         fetches += 1
-        if fetchWorks { shown = mode; snapshotGeneration = generation }
+        inFlight = true
+        if answersBeforeNextPing { answer(mode: mode, generation: generation, works: fetchWorks) }
+    }
+    mutating func answer(mode: AppMode, generation: UInt64?, works: Bool) {
+        inFlight = false
+        if works { shown = mode; snapshotGeneration = generation }
     }
 }
 
@@ -228,6 +242,19 @@ pass("once the current snapshot arrived, pings stop fetching it")
 app.ping(mode: .alert, generation: 8, fetchWorks: true)
 guard app.fetches == 5, app.snapshotGeneration == 8 else { fail("a new generation with the same mode did not fetch the snapshot") }
 pass("a new policy generation with the same mode still fetches the snapshot")
+
+// A slow helper: the fetch takes longer than one ping. The next ping must not
+// start a second fetch, which would drop the first one's answer.
+var slow = App()
+slow.ping(mode: .silentDeny, generation: 3, fetchWorks: true, answersBeforeNextPing: false)
+guard slow.shown == .silentDeny else { fail("a slow snapshot kept the app from showing the enforced mode") }
+slow.ping(mode: .silentDeny, generation: 3, fetchWorks: true, answersBeforeNextPing: false)
+slow.ping(mode: .silentDeny, generation: 3, fetchWorks: true, answersBeforeNextPing: false)
+guard slow.fetches == 1 else { fail("pings started \(slow.fetches) fetches while the first was still running") }
+slow.answer(mode: .silentDeny, generation: 3, works: true)
+slow.ping(mode: .silentDeny, generation: 3, fetchWorks: true)
+guard slow.fetches == 1, slow.snapshotGeneration == 3 else { fail("the slow fetch's answer was not kept") }
+pass("a slow snapshot fetch is left to finish, and its answer is kept")
 
 // A helper that sends no generation: only a mode change fetches.
 var old = App(shown: .alert, snapshotGeneration: nil)

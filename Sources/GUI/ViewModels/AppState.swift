@@ -161,6 +161,12 @@ final class AppState: ObservableObject {
     /// Only the newest helper getter response may update the GUI cache or
     /// publish a snapshot. This protects against out-of-order XPC replies.
     private var snapshotRequestSequence: UInt64 = 0
+    /// Whether the latest snapshot request is still waiting for its answer.
+    /// The status ping leaves it alone instead of replacing it (#452).
+    private var snapshotFetchInFlight = false
+    /// The last snapshot failure written to the log. The ping retries every
+    /// few seconds, and the same failure is logged once, not on every retry.
+    private var lastSnapshotFailure: String?
     /// Prepared by the helper from retained Insights history. This cache is
     /// memory-only on the alert path; an unavailable or stale classifier asks.
     private var contactClassifier = InsightsContactClassifier(snapshot: nil)
@@ -388,14 +394,20 @@ final class AppState: ObservableObject {
     func syncSharedRules() {
         snapshotRequestSequence &+= 1
         let request = snapshotRequestSequence
+        snapshotFetchInFlight = true
         helper.authoritativeSnapshot { [weak self] snapshot, error in
             guard let self, request == self.snapshotRequestSequence else { return }
+            self.snapshotFetchInFlight = false
             guard let snapshot else {
                 let message = error ?? "The helper did not return an authoritative rule snapshot."
                 self.publishFilterSnapshotStatus(.unavailable(message))
-                self.appendLog(level: "error", message: message)
+                if message != self.lastSnapshotFailure {
+                    self.lastSnapshotFailure = message
+                    self.appendLog(level: "error", message: message)
+                }
                 return
             }
+            self.lastSnapshotFailure = nil
 
             self.mode = snapshot.mode
             self.rules = snapshot.rules
@@ -493,7 +505,8 @@ final class AppState: ObservableObject {
         let sync = EnforcedModeSync.decide(statusMode: statusMode,
                                            statusGeneration: generation,
                                            shownMode: mode,
-                                           snapshotGeneration: authoritativeSnapshotGeneration)
+                                           snapshotGeneration: authoritativeSnapshotGeneration,
+                                           fetchInFlight: snapshotFetchInFlight)
         if let shown = sync.showMode {
             mode = shown
             AppPreferences.set(shown.rawValue, forKey: AppPreferences.Key.mode, notify: false)

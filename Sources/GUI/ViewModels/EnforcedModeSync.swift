@@ -7,7 +7,9 @@ import Foundation
 /// asks for the full snapshot again until it holds the snapshot of that
 /// generation: the snapshot is what the network extension is given, so a
 /// fetch that failed is retried on the next ping instead of leaving the
-/// extension on the old policy while the app shows the new mode.
+/// extension on the old policy while the app shows the new mode. A fetch that
+/// is still running is left to finish: starting another would drop its answer,
+/// and a helper that needs a few seconds would then never be heard.
 struct EnforcedModeSync: Equatable {
     /// The mode to show, or nil when it is already shown.
     var showMode: AppMode?
@@ -17,12 +19,13 @@ struct EnforcedModeSync: Equatable {
     static func decide(statusMode: AppMode,
                        statusGeneration: UInt64?,
                        shownMode: AppMode,
-                       snapshotGeneration: UInt64?) -> EnforcedModeSync {
+                       snapshotGeneration: UInt64?,
+                       fetchInFlight: Bool) -> EnforcedModeSync {
         let modeChanged = statusMode != shownMode
         // An older helper sends no generation; then only a mode change says
         // the snapshot is out of date, as before.
         let snapshotBehind = statusGeneration.map { $0 != snapshotGeneration } ?? false
         return EnforcedModeSync(showMode: modeChanged ? statusMode : nil,
-                                fetchSnapshot: modeChanged || snapshotBehind)
+                                fetchSnapshot: (modeChanged || snapshotBehind) && !fetchInFlight)
     }
 }

@@ -642,9 +642,8 @@ final class HelperClient: NSObject, ObservableObject {
                         helperAppPath: status.appPath,
                         thisAppPath: InstallLocation.runningOriginal.path)
                 }
-                // Adopt the persisted mode instead of leaving the GUI on its
-                // pre-connection default, which would then be pushed to the
-                // extension and silently undo the user's choice.
+                // Show the mode the helper enforces, and fetch its snapshot
+                // again until the app holds the current one (#452).
                 if let status { self?.state?.adoptHelperStatus(mode: status.mode, generation: status.policyGeneration) }
                 self?.state?.adoptHelperEnforcement(status)
             }
