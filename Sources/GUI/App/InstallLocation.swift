@@ -186,6 +186,9 @@ enum InstallLocation {
         caskrooms.contains(where: exists)
     }
 
+    /// The command a Homebrew install reinstalls with (#407, #408).
+    static let brewReinstallCommand = "brew reinstall --cask freesnitch"
+
     /// How to put a stuck installed copy back so macOS runs it from
     /// Applications again, for the way it was installed (#375, #407).
     /// A brew reinstall leaves a copy owned by this user, so even if Homebrew
@@ -194,18 +197,40 @@ enum InstallLocation {
     /// real Mac.
     static func reinstallSteps(homebrew: Bool) -> String {
         homebrew
-            ? "Reinstall it with brew reinstall --cask freesnitch in Terminal."
+            ? "Reinstall it with \(brewReinstallCommand) in Terminal."
             : "Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
     }
 
-    /// The same, for this Mac. Worked out once: the install doesn't change
-    /// while the app runs. The demo shows the Homebrew wording with
-    /// FREESNITCH_DEMO_HOMEBREW=1 so it can be reviewed.
-    static let reinstallAdvice: String = {
+    /// Whether this Mac's copy came from Homebrew. Worked out once: the
+    /// install doesn't change while the app runs. The demo shows the Homebrew
+    /// wording with FREESNITCH_DEMO_HOMEBREW=1 so it can be reviewed.
+    static let isHomebrewInstall: Bool = {
         let env = ProcessInfo.processInfo.environment
-        if env["FREESNITCH_DEMO"] == "1" { return reinstallSteps(homebrew: env["FREESNITCH_DEMO_HOMEBREW"] == "1") }
-        return reinstallSteps(homebrew: installedWithHomebrew())
+        if env["FREESNITCH_DEMO"] == "1" { return env["FREESNITCH_DEMO_HOMEBREW"] == "1" }
+        return installedWithHomebrew()
     }()
+
+    static var reinstallAdvice: String { reinstallSteps(homebrew: isHomebrewInstall) }
+
+    /// The stuck-copy title and button, matched to the advice (#408): a
+    /// Homebrew install is fixed in Terminal, so its button copies the
+    /// command; a disk image install is fixed in Finder.
+    static var stuckCopyTitle: String {
+        isHomebrewInstall ? "Reinstall FreeSnitch with Homebrew" : "Put FreeSnitch into Applications again"
+    }
+    static var stuckCopyButton: String { isHomebrewInstall ? "Copy Command" : "Show in Finder" }
+
+    /// What the stuck-copy button does. The demo only shows the button.
+    @MainActor
+    static func stuckCopyAction(_ installed: URL) {
+        guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" else { return }
+        if isHomebrewInstall {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(brewReinstallCommand, forType: .string)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([installed])
+        }
+    }
 
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
@@ -231,7 +256,7 @@ extension InstallLocation {
                 NSApp.activate(ignoringOtherApps: true)
                 _ = moveAlert().runModal()
             case "stuck":
-                explainStuckInstalledCopy(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), flagCleared: false, showInFinder: false)
+                explainStuckInstalledCopy(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), flagCleared: false)
             default: break
             }
             return false
@@ -277,7 +302,7 @@ extension InstallLocation {
     }
 
     /// Says what the user has to do in Finder, since FreeSnitch can't.
-    static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool, showInFinder: Bool = true) {
+    static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -286,10 +311,10 @@ extension InstallLocation {
             ? "macOS still runs the copy in Applications from a temporary location"
             : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
         alert.informativeText = "\(why), so FreeSnitch can't install its helper. \(reinstallAdvice)"
-        alert.addButton(withTitle: "Show in Finder")
+        alert.addButton(withTitle: stuckCopyButton)
         alert.addButton(withTitle: "Not Now")
-        if alert.runModal() == .alertFirstButtonReturn, showInFinder {
-            NSWorkspace.shared.activateFileViewerSelecting([installed])
+        if alert.runModal() == .alertFirstButtonReturn {
+            stuckCopyAction(installed)
         }
     }
 

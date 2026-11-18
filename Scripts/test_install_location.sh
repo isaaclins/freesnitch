@@ -173,6 +173,8 @@ check(InstallLocation.reinstallSteps(homebrew: true).contains("brew reinstall --
       "a Homebrew install is told to reinstall with brew, not to use a disk image")
 check(InstallLocation.reinstallSteps(homebrew: false).contains("disk image"),
       "a disk image install keeps the drag-in-again advice")
+check(InstallLocation.reinstallSteps(homebrew: true).contains(InstallLocation.brewReinstallCommand),
+      "the Homebrew advice names the same command its Copy Command button copies")
 
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
@@ -275,3 +277,12 @@ fi
 [ "$(grep -c 'InstallLocation.wrongLocationRepairAdvice' "$ROOT/Sources/GUI/App/HelperClient.swift")" -ge 2 ] \
   || { echo "install location: FAIL: could not find both repair messages to check" >&2; exit 1; }
 echo "install location: PASS: helper repair gives reinstall advice for a stuck installed copy"
+
+# #408: the stuck-copy banner and explanation take their title and button
+# from the install route, so a Homebrew install never gets a Finder button.
+banner="$ROOT/Sources/GUI/Views/HelperBanner.swift"
+grep -q 'title = InstallLocation.stuckCopyTitle' "$banner" \
+  && grep -q 'BannerAction(title: InstallLocation.stuckCopyButton)' "$banner" \
+  && grep -q 'alert.addButton(withTitle: stuckCopyButton)' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+  || { echo "install location: FAIL: the stuck-copy title or button doesn't follow the install route" >&2; exit 1; }
+echo "install location: PASS: the stuck-copy title and button follow the install route"

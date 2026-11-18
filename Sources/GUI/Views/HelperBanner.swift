@@ -128,13 +128,11 @@ private struct BannerInfo {
             // copy; a move would only reopen this same copy (#375).
             icon = "arrow.down.app.fill"
             tint = Color.red
-            title = "Put FreeSnitch into Applications again"
+            title = InstallLocation.stuckCopyTitle
             detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. \(InstallLocation.reinstallAdvice)"
-            action = BannerAction(title: "Show in Finder") { _, _ in
-                // The demo's banner only shows the button.
-                if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1",
-                   let installed = InstallLocation.stuckInstalledCopy {
-                    NSWorkspace.shared.activateFileViewerSelecting([installed])
+            action = BannerAction(title: InstallLocation.stuckCopyButton) { _, _ in
+                if let installed = InstallLocation.stuckInstalledCopy {
+                    InstallLocation.stuckCopyAction(installed)
                 }
             }
         case .wrongLocation:
