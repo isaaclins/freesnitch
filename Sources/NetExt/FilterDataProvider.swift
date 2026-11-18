@@ -325,20 +325,23 @@ final class FilterDataProvider: NEFilterDataProvider {
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
         let (conn, version, signatureChecked) = connection(from: socketFlow)
-        // The compact evidence event is still created before any verdict work:
-        // FlowObservation(connection: conn)
-        _ = observationQueue.enqueue(FlowObservation(connection: conn, processVersion: version))
-        signalObservationDrain()
+        // Every flow that gets this far is recorded exactly once, with the
+        // decision it really got (#447). Stamped now, so a flow that waits on
+        // an alert still sits in the history at the moment it started.
+        let observedAt = Date()
+        let observe: (FlowDecision) -> Void = { [weak self] decision in
+            self?.recordObservation(conn, observedAt: observedAt, version: version, decision: decision)
+        }
         // FreeSnitch must never hold up its own traffic. The helper shells out
         // to nettop and lsof to observe connections, and pausing those to ask
         // the user deadlocks the app that is supposed to answer the question.
-        if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }
+        if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { observe(.unfiltered); return .allow() }
         // Decided once, before any rule is consulted: a flow can reach this
         // point with no destination at all, and that limitation is reported
         // rather than hidden behind a wildcard address.
         let destinationKnown = !conn.remoteIP.isEmpty || !conn.remoteHost.isEmpty
         let policy = currentPolicy()
-        if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { return .allow() }
+        if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { observe(.unfiltered); return .allow() }
         // Equivalent to `guard let snapshot = currentSnapshot() else`, but
         // the snapshot and its boot/live origin must come from one locked read.
         guard let snapshot = policy.snapshot else {
@@ -346,6 +349,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             // policy. Allowing here keeps a missing GUI from becoming a network
             // outage while the published status tells the UI that filtering is
             // not ready.
+            observe(.unfiltered)
             return .allow()
         }
         // The process that sent the flow, not the app it is attributed to:
@@ -376,13 +380,24 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         switch decision.action {
         case .allow:
+            observe(.allowed)
             return reportingLateDestination(.allow(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
         case .deny:
+            observe(.blocked)
             return reportingLateDestination(.drop(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
         case .ask:
-            promptAndResume(flow: flow, conn: conn)
+            promptAndResume(flow: flow, conn: conn, observe: observe)
             return .pause()
         }
+    }
+
+    /// The compact evidence event, queued without waiting: trylock-only, a
+    /// full or contended queue drops it. Only ever called after the verdict
+    /// is decided, so recording can never change or delay one.
+    private func recordObservation(_ conn: Connection, observedAt: Date, version: String?, decision: FlowDecision) {
+        _ = observationQueue.enqueue(FlowObservation(connection: conn, observedAt: observedAt,
+                                                     processVersion: version, decision: decision))
+        signalObservationDrain()
     }
 
     // MARK: - Late destination
@@ -601,30 +616,36 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Ask flow
 
-    private func promptAndResume(flow: NEFilterFlow, conn: Connection) {
+    /// `observe` is called once, with what the flow finally got: the user's
+    /// answer, or `.unfiltered` when it was let through because nobody could
+    /// answer (#447). A pending flow is never recorded as decided.
+    private func promptAndResume(flow: NEFilterFlow, conn: Connection, observe: @escaping (FlowDecision) -> Void) {
         guard let data = try? JSONEncoder().encode(conn) else {
+            observe(.unfiltered)
             resumeFlow(flow, with: NEFilterNewFlowVerdict.allow()); return
         }
         var settled = false
         let lock = NSLock()
         let destinationKnown = !conn.remoteIP.isEmpty || !conn.remoteHost.isEmpty
-        let resumeOnce: (NEFilterNewFlowVerdict) -> Void = { [weak self] verdict in
+        let resumeOnce: (NEFilterNewFlowVerdict, FlowDecision) -> Void = { [weak self] verdict, decision in
             lock.lock(); defer { lock.unlock() }
             guard let self, !settled else { return }
             settled = true
             self.resumeFlow(flow, with: self.reportingLateDestination(verdict, for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
+            observe(decision)
         }
 
         let asked = IPCConnection.shared.promptUser(flowJSON: data) { allow, _ in
-            resumeOnce(allow ? NEFilterNewFlowVerdict.allow() : NEFilterNewFlowVerdict.drop())
+            resumeOnce(allow ? NEFilterNewFlowVerdict.allow() : NEFilterNewFlowVerdict.drop(),
+                       allow ? .allowed : .blocked)
         }
         if !asked {
             // No GUI connected: fail open so the user's network keeps working.
-            resumeOnce(NEFilterNewFlowVerdict.allow())
+            resumeOnce(NEFilterNewFlowVerdict.allow(), .unfiltered)
             return
         }
         // Safety net: never hold a flow forever if the GUI never answers.
-        workQueue.asyncAfter(deadline: .now() + askTimeout) { resumeOnce(NEFilterNewFlowVerdict.allow()) }
+        workQueue.asyncAfter(deadline: .now() + askTimeout) { resumeOnce(NEFilterNewFlowVerdict.allow(), .unfiltered) }
     }
 
     // MARK: - Self exemption

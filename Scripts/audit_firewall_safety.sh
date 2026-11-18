@@ -364,8 +364,10 @@ require_text "$OBSERVATION_QUEUE" "os_unfair_lock_trylock" \
   "the extension queue enqueue path is not trylock-only"
 require_text "$OBSERVATION_QUEUE" "capacity: Int = 1024" \
   "the extension queue capacity is not explicit and modest"
-require_text "$FILTER" "FlowObservation(connection: conn)" \
-  "the extension does not enqueue a compact observation before verdict handling"
+require_text "$FILTER" "FlowObservation(connection: conn, observedAt: observedAt," \
+  "the extension does not enqueue a compact observation for each flow"
+require_text "$FILTER" "processVersion: version, decision: decision))" \
+  "the extension does not record the decision each flow got (#447)"
 require_text "$FILTER" "observationQueue.drain(maximum: InsightsLimits.maxBatchCount)" \
   "the extension drain is not bounded by the model batch count"
 require_text "$IPC" "sendObservationBatch" \
@@ -984,7 +986,7 @@ allow_within_block() {
       depth = 0
     }
     active {
-      if ($0 ~ /resumeOnce\(NEFilterNewFlowVerdict\.allow\(\)\)/) {
+      if ($0 ~ /resumeOnce\(NEFilterNewFlowVerdict\.allow\(\)(\)|, \.unfiltered\))/) {
         found = 1
         exit 0
       }
@@ -1003,7 +1005,7 @@ fi
 
 # FreeSnitch, its helper, and loopback are safety-critical exemptions. They
 # must be decided before the general matcher can pause or drop the flow.
-own_line="$(grep -nF 'if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }' "$FILTER" | head -1 | cut -d: -f1 || true)"
+own_line="$(grep -nF 'if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { observe(.unfiltered); return .allow() }' "$FILTER" | head -1 | cut -d: -f1 || true)"
 matcher_line="$(grep -nF 'matcher.explainedDecision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
 [[ -n "$own_line" ]] || fail "own-traffic and loopback exemption is missing"
 [[ -n "$matcher_line" ]] || fail "the extension no longer invokes the shared matcher"
