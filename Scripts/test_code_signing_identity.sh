@@ -233,6 +233,18 @@ expect(CodeSigningIdentity.decide(.trusted(CodeSigningIdentity.Signed(identifier
        == .resolved("com.example.beta"),
        "a TestFlight-signed app keeps its own signed id")
 
+// Apple's own code comes from the certificate chain, never from a missing
+// team id: a non-Apple signature without a team id can't pose as Apple.
+expect(CodeSigningIdentity.classify(identifier: "com.apple.Safari", team: nil, apple: false, appStore: false) == .untrusted,
+       "a non-Apple signature without a team id is not taken as Apple's (and not trusted)")
+expect(CodeSigningIdentity.decide(CodeSigningIdentity.classify(identifier: "com.apple.Safari", team: nil, apple: false, appStore: false)) == .resolved(nil),
+       "so it cannot claim com.apple.Safari")
+expect(CodeSigningIdentity.classify(identifier: "com.apple.Safari", team: nil, apple: true, appStore: false)
+       == .trusted(CodeSigningIdentity.Signed(identifier: "com.apple.Safari", signer: .apple, appStore: false)),
+       "a signature that passed anchor apple is Apple's")
+expect(CodeSigningIdentity.failure(errSecCSInternalError) == .unavailable,
+       "a signing-information read that fails is checked again, not untrusted")
+
 // The decision itself, for signers this Mac may not have.
 typealias S = CodeSigningIdentity.Signed
 func decideID(_ p: CodeSigningIdentity.Lookup) -> String? { CodeSigningIdentity.decide(p).bundleIdentifier }

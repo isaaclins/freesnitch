@@ -435,7 +435,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         classifyFlaggedReport(socketFlow.identifier, destinationKnown: destination.isKnown, isClose: isClose)
     }
 
-    /// Once per process: an allow or ask rule named the bundle id this app's
+    /// Once per process: an allow rule named the bundle id this app's
     /// Info.plist claims, but the process's code signature does not vouch for
     /// that id, so the rule did not apply (#351). Says why the user got an
     /// alert for an app they allowed. Trylock-only: a contended verdict skips

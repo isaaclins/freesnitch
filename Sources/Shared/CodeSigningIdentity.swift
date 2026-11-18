@@ -79,6 +79,10 @@ public enum CodeSigningIdentity {
 
     private static let distributionRequirement: SecRequirement? = requirement(distributionRequirementText)
     private static let appStoreRequirement: SecRequirement? = requirement(appStoreRequirementText)
+    /// Apple's own code, checked by its certificate chain. Never inferred from
+    /// a missing team id: Apple's verifier only compares the certificate's
+    /// team with that field when the field is there.
+    private static let appleRequirement: SecRequirement? = requirement("anchor apple")
 
     private static func requirement(_ text: String) -> SecRequirement? {
         var requirement: SecRequirement?
@@ -182,9 +186,10 @@ public enum CodeSigningIdentity {
         let status = SecCodeCheckValidity(code, [], distribution)
         guard status == errSecSuccess else { return failure(status) }
         let appStore = appStoreRequirement.map { SecCodeCheckValidity(code, [], $0) == errSecSuccess } ?? false
+        let apple = appleRequirement.map { SecCodeCheckValidity(code, [], $0) == errSecSuccess } ?? false
         var staticCode: SecStaticCode?
         guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return .unavailable }
-        return signed(staticCode, appStore: appStore)
+        return signed(staticCode, appStore: appStore, apple: apple)
     }
 
     private static func lookup(staticCode: SecStaticCode) -> Lookup {
@@ -194,7 +199,10 @@ public enum CodeSigningIdentity {
         let appStore = appStoreRequirement.map {
             SecStaticCodeCheckValidity(staticCode, checkFlags, $0) == errSecSuccess
         } ?? false
-        return signed(staticCode, appStore: appStore)
+        let apple = appleRequirement.map {
+            SecStaticCodeCheckValidity(staticCode, checkFlags, $0) == errSecSuccess
+        } ?? false
+        return signed(staticCode, appStore: appStore, apple: apple)
     }
 
     /// Only an answer about the signature itself makes code untrusted: it is
@@ -229,15 +237,25 @@ public enum CodeSigningIdentity {
         NSLog("FreeSnitch: could not read a code signature to verify a bundle id (OSStatus %d); it is checked again", status)
     }
 
-    /// Only called once the signature passed `distributionRequirement`. Every
-    /// certificate that passes it and is not Apple's own carries a team id, so
-    /// a missing team id here means `anchor apple`.
-    private static func signed(_ code: SecStaticCode, appStore: Bool) -> Lookup {
+    /// Only called once the signature passed `distributionRequirement`.
+    /// `apple` says whether it also passed `anchor apple`; anything else must
+    /// name its team, or its identifier is not taken.
+    private static func signed(_ code: SecStaticCode, appStore: Bool, apple: Bool) -> Lookup {
         var info: CFDictionary?
-        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let dict = info as? [String: Any],
+        let status = SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
+        guard status == errSecSuccess else { return failure(status) }
+        guard let dict = info as? [String: Any],
               let identifier = dict[kSecCodeInfoIdentifier as String] as? String else { return .untrusted }
         let team = (dict[kSecCodeInfoTeamIdentifier as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        return .trusted(Signed(identifier: identifier, signer: team.map(Signer.team) ?? .apple, appStore: appStore))
+        return classify(identifier: identifier, team: team, apple: apple, appStore: appStore)
+    }
+
+    /// Pure, so it can be tested: Apple's own code only when the chain passed
+    /// `anchor apple`; otherwise the signer is the team, and a signature
+    /// without a team id is not trusted at all.
+    static func classify(identifier: String, team: String?, apple: Bool, appStore: Bool) -> Lookup {
+        if apple { return .trusted(Signed(identifier: identifier, signer: .apple, appStore: appStore)) }
+        guard let team else { return .untrusted }
+        return .trusted(Signed(identifier: identifier, signer: .team(team), appStore: appStore))
     }
 }
