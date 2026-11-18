@@ -201,7 +201,8 @@ final class HelperClient: NSObject, ObservableObject {
                 refreshInstallState()
             } catch {
                 let details = HelperRecovery.registrationErrorDetails(error)
-                installState = .failed(details)
+                installState = .failed(HelperRegistrationFailure.message(
+                    for: error, inApplications: Self.isInApplicationsFolder))
                 state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
             }
         case .guideApproval:
