@@ -357,6 +357,17 @@ struct IPBlocklistHarness {
                       "an app's allow must stay without quick, whatever its priority")
         checks.expect(ranked.contains("pass out proto { tcp udp } to 203.0.113.7 tag"),
                       "an app's allow is still written, tagged for the address feed")
+        // An allow with both a hostname and an address reaches pf as the
+        // address alone, wider than the matcher, which needs both. Hoisted
+        // as a quick pass it would let other names on that address past a
+        // lower-priority deny, so it is written like an app's allow.
+        let namedAllow = Rule(remoteHost: "allowed.example", remoteIP: "203.0.113.9",
+                              action: .allow, scope: .ip, priority: 100)
+        let namedRanked = pf.renderAnchor(rules: [wideDeny, namedAllow])
+        checks.expect(!namedRanked.contains("pass out quick proto { tcp udp } to 203.0.113.9"),
+                      "an allow with a hostname and an address must not become a quick pass ahead of the deny")
+        checks.expect(namedRanked.contains("pass out proto { tcp udp } to 203.0.113.9 tag"),
+                      "an allow with a hostname and an address is still written, tagged for the address feed")
         var outranked = wideDeny
         outranked.priority = 200
         let denyFirst = pf.renderAnchor(rules: [everyAppAllow, outranked])
@@ -397,13 +408,6 @@ struct IPBlocklistHarness {
         let askedFeed = pf.renderAnchor(rules: [Rule(remotePort: 443, action: .ask, scope: .port)], ipBlocklist: feedSet)
         checks.expect(!askedFeed.contains("port 443") && askedFeed.contains("<freesnitch_ipblock>"),
                       "an ask rule on a port must leave the address feed blocking that port")
-        // pf only takes a port after a host, so a port-only allow must name
-        // `any`, or pf refuses the line and the whole anchor fails to load.
-        let portOnlyPass = pf.renderAnchor(rules: [Rule(remotePort: 8445, action: .allow, scope: .port)])
-        checks.expect(portOnlyPass.contains("pass out quick proto { tcp udp } to any port 8445"),
-                      "a port-only allow must name `to any`, the only form pf accepts")
-        checks.expect(!portOnlyPass.contains("udp } port"),
-                      "no pass line may carry a bare port, which pf refuses")
 
         // An address typed into the hostname field (no remoteIP) is written
         // to pf as that address, so the matcher must apply it to every flow

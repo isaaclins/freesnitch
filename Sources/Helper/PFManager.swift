@@ -320,6 +320,15 @@ final class PFManager: @unchecked Sendable {
         !(rule.processBundleId ?? "").isEmpty || !(rule.processPath ?? "").isEmpty
     }
 
+    /// An allow that pf would apply more widely than the matcher: one that
+    /// names an app (pf can't tell apps apart), or one with both an address
+    /// and a hostname (pf only gets the address, the matcher needs both). Its
+    /// pass drops quick, so in priority order it can't override a block for
+    /// traffic the user never allowed (issue #181).
+    static func passIsWiderInPF(_ rule: Rule) -> Bool {
+        namesAnApp(rule) || (!(rule.remoteIP ?? "").isEmpty && !(rule.remoteHost ?? "").isEmpty)
+    }
+
     /// Which rules the anchor renders at all: every allow, and the denies that
     /// do not name an app (issue #155). Ask rules stay out: the address feeds
     /// live only in pf, after the user's rules, so an ask rule written as a
@@ -472,7 +481,7 @@ final class PFManager: @unchecked Sendable {
                 // /etc/pf.conf still wins (#328). Without quick the feed's
                 // quick block would win, so the pass tags its packets and
                 // the feed lets tagged packets by, see ipBlocklistLines.
-                if PFManager.namesAnApp(r) {
+                if PFManager.passIsWiderInPF(r) {
                     passes.append("pass out proto { tcp udp }" + target + " tag \(PFManager.appAllowTag)")
                 } else {
                     passes.append("pass out quick proto { tcp udp }" + target)
@@ -485,7 +494,7 @@ final class PFManager: @unchecked Sendable {
                     // still wins (one before it still loses, #327), and its
                     // state lets the replies past the feed, see
                     // ipBlocklistLines.
-                    let quick = PFManager.namesAnApp(r) ? "" : " quick"
+                    let quick = PFManager.passIsWiderInPF(r) ? "" : " quick"
                     passes.append("pass in\(quick) proto { tcp udp } from" + host)
                 } else {
                     onRejected?(r, "the incoming half of an allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port; only the outgoing half is written")
