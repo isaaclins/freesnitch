@@ -166,6 +166,7 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     private let matcher = RuleMatcher()
     private let resolverBypass = ResolverBypass()
+    private let systemResolverIdentity = SystemResolverIdentity()
     private let bundleIdentifierCache = BundleIdentifierCache()
     /// Processes already told about an allow rule their unsigned bundle id
     /// could not use; bounded, cleared when full.
@@ -344,7 +345,19 @@ final class FilterDataProvider: NEFilterDataProvider {
             // not ready.
             return .allow()
         }
-        let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode)
+        // The process that sent the flow, not the app it is attributed to:
+        // a lookup the resolver makes on an app's behalf is attributed to
+        // that app (#422). Remembered per process, so this costs a path read
+        // per flow and a signature check per process.
+        // A process that sent its own flow from elsewhere is settled by the
+        // path read above, without another one.
+        let senderToken = socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken
+        let sentByOtherProcess = senderToken != socketFlow.sourceAppAuditToken
+        let sentByResolver = conn.direction == .outgoing
+            && (sentByOtherProcess || conn.processPath == RuleMatcher.systemResolverPath)
+            && systemResolverIdentity.isSystemResolver(processAuditToken: senderToken)
+        let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode,
+                                                 sentBySystemResolver: sentByResolver)
         // Only once the flow's own code was checked: before that, a missing
         // signed id means "not known yet", and the log would wrongly say the
         // signature does not vouch for a signed app. And only when the flow was

@@ -166,6 +166,30 @@ require_text "$RULE_MATCHER" "public struct PreparedRuleSet" \
   "the precomputed rule order is missing, so every flow pays a filter and a sort again"
 verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for c: Connection, prepared:')"
 [[ -n "$verdict_body" ]] || fail "the shared matcher has no prepared-rule verdict path to audit"
+# Every app's name lookups leave through the system resolver. With no rule
+# for it, the default mode must not ask about it or drop it, or DNS stops for
+# the whole Mac until someone answers (#422).
+# Only Apple's resolver at its system path gets that default, never any other
+# port-53 flow (#30): the path and the signature check must both hold.
+grep -Fq 'if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped) }' <<<"$verdict_body" \
+  || fail "the system resolver's default allow is missing or no longer needs both its path and its signature"
+require_text "$RULE_MATCHER" 'public static let systemResolverPath = "/usr/sbin/mDNSResponder"' \
+  "the system resolver is no longer identified by its protected system path"
+require_text "$RULE_MATCHER" 'public static let systemResolverRequirement = "anchor apple and identifier \"com.apple.mDNSResponder\""' \
+  "the system resolver's signature requirement is no longer Apple's mDNSResponder"
+require_text "$RULE_MATCHER" 'passesRequirement && senderPath == systemResolverPath' \
+  "the system resolver no longer needs both its path and its signature"
+require_text "$FILTER" 'let senderToken = socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken' \
+  "the extension no longer identifies the resolver by the process that sent the flow"
+require_text "$FILTER" 'systemResolverIdentity.isSystemResolver(processAuditToken: senderToken)' \
+  "the extension no longer checks the process that sent the flow against the resolver identity"
+RESOLVER_IDENTITY="$ROOT/Sources/NetExt/SystemResolverIdentity.swift"
+require_text "$RESOLVER_IDENTITY" 'guard path == RuleMatcher.systemResolverPath else { return false }' \
+  "the extension no longer checks the sending process's path before vouching for the resolver"
+require_text "$RESOLVER_IDENTITY" 'passes = SecCodeCheckValidity(code, [], requirement) == errSecSuccess' \
+  "the system resolver's signature is no longer checked against the running code"
+require_text "$RESOLVER_IDENTITY" 'RuleMatcher.isSystemResolver(senderPath: path, passesRequirement: passes)' \
+  "the extension no longer combines the resolver's path and signature through the shared rule"
 for forbidden in '.sorted' '.filter' '.map('; do
   if grep -Fq -- "$forbidden" <<<"$verdict_body"; then
     fail "the per-flow verdict path uses $forbidden, which reorders or allocates on every flow"
