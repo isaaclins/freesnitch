@@ -194,3 +194,15 @@ app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
   && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \
   || { echo "install location: FAIL: the filter can start outside the PureSnitch continuation" >&2; exit 1; }
 echo "install location: PASS: the filter starts only from the PureSnitch continuation"
+
+# #403: the move question can be open before the window manager exists, so
+# nothing outside applicationDidFinishLaunching may force-unwrap it: menu
+# commands, the Settings redirect and the reopen handler all go through `?.`.
+outside="$(awk '/func applicationDidFinishLaunching/ { skip = 1 } skip && /^    }$/ { skip = 0; next } !skip' "$app_swift")"
+if printf '%s\n' "$outside" | grep -nE 'windowManager[.!]'; then
+  echo "install location: FAIL: the window manager is used without a check outside launch setup" >&2; exit 1
+fi
+printf '%s\n' "$outside" | grep -q 'delegate.windowManager?.showPage' \
+  || { echo "install location: FAIL: could not find the menu commands to check" >&2; exit 1; }
+echo "install location: PASS: menu commands and reopen do nothing until the window manager exists"
+

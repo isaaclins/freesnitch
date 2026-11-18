@@ -35,7 +35,9 @@ struct FreeSnitchApp: App {
                 // you see and reordering the sidebar cannot make a shortcut lie.
                 ForEach(Array(MainPage.allCases.enumerated()), id: \.element.id) { index, page in
                     Button(page.title) {
-                        delegate.windowManager.showPage(page)
+                        // Optional: the window manager doesn't exist yet while
+                        // the launch-time move question is open (#403).
+                        delegate.windowManager?.showPage(page)
                     }
                     .keyboardShortcut(pageShortcut(index), modifiers: .command)
                 }
@@ -44,7 +46,7 @@ struct FreeSnitchApp: App {
             // field the current page shows rather than opening a find bar of
             // its own (#96).
             CommandGroup(after: .textEditing) {
-                Button("Find") { delegate.windowManager.focusSearch() }
+                Button("Find") { delegate.windowManager?.focusSearch() }
                     .keyboardShortcut("f", modifiers: .command)
             }
         }
