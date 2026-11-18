@@ -134,7 +134,7 @@ macOS 15.3 the Trash may leave the old network extension running, and
 FreeSnitch cannot remove another app's extension, so it also checks
 `systemextensionsctl list` on every launch and, while PureSnitch's extension
 is still active, says where to delete it in System Settings > General > Login
-Items & Extensions > Network Extensions. From a
+Items & Extensions, under Extensions. From a
 source checkout the same can be done by hand:
 
 ```sh

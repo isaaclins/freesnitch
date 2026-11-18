@@ -29,28 +29,38 @@ enum LegacyPureSnitch {
         var any: Bool { app || daemon || extensionActive }
     }
 
-    static func detect(listing: () -> String? = readExtensionListing,
+    static func detect(listing: () -> String? = { readExtensionListing() },
                        fileExists: (String) -> Bool = FileManager.default.fileExists(atPath:)) -> Found {
         Found(app: fileExists(app.path),
               daemon: fileExists(daemonPlist.path),
               extensionActive: listing().map(extensionStillActive(in:)) ?? false)
     }
 
-    /// `systemextensionsctl list` needs no privileges. nil when it can't run,
-    /// which counts as "not seen": the app and plist checks still apply.
-    static func readExtensionListing() -> String? {
-        let tool = "/usr/bin/systemextensionsctl"
+    /// `systemextensionsctl list` needs no privileges. nil when it can't run
+    /// or doesn't answer within `timeout`, which counts as "not seen": the app
+    /// and plist checks still apply, and launch never waits on it for long.
+    static func readExtensionListing(timeout: TimeInterval = 3,
+                                     tool: String = "/usr/bin/systemextensionsctl",
+                                     arguments: [String] = ["list"]) -> String? {
         guard FileManager.default.isExecutableFile(atPath: tool) else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = ["list"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
+        process.arguments = arguments
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("freesnitch-sysext-\(UUID().uuidString).txt")
+        guard FileManager.default.createFile(atPath: output.path, contents: nil),
+              let handle = try? FileHandle(forWritingTo: output) else { return nil }
+        defer { try? handle.close(); try? FileManager.default.removeItem(at: output) }
+        process.standardOutput = handle
         process.standardError = FileHandle.nullDevice
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
         do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8)
+        guard done.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return nil
+        }
+        return try? String(contentsOf: output, encoding: .utf8)
     }
 
     /// True when a listed PureSnitch extension is still active. One that is
@@ -135,7 +145,7 @@ enum LegacyPureSnitch {
 
     /// Only the extension is left: FreeSnitch can't remove another app's
     /// extension, so it says exactly where the user can.
-    static let extensionOnlyText = "PureSnitch's app is gone, but macOS is still running its network extension, and its filter and FreeSnitch's must not run together. If you just removed PureSnitch, restart your Mac first. If it is still there after that, open System Settings > General > Login Items & Extensions > Network Extensions, click the info button next to PureSnitch and choose Delete."
+    static let extensionOnlyText = "PureSnitch's app is gone, but macOS is still running its network extension, and its filter and FreeSnitch's must not run together. If you just removed PureSnitch, restart your Mac first. If it is still there after that, open System Settings > General > Login Items & Extensions, find PureSnitch under Extensions, click its info button and delete its network extension there."
 
     /// Asks at launch when an old install is present. Shown on every launch
     /// until it is gone, because both filters running together is a real

@@ -149,8 +149,16 @@ check(LegacyPureSnitch.detect(listing: { activeListing }) { _ in false } == .ini
       "a PureSnitch extension still active without its app is found")
 check(!LegacyPureSnitch.detect(listing: { leavingListing }) { _ in false }.any, "one waiting to be removed at restart isn't")
 check(!LegacyPureSnitch.detect(listing: { freeSnitchOnly }) { _ in false }.any, "FreeSnitch's own extension is never taken for PureSnitch's")
-check(LegacyPureSnitch.extensionOnlyText.contains("Network Extensions") && LegacyPureSnitch.extensionOnlyText.contains("Delete"),
+check(LegacyPureSnitch.extensionOnlyText.contains("Login Items & Extensions") && LegacyPureSnitch.extensionOnlyText.contains("delete"),
       "with only the extension left, the question says where to delete it")
+// A listing tool that hangs must not hold launch: it is given up after the
+// time limit and counts as "not seen".
+let listingStart = Date()
+let hung = LegacyPureSnitch.readExtensionListing(timeout: 1, tool: "/bin/sleep", arguments: ["30"])
+check(hung == nil && Date().timeIntervalSince(listingStart) < 3,
+      "a hanging extension listing is given up after its time limit")
+check(LegacyPureSnitch.readExtensionListing(timeout: 3, tool: "/bin/echo", arguments: ["io.isaaclins.puresnitch.netext"])?.contains("puresnitch") == true,
+      "a listing that answers in time is read")
 
 // #399: the question only promises a password prompt when the helper is part
 // of the removal, and only mentions the Trash when the app is there.
