@@ -3,6 +3,49 @@
     <channel>
         <title>FreeSnitch</title>
         <item>
+            <title>1.2.0</title>
+            <pubDate>Wed, 18 Nov 2026 21:57:47 +0100</pubDate>
+            <link>https://github.com/isaaclins/freesnitch/releases/latest</link>
+            <sparkle:informationalUpdate>
+                <sparkle:belowVersion>34</sparkle:belowVersion>
+            </sparkle:informationalUpdate>
+            <sparkle:version>35</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[FreeSnitch 1.2 is mostly about making sure the firewall does exactly what your rules say: the pf rules now match the app's own matcher, rules that name an app check who signed it, and saving, exporting and uninstalling no longer lose or leave things behind. If you use FreeSnitch 1.1.0, it updates itself. Coming from 1.0.0 or older, download the disk image once and replace the old copy; your rules and settings stay.
+
+## Fixes
+
+- **Switching or editing a profile no longer stops filtering (#438).** After a profile switch, edit or delete, the filter could refuse the new rules and stop filtering with "FreeSnitch is not filtering traffic". It now takes the new profile's rules right away, and if you're stuck in that state, updating gets you out of it.
+- **Silent Deny keeps filtering after the extension restarts (#455).** If the network extension restarted a day or more after your last rule change, Silent Deny stopped filtering with the same warning. That's fixed too.
+- **DNS keeps working during setup (#422).** On a fresh install, the first question used to be about the Mac's own DNS resolver, and until you answered it no app could look up a name. That question is gone; the first one you see is about a real app.
+- **Exporting rules keeps every profile (#247).** Exporting from the app used to write only the active profile, and importing that file deleted the others. Exports now carry every profile, and an import never removes a profile the file doesn't mention.
+- **Removed rules stay removed after a restart (#213).** If saving the rules for the next start failed, a restart could bring back deny rules you had already deleted. A failed save is now retried, and an older saved set is never loaded over a newer one.
+- **Rules for an app follow its signature (#268, #351, #364).** A rule that names an app by bundle id now takes that id from the app's code signature instead of its Info.plist, which any program can copy. Allow and Ask rules without a path also remember which developer signed the app and only match apps from that developer, so another program can't borrow an app's identity to get through. Rules you already have learn the developer the first time FreeSnitch sees that app signed. Deny rules still match the id whoever signed the app. A failed read of an app's Info.plist no longer switches its rules off for five minutes. iPhone and iPad apps on Apple silicon get their bundle id too (#325).
+- **pf blocks what the rule says, and no more (#298, #301, #302, #303, #307, #313, #328).** Port-only rules, incoming allows, rules with both a hostname and an address, and an app's allow rules are now written to pf the way the app itself matches them. Before, one port-only rule could make pf refuse the whole set of rules, and some allow rules let more through than asked.
+- **Uninstall works in one go (#391).** Settings > Uninstall now removes the network extension, the helper and the pf rules in one confirmed pass and quits by itself. `brew uninstall --cask freesnitch` asks FreeSnitch to remove its network extension instead of refusing.
+- **The status follows System Settings (#361, #368, #382, #383).** Turning the filter off or on in System Settings now shows up in FreeSnitch, and a rule save running at the same moment no longer turns it back on.
+- **Demo mode leaves your real setup alone (#388, #389).** Trying the demo no longer touches the real filter, helper, extension, login item or files.
+- **FreeSnitch works next to Tailscale and other VPNs (#424).** Address feeds can no longer block the ranges Tailscale and proxy VPNs hand out, so turning on a feed doesn't cut off your VPN peers. Settings shows a connected VPN, and the DNS tab says by name when a VPN is handling DNS.
+- **A rule's process path matches as a path (#158),** so a rule for `/Applications/Foo` no longer also covers `/Applications/Foobar`.
+- **More fixes.** Temporary rules leave pf when they expire (#180). pf applies the rules in their priority order. The filter can be turned on with more than 800 rules, and FreeSnitch tells you they won't be kept for the next start (#320). A copy in your home folder's Applications is asked to move, since its network filter can't start from there (#412).
+
+## New
+
+- **Edit rules (#433).** Rules on the Rules page can be edited in place instead of deleted and made again.
+- **Hits and Last used are real (#434).** Each rule counts its matches, so you can see which rules are actually doing something.
+- **Domain names in the Network Monitor (#168).** Connections show the name an address was recently looked up under, instead of a bare address.
+- **Helpers under their app (#169).** Browser helpers such as Helium Helper or WebKit's networking process are listed under the app they work for.
+- **Move to Applications (#370).** Opened from the disk image or Downloads, FreeSnitch offers to move itself to Applications and removes an old PureSnitch copy. If a copy in Applications is the other build (firewall or monitor-only), it says so instead of opening the wrong one (#417).
+- **The command-line tool is easy to find (#423).** Settings > Command Line shows the `freesnitch` command and can install it for you.
+- **Homebrew.** `brew install --cask isaaclins/tap/freesnitch` installs it. FreeSnitch keeps updating itself as before.
+- **Checksums.** Every release now comes with a `SHA256SUMS.txt`. Check a download with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder you saved it to.
+
+Requires macOS 13 or later. One universal build for Apple Silicon and Intel, signed with a Developer ID and notarized by Apple.
+]]></description>
+            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.2.0/FreeSnitch-1.2.0.zip" length="12426030" type="application/octet-stream" sparkle:edSignature="bIJElpT4Bj+PpJyFU7EY5aLZwweZpOjNxzOY9XFJ1VTGGKz1qt5tAkbKYKMVBhRCm/COxb/MtswXv8qgCBekBg=="/>
+        </item>
+        <item>
             <title>1.1.0</title>
             <pubDate>Sun, 25 Oct 2026 01:53:38 +0200</pubDate>
             <link>https://github.com/isaaclins/freesnitch/releases/latest</link>
@@ -108,38 +151,6 @@ Map locations are estimates from IP geolocation, not measurements.
                 <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-29.delta" sparkle:deltaFrom="29" length="3891182" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="jlDYxU3hw2QWXlSh+hRu2CaGOuzGv250S7XiUHeS62SLLN3yr0184AJL8Bx1byz+y4gvWET74vANv3ek37uEAQ=="/>
                 <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-28.delta" sparkle:deltaFrom="28" length="3902986" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="3m3R2QJsy/2OSOFnZYds60yMsbGS97/C1XNye79uSOwsRAFyPrI1OEq6Msq4y5Aa6HISxiTiegPqm/Beu97DAg=="/>
             </sparkle:deltas>
-        </item>
-        <item>
-            <title>0.4.5</title>
-            <pubDate>Fri, 14 Aug 2026 14:01:02 +0200</pubDate>
-            <sparkle:version>32</sparkle:version>
-            <sparkle:shortVersionString>0.4.5</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="plain-text"><![CDATA[## Fixed
-
-**The firewall no longer switches itself off after a helper restart or update (#70).**
-
-Until now the network extension compared rule snapshots by generation number alone. The extension's counter lives in extension memory and survives a helper restart, while the helper's counter came from the database and could legitimately start over. A restarted or updated helper therefore looked older forever, every snapshot it sent was refused, and the Mac stayed unfiltered until the next reboot.
-
-Snapshots are now ordered by `(helper session, generation)`:
-
-- a restarted helper opens a new session and is accepted immediately, at any generation
-- a lower generation inside one session is still rejected, as before
-- a snapshot from an older session is rejected even at a higher generation
-- the published generation is made durable whenever it advances, so it survives a restart
-- an extension still holding a pre-update generation converges on its own, with no reboot
-
-The session counter is a persisted counter, not a clock value or a random id, so a backwards clock correction or a dual boot cannot make a newer helper look older. If the extension does refuse a snapshot, the app now recovers automatically by restarting the filter provider, bounded to 3 attempts spaced 30s apart, and never asks you to reboot.
-
-**The helper stands down when the app is dragged to the Trash (#71).**
-
-If the FreeSnitch bundle is gone, the root helper now stops enforcing instead of leaving a registered service behind whose binary no longer exists. It deliberately never unregisters, boots out or deletes anything, because an in-place update is exactly the moment a bundle looks briefly absent. It requires 5 separated absence observations spanning at least 600s before it stands down.
-
-**Repair Helper does the privileged restart itself (#69).**
-
-Confirmed fixed since 0.4.1: repairing a stale helper happens behind a macOS authorization prompt, not by pasting a `sudo` command into Terminal. The enabled service is never unregistered, so your approval stays intact.
-]]></description>
-            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v0.4.5/FreeSnitch-0.4.5.zip" length="10190403" type="application/octet-stream" sparkle:edSignature="lbZr02FSKwKVVUvYE3pUrzTyhwUVKwLcu2XGzfvd/q8aB6+S8fpXcnT/ITD6xJyX6pyKgF5hNP0gcLCUif9uDA=="/>
         </item>
     </channel>
 </rss>
