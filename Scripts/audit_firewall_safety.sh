@@ -1405,7 +1405,9 @@ require_text "$FILTER" "received.generation == current.generation" \
 # A store method that changes rules outside mutatePolicy keeps the policy
 # generation, and republishing under an old generation is refused by the
 # extension as split-brain, which stops filtering (#438).
-if grep -nE 'public func (upsertRule|deleteRule|insertRule|replaceRules)\b' "$RULE_STORE"; then
+# Sources/Shared is compiled into every target, so an internal method is as
+# reachable as a public one; only private ones are left out.
+if grep -nE '^[[:space:]]*((public|internal|open|fileprivate)[[:space:]]+)?func (upsertRule|deleteRule|insertRule|replaceRules)\b' "$RULE_STORE"; then
   fail "RuleStore exposes a rule write that does not advance the policy generation; use mutatePolicy"
 fi
 # Same policy or not is decided by one shared definition that leaves out usage
