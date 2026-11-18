@@ -173,14 +173,14 @@ func runningID(_ path: String, _ pid: Int32) -> CodeSigningIdentity.Resolution {
 let finderPID = Int32(args[7]) ?? 0, devIDPID = Int32(args[8]) ?? 0
 let devIDPath = args[9], devID = args[10]
 if finderPID > 0 {
-    expect(runningID("/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder", finderPID) == .resolved("com.apple.finder"),
+    expect(runningID("/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder", finderPID) == .resolved(signed("com.apple.finder", CodeSigningIdentity.appleTeam)),
            "the running Finder, checked as a running process, gets com.apple.finder")
 } else {
     print("code signing harness: skip: Finder is not running")
 }
 let devIDAnswer = devIDPID > 0 ? runningID(devIDPath, devIDPID) : .unavailable
 if devIDPID > 0, kill(devIDPID, 0) == 0 {
-    expect(devIDAnswer == .resolved(devID),
+    expect(devIDAnswer.bundleIdentifier == devID,
            "a running Developer ID app (\((devIDPath as NSString).lastPathComponent)), checked as a running process, gets \(devID)")
 } else {
     print("code signing harness: skip: no Developer ID app is running")
@@ -249,7 +249,7 @@ expect(compiledText(CodeSigningIdentity.appStoreRequirementText)?.contains(testF
        "TestFlight counts as a channel where Apple hands out bundle ids")
 expect(CodeSigningIdentity.decide(.trusted(CodeSigningIdentity.Signed(identifier: "com.example.beta",
                                                                      signer: .team("ABCDE12345"), appStore: true)))
-       == .resolved("com.example.beta"),
+       == .resolved(signed("com.example.beta", "ABCDE12345")),
        "a TestFlight-signed app keeps its own signed id")
 
 // Apple's own code comes from the certificate chain, never from a missing
@@ -417,7 +417,7 @@ let stuckHash = HashBox()
 stuckHash.hash = h1
 let relaunch = BundleIdentifierCache(entryLifetime: 300, read: { _ in .read(nil) }, identify: { _, _ in
     stuckHash.checks.append(stuckHash.hash)
-    return stuckHash.hash == h1 ? .unavailable : .resolved("com.example.updated")
+    return stuckHash.hash == h1 ? .unavailable : .resolved(signed("com.example.updated"))
 }, codeHash: { _ in stuckHash.hash }, clock: { stuckClock.nanos })
 for _ in 0..<5 {
     _ = relaunch.cachedMetadata(forExecutablePath: stuckPath)
@@ -544,28 +544,33 @@ expect(decide(flow(signed: nil, claimed: nil), [denySafari], .silentAllow).0 == 
 let chromeTeam = "EQHXZ8M8AV", attackerTeam = "ATTACKER01"
 let chromeExe = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 let realChrome = flow(signed: "com.google.Chrome", claimed: nil, path: chromeExe, team: chromeTeam)
-let impostor = flow(signed: "com.google.Chrome", claimed: nil,
+let teamImpostor = flow(signed: "com.google.Chrome", claimed: nil,
                     path: "/Users/someone/Downloads/Chrome.app/Contents/MacOS/Chrome", team: attackerTeam)
 let allowChrome = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, action: .allow, priority: 100)
 let askChrome = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, action: .ask, priority: 100)
 let denyChrome = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam,
                       remoteHost: "example.com", action: .deny, priority: 100)
 expect(decide(realChrome, [allowChrome]).0 == .allow, "Chrome signed by its own team gets its allow rule")
-expect(decide(impostor, [allowChrome]).0 == .ask,
+expect(decide(teamImpostor, [allowChrome]).0 == .ask,
        "a binary another team signed with Chrome's id does not get Chrome's allow rule")
-expect(decide(impostor, [allowChrome], .silentDeny).0 == .deny,
-       "with no allow, the impostor falls to the default mode like any unknown app")
-expect(decide(impostor, [allowChrome]).1?.id == allowChrome.id,
+expect(decide(teamImpostor, [allowChrome], .silentDeny).0 == .deny,
+       "with no allow, the teamImpostor falls to the default mode like any unknown app")
+expect(decide(teamImpostor, [allowChrome]).1?.id == allowChrome.id,
        "the allow skipped for another team is reported, so the extension can log why the user was asked")
-expect(!matcher.matches(rule: allowChrome, connection: impostor) && matcher.matches(rule: allowChrome, connection: realChrome),
+expect(!matcher.matches(rule: allowChrome, connection: teamImpostor) && matcher.matches(rule: allowChrome, connection: realChrome),
        "the one-rule matcher agrees on the team")
-expect(!matcher.matches(rule: askChrome, connection: impostor) && decide(impostor, [askChrome], .silentAllow).1?.id == askChrome.id,
-       "an ask rule needs the same team too")
-expect(decide(impostor, [denyChrome], .silentAllow).0 == .deny && matcher.matches(rule: denyChrome, connection: impostor),
+expect(decide(teamImpostor, [askChrome], .silentAllow).0 == .ask,
+       "an ask rule for Chrome still gets another team's binary asked about: it can only make the verdict stricter")
+let allowChromeAtPath = Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, processPath: chromeExe, action: .allow)
+expect(decide(flow(signed: "com.google.Chrome", claimed: nil, path: chromeExe, team: attackerTeam), [allowChromeAtPath]).0 == .allow,
+       "a rule that also names a path is pinned by the path, like an unsigned app at that path (#363), not by the team")
+expect(decide(teamImpostor, [allowChromeAtPath]).0 == .ask,
+       "another team's binary elsewhere never gets a path-pinned allow")
+expect(decide(teamImpostor, [denyChrome], .silentAllow).0 == .deny && matcher.matches(rule: denyChrome, connection: teamImpostor),
        "a deny for Chrome still blocks a binary any team signed with Chrome's id")
-expect(decide(impostor, [Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, remoteHost: "example.com",
+expect(decide(teamImpostor, [Rule(processBundleId: "com.google.Chrome", processTeamId: chromeTeam, remoteHost: "example.com",
                               action: .allow, priority: 200), denyChrome], .silentAllow).0 == .deny,
-       "the impostor skips Chrome's allow and lands on Chrome's deny")
+       "the teamImpostor skips Chrome's allow and lands on Chrome's deny")
 let unboundAllow = Rule(processBundleId: "com.google.Chrome", action: .allow, priority: 100)
 expect(decide(realChrome, [unboundAllow]).0 == .allow,
        "a rule that has not learned a team yet keeps matching the app it was made for")
@@ -599,8 +604,8 @@ let learned = first!.rules
 expect(RuleSigningTeam.learn(rules: learned, from: [Sighting(bundleId: "com.google.Chrome", team: attackerTeam,
                                                              processPath: chromeExe)]) == nil,
        "a rule that learned its team never takes another")
-expect(decide(impostor, [learned[0]]).0 == .ask && decide(realChrome, [learned[0]]).0 == .allow,
-       "once learned, the impostor is asked about and Chrome still gets its allow")
+expect(decide(teamImpostor, [learned[0]]).0 == .ask && decide(realChrome, [learned[0]]).0 == .allow,
+       "once learned, the teamImpostor is asked about and Chrome still gets its allow")
 let fromObservation = RuleSigningTeam.Sighting(FlowObservation(connection: realChrome))
 expect(fromObservation == Sighting(bundleId: "com.google.Chrome", team: chromeTeam, processPath: chromeExe),
        "an observation from the extension carries the team")
