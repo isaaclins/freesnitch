@@ -126,13 +126,15 @@ let both = reEnabled.applied(to: meanwhile, openedWith: original)
 guard both.profile == "Cafe", !both.enabled else { fail("the user's own profile change lost, or an untouched toggle was reverted") }
 // Untouched fields the sheet shows differently are not rewritten: a rule
 // with no app that gained a path meanwhile, port 0, notes with spaces.
-let bare = Rule(remoteHost: "bare.example", remotePort: 0, action: .deny, notes: " keep ")
+let bare = Rule(processBundleId: "", processTeamId: "ABCDE12345", remoteHost: "bare.example", remoteIP: "",
+                remotePort: 0, action: .deny, notes: " keep ")
 var bareNow = bare
 bareNow.processPath = "/usr/bin/curl"
 let bareEdit = RuleEdit(process: .anyApp, bundleId: nil, remoteHost: "bare.example", remoteIP: nil,
                         remotePort: nil, direction: bare.direction, action: .allow, scope: bare.scope,
                         profile: bare.profile, notes: "keep", enabled: true).applied(to: bareNow, openedWith: bare)
 guard bareEdit.processPath == "/usr/bin/curl", bareEdit.remotePort == 0, bareEdit.notes == " keep ",
+      bareEdit.processBundleId == "", bareEdit.processTeamId == "ABCDE12345", bareEdit.remoteIP == "",
       bareEdit.action == .allow else { fail("untouched fields were rewritten: \(bareEdit)") }
 pass("an edit writes only the fields the user changed, over the current rule")
 
@@ -155,7 +157,7 @@ xcrun swiftc -O \
 
 # The sheet uses this merge, and every way into it is wired.
 SRC="$ROOT/Sources/GUI/Views/RulesManager.swift"
-grep -Fq 'edit.applied(to: current, openedWith: original)' "$SRC" || { echo 'rule edit: FAIL: the sheet does not use RuleEdit' >&2; exit 1; }
+grep -Fq 'edit.applied(to: current, openedWith: original)' "$SRC" && grep -Fq 'state.helper.allRulesInEveryProfile { rules, error in' "$SRC" || { echo 'rule edit: FAIL: the sheet does not use RuleEdit' >&2; exit 1; }
 grep -Fq 'Button("Edit Rule\u{2026}")' "$SRC" || { echo 'rule edit: FAIL: no Edit Rule item in the context menu' >&2; exit 1; }
 grep -Fq 'if let existingRule, processBundleID == (existingRule.processBundleId ?? "")' "$SRC" || { echo 'rule edit: FAIL: choosing another app keeps the old bundle id' >&2; exit 1; }
 grep -Fq 'primaryAction:' "$SRC" || { echo 'rule edit: FAIL: double-click does not open the editor' >&2; exit 1; }

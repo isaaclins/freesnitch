@@ -69,17 +69,17 @@ public struct RuleEdit: Equatable, Sendable {
                 rule.processName = nil
             }
         }
-        if bundleId != snapshot.processBundleId {
+        if Self.text(bundleId) != Self.text(snapshot.processBundleId) {
             rule.processBundleId = bundleId
             // The signing team belongs to the bundle id the rule was made
             // for. A new bundle id has to learn its own team, never inherit
             // the old one.
-            if rule.processBundleId != current.processBundleId { rule.processTeamId = nil }
+            if Self.text(rule.processBundleId) != Self.text(current.processBundleId) { rule.processTeamId = nil }
         }
-        if remoteHost != snapshot.remoteHost { rule.remoteHost = remoteHost }
-        if remoteIP != snapshot.remoteIP { rule.remoteIP = remoteIP }
-        // The sheet shows port 0 as an empty field and trims notes, so neither
-        // counts as a change on its own.
+        if Self.text(remoteHost) != Self.text(snapshot.remoteHost) { rule.remoteHost = remoteHost }
+        if Self.text(remoteIP) != Self.text(snapshot.remoteIP) { rule.remoteIP = remoteIP }
+        // The sheet shows port 0 and an empty string as an empty field and
+        // trims text, so none of that counts as a change on its own.
         if Self.port(remotePort) != Self.port(snapshot.remotePort) { rule.remotePort = remotePort }
         if direction != snapshot.direction { rule.direction = direction }
         if action != snapshot.action { rule.action = action }

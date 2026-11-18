@@ -1328,19 +1328,27 @@ struct RulesManagerView: View {
     /// change made elsewhere meanwhile (a toggle or profile move from the CLI,
     /// a learned team) is not undone, and a removed rule is not brought back.
     private func saveEdit(_ edit: RuleEdit, to original: Rule) {
-        guard let current = state.rules.first(where: { $0.id == original.id }) else {
-            showError("Could not save the changes to \(Self.describe(original))",
-                      "The rule was removed while you were editing it.")
-            return
-        }
-        let rule = edit.applied(to: current, openedWith: original)
-        state.helper.addRule(rule) { ok, message in
-            guard ok else {
-                showError("Could not save the changes to \(Self.describe(rule))",
-                          message ?? "The helper rejected the change and did not say why.")
+        let title = "Could not save the changes to \(Self.describe(original))"
+        // The merge base is the helper's stored rule, not this window's copy:
+        // the window is not told about a toggle or delete made from the CLI.
+        state.helper.allRulesInEveryProfile { rules, error in
+            guard let rules else {
+                showError(title, error ?? "The helper did not return the rules.")
                 return
             }
-            state.refreshRules()
+            guard let current = rules.first(where: { $0.id == original.id }) else {
+                showError(title, "The rule was removed while you were editing it.")
+                state.refreshRules()
+                return
+            }
+            let rule = edit.applied(to: current, openedWith: original)
+            state.helper.addRule(rule) { ok, message in
+                guard ok else {
+                    showError(title, message ?? "The helper rejected the change and did not say why.")
+                    return
+                }
+                state.refreshRules()
+            }
         }
     }
 
