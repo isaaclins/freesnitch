@@ -132,9 +132,9 @@ public enum VPNStatus {
             let servers = owner.dnsServers.joined(separator: ", ")
             var text = "\(owner.displayName) is handling DNS right now (\(servers)), so FreeSnitch's DNS blocking and upstream don't apply while it is connected."
             if isTailscale(owner) {
-                text += " To keep FreeSnitch's DNS, turn off Use Tailscale DNS Settings in the Tailscale menu."
+                text += " To use FreeSnitch's DNS while it is connected, turn off Use Tailscale DNS Settings in the Tailscale menu, then set this Mac's DNS server to 127.0.0.1 if it isn't already."
             } else {
-                text += " To keep FreeSnitch's DNS, turn off the VPN's own DNS in its settings, if it has that option."
+                text += " To use FreeSnitch's DNS while it is connected, turn off the VPN's own DNS in its settings, if it has that option, then set this Mac's DNS server to 127.0.0.1 if it isn't already."
             }
             return text
         }
