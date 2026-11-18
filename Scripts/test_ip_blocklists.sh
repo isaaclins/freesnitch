@@ -346,6 +346,7 @@ struct IPBlocklistHarness {
                                 action: .allow, scope: .ip, priority: 100)
         let everyAppAllow = Rule(remoteIP: "203.0.113.8", action: .allow, scope: .ip, priority: 100)
         let ranked = pf.renderAnchor(rules: [wideDeny, firefoxAllow, everyAppAllow])
+        checkPFSyntax("ranked", ranked, checks)
         let wideIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: ranked)
         let everyAppPass = position("pass out quick proto { tcp udp } to 203.0.113.8", in: ranked)
         checks.expect(everyAppPass != nil && wideIndex != nil && everyAppPass! < wideIndex!,
@@ -364,6 +365,7 @@ struct IPBlocklistHarness {
         let namedAllow = Rule(remoteHost: "allowed.example", remoteIP: "203.0.113.9",
                               action: .allow, scope: .ip, priority: 100)
         let namedRanked = pf.renderAnchor(rules: [wideDeny, namedAllow])
+        checkPFSyntax("named-ranked", namedRanked, checks)
         checks.expect(!namedRanked.contains("pass out quick proto { tcp udp } to 203.0.113.9"),
                       "an allow with a hostname and an address must not become a quick pass ahead of the deny")
         checks.expect(namedRanked.contains("pass out proto { tcp udp } to 203.0.113.9 tag"),
@@ -371,6 +373,7 @@ struct IPBlocklistHarness {
         var outranked = wideDeny
         outranked.priority = 200
         let denyFirst = pf.renderAnchor(rules: [everyAppAllow, outranked])
+        checkPFSyntax("deny-first", denyFirst, checks)
         let outrankedIndex = position("block out quick proto { tcp udp } to 203.0.113.0/24", in: denyFirst)
         let lowerAllowIndex = position("pass out quick proto { tcp udp } to 203.0.113.8", in: denyFirst)
         checks.expect(outrankedIndex != nil && lowerAllowIndex != nil && outrankedIndex! < lowerAllowIndex!,
