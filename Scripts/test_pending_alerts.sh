@@ -556,7 +556,7 @@ require_text "$HELPER" "if !XPCPeerValidator.isCLI(newConnection) {" \
 require_text "$HELPER" "XPCPeerValidator.isCLI(connection)" \
   "the helper refuses a pending alert registration from the CLI"
 # Fail open is still the extension's answer to an unanswered flow.
-require_text "$PROVIDER" "workQueue.asyncAfter(deadline: .now() + askTimeout) { resumeOnce(NEFilterNewFlowVerdict.allow()) }" \
+require_text "$PROVIDER" "workQueue.asyncAfter(deadline: .now() + askTimeout) { resumeOnce(NEFilterNewFlowVerdict.allow(), .unfiltered) }" \
   "an unanswered flow still resumes with the fail-open allow verdict"
 # The app is still the only process that answers the extension.
 require_text "$APP_STATE" "registerPendingAlertWithHelper(alert)" \

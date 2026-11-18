@@ -117,6 +117,16 @@ public struct InsightsDecisionCounts: Codable, Hashable, Sendable {
         self.unfiltered = max(0, unfiltered)
     }
 
+    private enum CodingKeys: String, CodingKey { case allowed, blocked, unfiltered }
+
+    /// Through the clamping init, so a negative count from the wire reads as 0.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(allowed: try c.decode(Int.self, forKey: .allowed),
+                  blocked: try c.decode(Int.self, forKey: .blocked),
+                  unfiltered: try c.decode(Int.self, forKey: .unfiltered))
+    }
+
     /// What one row says, given every connection it holds (`total`),
     /// including those recorded with no decision. A label only claims what is
     /// true of all of them.
@@ -146,6 +156,45 @@ public struct InsightsDecisionCounts: Codable, Hashable, Sendable {
     }
 }
 
+/// Flows the app let through on an alert without anyone answering it (#447):
+/// a duplicate of an alert already on screen, a full alert queue, or a full
+/// command-line registry. The extension only sees "allow" come back, so it
+/// records those as allowed. The app forwards every observation batch to the
+/// helper, and on the way it relabels these as `.unfiltered`, which is what
+/// they were. Bounded: the oldest ids go first, and an id is used once.
+public struct UnansweredAlertLedger: Sendable {
+    public static let capacity = 4096
+    private var order: [UUID] = []
+    private var ids = Set<UUID>()
+
+    public init() {}
+
+    public mutating func note(_ id: UUID) {
+        guard ids.insert(id).inserted else { return }
+        order.append(id)
+        if order.count > Self.capacity {
+            ids.remove(order.removeFirst())
+        }
+    }
+
+    /// The batch with every noted flow that came back as allowed relabelled,
+    /// or nil when nothing in it was noted, so the caller can forward the
+    /// original bytes untouched.
+    public mutating func relabel(_ batch: FlowObservationBatch) -> FlowObservationBatch? {
+        guard !ids.isEmpty else { return nil }
+        var changed = false
+        let observations = batch.observations.map { observation -> FlowObservation in
+            guard ids.contains(observation.id) else { return observation }
+            ids.remove(observation.id)
+            order.removeAll { $0 == observation.id }
+            guard observation.decision == .allowed else { return observation }
+            changed = true
+            return observation.withDecision(.unfiltered)
+        }
+        return changed ? FlowObservationBatch(observations: observations) : nil
+    }
+}
+
 public struct FlowObservation: Codable, Hashable, Sendable {
     public let schemaVersion: Int
     public let id: UUID
@@ -169,7 +218,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     public let bytesOut: Int64?
     /// Nil when the sender did not know it (an older extension). Never
     /// guessed from anything else (#447).
-    public let decision: FlowDecision?
+    public private(set) var decision: FlowDecision?
 
     public init(connection: Connection, observedAt: Date = Date(), processVersion: String? = nil,
                 decision: FlowDecision? = nil) {
@@ -239,6 +288,14 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         try c.encodeIfPresent(bytesIn, forKey: .bytesIn)
         try c.encodeIfPresent(bytesOut, forKey: .bytesOut)
         try c.encodeIfPresent(decision, forKey: .decision)
+    }
+
+    /// The same observation with another decision. Only the app uses it, for
+    /// alerts it let through without anyone answering (`UnansweredAlertLedger`).
+    public func withDecision(_ decision: FlowDecision) -> FlowObservation {
+        var copy = self
+        copy.decision = decision
+        return copy
     }
 
     public func validate(now: Date = Date()) throws {

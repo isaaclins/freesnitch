@@ -609,6 +609,47 @@ struct InsightsHarness {
         check(futureBatch != nil, "an unknown decision value does not fail the batch")
         check(futureBatch?.observations.first?.decision == nil, "an unknown decision value reads as unknown")
 
+        // MARK: alerts the app let through without anyone answering (#447)
+        // The extension only hears "allow" back, so it sends these as allowed.
+        // The app relabels them on the way to the helper.
+        let duplicate = observation(app: "Chrome", bundle: "com.google.Chrome", path: "/Applications/Chrome.app",
+                                    host: "", ip: "192.0.2.60", at: now, decision: .allowed)
+        let answered = observation(app: "Chrome", bundle: "com.google.Chrome", path: "/Applications/Chrome.app",
+                                   host: "", ip: "192.0.2.61", at: now, decision: .allowed)
+        let denied = observation(app: "Chrome", bundle: "com.google.Chrome", path: "/Applications/Chrome.app",
+                                 host: "", ip: "192.0.2.62", at: now, decision: .blocked)
+        var ledger = UnansweredAlertLedger()
+        check(ledger.relabel(FlowObservationBatch(observations: [duplicate])) == nil,
+              "with nothing noted, a batch is forwarded unchanged")
+        ledger.note(duplicate.id)
+        ledger.note(denied.id)
+        let relabelled = ledger.relabel(FlowObservationBatch(observations: [duplicate, answered, denied]))
+        equal(relabelled?.observations.map(\.decision), [.unfiltered, .allowed, .blocked],
+              "only the flow let through without an answer becomes not filtered")
+        check(ledger.relabel(FlowObservationBatch(observations: [duplicate])) == nil,
+              "a noted flow is relabelled once")
+        try! store.record(relabelled!.observations)
+        let chrome = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.google.Chrome",
+                                                          since: now.addingTimeInterval(-day), limit: 50))
+        equal(rowStatus(chrome.destinations.first { $0.destinationKey == "192.0.2.60" }), .unfiltered,
+              "a duplicate alert's flow reads Not filtered, not Allowed")
+        let evicted = observation(app: "Chrome", bundle: nil, path: "/Applications/Chrome.app", host: "",
+                                  ip: "192.0.2.63", at: now, decision: .allowed)
+        let newest = observation(app: "Chrome", bundle: nil, path: "/Applications/Chrome.app", host: "",
+                                 ip: "192.0.2.64", at: now, decision: .allowed)
+        var bounded = UnansweredAlertLedger()
+        bounded.note(evicted.id)
+        for _ in 0..<(UnansweredAlertLedger.capacity - 1) { bounded.note(UUID()) }
+        bounded.note(newest.id)
+        check(bounded.relabel(FlowObservationBatch(observations: [evicted])) == nil,
+              "the ledger stays bounded and forgets the oldest id")
+        equal(bounded.relabel(FlowObservationBatch(observations: [newest]))?.observations.first?.decision, .unfiltered,
+              "the newest id is still there after the oldest was dropped")
+        let negative = try? JSONDecoder().decode(InsightsDecisionCounts.self,
+                                                 from: Data(#"{"allowed":-3,"blocked":2,"unfiltered":-1}"#.utf8))
+        equal(negative, InsightsDecisionCounts(allowed: 0, blocked: 2, unfiltered: 0),
+              "negative counts from the wire read as zero")
+
         // MARK: a store from before #447 gains the columns and keeps its rows unknown
         let legacySupport = root.appendingPathComponent("Legacy Support")
         try! FileManager.default.createDirectory(at: legacySupport.appendingPathComponent("Insights"),

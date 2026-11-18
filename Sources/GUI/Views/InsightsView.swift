@@ -374,7 +374,7 @@ struct InsightsView: View {
         if counts.blocked > 0 { parts.append("\(Self.plural(counts.blocked, "connection")) blocked") }
         if counts.unfiltered > 0 {
             parts.append("\(Self.plural(counts.unfiltered, "connection")) let through without a filtering decision "
-                         + "(name lookups, local traffic, an unanswered alert, or the filter wasn't running)")
+                         + "(name lookups, local traffic, an alert nobody answered, or no rules loaded yet)")
         }
         let unknown = total - counts.allowed - counts.blocked - counts.unfiltered
         if unknown > 0 {

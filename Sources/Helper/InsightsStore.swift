@@ -542,18 +542,17 @@ extension InsightsStore {
     }
 
     private static let appIdentitySQL = "COALESCE(NULLIF(process_bundle_id,''), process_path)"
-    /// The hostname the app asked for when one was recorded, otherwise the
-    /// address it connected to. A flow to port 53 is a lookup: its hostname is
-    /// the name being looked up and its address is the resolver, so it counts
-    /// as a contact with the resolver, never with the name (#167). Rows
-    /// recorded before that rule are read the same way.
     /// Allowed, blocked and unfiltered counts over raw events (#447). Rows
     /// with no recorded decision fall in none of them.
     private static let rawDecisionSQL =
         "COALESCE(SUM(decision = 'allowed'),0), COALESCE(SUM(decision = 'blocked'),0), COALESCE(SUM(decision = 'unfiltered'),0)"
     private static let rollupDecisionSQL =
         "COALESCE(SUM(allowed_count),0), COALESCE(SUM(blocked_count),0), COALESCE(SUM(unfiltered_count),0)"
-
+    /// The hostname the app asked for when one was recorded, otherwise the
+    /// address it connected to. A flow to port 53 is a lookup: its hostname is
+    /// the name being looked up and its address is the resolver, so it counts
+    /// as a contact with the resolver, never with the name (#167). Rows
+    /// recorded before that rule are read the same way.
     private static let destinationSQL =
         "CASE WHEN remote_port <> 53 AND remote_host <> '' AND remote_host <> remote_ip THEN remote_host ELSE remote_ip END"
 
