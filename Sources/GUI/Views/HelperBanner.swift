@@ -74,7 +74,9 @@ private struct BannerInfo {
           needsRepair: Bool,
           versionState: HelperVersionState,
           repairState: HelperRepairState) {
-        if case .mismatch(let helperVersion, let appVersion) = versionState {
+        // A copy outside Applications shows the Move banner first: Repair
+        // can't work from there (its location guard refuses), moving can (#412).
+        if case .mismatch(let helperVersion, let appVersion) = versionState, installState != .wrongLocation {
             icon = "wrench.and.screwdriver.fill"
             tint = Color.orange
             title = "The running helper is not the installed build"
@@ -126,14 +128,15 @@ private struct BannerInfo {
         case .wrongLocation:
             icon = "arrow.down.app.fill"
             tint = Color.red
-            if InstallLocation.isInUserApplications(InstallLocation.runningOriginal) {
-                title = "Move FreeSnitch to the main Applications folder"
+            let fromHome = InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
+            if fromHome {
+                title = "Copy FreeSnitch to the main Applications folder"
                 detail = InstallLocation.userApplicationsReason + " FreeSnitch can copy itself there and reopen."
             } else {
                 title = "Move FreeSnitch to your Applications folder"
                 detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there."
             }
-            action = BannerAction(title: "Move to Applications") { _, _ in
+            action = BannerAction(title: fromHome ? "Copy to Applications" : "Move to Applications") { _, _ in
                 InstallLocation.moveToApplications()
             }
         case .notFound:

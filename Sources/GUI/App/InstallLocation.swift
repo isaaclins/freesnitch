@@ -273,13 +273,18 @@ extension InstallLocation {
 
     private static func moveAlert() -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = "Move FreeSnitch to Applications?"
-        if isInUserApplications(runningOriginal) {
-            alert.informativeText = userApplicationsReason + " FreeSnitch can copy itself there and reopen. The copy in your home folder stays until you delete it."
+        // From ~/Applications it copies and leaves the original, whose helper
+        // may still be registered, so it says copy and doesn't suggest
+        // deleting that copy.
+        let fromHome = isInUserApplications(runningOriginal)
+        if fromHome {
+            alert.messageText = "Copy FreeSnitch to the main Applications folder?"
+            alert.informativeText = userApplicationsReason + " FreeSnitch can copy itself there and reopen."
         } else {
+            alert.messageText = "Move FreeSnitch to Applications?"
             alert.informativeText = "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen."
         }
-        alert.addButton(withTitle: "Move to Applications")
+        alert.addButton(withTitle: fromHome ? "Copy to Applications" : "Move to Applications")
         alert.addButton(withTitle: "Not Now")
         return alert
     }

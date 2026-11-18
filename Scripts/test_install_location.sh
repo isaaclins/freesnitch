@@ -265,6 +265,9 @@ if grep -nE 'removeItem\(at: (destination|installed)|trashItem\(at: (destination
   echo "install location: FAIL: the move can delete the installed copy" >&2; exit 1
 fi
 echo "install location: PASS: the move never deletes the installed copy"
+grep -q 'versionState, installState != .wrongLocation' "$ROOT/Sources/GUI/Views/HelperBanner.swift" \
+  || { echo "install location: FAIL: a helper mismatch can hide the Move banner of a copy outside Applications" >&2; exit 1; }
+echo "install location: PASS: a copy outside Applications shows Move before Repair Helper"
 app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
 [ "$(grep -c 'systemExtension.activate()' "$app_swift")" = 1 ] \
   && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \
