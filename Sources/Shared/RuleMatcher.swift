@@ -187,7 +187,32 @@ fileprivate struct PreparedIPPattern: Sendable {
     }
 }
 
+/// A rule's path covers the process at that path and everything inside it,
+/// such as the helpers in an app bundle. It is compared as a path, not as a
+/// string prefix: a rule for /usr/local/bin/node must not also match
+/// /usr/local/bin/nodemon, nor /usr/bin/ssh match /usr/bin/ssh-agent (#158).
+func processPathCovers(_ rulePath: String, _ processPath: String) -> Bool {
+    guard processPath.hasPrefix(rulePath) else { return false }
+    if rulePath.hasSuffix("/") { return true }
+    let rest = processPath.dropFirst(rulePath.count)
+    return rest.isEmpty || rest.first == "/"
+}
+
 extension Rule {
+    /// An address or CIDR in the hostname field of a rule that has no
+    /// address of its own (#307). The rule editor and the CLI accept one
+    /// there, and the pf anchor writes it as the address, so the matcher
+    /// compares it with the flow's address too. Otherwise a flow to that
+    /// address that macOS reports under a name would slip past the rule in
+    /// the Network Extension while pf still applied it.
+    public var addressInHostField: String? {
+        guard (remoteIP ?? "").isEmpty, let host = remoteHost, !host.isEmpty else { return nil }
+        switch PFHostValidator.kind(for: host) {
+        case .ip, .cidr: return host
+        case .hostname, nil: return nil
+        }
+    }
+
     /// The matcher knows an app only by its bundle id or path. A rule that
     /// carries nothing but a name reads as "this app" and matches every app
     /// (#157), so ingest refuses it while it is enabled and the Rules list
@@ -220,6 +245,9 @@ fileprivate struct PreparedRule: Sendable {
     let processPath: String?
     let remotePort: Int?
     let remoteHost: PreparedHostPattern?
+    /// An address or CIDR typed into the hostname field, compared with the
+    /// flow's address as well as its host (#307).
+    let remoteHostAddress: PreparedIPPattern?
     let remoteIP: PreparedIPPattern?
 
     init(_ rule: Rule) {
@@ -230,18 +258,20 @@ fileprivate struct PreparedRule: Sendable {
         processPath = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
         remotePort = rule.remotePort.flatMap { $0 == 0 ? nil : $0 }
         remoteHost = rule.remoteHost.flatMap { $0.isEmpty ? nil : PreparedHostPattern($0) }
+        remoteHostAddress = rule.addressInHostField.map(PreparedIPPattern.init)
         remoteIP = rule.remoteIP.flatMap { $0.isEmpty ? nil : PreparedIPPattern($0) }
     }
 
-    var needsIPv4: Bool { remoteIP?.needsIPv4 ?? false }
-    var needsIPv6: Bool { remoteIP?.needsIPv6 ?? false }
+    var needsIPv4: Bool { (remoteIP?.needsIPv4 ?? false) || (remoteHostAddress?.needsIPv4 ?? false) }
+    var needsIPv6: Bool { (remoteIP?.needsIPv6 ?? false) || (remoteHostAddress?.needsIPv6 ?? false) }
 
     func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
         if let direction, direction != connection.direction { return false }
         if let processBundleId, (connection.processBundleId ?? "") != processBundleId { return false }
-        if let processPath, !connection.processPath.hasPrefix(processPath) { return false }
+        if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
         if let remotePort, connection.remotePort != remotePort { return false }
-        if let remoteHost, !remoteHost.matches(connection.remoteHost) { return false }
+        if let remoteHost, !remoteHost.matches(connection.remoteHost),
+           !(remoteHostAddress?.matches(rawIP: connection.remoteIP, parsed: address) ?? false) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
         return true
     }
@@ -317,13 +347,14 @@ public struct RuleMatcher: Sendable {
             if (c.processBundleId ?? "") != bid { return false }
         }
         if let path = r.processPath, !path.isEmpty {
-            if c.processPath != path && !c.processPath.hasPrefix(path) { return false }
+            if !processPathCovers(path, c.processPath) { return false }
         }
         if let port = r.remotePort, port != 0 {
             if c.remotePort != port { return false }
         }
         if let host = r.remoteHost, !host.isEmpty {
-            if !hostMatches(pattern: host, host: c.remoteHost) { return false }
+            if !hostMatches(pattern: host, host: c.remoteHost),
+               !(r.addressInHostField.map { ipMatches(pattern: $0, ip: c.remoteIP) } ?? false) { return false }
         }
         if let ip = r.remoteIP, !ip.isEmpty {
             if !ipMatches(pattern: ip, ip: c.remoteIP) { return false }
