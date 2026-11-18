@@ -546,6 +546,17 @@ public final class RuleStore: @unchecked Sendable {
         return policyStateLocked()
     }
 
+    /// Advances the policy generation inside the caller's transaction. A
+    /// profile switch, a change to the active profile, or deleting it changes
+    /// the enforced policy without going through `mutatePolicy`. Republishing
+    /// that under the old generation made the extension refuse it as a
+    /// split-brain snapshot and stop filtering until the next rule edit (#438).
+    private func advancePolicyGenerationLocked() throws {
+        let current = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
+        guard current < UInt64.max else { throw PolicyStoreError.generationExhausted }
+        try setSettingLocked(Self.policyGenerationSettingKey, String(current + 1))
+    }
+
     private func policyStateLocked() -> PolicyState {
         // Missing means a genuinely fresh database. Existing installs retain
         // their stored choice, while a new user starts honestly in Silent
@@ -727,6 +738,7 @@ public final class RuleStore: @unchecked Sendable {
                 }
                 try replaceProfileBlocklistsLocked(profileName: normalizedName, blocklistIDs: profile.blocklistIDs)
                 try syncGlobalBlocklistEnabledLocked()
+                try advancePolicyGenerationLocked()
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")
@@ -775,6 +787,7 @@ public final class RuleStore: @unchecked Sendable {
                     }
                 }
                 try syncGlobalBlocklistEnabledLocked()
+                try advancePolicyGenerationLocked()
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")
@@ -798,6 +811,7 @@ public final class RuleStore: @unchecked Sendable {
                     sqlite3_bind_text(stmt, 1, profile.id.uuidString, -1, SQLITE_TRANSIENT)
                 }
                 try syncGlobalBlocklistEnabledLocked()
+                try advancePolicyGenerationLocked()
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")
