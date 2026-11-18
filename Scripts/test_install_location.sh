@@ -109,6 +109,37 @@ try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: readOnly.path)
 check(!ok(roResult), "a copy that keeps the download flag is reported as a failure")
 check((try? fm.contentsOfDirectory(atPath: roApps.path))?.isEmpty == true, "nothing is left in Applications after that failure")
 
+// #413: a move cut off mid-copy (crash, force quit) left its hidden staging
+// folder behind. The next move removes those, read-only insides included,
+// and nothing else in the folder.
+let leftApps = work.appendingPathComponent("LeftoverApplications", isDirectory: true)
+try! fm.createDirectory(at: leftApps, withIntermediateDirectories: true)
+let leftover = leftApps.appendingPathComponent(".FreeSnitch.app.partial-\(UUID().uuidString)", isDirectory: true)
+makeBundle(at: leftover, build: "35")
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: leftover.appendingPathComponent("Contents").path)
+let lookalikes = [".FreeSnitch.app.partial-notauuid", ".FreeSnitch.app.partial-\(UUID().uuidString.lowercased())",
+                  ".Other.app.partial-\(UUID().uuidString)", "FreeSnitch.app.partial-\(UUID().uuidString)", "Other.app"]
+for name in lookalikes { makeBundle(at: leftApps.appendingPathComponent(name), build: "1") }
+let outside = work.appendingPathComponent("Outside", isDirectory: true)
+makeBundle(at: outside, build: "1")
+let linked = ".FreeSnitch.app.partial-\(UUID().uuidString)"
+try! fm.createSymbolicLink(atPath: leftApps.appendingPathComponent(linked).path, withDestinationPath: outside.path)
+let leftDestination = leftApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+check(ok(InstallLocation.copyBundle(from: source, to: leftDestination)), "a move with a leftover staging folder present succeeds")
+check(!fm.fileExists(atPath: leftover.path), "the next move removes a leftover staging folder")
+check(Set(try! fm.contentsOfDirectory(atPath: leftApps.path)) == Set(lookalikes + [linked, "FreeSnitch.app"]),
+      "lookalike names, other apps and a symlinked staging name are all left alone")
+check(fm.fileExists(atPath: outside.appendingPathComponent("Contents/MacOS/FreeSnitch").path),
+      "the folder a symlinked staging name points to is untouched")
+let launchApps = work.appendingPathComponent("LaunchApplications", isDirectory: true)
+let launchLeftover = launchApps.appendingPathComponent(".FreeSnitch.app.partial-\(UUID().uuidString)", isDirectory: true)
+makeBundle(at: launchLeftover, build: "35")
+makeBundle(at: launchApps.appendingPathComponent("FreeSnitch.app"), build: "35")
+InstallLocation.removeLeftoverStaging(in: launchApps)
+check(try! fm.contentsOfDirectory(atPath: launchApps.path) == ["FreeSnitch.app"], "launch cleanup removes the leftover and keeps the installed app")
+InstallLocation.removeLeftoverStaging(in: work.appendingPathComponent("Missing", isDirectory: true))
+check(true, "a missing Applications folder is fine")
+
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
 
 // #400: only a downloaded copy is asked at launch. A build folder isn't.
