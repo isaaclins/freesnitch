@@ -66,16 +66,18 @@ grep -Fq 'ProfileClient.shared.refresh()' "$CLIENT" \
   || fail "the app no longer refreshes its Profiles page when the helper says the policy changed"
 pass "a mode change through the helper refreshes the app's mode and its Profiles page"
 
-# 3. The app shows the helper's reported mode at once, and does not start out
-#    claiming Silent Allow while it waits for the helper.
-adopt_body="$(function_body "$APPSTATE" 'func adoptPersistedMode(')"
-grep -Eq '^\s+mode = m$' <<<"$adopt_body" \
-  || fail "adoptPersistedMode waits for the full snapshot before showing the enforced mode"
-grep -Fq 'if let mode = status?.mode { self?.state?.adoptPersistedMode(mode) }' "$CLIENT" \
-  || fail "the status ping no longer hands the helper's mode to the app"
+# 3. The status ping goes through the tested decision (replayed in the harness
+#    below), and the app does not start out claiming Silent Allow.
+adopt_body="$(function_body "$APPSTATE" 'func adoptHelperStatus(')"
+grep -Fq 'EnforcedModeSync.decide(' <<<"$adopt_body" \
+  || fail "adoptHelperStatus no longer uses EnforcedModeSync"
+grep -Fq 'if sync.fetchSnapshot { syncSharedRules() }' <<<"$adopt_body" \
+  || fail "adoptHelperStatus no longer fetches the snapshot when the decision says so"
+grep -Fq 'self?.state?.adoptHelperStatus(mode: status.mode, generation: status.policyGeneration)' "$CLIENT" \
+  || fail "the status ping no longer hands the helper's mode and generation to the app"
 grep -Eq '@Published var mode: AppMode = \.silentAllow$' "$APPSTATE" \
   && fail "the app starts out showing Silent Allow instead of the last mode the helper reported"
-pass "the app shows the helper's mode from the first status ping, and the last known one before it"
+pass "the status ping goes through EnforcedModeSync, and the app starts from the last known mode"
 
 # 4. Insights and the menu bar read that one value.
 grep -Fq 'switch state.mode' "$INSIGHTS" || fail "Insights' banner no longer reads state.mode"
@@ -190,10 +192,55 @@ guard store.allProfiles().first(where: { $0.name == "office" })?.mode == .silent
 }
 pass("a mode change only touches the active profile")
 
+// MARK: - the app's side of a status ping (#452)
+
+// Replays the report: the helper enforces Alert and answers every status ping,
+// but fetching the full snapshot fails. The app must show Alert at once and
+// keep asking for the snapshot, because the extension enforces the snapshot.
+struct App {
+    var shown: AppMode = .silentAllow
+    var snapshotGeneration: UInt64? = nil
+    var fetches = 0
+    mutating func ping(mode: AppMode, generation: UInt64?, fetchWorks: Bool) {
+        let sync = EnforcedModeSync.decide(statusMode: mode, statusGeneration: generation,
+                                           shownMode: shown, snapshotGeneration: snapshotGeneration)
+        if let m = sync.showMode { shown = m }
+        guard sync.fetchSnapshot else { return }
+        fetches += 1
+        if fetchWorks { shown = mode; snapshotGeneration = generation }
+    }
+}
+
+var app = App()
+app.ping(mode: .alert, generation: 7, fetchWorks: false)
+guard app.shown == .alert else { fail("with the snapshot failing, the app still shows \(app.shown.rawValue) while Alert is enforced") }
+app.ping(mode: .alert, generation: 7, fetchWorks: false)
+app.ping(mode: .alert, generation: 7, fetchWorks: false)
+guard app.fetches == 3 else { fail("a failed snapshot fetch was retried \(app.fetches - 1) times over two more pings, expected 2") }
+pass("a failing snapshot fetch: Alert is shown at once and the fetch is retried on every ping")
+app.ping(mode: .alert, generation: 7, fetchWorks: true)
+app.ping(mode: .alert, generation: 7, fetchWorks: true)
+guard app.fetches == 4, app.snapshotGeneration == 7 else { fail("the app kept fetching after it held the current snapshot") }
+pass("once the current snapshot arrived, pings stop fetching it")
+
+// A rule change or profile switch raises the generation without changing the
+// mode; the app must still fetch, or the extension keeps the old rules.
+app.ping(mode: .alert, generation: 8, fetchWorks: true)
+guard app.fetches == 5, app.snapshotGeneration == 8 else { fail("a new generation with the same mode did not fetch the snapshot") }
+pass("a new policy generation with the same mode still fetches the snapshot")
+
+// A helper that sends no generation: only a mode change fetches.
+var old = App(shown: .alert, snapshotGeneration: nil)
+old.ping(mode: .alert, generation: nil, fetchWorks: true)
+guard old.fetches == 0 else { fail("a helper without generations was asked for a snapshot on every ping") }
+old.ping(mode: .silentDeny, generation: nil, fetchWorks: false)
+guard old.shown == .silentDeny, old.fetches == 1 else { fail("a mode change from a helper without generations was not shown or fetched") }
+pass("a helper without generations: only a mode change fetches, and it is shown at once")
+
 print("enforced mode harness: all checks passed")
 SWIFT
 
-swiftc "$ROOT"/Sources/Shared/*.swift "$HARNESS_DIR/main.swift" -lsqlite3 -o "$HARNESS_DIR/enforced_mode_harness"
+swiftc "$ROOT"/Sources/Shared/*.swift "$ROOT/Sources/GUI/ViewModels/EnforcedModeSync.swift" "$HARNESS_DIR/main.swift" -lsqlite3 -o "$HARNESS_DIR/enforced_mode_harness"
 "$HARNESS_DIR/enforced_mode_harness" "$TMP/enforced-mode.sqlite"
 
 printf 'enforced mode verification: PASS\n'

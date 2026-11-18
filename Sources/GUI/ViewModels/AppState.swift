@@ -5,9 +5,6 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
-    /// Honest first-launch default. The helper's persisted policy replaces this
-    /// as soon as it connects; until then the UI must not imply a fresh install
-    /// is blocking when it is allowing and learning.
     /// The mode the helper enforces: the active profile's. Until the helper
     /// first answers, it is the last mode the helper reported, not a guess, so
     /// Insights does not claim Silent Allow on launch while Alert is in force
@@ -458,6 +455,8 @@ final class AppState: ObservableObject {
     /// consequential control looked broken (#128). Both are written, in the
     /// order that leaves them consistent if the second call fails.
     func setMode(_ m: AppMode) {
+        // A helper from 1.1.0 or older writes only the global mode, so the
+        // app still writes the profile's itself until that helper is updated.
         if let profile = ProfileClient.shared.activeProfile, profile.mode != m {
             var updated = profile
             updated.mode = m
@@ -483,19 +482,23 @@ final class AppState: ObservableObject {
         return "Changing the mode here changes it for the \(name) profile, which is active."
     }
 
-    /// The status response is only a reachability hint. Refreshing the
-    /// persisted mode also fetches the helper's complete authoritative policy.
     /// Takes the mode from the helper's status, which is the active profile's
     /// mode and so the one the helper enforces. It is shown at once and does
     /// not wait for the full rule snapshot: when that snapshot could not be
     /// fetched, the app kept showing its launch default while another mode was
-    /// enforced (#452). The snapshot is still requested so the extension gets
-    /// the new policy.
-    func adoptPersistedMode(_ m: AppMode) {
-        guard mode != m else { return }
-        mode = m
-        AppPreferences.set(m.rawValue, forKey: AppPreferences.Key.mode, notify: false)
-        syncSharedRules()
+    /// enforced (#452). The snapshot is fetched again on every ping until the
+    /// app holds the one for the status's generation, because that snapshot is
+    /// what the extension enforces.
+    func adoptHelperStatus(mode statusMode: AppMode, generation: UInt64?) {
+        let sync = EnforcedModeSync.decide(statusMode: statusMode,
+                                           statusGeneration: generation,
+                                           shownMode: mode,
+                                           snapshotGeneration: authoritativeSnapshotGeneration)
+        if let shown = sync.showMode {
+            mode = shown
+            AppPreferences.set(shown.rawValue, forKey: AppPreferences.Key.mode, notify: false)
+        }
+        if sync.fetchSnapshot { syncSharedRules() }
     }
 
     func updateConnections(_ conns: [Connection]) {
