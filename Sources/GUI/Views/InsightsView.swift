@@ -30,6 +30,9 @@ struct InsightsView: View {
             HelperBanner(systemExtension: systemExtension)
             notices
             content
+                // An app picked under one address must not stay picked under
+                // the next one, in the No Name pane or the Apps-tab sheet.
+                .onChange(of: model.reachingKey) { _ in selectedReachingAppID = nil }
         }
         .onAppear { model.attach(state) }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
@@ -244,7 +247,6 @@ struct InsightsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onChange(of: model.reachingKey) { _ in selectedReachingAppID = nil }
         .sheet(item: $model.sharedDestination) { destination in
             sharedDestinationSheet(destination)
         }
@@ -487,7 +489,6 @@ struct InsightsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onChange(of: model.reachingKey) { _ in selectedReachingAppID = nil }
     }
 
     private var unresolvedSelection: Binding<String?> {
@@ -1000,7 +1001,7 @@ final class InsightsViewModel: ObservableObject {
 
     func selectUnresolved(_ entry: InsightsUnresolvedDestination) {
         selectedUnresolved = entry
-        loadReachingApps(key: entry.remoteIP, offset: 0)
+        loadReachingApps(key: entry.remoteIP, excludesLookups: true, offset: 0)
     }
 
     /// The Apps tab's "also contacted by N other apps" note, opened up.
@@ -1014,17 +1015,20 @@ final class InsightsViewModel: ObservableObject {
                                                  connections: destination.connectionCount)
             return
         }
-        loadReachingApps(key: destination.destinationKey, offset: 0)
+        loadReachingApps(key: destination.destinationKey, excludesLookups: false, offset: 0)
     }
 
     func loadMoreReachingApps() {
         guard let key = reachingKey else { return }
-        loadReachingApps(key: key, offset: reachingApps.count)
+        loadReachingApps(key: key, excludesLookups: reachingExcludesLookups, offset: reachingApps.count)
     }
 
-    private func loadReachingApps(key: String, offset: Int) {
+    private var reachingExcludesLookups = false
+
+    private func loadReachingApps(key: String, excludesLookups: Bool, offset: Int) {
         if offset == 0 {
             reachingKey = key
+            reachingExcludesLookups = excludesLookups
             reachingApps = []
             hasMoreReachingApps = false
             reachingError = nil
@@ -1034,7 +1038,8 @@ final class InsightsViewModel: ObservableObject {
             return
         }
         guard let helper = state?.helper,
-              let request = query(.apps, offset: offset, destinationKey: key) else { return }
+              let request = query(.apps, offset: offset, destinationKey: key,
+                                  excludesLookups: excludesLookups) else { return }
         isLoading = true
         helper.insightsReport(request) { [weak self] report, error in
             guard let self else { return }
@@ -1071,12 +1076,13 @@ final class InsightsViewModel: ObservableObject {
     }
 
     private func query(_ kind: InsightsQueryKind, offset: Int, appIdentity: String? = nil,
-                       destinationKey: String? = nil) -> InsightsQuery? {
+                       destinationKey: String? = nil, excludesLookups: Bool? = nil) -> InsightsQuery? {
         guard offset <= Self.pageSize * Self.maximumPages else { return nil }
         let now = Date()
         return InsightsQuery(kind: kind,
                              appIdentity: appIdentity,
                              destinationKey: destinationKey,
+                             excludesLookups: excludesLookups,
                              since: now.addingTimeInterval(-range.seconds),
                              until: now,
                              limit: Self.pageSize,

@@ -500,10 +500,18 @@ struct InsightsHarness {
         ])
         let resolverRow = try! store.report(for: InsightsQuery(kind: .unresolved, since: Date().addingTimeInterval(-day), limit: 50))
             .unresolved.first { $0.remoteIP == sharedResolverIP }
-        let resolverApps = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: sharedResolverIP,
+        let resolverApps = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: sharedResolverIP, excludesLookups: true,
                                                                since: Date().addingTimeInterval(-day), limit: 50)).apps
-        equal(resolverApps.map(\.appIdentity), ["com.beeper.app"], "a lookup to a resolver is not listed as reaching it")
+        equal(resolverApps.map(\.appIdentity), ["com.beeper.app"], "from No Name, a lookup to a resolver is not listed as reaching it")
         equal(resolverApps.count, resolverRow?.appCount ?? -1, "the narrowed list agrees with the No Name row's app count")
+        let withLookups = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: sharedResolverIP,
+                                                              since: Date().addingTimeInterval(-day), limit: 50)).apps
+        equal(Set(withLookups.map(\.appIdentity)), ["com.beeper.app", "com.example.lookupprobe"],
+              "from the Apps tab, an app that only looked a name up there is listed, as its destinations count it")
+        let probeDestinations = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.example.lookupprobe",
+                                                                    since: Date().addingTimeInterval(-day), limit: 50)).destinations
+        equal((probeDestinations.first { $0.destinationKey == sharedResolverIP }?.otherAppCount ?? -2) + 1, withLookups.count,
+              "the Apps tab's 'also contacted by' count matches the list its Show Apps opens")
 
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {

@@ -578,6 +578,11 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
     /// the apps that reached this one destination, so a shared address can be
     /// traced back to every app behind it (#435).
     public let destinationKey: String?
+    /// With `destinationKey`: leave lookups (port 53) out, the way No Name
+    /// counts an address. The Apps tab counts a lookup as a contact with the
+    /// resolver (#167), so its "Show Apps" list keeps them. Optional so a
+    /// query without it still decodes.
+    public let excludesLookups: Bool?
     public let since: Date
     public let until: Date
     public let limit: Int
@@ -586,6 +591,7 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
     public init(kind: InsightsQueryKind,
                 appIdentity: String? = nil,
                 destinationKey: String? = nil,
+                excludesLookups: Bool? = nil,
                 since: Date,
                 until: Date = Date(),
                 limit: Int = 50,
@@ -594,6 +600,7 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
         self.kind = kind
         self.appIdentity = appIdentity
         self.destinationKey = destinationKey
+        self.excludesLookups = excludesLookups
         self.since = since
         self.until = until
         self.limit = limit
