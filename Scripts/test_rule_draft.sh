@@ -62,6 +62,12 @@ equal(anyApp.remoteIP, "198.51.100.4", "the address is filled")
 // A tool shipped inside an app is not the app: it stays its own executable.
 equal(RuleDraft.appFilePath(forExecutable: "/Applications/Xcode.app/Contents/Developer/usr/bin/git"),
       "/Applications/Xcode.app/Contents/Developer/usr/bin/git", "a tool inside a bundle is not widened to the app")
+// A real app shipped inside another stays itself, like choosing it on the Rules page.
+equal(RuleDraft.appFilePath(forExecutable: "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator"),
+      "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app", "a nested app is not widened to its host")
+// Chrome keeps its helpers deep under Frameworks: they still go to the browser.
+equal(RuleDraft.appFilePath(forExecutable: "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/131.0/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper"),
+      "/Applications/Google Chrome.app", "a framework helper resolves to the browser")
 // Insights may record the bundle folder itself (demo data, rollups): kept as it is.
 equal(RuleDraft.appFilePath(forExecutable: "/Applications/Zed.app"), "/Applications/Zed.app", "a bundle folder stays the bundle")
 // A path with no app bundle in it is kept as it is.

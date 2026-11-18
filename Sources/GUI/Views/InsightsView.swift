@@ -1091,7 +1091,13 @@ final class InsightsViewModel: ObservableObject {
             }
             self.errorMessage = nil
             let who = rule.processName ?? rule.processBundleId ?? "every app"
-            self.ruleAddedMessage = "Added a rule to \(rule.action == .deny ? "block" : rule.action == .allow ? "allow" : "ask before connecting to") \(rule.displayDestination) for \(who)."
+            let verb: String
+            switch rule.action {
+            case .allow: verb = "allow"
+            case .deny: verb = "block"
+            case .ask: verb = "ask before connecting to"
+            }
+            self.ruleAddedMessage = "Added a rule to \(verb) \(rule.displayDestination) for \(who)."
             state.refreshRules()
         }
     }

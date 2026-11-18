@@ -45,19 +45,27 @@ struct RuleDraft: Equatable {
     /// apps do their networking. A rule started from a recorded process does
     /// the same, so both ways of making a rule for an app make the same rule.
     ///
-    /// Only an app's own executable (`<name>.app/Contents/MacOS/<exe>`, the
-    /// app itself or a helper app inside it) widens to the app. A tool that
-    /// merely ships inside a bundle, such as Xcode's `git`, stays its own
-    /// executable, so a rule for it never covers the whole app.
+    /// Only an app's own executable (`<name>.app/Contents/MacOS/<exe>`)
+    /// widens to an app. A tool that merely ships inside a bundle, such as
+    /// Xcode's `git`, stays its own executable. A helper app (anything under
+    /// an app's Frameworks or Helpers folder, where Chrome and Electron keep
+    /// theirs) widens to the app it helps; a real app shipped inside another,
+    /// such as Simulator inside Xcode, stays itself, as it would when chosen
+    /// on the Rules page.
     static func appFilePath(forExecutable path: String) -> String {
         let components = (path as NSString).pathComponents
         let count = components.count
         guard count >= 4,
               components[count - 2] == "MacOS",
               components[count - 3] == "Contents",
-              isAppBundle(components[count - 4]),
-              let index = components.firstIndex(where: isAppBundle) else {
+              isAppBundle(components[count - 4]) else {
             return path
+        }
+        var index = count - 4
+        while let outer = components[..<index].lastIndex(where: isAppBundle) {
+            let between = components[(outer + 1)..<index]
+            guard between.contains("Frameworks") || between.contains("Helpers") else { break }
+            index = outer
         }
         return NSString.path(withComponents: Array(components[...index]))
     }
