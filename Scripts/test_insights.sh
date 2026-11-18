@@ -425,6 +425,39 @@ struct InsightsHarness {
                                             Rule(remoteHost: "api.example.com", action: .deny)], now: coverageNow),
               "a full rule next to a port-only rule still covers")
 
+        // MARK: coverage by a wildcard or suffix hostname rule (#332)
+        check(domainProposal.isCovered(by: [Rule(remoteHost: "*.example.com", action: .deny)]),
+              "a wildcard hostname rule covers a domain proposal under it")
+        check(domainProposal.isCovered(by: [Rule(remoteHost: ".example.com", action: .deny)]),
+              "a suffix hostname rule covers a domain proposal under it")
+        check(domainProposal.isCovered(by: [Rule(processBundleId: "com.beeper.app", remoteHost: "*.EXAMPLE.com", action: .deny)]),
+              "a wildcard rule for this app covers the proposal in any case")
+        let apexProposal = InsightsProposedRule(appIdentity: "com.beeper.app", appDisplayName: "Beeper",
+                                                processBundleId: "com.beeper.app", processPath: nil,
+                                                domain: "Example.com", remoteIP: nil, connectionCount: 1,
+                                                otherAppCount: 0, lastSeen: nil)
+        check(apexProposal.isCovered(by: [Rule(remoteHost: "*.example.com", action: .deny)]),
+              "a wildcard rule covers the bare domain too, as the matcher does")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "*.other.com", action: .deny)]),
+              "a wildcard rule for another domain does not cover the proposal")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "*.eu.api.example.com", action: .deny)]),
+              "a wildcard rule for a deeper name does not cover the name above it")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "example.com", action: .deny)]),
+              "a plain parent name does not cover a subdomain, as in the matcher")
+        check(!domainProposal.isCovered(by: [Rule(remoteHost: "*.example.com", action: .deny, enabled: false)]),
+              "a disabled wildcard rule covers nothing")
+        check(!domainProposal.isCovered(by: [Rule(processBundleId: "com.other.app", remoteHost: "*.example.com", action: .deny)]),
+              "a wildcard rule for another app does not cover this app's proposal")
+        // The answer must agree with the matcher for every one of these.
+        let probe = Connection(pid: 501, processName: "Beeper", processPath: "/Applications/Beeper.app",
+                               processBundleId: "com.beeper.app", remoteHost: "api.example.com",
+                               remoteIP: "203.0.113.5", remotePort: 443, direction: .outgoing)
+        for pattern in ["*.example.com", ".example.com", "api.example.com", "example.com", "*.api.example.com", "*.eu.api.example.com", "*.other.com"] {
+            let rule = Rule(remoteHost: pattern, action: .deny)
+            equal(domainProposal.isCovered(by: [rule]), RuleMatcher().matches(rule: rule, connection: probe),
+                  "coverage agrees with the matcher for \(pattern)")
+        }
+
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {
             FileHandle.standardError.write(Data("insights harness: \(failures) failure(s)\n".utf8))
