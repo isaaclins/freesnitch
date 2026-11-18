@@ -124,6 +124,15 @@ check(asked == ["/Applications/PureSnitch.app", "/Library/LaunchDaemons/io.isaac
 check(LegacyPureSnitch.detect { $0.hasSuffix(".plist") } == .init(app: false, daemon: true),
       "a helper left behind without the app is still found")
 
+// #399: the question only promises a password prompt when the helper is part
+// of the removal, and only mentions the Trash when the app is there.
+let both = LegacyPureSnitch.removalText(.init(app: true, daemon: true))
+let appOnly = LegacyPureSnitch.removalText(.init(app: true, daemon: false))
+let helperOnly = LegacyPureSnitch.removalText(.init(app: false, daemon: true))
+check(both.contains("password") && both.contains("Trash"), "app and helper: the question mentions the password and the Trash")
+check(!appOnly.contains("password") && appOnly.contains("Trash"), "app only: no password is promised")
+check(helperOnly.contains("password") && !helperOnly.contains("Trash"), "helper only: the password is mentioned, the Trash isn't")
+
 // Choosing Remove: FreeSnitch's own filter may only start once the removal
 // is done, and also when it failed, so the filter never stays off for good.
 @MainActor func runRemoval(helper: LegacyPureSnitch.Outcome, trash: LegacyPureSnitch.Outcome?, app: Bool) -> [String] {

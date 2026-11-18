@@ -128,7 +128,8 @@ archives.
 The old and new content filters must not run together. FreeSnitch checks for
 `/Applications/PureSnitch.app` and the old helper's LaunchDaemon every time it
 opens and offers to remove both (`Sources/GUI/App/LegacyPureSnitch.swift`):
-it stops the helper behind one password prompt, moves the app to the Trash so
+it stops the helper behind one password prompt (only when the helper is still
+there), moves the app to the Trash so
 macOS removes its system extension, and keeps PureSnitch's user data. From a
 source checkout the same can be done by hand:
 

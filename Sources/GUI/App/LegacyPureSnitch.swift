@@ -77,6 +77,22 @@ enum LegacyPureSnitch {
         }
     }
 
+    /// What the question says, built from what is actually there: the
+    /// password prompt only comes when the old helper has to be stopped, and
+    /// the Trash only when the app is still in Applications (#399).
+    static func removalText(_ found: Found) -> String {
+        let action: String
+        switch (found.daemon, found.app) {
+        case (true, true):
+            action = "FreeSnitch can stop its helper and move it to the Trash; macOS asks for your password once."
+        case (true, false):
+            action = "Its helper is still installed. FreeSnitch can stop and remove it; macOS asks for your password once."
+        default:
+            action = "FreeSnitch can move it to the Trash."
+        }
+        return "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. \(action) Your PureSnitch data is kept. A restart finishes removing its network extension."
+    }
+
     /// Asks at launch when an old install is present. Shown on every launch
     /// until it is gone, because both filters running together is a real
     /// conflict, but "Not Now" always lets FreeSnitch carry on.
@@ -98,7 +114,7 @@ enum LegacyPureSnitch {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Remove the old PureSnitch?"
-        alert.informativeText = "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. FreeSnitch can stop its helper and move it to the Trash; macOS asks for your password once. Your PureSnitch data is kept. A restart finishes removing its network extension."
+        alert.informativeText = removalText(found)
         alert.addButton(withTitle: "Remove PureSnitch")
         alert.addButton(withTitle: "Not Now")
         guard alert.runModal() == .alertFirstButtonReturn, !demoPreview else { return continueStartup() }
