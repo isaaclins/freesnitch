@@ -554,6 +554,11 @@ printf '%s\n' "$abandoned_body" | grep -Fq 'filterPreferences.run {' \
   && printf '%s\n' "$abandoned_body" | grep -Fq 'guard self.status != .needsApproval && self.status != .activating else { return }' \
   && printf '%s\n' "$abandoned_body" | grep -A3 -F 'self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))' | grep -Fq 'self.showNotFiltering()' \
   || fail "a turn-on from System Settings given up for lack of rules does not check whether the filter is still on there (#382)"
+# Still on there after that, the failed turn-on must stay one that turning it
+# on there again can retry (#383), so the check leaves the flag alone.
+if printf '%s\n' "$abandoned_body" | grep -Fq 'turnOnFromSettings = false'; then
+  fail "a failed turn-on from System Settings can no longer be tried again there (#383)"
+fi
 grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' \
   || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"
 printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \

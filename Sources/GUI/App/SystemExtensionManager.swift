@@ -918,7 +918,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// app says not filtering instead of a failed turn-on (#382). Read in its
     /// turn on the preferences line, so it sees every earlier save.
     private func reportAbandonedSettingsTurnOn(_ message: String) {
-        turnOnFromSettings = false
+        // turnOnFromSettings stays set: still on there, the failed turn-on
+        // can be tried again by turning it on there again (#383).
         filterPreferences.run { [weak self] done in
             NEFilterManager.shared().loadFromPreferences { error in
                 DispatchQueue.main.async {

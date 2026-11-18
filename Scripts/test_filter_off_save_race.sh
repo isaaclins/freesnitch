@@ -465,7 +465,10 @@ mutate_and_expect_failure abandoned-settings-hides-approval "$SEM" \
 mutate_and_expect_failure abandoned-settings-overrides-newer-turn-on "$SEM" \
   $'                    // A newer turn-on reports the state itself.\n                    guard !self.persistenceCycle.enableRequested else { return }\n' \
   $'                    // A newer turn-on reports the state itself.\n'
+mutate_and_expect_failure abandoned-settings-blocks-retry "$SEM" \
+  $'    private func reportAbandonedSettingsTurnOn(_ message: String) {\n' \
+  $'    private func reportAbandonedSettingsTurnOn(_ message: String) {\n        turnOnFromSettings = false\n'
 mutate_and_expect_failure abandoned-settings-read-unserialized "$SEM" \
-  $'        turnOnFromSettings = false\n        filterPreferences.run { [weak self] done in' \
-  $'        turnOnFromSettings = false\n        do { let done = {}'
+  $'again by turning it on there again (#383).\n        filterPreferences.run { [weak self] done in' \
+  $'again by turning it on there again (#383).\n        do { let done = {}'
 printf 'filter off vs boot-policy save verification: PASS\n'
