@@ -84,11 +84,11 @@ enum LegacyPureSnitch {
         let action: String
         switch (found.daemon, found.app) {
         case (true, true):
-            action = "FreeSnitch can stop its helper and move it to the Trash; macOS asks for your password once."
+            action = "FreeSnitch can stop PureSnitch's helper and move PureSnitch to the Trash; macOS asks for your password once."
         case (true, false):
-            action = "Its helper is still installed. FreeSnitch can stop and remove it; macOS asks for your password once."
+            action = "PureSnitch's helper is still installed. FreeSnitch can stop and remove that helper; macOS asks for your password once."
         default:
-            action = "FreeSnitch can move it to the Trash."
+            action = "FreeSnitch can move PureSnitch to the Trash."
         }
         return "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. \(action) Your PureSnitch data is kept. A restart finishes removing its network extension."
     }
