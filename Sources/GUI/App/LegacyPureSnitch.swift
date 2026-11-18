@@ -163,9 +163,21 @@ enum LegacyPureSnitch {
         if demoPreview {
             guard demoWindow == "puresnitch" || demoWindow == "puresnitch-extension" else { return continueStartup() }
         }
-        let found = demoPreview
-            ? (demoWindow == "puresnitch-extension" ? Found(app: false, daemon: false, extensionActive: true) : Found(app: true, daemon: true))
-            : detect()
+        if demoPreview {
+            ask(demoWindow == "puresnitch-extension" ? Found(app: false, daemon: false, extensionActive: true) : Found(app: true, daemon: true),
+                demoPreview: true, then: continueStartup)
+            return
+        }
+        // Reading the extension list runs a system tool; keep it off the main
+        // thread so the menu bar never waits on it.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = detect()
+            DispatchQueue.main.async { ask(found, demoPreview: false, then: continueStartup) }
+        }
+    }
+
+    @MainActor
+    private static func ask(_ found: Found, demoPreview: Bool, then continueStartup: @escaping @MainActor () -> Void) {
         guard found.any else { return continueStartup() }
 
         if !found.app && !found.daemon {
