@@ -244,6 +244,7 @@ struct InsightsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .onChange(of: model.reachingKey) { _ in selectedReachingAppID = nil }
         .sheet(item: $model.sharedDestination) { destination in
             sharedDestinationSheet(destination)
         }
@@ -254,7 +255,7 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 0) {
             sectionTitle("Apps that reached \(destination.displayName)",
                          subtitle: "\(Self.plural(destination.otherAppCount + 1, "app")) in this range",
-                         note: "Apps reaching the same place is co-occurrence, not a shared cause.")
+                         note: "Apps that talk to the same server aren't necessarily related.")
             reachingAppsList(proposingFor: nil)
             Divider()
             HStack {
@@ -486,6 +487,7 @@ struct InsightsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .onChange(of: model.reachingKey) { _ in selectedReachingAppID = nil }
     }
 
     private var unresolvedSelection: Binding<String?> {
@@ -513,7 +515,9 @@ struct InsightsView: View {
     /// app, the same proposal the context menu used to offer by name only.
     @ViewBuilder
     private func reachingAppsList(proposingFor entry: InsightsUnresolvedDestination?) -> some View {
-        if model.reachingApps.isEmpty && !model.isLoading {
+        if let error = model.reachingError {
+            emptyState(error)
+        } else if model.reachingApps.isEmpty && !model.isLoading {
             emptyState("No app recorded for this destination in this range.")
         } else {
             List(selection: $selectedReachingAppID) {
@@ -885,6 +889,9 @@ final class InsightsViewModel: ObservableObject {
     @Published var reachingApps: [InsightsAppSummary] = []
     @Published private(set) var reachingKey: String?
     @Published var hasMoreReachingApps = false
+    /// Why the list above could not be shown, said where the list would be:
+    /// the main banner sits under the Apps tab's sheet.
+    @Published var reachingError: String?
     /// The Apps-tab destination whose apps the sheet is showing.
     @Published var sharedDestination: InsightsDestinationSummary?
     @Published var recordingEnabled = true
@@ -1020,6 +1027,7 @@ final class InsightsViewModel: ObservableObject {
             reachingKey = key
             reachingApps = []
             hasMoreReachingApps = false
+            reachingError = nil
         }
         if InsightsDemoData.isEnabled {
             reachingApps = InsightsDemoData.apps(reaching: key)
@@ -1034,12 +1042,12 @@ final class InsightsViewModel: ObservableObject {
             // the loading state of the one they are looking at now.
             guard self.reachingKey == key else { return }
             self.isLoading = false
-            guard let report else { self.errorMessage = error; return }
+            guard let report else { self.reachingError = error ?? "The helper didn't answer."; return }
             // A helper from before the destination filter ignores it, sends
             // every app and never echoes the key; listing those under this
             // address would be wrong.
             guard report.destinationKey == key else {
-                self.errorMessage = "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address."
+                self.reachingError = "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address."
                 return
             }
             self.source = report.source

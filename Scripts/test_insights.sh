@@ -487,6 +487,24 @@ struct InsightsHarness {
                   "coverage agrees with the matcher for \(pattern)")
         }
 
+        // MARK: lookups to a resolver stay out of the narrowed list (#435)
+        // Recorded last so the counts above stay as they were. A lookup to a
+        // resolver carries the name asked for; No Name and the rollups leave
+        // it out, so the narrowed list does too.
+        let sharedResolverIP = "198.51.100.53"
+        try! store.record([
+            observation(app: "Beeper", bundle: "com.beeper.app", path: "/Applications/Beeper.app",
+                        host: "", ip: sharedResolverIP, at: Date().addingTimeInterval(-30)),
+            observation(app: "Lookup Probe", bundle: "com.example.lookupprobe", path: "/Applications/Lookup Probe.app",
+                        host: "lookup.example.net", ip: sharedResolverIP, at: Date().addingTimeInterval(-20), port: 53)
+        ])
+        let resolverRow = try! store.report(for: InsightsQuery(kind: .unresolved, since: Date().addingTimeInterval(-day), limit: 50))
+            .unresolved.first { $0.remoteIP == sharedResolverIP }
+        let resolverApps = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: sharedResolverIP,
+                                                               since: Date().addingTimeInterval(-day), limit: 50)).apps
+        equal(resolverApps.map(\.appIdentity), ["com.beeper.app"], "a lookup to a resolver is not listed as reaching it")
+        equal(resolverApps.count, resolverRow?.appCount ?? -1, "the narrowed list agrees with the No Name row's app count")
+
         try? FileManager.default.removeItem(at: root)
         if failures > 0 {
             FileHandle.standardError.write(Data("insights harness: \(failures) failure(s)\n".utf8))
