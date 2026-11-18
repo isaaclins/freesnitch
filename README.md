@@ -59,20 +59,13 @@ FreeSnitch keeps updating itself, so a plain `brew upgrade` skips it; `brew upgr
 - Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
 - Later versions arrive through the built-in Sparkle updater.
 
-1. Open the disk image and drag FreeSnitch to **Applications**. It has to live there, see below.
+1. Open the disk image and drag FreeSnitch to **Applications**. If you open it from the disk image or Downloads instead, FreeSnitch offers to move itself there.
 2. Open FreeSnitch and allow its helper in **System Settings > General > Login Items & Extensions > Allow in the Background**.
 3. When macOS asks, allow the FreeSnitch system extension in System Settings. That is the part that filters per process.
 
-To check the download before you open it:
+The release page shows the SHA-256 of every file and carries a `SHA256SUMS.txt`, if you want to check a download with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder you saved it to. Opening it is already checked by macOS, because the app is signed and notarized.
 
-```console
-$ shasum -a 256 ~/Downloads/FreeSnitch-1.1.0.dmg
-f15857e6e328936b1623cfe309c1d7a357d1150f77fbe2e24a8ed7c1650382cd
-```
-
-Coming from PureSnitch? Run `Scripts/uninstall_puresnitch.sh` first. The old and new content filters must not run together.
-
-**FreeSnitch has to live in `/Applications`.** macOS refuses to install background helpers for an app launched from a mounted disk image or from Downloads, so drag it across before opening it. FreeSnitch will tell you if you forget.
+Coming from PureSnitch? FreeSnitch notices an old PureSnitch install when it opens and offers to remove it. The old and new content filters must not run together.
 
 On first launch the app registers a privileged helper and opens the Network Monitor with a banner asking you to approve it in **System Settings > General > Login Items & Extensions > Allow in the Background**. Until that switch is on, macOS blocks the helper and the app cannot see traffic. The window updates on its own once you approve it, with no relaunch needed.
 
@@ -106,7 +99,7 @@ xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Relea
 open build/Build/Products/Release/FreeSnitch.app
 ```
 
-This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release.
+This build needs no system extension approval, because it has no extension to approve. It still has to run from `/Applications` and needs the helper approved, like the release. Opened from the build folder, its banner has a Move to Applications button; if a FreeSnitch is already installed, it never overwrites that copy.
 
 ## Uninstall
 
