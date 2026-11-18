@@ -156,7 +156,7 @@ final class NetMonitor: @unchecked Sendable {
     private func readBundleID(forPath path: String) -> String? {
         var p = path
         if let r = p.range(of: ".app/", options: .backwards) { p = String(p[..<r.upperBound]) }
-        let plist = (p as NSString).appendingPathComponent("Contents/Info.plist")
+        let plist = AppBundleIdentity.infoPlistPath(forAppPath: p)
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)) else { return nil }
         guard let d = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
         return d["CFBundleIdentifier"] as? String

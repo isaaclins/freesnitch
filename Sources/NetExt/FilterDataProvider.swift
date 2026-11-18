@@ -1106,7 +1106,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
 
     /// The one filesystem read, reached only from `resolveQueue`.
     static func readBundleMetadata(atAppPath appPath: String) -> AppBundleMetadataRead {
-        let plist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
+        let plist = AppBundleIdentity.infoPlistPath(forAppPath: appPath)
         let data: Data
         do {
             data = try Data(contentsOf: URL(fileURLWithPath: plist))
@@ -1133,11 +1133,6 @@ final class BundleIdentifierCache: @unchecked Sendable {
         }
         guard bundleIdentifier != nil || version != nil else { return .read(nil) }
         return .read(AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: version))
-    }
-
-    static func readBundleIdentifier(atAppPath appPath: String) -> String? {
-        guard case .read(let metadata) = readBundleMetadata(atAppPath: appPath) else { return nil }
-        return metadata?.bundleIdentifier
     }
 
     /// Test seam: how many executable paths are currently held.
