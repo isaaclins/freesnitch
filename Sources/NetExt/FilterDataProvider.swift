@@ -347,8 +347,11 @@ final class FilterDataProvider: NEFilterDataProvider {
         let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode)
         // Only once the flow's own code was checked: before that, a missing
         // signed id means "not known yet", and the log would wrongly say the
-        // signature does not vouch for a signed app.
-        if let skipped = decision.skippedUnverified, signatureChecked { noteUnverifiedBundleId(conn, skipped: skipped) }
+        // signature does not vouch for a signed app. And only when the flow was
+        // not allowed anyway (by a path rule, say), since then nothing is asked.
+        if let skipped = decision.skippedUnverified, signatureChecked, decision.action != .allow {
+            noteUnverifiedBundleId(conn, skipped: skipped)
+        }
         switch decision.action {
         case .allow:
             return reportingLateDestination(.allow(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
@@ -445,7 +448,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         guard first else { return }
         PSLog.info(
             PSLog.netext,
-            "The \(skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(conn.pid)): its Info.plist claims that bundle id, but its code signature does not vouch for it (signed id: \(conn.processBundleId ?? "none")), so only deny rules for that id apply."
+            "The \(skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(conn.pid)): its Info.plist claims that bundle id, but its code signature does not vouch for it (signed id: \(conn.processBundleId ?? "none")), so only deny and ask rules for that id apply."
         )
     }
 
@@ -1043,9 +1046,12 @@ final class BundleIdentifierCache: @unchecked Sendable {
         /// when the code's signature is not one rules may trust.
         var signed: [CDHash: String?] = [:]
         var signedOrder: [CDHash] = []
-        /// When a signature check may run again after one that could not read
-        /// a signature at all, and how many such checks failed in a row.
-        var signatureRetryAfterNanos: UInt64?
+        /// The code whose signature could not be read at all, when it may be
+        /// checked again, and how many such checks failed in a row. Kept per
+        /// code hash: a relaunched app runs new code and is checked at once,
+        /// whatever its predecessor's backoff was.
+        var unreadableHash: CDHash?
+        var signatureRetryAfterNanos: UInt64 = 0
         var signatureFailures = 0
     }
 
@@ -1138,7 +1144,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
         let entry = entries[path]
         let known: String?? = hash.flatMap { entry?.signed[$0] }
         let plistDue = entry.map { now >= $0.plistRefreshAfterNanos } ?? true
-        let retryDue = entry?.signatureRetryAfterNanos.map { now >= $0 } ?? true
+        let retryDue = entry.map { hash != $0.unreadableHash || now >= $0.signatureRetryAfterNanos } ?? true
         let checkDue = hash != nil && known == nil && retryDue
         let shouldRefresh = !pending.contains(path) && pending.count < capacity && (plistDue || checkDue)
         if shouldRefresh { pending.insert(path) }
@@ -1206,7 +1212,8 @@ final class BundleIdentifierCache: @unchecked Sendable {
                 // answer: try again, backing off like a failed plist read,
                 // since an app updated under a running process can only be
                 // checked once it is relaunched.
-                entry.signatureFailures += 1
+                entry.signatureFailures = entry.unreadableHash == hash ? entry.signatureFailures + 1 : 1
+                entry.unreadableHash = hash
                 let shift = UInt64(min(entry.signatureFailures - 1, 20))
                 entry.signatureRetryAfterNanos = now &+ min(failureRetryNanos << shift, lifetimeNanos)
             case .noBundle, .resolved:
@@ -1216,8 +1223,10 @@ final class BundleIdentifierCache: @unchecked Sendable {
                         entry.signed.removeValue(forKey: entry.signedOrder.removeFirst())
                     }
                 }
-                entry.signatureRetryAfterNanos = nil
-                entry.signatureFailures = 0
+                if entry.unreadableHash == hash {
+                    entry.unreadableHash = nil
+                    entry.signatureFailures = 0
+                }
             }
         }
         insertLocked(path, entry: entry)

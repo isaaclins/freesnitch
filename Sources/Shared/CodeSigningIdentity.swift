@@ -74,9 +74,10 @@ public enum CodeSigningIdentity {
         return requirement
     }
 
-    /// Resources (images, nibs, localisations) are not hashed: that reads the
-    /// whole bundle from disk on every lookup. The executable, its code
-    /// directory and the Info.plist bound into the signature are still checked.
+    /// For a file on disk only: resources (images, nibs, localisations) are not
+    /// hashed, which would read the whole bundle on every lookup. The
+    /// executable, its code directory and the Info.plist bound into the
+    /// signature are still checked.
     private static let checkFlags = SecCSFlags(rawValue: kSecCSDoNotValidateResources)
 
     /// The bundle id rules may match the process by.
@@ -164,9 +165,11 @@ public enum CodeSigningIdentity {
 
     private static func lookup(code: SecCode) -> Lookup {
         guard let distribution = distributionRequirement else { return .untrusted }
-        let status = SecCodeCheckValidity(code, checkFlags, distribution)
+        // A running process takes no static-validation flags (kSecCSDoNotValidateResources
+        // is refused with errSecCSInvalidFlags); its pages are checked by the kernel.
+        let status = SecCodeCheckValidity(code, [], distribution)
         guard status == errSecSuccess else { return failure(status) }
-        let appStore = appStoreRequirement.map { SecCodeCheckValidity(code, checkFlags, $0) == errSecSuccess } ?? false
+        let appStore = appStoreRequirement.map { SecCodeCheckValidity(code, [], $0) == errSecSuccess } ?? false
         var staticCode: SecStaticCode?
         guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return .unavailable }
         return signed(staticCode, appStore: appStore)
@@ -185,14 +188,15 @@ public enum CodeSigningIdentity {
     /// Only an answer about the signature itself makes code untrusted: it is
     /// unsigned, its signature is broken, or the signer is not one rules may
     /// trust. Anything else (the process is gone, the app was updated on disk
-    /// while running, the file could not be read) is no answer, so the caller
-    /// checks again instead of turning every allow for that app into an alert.
+    /// while running, the file could not be read, `errSecCSSignatureNotVerifiable`
+    /// among them) is no answer, so the caller checks again instead of turning
+    /// every allow for that app into an alert.
     static func failure(_ status: OSStatus) -> Lookup {
         switch status {
         case errSecCSUnsigned, errSecCSReqFailed, errSecCSSignatureFailed, errSecCSSignatureInvalid,
              errSecCSSignatureUnsupported, errSecCSBadObjectFormat, errSecCSBadDictionaryFormat,
              errSecCSResourceDirectoryFailed, errSecCSInfoPlistFailed, errSecCSWeakResourceRules,
-             errSecCSSignatureNotVerifiable, errSecCSHostReject, errSecCSInvalidPlatform:
+             errSecCSHostReject, errSecCSInvalidPlatform:
             return .untrusted
         default:
             reportUnreadable(status)

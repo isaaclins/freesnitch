@@ -40,7 +40,7 @@ grep -q 'final class BundleIdentifierCache' "$TMP/cache.swift"
 mkdir -p "$TMP/src"
 cat > "$TMP/src/tool.c" <<'C'
 #include <unistd.h>
-int main(void) { sleep(30); return 0; }
+int main(void) { sleep(900); return 0; }
 C
 xcrun clang -o "$TMP/tool" "$TMP/src/tool.c"
 
@@ -92,6 +92,23 @@ if [[ -d /Applications/Safari.app ]]; then
   cp /usr/bin/curl "$CURL_IN_SAFARI/Contents/MacOS/curl"
 fi
 
+# Real signed apps that are already running, to check a running process.
+FINDER_PID="$(pgrep -x Finder | head -1 || true)"
+# Any running Developer ID app's main process: its path, pid and the
+# identifier codesign reports for it.
+DEVID_PATH="" DEVID_PID="0" DEVID_ID=""
+for app in /Applications/*.app; do
+  info="$(codesign -dvv "$app" 2>&1 || true)"
+  [[ "$info" == *"Authority=Developer ID Application"* ]] || continue
+  exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist" 2>/dev/null || true)"
+  [[ -n "$exe" ]] || continue
+  pid="$(pgrep -f "^$app/Contents/MacOS/$exe( |\$)" | head -1 || true)"
+  [[ -n "$pid" ]] || continue
+  DEVID_PATH="$app/Contents/MacOS/$exe" DEVID_PID="$pid"
+  DEVID_ID="$(printf '%s\n' "$info" | sed -n 's/^Identifier=//p')"
+  break
+done
+
 "$FAKES/adhoc/Safari.app/Contents/MacOS/Safari" &
 FAKE_PID=$!
 
@@ -132,6 +149,29 @@ expect(id(fakes + "/adhoc/Safari.app/Contents/MacOS/Safari", pid: fakePID) == ni
        "a running fake Safari, looked up by its pid, gets no bundle id")
 expect(id(swapped + "/Contents/MacOS/Calculator") == nil,
        "a copied Calculator whose executable was swapped gets no bundle id")
+
+// Running processes: the check the extension and the monitor really make,
+// by the process (no file fallback).
+func runningID(_ path: String, _ pid: Int32) -> CodeSigningIdentity.Resolution {
+    CodeSigningIdentity.resolve(executablePath: path, auditToken: nil, pid: pid, fileFallback: false)
+}
+let finderPID = Int32(args[7]) ?? 0, devIDPID = Int32(args[8]) ?? 0
+let devIDPath = args[9], devID = args[10]
+if finderPID > 0 {
+    expect(runningID("/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder", finderPID) == .resolved("com.apple.finder"),
+           "the running Finder, checked as a running process, gets com.apple.finder")
+} else {
+    print("code signing harness: skip: Finder is not running")
+}
+let devIDAnswer = devIDPID > 0 ? runningID(devIDPath, devIDPID) : .unavailable
+if devIDPID > 0, kill(devIDPID, 0) == 0 {
+    expect(devIDAnswer == .resolved(devID),
+           "a running Developer ID app (\((devIDPath as NSString).lastPathComponent)), checked as a running process, gets \(devID)")
+} else {
+    print("code signing harness: skip: no Developer ID app is running")
+}
+expect(runningID(fakes + "/adhoc/Safari.app/Contents/MacOS/Safari", fakePID) == .resolved(nil),
+       "the running fake Safari is checked and found untrusted, not unreadable")
 
 // Real code on this Mac.
 let safari = "/Applications/Safari.app/Contents/MacOS/Safari"
@@ -186,6 +226,8 @@ expect(CodeSigningIdentity.failure(errSecCSReqFailed) == .untrusted && CodeSigni
        "an unsigned binary, or a signer rules may not trust, is untrusted")
 expect(CodeSigningIdentity.failure(errSecCSStaticCodeChanged) == .unavailable,
        "an app updated on disk while it runs is checked again, not untrusted")
+expect(CodeSigningIdentity.failure(errSecCSSignatureNotVerifiable) == .unavailable,
+       "a signature the verifier could not read is checked again, not untrusted")
 expect(CodeSigningIdentity.failure(errSecCSStaticCodeNotFound) == .unavailable
        && CodeSigningIdentity.failure(errSecCSInternalError) == .unavailable,
        "a signature that could not be read (a sandbox refusal, a missing file) is checked again, not untrusted")
@@ -313,6 +355,24 @@ for _ in 0..<600 {
 }
 // Checks at 0, 1, 3, 7, 15, 31 s: 6 in 60 s.
 expect(stuck.calls == 6, "a signature that stays unreadable is checked with growing gaps (\(stuck.calls) checks for 600 flows)")
+// The app is relaunched: new code at the same path is checked at once, not
+// after its predecessor's backoff.
+let stuckHash = HashBox()
+stuckHash.hash = h1
+let relaunch = BundleIdentifierCache(entryLifetime: 300, read: { _ in .read(nil) }, identify: { _, _ in
+    stuckHash.checks.append(stuckHash.hash)
+    return stuckHash.hash == h1 ? .unavailable : .resolved("com.example.updated")
+}, codeHash: { _ in stuckHash.hash }, clock: { stuckClock.nanos })
+for _ in 0..<5 {
+    _ = relaunch.cachedMetadata(forExecutablePath: stuckPath)
+    relaunch.waitForPendingResolves()
+    stuckClock.nanos += 60_000_000_000
+}
+stuckHash.hash = h2
+_ = relaunch.cachedMetadata(forExecutablePath: stuckPath)
+relaunch.waitForPendingResolves()
+expect(relaunch.cachedBundleId(forExecutablePath: stuckPath) == "com.example.updated",
+       "a relaunched app's new code is checked at once, whatever the old code's backoff")
 
 // The cache keeps the plist's id apart, as the claimed one.
 let claiming = BundleIdentifierCache(read: plistOnly, identify: { _, _ in .resolved(nil) })
@@ -402,4 +462,5 @@ SHARED=()
 while IFS= read -r file; do SHARED+=("$file"); done < <(find "$ROOT/Sources/Shared" -name '*.swift' | sort)
 xcrun swiftc -swift-version 5 -O -o "$TMP/harness" "${SHARED[@]}" "$TMP/cache.swift" "$TMP/main.swift" -lsqlite3
 OWN_CDHASH="$(codesign -dvvv "$TMP/harness" 2>&1 | sed -n 's/^CDHash=//p' | head -1)"
-"$TMP/harness" "$FAKES" "$SWAPPED" "${DROPPED:-$TMP/none}" "$FAKE_PID" "${CURL_IN_SAFARI:-$TMP/none}" "$OWN_CDHASH"
+"$TMP/harness" "$FAKES" "$SWAPPED" "${DROPPED:-$TMP/none}" "$FAKE_PID" "${CURL_IN_SAFARI:-$TMP/none}" "$OWN_CDHASH" \
+  "${FINDER_PID:-0}" "$DEVID_PID" "$DEVID_PATH" "$DEVID_ID"
