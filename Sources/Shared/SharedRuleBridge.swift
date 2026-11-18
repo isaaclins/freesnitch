@@ -175,12 +175,7 @@ public enum SharedRuleBridge {
             encoder.outputFormatting = [.sortedKeys]
             // Usage counters change without changing what a rule matches, so
             // they are not part of the policy content.
-            let rules = snapshot.rules.map { rule -> Rule in
-                var policyOnly = rule
-                policyOnly.hitCount = 0
-                policyOnly.lastUsedAt = nil
-                return policyOnly
-            }
+            let rules = PolicyContent.rules(snapshot.rules)
             guard let data = try? encoder.encode(Content(mode: snapshot.mode, rules: rules)) else { return nil }
             return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
@@ -194,6 +189,39 @@ public enum SharedRuleBridge {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        }
+    }
+
+    /// What a policy is, as opposed to bookkeeping about it. Two snapshots with
+    /// the same mode and the same rules here enforce exactly the same thing.
+    ///
+    /// Usage counters (a rule's hit count and when it last matched) change on
+    /// every counted match without a new generation (#434), so they are not
+    /// policy. Every place that asks "is this the same policy?" uses this one
+    /// definition: the live snapshot gate, the extension's split-brain check
+    /// and the watermark digest. When they compared whole rules, a resend after
+    /// a counted hit looked like different rules under the same generation, the
+    /// extension refused it and filtering stopped (#438).
+    public enum PolicyContent {
+        public static func rule(_ rule: Rule) -> Rule {
+            var policyOnly = rule
+            policyOnly.hitCount = 0
+            policyOnly.lastUsedAt = nil
+            return policyOnly
+        }
+
+        public static func rules(_ rules: [Rule]) -> [Rule] {
+            rules.map(rule)
+        }
+
+        public static func same(mode lhsMode: AppMode, rules lhsRules: [Rule],
+                                as rhsMode: AppMode, _ rhsRules: [Rule]) -> Bool {
+            lhsMode == rhsMode && lhsRules.count == rhsRules.count
+                && zip(lhsRules, rhsRules).allSatisfy { rule($0) == rule($1) }
+        }
+
+        public static func same(_ lhs: Snapshot, _ rhs: Snapshot) -> Bool {
+            same(mode: lhs.mode, rules: lhs.rules, as: rhs.mode, rhs.rules)
         }
     }
 
@@ -309,7 +337,7 @@ public enum SharedRuleBridge {
                         return .rejectedOlder(currentGeneration: current.generation)
                     }
                     if received.generation == current.generation {
-                        guard current.mode == received.mode, current.rules == received.rules else {
+                        guard PolicyContent.same(current, received) else {
                             return .rejectedConflict(currentGeneration: current.generation)
                         }
                         self.current = received

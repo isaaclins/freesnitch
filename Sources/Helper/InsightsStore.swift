@@ -571,7 +571,8 @@ extension InsightsStore {
                                   unresolved: page.unresolved,
                                   proposals: page.proposals,
                                   findings: page.findings,
-                                  overview: page.overview)
+                                  overview: page.overview,
+                                  destinationKey: query.destinationKey)
         }
     }
 
@@ -580,6 +581,13 @@ extension InsightsStore {
     private func appsLocked(_ query: InsightsQuery,
                             source: InsightsDataSource) throws -> (rows: [InsightsAppSummary], hasMore: Bool) {
         var rows: [InsightsAppSummary] = []
+        // With a destination, the same list narrowed to the apps that reached
+        // it, so a shared address names every app behind it in any range
+        // (#435). Bound, never spliced into the SQL. From No Name, the same
+        // test as that row's own count: flows that carried a name (lookups
+        // to a resolver among them) are left out. From the Apps tab they
+        // stay, matching its own counts (#167).
+        let destination = query.destinationKey
         switch source {
         case .rawEvents:
             let sql = """
@@ -589,13 +597,16 @@ extension InsightsStore {
                        COUNT(*), COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(observed_at)
                 FROM flow_observations
                 WHERE observed_at >= ? AND observed_at <= ?
+                  \(destination == nil ? "" : "AND \(Self.destinationSQL) = ?")
+                  \(destination != nil && query.excludesLookups == true ? "AND (remote_host = '' OR remote_host = remote_ip)" : "")
                 GROUP BY app
                 ORDER BY COUNT(*) DESC, app ASC
                 LIMIT ? OFFSET ?;
                 """
             try queryLocked(sql, bind: { statement in
                 try self.bindRawRange(statement, query: query)
-                try self.bindPage(statement, query: query, firstIndex: 3)
+                if let destination { try self.bindText(statement, index: 3, value: destination) }
+                try self.bindPage(statement, query: query, firstIndex: destination == nil ? 3 : 4)
             }) { statement in
                 guard let identity = self.columnText(statement, index: 0), !identity.isEmpty else { return }
                 rows.append(InsightsAppSummary(
@@ -615,13 +626,15 @@ extension InsightsStore {
                        COALESCE(SUM(bytes_in),0), COALESCE(SUM(bytes_out),0), MAX(utc_day)
                 FROM daily_rollups
                 WHERE utc_day >= ? AND utc_day <= ?
+                  \(destination == nil ? "" : "AND destination_key = ?")
                 GROUP BY app_identity
                 ORDER BY SUM(connection_count) DESC, app_identity ASC
                 LIMIT ? OFFSET ?;
                 """
             try queryLocked(sql, bind: { statement in
                 try self.bindDayRange(statement, query: query)
-                try self.bindPage(statement, query: query, firstIndex: 3)
+                if let destination { try self.bindText(statement, index: 3, value: destination) }
+                try self.bindPage(statement, query: query, firstIndex: destination == nil ? 3 : 4)
             }) { statement in
                 guard let identity = self.columnText(statement, index: 0), !identity.isEmpty else { return }
                 rows.append(InsightsAppSummary(

@@ -14,9 +14,9 @@ struct InsightsView: View {
     /// Only exists so the destination list has a selection for its context
     /// menu to key off. Nothing else reads it.
     @State private var selectedDestinationID: InsightsDestinationSummary.ID?
-    /// The address rows in Unresolved, which used to be unselectable text
-    /// (#124).
-    @State private var selectedUnresolvedID: String?
+    /// The selected row in the apps-behind-a-destination list, for its footer
+    /// and context menu (#435).
+    @State private var selectedReachingAppID: InsightsAppSummary.ID?
     @State private var showingSourceNote = false
     /// The Rules page's own Add Rule sheet, started from a recorded
     /// destination (#446).
@@ -34,13 +34,19 @@ struct InsightsView: View {
             HelperBanner(systemExtension: systemExtension)
             notices
             content
+                // An app picked under one address must not stay picked under
+                // the next one, in the No Name pane or the Apps-tab sheet.
+                .onChange(of: model.reachingKey) { _ in selectedReachingAppID = nil }
         }
         .onAppear { model.attach(state) }
         .sheet(item: $ruleEditorRequest) { request in
             RuleEditorView(initialApp: request.app,
+                           existingRule: nil,
                            draft: request.draft,
                            profiles: profileClient.profiles,
-                           activeProfileName: profileClient.activeProfileName) { rule in model.add(rule) }
+                           activeProfileName: profileClient.activeProfileName,
+                           onSave: { rule in model.add(rule) },
+                           onEdit: { _ in })
         }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
             Button("Cancel", role: .cancel) {}
@@ -174,7 +180,7 @@ struct InsightsView: View {
         }
         switch state.mode {
         case .silentAllow:
-            return "FreeSnitch is in Silent Allow: every connection is permitted. Insights still records, and nothing on this screen is in force."
+            return "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply. Insights still records, and nothing on this screen is in force."
         case .alert, .silentDeny:
             return nil
         }
@@ -257,6 +263,27 @@ struct InsightsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .sheet(item: $model.sharedDestination) { destination in
+            sharedDestinationSheet(destination)
+        }
+    }
+
+    /// "Also contacted by 2 other apps" said how many and never which (#435).
+    private func sharedDestinationSheet(_ destination: InsightsDestinationSummary) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle("Apps that reached \(destination.displayName)",
+                         subtitle: "\(Self.plural(destination.otherAppCount + 1, "app")) in this range",
+                         note: "Apps that talk to the same server aren't necessarily related.")
+            reachingAppsList(proposingFor: nil)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { model.sharedDestination = nil }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 520, height: 380)
     }
 
     /// Selection lives in the view model, because picking an app is also what
@@ -346,6 +373,14 @@ struct InsightsView: View {
             .help(selectedDestinationID == nil
                   ? "Select a destination first."
                   : "Draft a rule for the selected destination. Nothing is enforced until you accept it.")
+            if let shared = selectedSharedDestination {
+                Button("Show Apps\u{2026}") {
+                    selectedReachingAppID = nil
+                    model.showApps(reaching: shared)
+                }
+                .controlSize(.small)
+                .help("See every app that reached \(shared.displayName) in this range.")
+            }
             Spacer(minLength: 8)
             if model.hasMoreDestinations {
                 Button("Load more destinations") { model.loadMoreDestinations() }
@@ -355,6 +390,14 @@ struct InsightsView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.bar)
+    }
+
+    /// The selected destination when other apps reached it too.
+    private var selectedSharedDestination: InsightsDestinationSummary? {
+        guard let id = selectedDestinationID,
+              let destination = model.destinations.first(where: { $0.id == id }),
+              destination.otherAppCount > 0 else { return nil }
+        return destination
     }
 
     /// One shape for "there is more where that came from", under the list
@@ -394,6 +437,12 @@ struct InsightsView: View {
             newRule(app: app, domain: destination.resolvedDomain, ip: destination.remoteIP)
         }
         Button("Suggest a Rule\u{2026}") { model.proposeRule(for: destination, app: app) }
+        if destination.otherAppCount > 0 {
+            Button("Show Apps\u{2026}") {
+                selectedReachingAppID = nil
+                model.showApps(reaching: destination)
+            }
+        }
         Divider()
         CopyMenuItem(title: "Copy Destination", value: destination.displayName)
         CopyMenuItem(title: "Copy IP Address", value: destination.remoteIP)
@@ -411,7 +460,7 @@ struct InsightsView: View {
                               processBundleId: app?.processBundleId,
                               domain: domain,
                               remoteIP: ip)
-        ruleEditorRequest = RuleEditorRequest(app: nil, draft: draft)
+        ruleEditorRequest = RuleEditorRequest(app: nil, rule: nil, draft: draft)
     }
 
     @ViewBuilder
@@ -426,49 +475,176 @@ struct InsightsView: View {
     // MARK: Unresolved addresses
 
     private var unresolvedSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("Addresses reached without a name lookup",
-                         subtitle: "\(model.unresolved.count) in this range",
-                         note: InsightsUnresolvedDestination.signalWording)
-            if model.unresolved.isEmpty && !model.isLoading {
-                emptyState("Every recorded address had a DNS answer in this range.")
-            } else {
-                // Selectable, copyable and actionable, like the Apps list. It
-                // used to be plain text: the one thing a reader could want to
-                // do with a suspicious address, turn it into a rule, was not
-                // offered anywhere on the tab (#124).
-                List(selection: $selectedUnresolvedID) {
-                    ForEach(model.unresolved) { entry in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 8) {
-                                Text(entry.remoteIP).font(.body.monospaced())
-                                Spacer()
-                                Text("\(PSFormat.compactCount(entry.connectionCount)) connections")
-                                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                                Text(PSFormat.bytes(entry.bytesIn + entry.bytesOut))
-                                    .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionTitle("Addresses reached without a name lookup",
+                             subtitle: "\(model.unresolved.count) in this range",
+                             note: InsightsUnresolvedDestination.signalWording)
+                if model.unresolved.isEmpty && !model.isLoading {
+                    emptyState("Every recorded address had a DNS answer in this range.")
+                } else {
+                    // Selectable, copyable and actionable, like the Apps list. It
+                    // used to be plain text: the one thing a reader could want to
+                    // do with a suspicious address, turn it into a rule, was not
+                    // offered anywhere on the tab (#124). Selecting a row shows
+                    // every app behind it on the right, because "Reached by 3
+                    // apps" named none of them past 14 days (#435).
+                    List(selection: unresolvedSelection) {
+                        ForEach(model.unresolved) { entry in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 8) {
+                                    Text(entry.remoteIP).font(.body.monospaced()).lineLimit(1)
+                                    Spacer()
+                                    Text("\(PSFormat.compactCount(entry.connectionCount)) connections")
+                                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                                }
+                                Text(Self.reachedBy(entry))
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            Text(Self.reachedBy(entry))
-                                .font(.caption).foregroundStyle(.secondary)
+                            .padding(.vertical, 2)
+                            .tag(entry.id)
                         }
-                        .padding(.vertical, 2)
-                        .tag(entry.id)
                     }
+                    .listStyle(.inset)
+                    .contextMenu(forSelectionType: String.self) { ids in
+                        unresolvedContextMenu(ids)
+                    }
+                    .onCopyCommand {
+                        guard let id = model.selectedUnresolved?.id else { return [] }
+                        return [NSItemProvider(object: id as NSString)]
+                    }
+                    listFooter(hasMore: model.hasMoreUnresolved,
+                               title: "Load more addresses",
+                               action: { model.loadMoreUnresolved() })
                 }
-                .listStyle(.inset)
-                .contextMenu(forSelectionType: String.self) { ids in
-                    unresolvedContextMenu(ids)
+            }
+            .frame(width: 320)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                if let entry = model.selectedUnresolved {
+                    sectionTitle(entry.remoteIP,
+                                 subtitle: Self.unresolvedSummary(entry))
+                    reachingAppsList(proposingFor: entry)
+                } else {
+                    emptyState("Select an address to see which apps reached it.")
                 }
-                .onCopyCommand {
-                    guard let id = selectedUnresolvedID else { return [] }
-                    return [NSItemProvider(object: id as NSString)]
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var unresolvedSelection: Binding<String?> {
+        Binding(get: { model.selectedUnresolved?.id },
+                set: { id in
+                    guard let id, let entry = model.unresolved.first(where: { $0.id == id }) else { return }
+                    selectedReachingAppID = nil
+                    model.selectUnresolved(entry)
+                })
+    }
+
+    private static func unresolvedSummary(_ entry: InsightsUnresolvedDestination) -> String {
+        var parts = ["Reached by \(plural(entry.appCount, "app"))",
+                     plural(entry.connectionCount, "connection"),
+                     PSFormat.bytes(entry.bytesIn + entry.bytesOut)]
+        if let lastSeen = entry.lastSeen {
+            parts.append("last seen \(lastSeen.formatted(.relative(presentation: .named)))")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Every app behind one destination, each with its own count and the
+    /// executable it ran from. Shared by the No Name pane and the Apps tab's
+    /// sheet. With `entry`, the footer drafts an address rule for the selected
+    /// app, the same proposal the context menu used to offer by name only.
+    @ViewBuilder
+    private func reachingAppsList(proposingFor entry: InsightsUnresolvedDestination?) -> some View {
+        if let error = model.reachingError {
+            emptyState(error)
+        } else if model.reachingApps.isEmpty && !model.isLoading {
+            emptyState("No app recorded for this destination in this range.")
+        } else {
+            List(selection: $selectedReachingAppID) {
+                ForEach(model.reachingApps) { app in
+                    reachingAppRow(app).tag(app.id)
                 }
-                listFooter(hasMore: model.hasMoreUnresolved,
-                           title: "Load more addresses",
-                           action: { model.loadMoreUnresolved() })
+            }
+            .listStyle(.inset)
+            .contextMenu(forSelectionType: InsightsAppSummary.ID.self) { ids in
+                if let id = ids.first, let app = model.reachingApps.first(where: { $0.id == id }) {
+                    if let entry {
+                        Button("New Rule for \(app.displayName)\u{2026}") {
+                            newRule(app: app, domain: nil, ip: entry.remoteIP)
+                        }
+                        Button("Suggest a Rule for \(app.displayName)\u{2026}") {
+                            model.proposeRule(forUnresolved: entry, app: app)
+                        }
+                        Divider()
+                    }
+                    appContextMenu(app)
+                }
+            }
+            HStack(spacing: 8) {
+                if let entry {
+                    Button("New Rule\u{2026}") {
+                        guard let id = selectedReachingAppID,
+                              let app = model.reachingApps.first(where: { $0.id == id }) else { return }
+                        newRule(app: app, domain: nil, ip: entry.remoteIP)
+                    }
+                    .controlSize(.small)
+                    .disabled(selectedReachingAppID == nil)
+                    .help(selectedReachingAppID == nil
+                          ? "Select an app first."
+                          : "Make a rule for the selected app and this address, already filled in.")
+                    Button("Suggest a Rule\u{2026}") {
+                        guard let id = selectedReachingAppID,
+                              let app = model.reachingApps.first(where: { $0.id == id }) else { return }
+                        model.proposeRule(forUnresolved: entry, app: app)
+                    }
+                    .controlSize(.small)
+                    .disabled(selectedReachingAppID == nil)
+                    .help(selectedReachingAppID == nil
+                          ? "Select an app first."
+                          : "Draft a rule for the selected app and this address. Nothing is enforced until you accept it.")
+                }
+                Spacer(minLength: 8)
+                if model.hasMoreReachingApps && !model.atPageLimit {
+                    Button("Load more apps") { model.loadMoreReachingApps() }
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
+        }
+    }
+
+    private func reachingAppRow(_ app: InsightsAppSummary) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            if let icon = AppIcon.resolve(bundleId: app.processBundleId, path: app.processPath, name: app.displayName) {
+                Image(nsImage: icon).resizable().frame(width: 20, height: 20)
+            } else {
+                Image(systemName: "app.dashed").foregroundStyle(.secondary).frame(width: 20, height: 20)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(app.displayName).font(.body).lineLimit(1)
+                    Spacer()
+                    Text(app.connectionCount == 1 ? "1 connection"
+                         : "\(PSFormat.compactCount(app.connectionCount)) connections")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                if let detail = app.processPath ?? app.processBundleId {
+                    Text(detail)
+                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .help(detail)
+                        .textSelection(.enabled)
+                }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.vertical, 3)
     }
 
     /// One way of naming who reached an address. Three rows said "reached by
@@ -485,25 +661,16 @@ struct InsightsView: View {
 
     @ViewBuilder
     private func unresolvedContextMenu(_ ids: Set<String>) -> some View {
+        // Rules for one app live in the pane on the right, which lists every
+        // app behind the address. Matching the five sampled names against the
+        // loaded app list offered nothing past 14 days (#435).
         if let id = ids.first, let entry = model.unresolved.first(where: { $0.id == id }) {
-            let apps = model.proposableApps(for: entry)
-            // One entry per app that reached it, and one for every app, since
-            // an address nobody looked up is often one to block outright.
-            ForEach(apps, id: \.appIdentity) { app in
-                Button("New Rule for \(app.displayName)\u{2026}") {
-                    newRule(app: app, domain: nil, ip: entry.remoteIP)
-                }
-            }
-            Button(apps.isEmpty ? "New Rule\u{2026}" : "New Rule for Any App\u{2026}") {
+            // A rule for every app from the address itself; one for a single
+            // app is made from the list on the right (#446).
+            Button("New Rule for Any App\u{2026}") {
                 newRule(app: nil, domain: nil, ip: entry.remoteIP)
             }
             Divider()
-            ForEach(apps, id: \.appIdentity) { app in
-                Button("Suggest a Rule for \(app.displayName)…") {
-                    model.proposeRule(forUnresolved: entry, app: app)
-                }
-            }
-            if !apps.isEmpty { Divider() }
             CopyMenuItem(title: "Copy Address", value: entry.remoteIP)
         }
     }
@@ -777,6 +944,20 @@ final class InsightsViewModel: ObservableObject {
     @Published var findings: [InsightsBehaviourFinding] = []
     @Published var overview: InsightsOverview?
     @Published var selectedApp: InsightsAppSummary?
+    /// The No Name row whose apps fill the right-hand pane (#435).
+    @Published var selectedUnresolved: InsightsUnresolvedDestination?
+    /// The apps behind one destination, each with its own count: the No Name
+    /// pane and the Apps tab's "Show Apps" sheet both read it. `reachingKey`
+    /// says which destination they belong to, so a late reply for another
+    /// one is dropped instead of shown under the wrong address (#435).
+    @Published var reachingApps: [InsightsAppSummary] = []
+    @Published private(set) var reachingKey: String?
+    @Published var hasMoreReachingApps = false
+    /// Why the list above could not be shown, said where the list would be:
+    /// the main banner sits under the Apps tab's sheet.
+    @Published var reachingError: String?
+    /// The Apps-tab destination whose apps the sheet is showing.
+    @Published var sharedDestination: InsightsDestinationSummary?
     @Published var recordingEnabled = true
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -835,6 +1016,11 @@ final class InsightsViewModel: ObservableObject {
             loadApps(offset: 0)
         case .unresolved:
             unresolved = []
+            // The Apps tab's sheet shares this list; don't show its apps under
+            // the No Name address while that list reloads.
+            reachingGeneration += 1
+            reachingKey = nil
+            reachingApps = []
             loadUnresolved(offset: 0)
         case .proposals:
             proposals = []
@@ -866,12 +1052,86 @@ final class InsightsViewModel: ObservableObject {
         hasMoreDestinations = false
         hasMoreUnresolved = false
         hasMoreProposals = false
+        hasMoreReachingApps = false
         apps = InsightsDemoData.apps
         unresolved = InsightsDemoData.unresolved
         proposals = InsightsDemoData.proposals
         findings = InsightsDemoData.findings
         if selectedApp == nil { selectedApp = apps.first }
         destinations = InsightsDemoData.destinations(for: selectedApp?.appIdentity ?? "")
+        if let entry = selectedUnresolved.flatMap({ old in unresolved.first { $0.id == old.id } }) ?? unresolved.first {
+            selectUnresolved(entry)
+        }
+    }
+
+    // MARK: The apps behind one destination (#435)
+
+    func selectUnresolved(_ entry: InsightsUnresolvedDestination) {
+        selectedUnresolved = entry
+        loadReachingApps(key: entry.remoteIP, excludesLookups: true, offset: 0)
+    }
+
+    /// The Apps tab's "also contacted by N other apps" note, opened up.
+    func showApps(reaching destination: InsightsDestinationSummary) {
+        sharedDestination = destination
+        if InsightsDemoData.isEnabled {
+            reachingKey = destination.destinationKey
+            reachingApps = InsightsDemoData.apps(reaching: destination.destinationKey,
+                                                 owner: destination.appIdentity,
+                                                 otherApps: destination.otherAppCount,
+                                                 connections: destination.connectionCount)
+            return
+        }
+        loadReachingApps(key: destination.destinationKey, excludesLookups: false, offset: 0)
+    }
+
+    func loadMoreReachingApps() {
+        guard let key = reachingKey else { return }
+        loadReachingApps(key: key, excludesLookups: reachingExcludesLookups, offset: reachingApps.count)
+    }
+
+    private var reachingExcludesLookups = false
+    /// Bumped by every new list, so a reply for an earlier one (same address
+    /// opened from the other screen, or a page of a list since reloaded) is
+    /// dropped exactly.
+    private var reachingGeneration = 0
+
+    private func loadReachingApps(key: String, excludesLookups: Bool, offset: Int) {
+        if offset == 0 {
+            reachingGeneration += 1
+            reachingKey = key
+            reachingExcludesLookups = excludesLookups
+            reachingApps = []
+            hasMoreReachingApps = false
+            reachingError = nil
+        }
+        if InsightsDemoData.isEnabled {
+            reachingApps = InsightsDemoData.apps(reaching: key)
+            return
+        }
+        guard let helper = state?.helper,
+              let request = query(.apps, offset: offset, destinationKey: key,
+                                  excludesLookups: excludesLookups) else { return }
+        isLoading = true
+        let generation = reachingGeneration
+        helper.insightsReport(request) { [weak self] report, error in
+            guard let self else { return }
+            // A reply for a list the reader has already left must not end the
+            // loading state of the one they are looking at now.
+            guard self.reachingGeneration == generation else { return }
+            self.isLoading = false
+            guard let report else { self.reachingError = error ?? "The helper didn't answer."; return }
+            // A helper from before the destination filter ignores it, sends
+            // every app and never echoes the key; listing those under this
+            // address would be wrong.
+            guard report.destinationKey == key else {
+                self.reachingError = "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address."
+                return
+            }
+            self.source = report.source
+            self.reachingApps = offset == 0 ? report.apps : self.reachingApps + report.apps
+            self.hasMoreReachingApps = report.hasMore
+        }
     }
 
     func loadMoreApps() { loadApps(offset: apps.count) }
@@ -883,15 +1143,19 @@ final class InsightsViewModel: ObservableObject {
     /// Whether the next page would be refused. The view asks so it can say so
     /// rather than offering a button that returns nothing (#136).
     var atPageLimit: Bool {
-        let loaded = [apps.count, destinations.count, unresolved.count, proposals.count, findings.count]
+        let loaded = [apps.count, destinations.count, unresolved.count, proposals.count, findings.count,
+                      reachingApps.count]
         return loaded.contains { $0 > Self.pageSize * Self.maximumPages }
     }
 
-    private func query(_ kind: InsightsQueryKind, offset: Int, appIdentity: String? = nil) -> InsightsQuery? {
+    private func query(_ kind: InsightsQueryKind, offset: Int, appIdentity: String? = nil,
+                       destinationKey: String? = nil, excludesLookups: Bool? = nil) -> InsightsQuery? {
         guard offset <= Self.pageSize * Self.maximumPages else { return nil }
         let now = Date()
         return InsightsQuery(kind: kind,
                              appIdentity: appIdentity,
+                             destinationKey: destinationKey,
+                             excludesLookups: excludesLookups,
                              since: now.addingTimeInterval(-range.seconds),
                              until: now,
                              limit: Self.pageSize,
@@ -943,6 +1207,17 @@ final class InsightsViewModel: ObservableObject {
             self.source = report.source
             self.unresolved = offset == 0 ? report.unresolved : self.unresolved + report.unresolved
             self.hasMoreUnresolved = report.hasMore
+            // Like the Apps tab: land on a row rather than an empty pane, and
+            // keep the one the reader picked when it is still in the list.
+            guard offset == 0 else { return }
+            let kept = self.selectedUnresolved.flatMap { old in self.unresolved.first { $0.id == old.id } }
+            if let entry = kept ?? self.unresolved.first {
+                self.selectUnresolved(entry)
+            } else {
+                self.selectedUnresolved = nil
+                self.reachingKey = nil
+                self.reachingApps = []
+            }
         }
     }
 
@@ -1014,6 +1289,7 @@ final class InsightsViewModel: ObservableObject {
             }
             self.accepted = []
             self.selectedApp = nil
+            self.selectedUnresolved = nil
             self.reload()
         }
     }
@@ -1040,18 +1316,9 @@ final class InsightsViewModel: ObservableObject {
         section = .proposals
     }
 
-    /// The apps that reached an unresolved address, as far as the loaded app
-    /// list can identify them. An address whose apps are not in the current
-    /// range offers no proposal rather than a guess.
-    func proposableApps(for entry: InsightsUnresolvedDestination) -> [InsightsAppSummary] {
-        guard !entry.appNames.isEmpty else { return [] }
-        return entry.appNames.compactMap { name in
-            apps.first { $0.displayName == name }
-        }
-    }
-
     /// A proposal built from an address with no DNS answer. It can only ever be
-    /// address-pinned, which the proposal card already says out loud.
+    /// address-pinned, which the proposal card already says out loud. `app`
+    /// comes from the apps behind this address, so its count is its own.
     func proposeRule(forUnresolved entry: InsightsUnresolvedDestination, app: InsightsAppSummary) {
         let proposal = InsightsProposedRule(appIdentity: app.appIdentity,
                                             appDisplayName: app.displayName,
@@ -1059,7 +1326,7 @@ final class InsightsViewModel: ObservableObject {
                                             processPath: app.processPath,
                                             domain: nil,
                                             remoteIP: entry.remoteIP,
-                                            connectionCount: entry.connectionCount,
+                                            connectionCount: app.connectionCount,
                                             otherAppCount: max(0, entry.appCount - 1),
                                             lastSeen: entry.lastSeen)
         proposeRule(for: proposal)

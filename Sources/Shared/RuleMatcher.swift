@@ -393,7 +393,11 @@ public struct RuleMatcher: Sendable {
     /// `sentBySystemResolver` is the caller's word that the process that sent
     /// this flow passed `isSystemResolver(senderPath:passesRequirement:)`.
     /// Only then does an outgoing flow get the resolver's default allow.
-    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode, sentBySystemResolver: Bool = false) -> (action: RuleAction, skippedUnverified: Rule?) {
+    ///
+    /// `matchedRuleID` is the rule that decided the flow, or nil when no rule
+    /// covered it and the default mode did (#434). It is what the rule's hit
+    /// count and last-used time are kept for.
+    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode, sentBySystemResolver: Bool = false) -> (action: RuleAction, skippedUnverified: Rule?, matchedRuleID: UUID?) {
         // Expiry is the one predicate that cannot be precomputed, because it
         // depends on when the flow arrives rather than on the snapshot. It
         // stays a test inside the scan, which allocates nothing.
@@ -416,7 +420,7 @@ public struct RuleMatcher: Sendable {
             index += 1
             if let exp = r.expiresAt, exp < now { continue }
             if r.matches(connection: c, address: address) {
-                return (askFloor && r.action == .allow ? .ask : r.action, skipped)
+                return (askFloor && r.action == .allow ? .ask : r.action, skipped, prepared.ordered[index].id)
             }
             if mayHaveSkipped, r.matchesOnlyByClaimedBundleId(connection: c, address: address) {
                 if r.action == .ask {
@@ -433,11 +437,11 @@ public struct RuleMatcher: Sendable {
         // until someone answers (#422). The default for it is allow; a rule
         // the user wrote for it was already honoured above. Every other
         // process, port 53 or not, keeps the default mode (#30).
-        if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped) }
+        if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped, nil) }
         switch defaultMode {
-        case .alert: return (.ask, skipped)
-        case .silentAllow: return (askFloor ? .ask : .allow, skipped)
-        case .silentDeny: return (.deny, skipped)
+        case .alert: return (.ask, skipped, nil)
+        case .silentAllow: return (askFloor ? .ask : .allow, skipped, nil)
+        case .silentDeny: return (.deny, skipped, nil)
         }
     }
 

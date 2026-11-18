@@ -452,10 +452,15 @@ public struct InsightsBehaviourFinding: Codable, Sendable, Hashable, Identifiabl
 public struct FlowObservationBatch: Codable, Sendable {
     public let schemaVersion: Int
     public let observations: [FlowObservation]
+    /// Rule matches counted since the last batch (#434). Optional so a batch
+    /// from an extension without hit counting still decodes, and a helper
+    /// without it ignores the field.
+    public let ruleHits: [RuleHit]?
 
-    public init(observations: [FlowObservation]) {
+    public init(observations: [FlowObservation], ruleHits: [RuleHit]? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.observations = observations
+        self.ruleHits = ruleHits.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     public func validate(payloadBytes: Int, now: Date = Date()) throws {
@@ -469,6 +474,21 @@ public struct FlowObservationBatch: Codable, Sendable {
             throw InsightsValidationError.tooManyObservations(observations.count)
         }
         for observation in observations { try observation.validate(now: now) }
+        // Too many hits is a malformed batch. A single bad hit (a clock that
+        // moved back, say) only costs that hit: see `validRuleHits`.
+        guard (ruleHits?.count ?? 0) <= InsightsLimits.maxBatchCount else {
+            throw InsightsValidationError.invalidField("ruleHits")
+        }
+    }
+
+    /// The hits worth recording: valid ones, each rule at most once. Invalid
+    /// hits are dropped without costing the batch its observations (#434).
+    public func validRuleHits(now: Date = Date()) -> [RuleHit] {
+        guard let ruleHits, ruleHits.count <= InsightsLimits.maxBatchCount else { return [] }
+        var seen = Set<UUID>()
+        return ruleHits.filter { hit in
+            (try? hit.validate(now: now)) != nil && seen.insert(hit.ruleID).inserted
+        }
     }
 }
 
@@ -573,6 +593,16 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
     /// Bundle identifier when known, otherwise the executable path. Required
     /// for `.destinations`.
     public let appIdentity: String?
+    /// A destination as the store keys it: the name when one was asked for,
+    /// otherwise the address. Only for `.apps`, where it narrows the list to
+    /// the apps that reached this one destination, so a shared address can be
+    /// traced back to every app behind it (#435).
+    public let destinationKey: String?
+    /// With `destinationKey`: count only flows that carried no name, the way
+    /// No Name counts an address (lookups to a resolver carry the name). The Apps tab counts a lookup as a contact with the
+    /// resolver (#167), so its "Show Apps" list keeps them. Optional so a
+    /// query without it still decodes.
+    public let excludesLookups: Bool?
     public let since: Date
     public let until: Date
     public let limit: Int
@@ -580,6 +610,8 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
 
     public init(kind: InsightsQueryKind,
                 appIdentity: String? = nil,
+                destinationKey: String? = nil,
+                excludesLookups: Bool? = nil,
                 since: Date,
                 until: Date = Date(),
                 limit: Int = 50,
@@ -587,6 +619,8 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.kind = kind
         self.appIdentity = appIdentity
+        self.destinationKey = destinationKey
+        self.excludesLookups = excludesLookups
         self.since = since
         self.until = until
         self.limit = limit
@@ -620,6 +654,12 @@ public struct InsightsQuery: Codable, Sendable, Hashable {
         if let appIdentity {
             guard !appIdentity.isEmpty, appIdentity.utf8.count <= InsightsLimits.maxPathLength else {
                 throw InsightsValidationError.invalidField("appIdentity")
+            }
+        }
+        if let destinationKey {
+            guard kind == .apps, !destinationKey.isEmpty,
+                  destinationKey.utf8.count <= InsightsLimits.maxHostLength else {
+                throw InsightsValidationError.invalidField("destinationKey")
             }
         }
         if kind == .destinations {
@@ -922,10 +962,15 @@ public struct InsightsReport: Codable, Sendable {
     public let proposals: [InsightsProposedRule]
     public let findings: [InsightsBehaviourFinding]
     public let overview: InsightsOverview?
+    /// The destination the apps were narrowed to, echoed from the query. A
+    /// helper from before that filter never sets it, which is how the app
+    /// tells an unfiltered list from a narrowed one (#435).
+    public let destinationKey: String?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, kind, generatedAt, rangeStart, rangeEnd, source, recordingEnabled,
-             limit, offset, hasMore, apps, destinations, unresolved, proposals, findings, overview
+             limit, offset, hasMore, apps, destinations, unresolved, proposals, findings, overview,
+             destinationKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -946,6 +991,7 @@ public struct InsightsReport: Codable, Sendable {
         proposals = try c.decode([InsightsProposedRule].self, forKey: .proposals)
         findings = try c.decodeIfPresent([InsightsBehaviourFinding].self, forKey: .findings) ?? []
         overview = try c.decodeIfPresent(InsightsOverview.self, forKey: .overview)
+        destinationKey = try c.decodeIfPresent(String.self, forKey: .destinationKey)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -966,6 +1012,7 @@ public struct InsightsReport: Codable, Sendable {
         try c.encode(proposals, forKey: .proposals)
         try c.encode(findings, forKey: .findings)
         try c.encodeIfPresent(overview, forKey: .overview)
+        try c.encodeIfPresent(destinationKey, forKey: .destinationKey)
     }
 
     public init(kind: InsightsQueryKind,
@@ -982,8 +1029,10 @@ public struct InsightsReport: Codable, Sendable {
                 unresolved: [InsightsUnresolvedDestination] = [],
                 proposals: [InsightsProposedRule] = [],
                 findings: [InsightsBehaviourFinding] = [],
-                overview: InsightsOverview? = nil) {
+                overview: InsightsOverview? = nil,
+                destinationKey: String? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
+        self.destinationKey = destinationKey
         self.kind = kind
         self.generatedAt = generatedAt
         self.rangeStart = rangeStart

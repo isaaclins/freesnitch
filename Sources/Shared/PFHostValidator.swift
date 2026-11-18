@@ -58,7 +58,7 @@ public enum PFHostValidator {
 
         guard let range = addressRange(for: raw) else { return nil }
         if protectedRanges.contains(where: { rangesOverlap(range, $0) }) {
-            return "loopback, local-network, link-local, multicast, unspecified, or broadcast network"
+            return "loopback, local-network, shared (carrier NAT or Tailscale), link-local, multicast, unspecified, or broadcast network"
         }
         return nil
     }
@@ -84,10 +84,19 @@ public enum PFHostValidator {
         [
             addressRange(for: "0.0.0.0/8"),
             addressRange(for: "10.0.0.0/8"),
+            // Shared address space (RFC 6598): carrier NAT, and the range
+            // Tailscale gives every device on a tailnet. FireHOL Level 1 lists
+            // it as a bogon, so with that feed on every Tailscale peer was
+            // blocked (#424).
+            addressRange(for: "100.64.0.0/10"),
             addressRange(for: "127.0.0.0/8"),
             addressRange(for: "169.254.0.0/16"),
             addressRange(for: "172.16.0.0/12"),
             addressRange(for: "192.168.0.0/16"),
+            // Benchmarking range (RFC 2544) that proxy and VPN apps with a
+            // "fake IP" DNS mode hand out to apps, so blocking it cuts off
+            // everything those apps carry (#424).
+            addressRange(for: "198.18.0.0/15"),
             addressRange(for: "224.0.0.0/4"),
             addressRange(for: "255.255.255.255/32"),
             addressRange(for: "::/128"),

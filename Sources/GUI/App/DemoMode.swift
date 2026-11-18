@@ -9,4 +9,17 @@ import Foundation
 /// (#389). Every place that does one of those checks this first.
 enum DemoMode {
     static let isOn = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1"
+
+    /// `FREESNITCH_DEMO_VPN=1`: a sample Tailscale connection that handles
+    /// DNS, for reviewing what the app says about VPNs (#424). Without it a
+    /// demo shows no VPN, so the reviewer's own tunnel stays out of pictures.
+    static let showsVPN = isOn && ProcessInfo.processInfo.environment["FREESNITCH_DEMO_VPN"] == "1"
+    static let sampleVPN = ActiveVPN(name: "Tailscale", interface: "utun4",
+                                     dnsServers: ["100.100.100.100", "fd7a:115c:a1e0::53"],
+                                     matchDomains: [], handlesAllLookups: true)
+
+    /// `FREESNITCH_DEMO_SETTINGS_PANE=dns` opens Settings on that pane.
+    static var settingsPane: String? {
+        isOn ? ProcessInfo.processInfo.environment["FREESNITCH_DEMO_SETTINGS_PANE"] : nil
+    }
 }

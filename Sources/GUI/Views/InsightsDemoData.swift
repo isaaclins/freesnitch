@@ -54,6 +54,43 @@ enum InsightsDemoData {
         }
     }
 
+    /// The apps behind one destination, as the helper's narrowed `.apps`
+    /// query returns them: busiest first, each with its own count (#435).
+    static func apps(reaching key: String, owner: String? = nil, otherApps: Int = 0,
+                     connections: Int = 0) -> [InsightsAppSummary] {
+        switch key {
+        case "203.0.113.42":
+            return [reaching(apps[0], 340, 6_300_000)]
+        case "198.51.100.77":
+            return [reaching(apps[8], 96, 9_220_000)]
+        case "192.0.2.51":
+            let curl = InsightsAppSummary(appIdentity: "/usr/bin/curl", displayName: "curl",
+                                          processBundleId: nil, processPath: "/usr/bin/curl",
+                                          destinationCount: 1, connectionCount: 7,
+                                          bytesIn: 90_000, bytesOut: 20_000, lastSeen: now)
+            return [reaching(apps[3], 38, 980_000), reaching(apps[7], 15, 350_000), curl]
+        default:
+            // An Apps-tab destination: the app it belongs to, then as many
+            // others as its "also contacted by" note says.
+            let own = apps.first { $0.appIdentity == owner }
+            let others = apps.filter { $0.appIdentity != owner }.prefix(otherApps)
+            var rows: [InsightsAppSummary] = []
+            if let own { rows.append(reaching(own, connections, Int64(connections) * 4_000)) }
+            for (index, other) in others.enumerated() {
+                let count = max(1, connections / (index + 2))
+                rows.append(reaching(other, count, Int64(count) * 4_000))
+            }
+            return rows
+        }
+    }
+
+    private static func reaching(_ app: InsightsAppSummary, _ connections: Int, _ bytes: Int64) -> InsightsAppSummary {
+        InsightsAppSummary(appIdentity: app.appIdentity, displayName: app.displayName,
+                           processBundleId: app.processBundleId, processPath: app.processPath,
+                           destinationCount: 1, connectionCount: connections,
+                           bytesIn: bytes * 4 / 5, bytesOut: bytes / 5, lastSeen: now)
+    }
+
     static let unresolved: [InsightsUnresolvedDestination] = [
         InsightsUnresolvedDestination(remoteIP: "203.0.113.42", connectionCount: 340, appCount: 1,
                                       appNames: ["Arc"], bytesIn: 5_400_000, bytesOut: 900_000, lastSeen: now),

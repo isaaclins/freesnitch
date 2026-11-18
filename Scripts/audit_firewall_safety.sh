@@ -171,7 +171,7 @@ verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for 
 # the whole Mac until someone answers (#422).
 # Only Apple's resolver at its system path gets that default, never any other
 # port-53 flow (#30): the path and the signature check must both hold.
-grep -Fq 'if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped) }' <<<"$verdict_body" \
+grep -Fq 'if sentBySystemResolver, c.direction == .outgoing { return (askFloor ? .ask : .allow, skipped, nil) }' <<<"$verdict_body" \
   || fail "the system resolver's default allow is missing or no longer needs both its path and its signature"
 require_text "$RULE_MATCHER" 'public static let systemResolverPath = "/usr/sbin/mDNSResponder"' \
   "the system resolver is no longer identified by its protected system path"
@@ -1402,6 +1402,18 @@ require_text "$FILTER" "received.generation < current.generation" \
   "the extension does not reject a lower-generation live snapshot before assignment"
 require_text "$FILTER" "received.generation == current.generation" \
   "the extension does not check equal-generation split-brain content"
+# Same policy or not is decided by one shared definition that leaves out usage
+# counters. Comparing whole rules made a resend after a counted match look like
+# split-brain, and filtering stopped (#438).
+require_text "$FILTER" "!SharedRuleBridge.PolicyContent.same(received, current)" \
+  "the extension's split-brain check does not use the shared policy content"
+require_text "$BRIDGE" "guard PolicyContent.same(current, received) else {" \
+  "the live snapshot gate does not use the shared policy content"
+require_text "$BRIDGE" "let rules = PolicyContent.rules(snapshot.rules)" \
+  "the watermark digest does not use the shared policy content"
+if grep -nE '\.rules (==|!=) ' "$FILTER" "$BRIDGE"; then
+  fail "a policy comparison uses whole rules, usage counters included; use SharedRuleBridge.PolicyContent"
+fi
 require_text "$FILTER" "setSnapshotLocked(accepted)" \
   "the extension does not assign only after the generation gate"
 generation_check_line="$(grep -nF 'received.generation < current.generation' "$FILTER" | head -1 | cut -d: -f1 || true)"
@@ -1536,8 +1548,8 @@ require_text "$GUI_HELPER" "payload.count <= InsightsLimits.maxReportBytes" \
   "the GUI decodes Insights data before bounding the response"
 require_text "$HELPER" "insightsQueryQueue.async" \
   "the helper runs Insights queries on its XPC connection queue"
-require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection is permitted" \
-  "Insights does not say plainly that Silent Allow blocks nothing"
+require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply" \
+  "Insights does not say plainly that Silent Allow only blocks what deny rules name (#434)"
 require_text "$RULE_STORE" "?? .silentAllow" \
   "a fresh rules database does not default honestly to Silent Allow"
 if grep -Eq 'URLSession|CFHost|GetAddrInfo|gethostby' "$INSIGHTS_STORE"; then

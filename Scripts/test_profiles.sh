@@ -363,6 +363,61 @@ expectThrows("an oversized profile request") {
 }
 pass("the profile command surface is bounded, refuses unknown profiles and refreshes deny sets")
 
+// MARK: - a profile change is a new policy generation (#438)
+//
+// The extension enforces (session, generation) order and refuses a snapshot
+// that repeats its current generation with different rules or mode. Every
+// profile change that alters the enforced policy must therefore advance the
+// generation, or the helper republishes new content under the old number and
+// the extension stops filtering ("split-brain snapshot").
+
+func liveSnapshot() -> SharedRuleBridge.Snapshot {
+    let state = store.activePolicyState()
+    return SharedRuleBridge.Snapshot(mode: state.mode, rules: state.rules,
+                                     generation: state.generation, epoch: state.epoch)
+}
+
+func expectExtensionAccepts(_ what: String, _ change: () throws -> Void) throws {
+    var gate = SharedRuleBridge.LiveSnapshotGate(current: liveSnapshot())
+    let before = liveSnapshot()
+    try change()
+    let after = liveSnapshot()
+    let decision = gate.apply(after)
+    if after.mode != before.mode || after.rules != before.rules {
+        expect(after.generation > before.generation,
+               "\(what) changed the enforced policy but kept generation \(after.generation)")
+        expect(decision == .accepted, "\(what): the extension answered \(decision) instead of accepting the new policy")
+    } else {
+        expect(decision == .accepted || decision == .idempotent,
+               "\(what): the extension answered \(decision) for an unchanged policy")
+    }
+}
+
+_ = store.beginPolicySession()
+_ = try store.createProfile(name: "strict-438", mode: .silentDeny, icon: "lock")
+_ = try store.mutatePolicy { draft in
+    draft.rules.append(Rule(processPath: "/Applications/Only438.app/Contents/MacOS/Only438",
+                            action: .deny, profile: "strict-438"))
+}
+try expectExtensionAccepts("switching the active profile") {
+    _ = try coordinator.activate(profileName: "strict-438")
+}
+try expectExtensionAccepts("changing the active profile's mode") {
+    _ = try store.setProfileMode(name: "strict-438", mode: .alert)
+}
+try expectExtensionAccepts("renaming the active profile") {
+    var renamed = store.profile(named: "strict-438")!
+    renamed.name = "strict-438b"
+    _ = try store.updateProfile(renamed)
+}
+try expectExtensionAccepts("deleting the active profile") {
+    _ = try store.deleteProfile(name: "strict-438b")
+}
+try expectExtensionAccepts("switching back through the command service") {
+    _ = service.handle(requestData: try ProfileTransportBoundary.encodeRequest(.setActiveProfile(name: "lockdown")))
+}
+pass("every profile change that alters the enforced policy advances its generation, so the extension accepts it")
+
 // MARK: - watcher reports changes once
 
 let watchProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:01")
