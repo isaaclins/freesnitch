@@ -1164,16 +1164,18 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         do {
             _ = try mutatePolicy { draft in
                 guard let learned = RuleSigningTeam.learn(rules: draft.rules, from: sightings) else {
+                    // Recorded here, while `policyQueue` is still held and
+                    // against these very rules: a rule change that lands later
+                    // clears it, so a stale "nothing to learn" can never hide
+                    // a newly added rule.
+                    if fruitlessSightings.count >= 4096 { fruitlessSightings.removeAll() }
+                    fruitlessSightings.formUnion(sightings)
                     throw NothingLearned()
                 }
                 draft.rules = learned.rules
                 taught = learned.taught
             }
         } catch is NothingLearned {
-            policyQueue.sync {
-                if fruitlessSightings.count >= 4096 { fruitlessSightings.removeAll() }
-                fruitlessSightings.formUnion(sightings)
-            }
             return
         } catch {
             PSLog.error(PSLog.helper, "the signing team of an app could not be saved on its rules: \(error.localizedDescription)")

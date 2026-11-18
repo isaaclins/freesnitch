@@ -253,7 +253,7 @@ public final class RuleStore: @unchecked Sendable {
 
     /// The signing team a bundle-id rule is bound to (#364). Older databases
     /// get the column empty: their rules learn the team the first time their
-    /// app is seen (`recordSigningTeam`). It is appended, so `SELECT *` reads
+    /// app is seen (`RuleSigningTeam.learn`, run by the helper's `learnSigningTeams`). It is appended, so `SELECT *` reads
     /// it at index 20.
     private func addRuleTeamColumnIfMissing() throws {
         var stmt: OpaquePointer?

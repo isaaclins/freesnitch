@@ -685,6 +685,18 @@ expect(exported.first?.processTeamId == chromeTeam, "an exported rule keeps its 
 print("code signing harness: all \(checks) checks passed")
 SWIFT
 
+# The helper can't be compiled here, so pin its one race-sensitive step: a
+# "nothing to learn" result is recorded inside the policy transaction that read
+# the rules, never after it, where a concurrent rule change would already have
+# cleared the cache and a stale result would keep a new rule from learning.
+HELPER="$ROOT/Sources/Helper/HelperService.swift"
+awk '/RuleSigningTeam.learn\(rules: draft.rules/{inside=1} inside && /fruitlessSightings.formUnion\(sightings\)/{found=1} inside && /throw NothingLearned\(\)/{exit !found}' "$HELPER" \
+  || { echo "code signing harness: FAIL: the helper records fruitless sightings outside the transaction that read the rules" >&2; exit 1; }
+if awk '/catch is NothingLearned/{c=1;next} c && /fruitlessSightings/{bad=1} c && /return/{exit} END{exit !bad}' "$HELPER"; then
+  echo "code signing harness: FAIL: the helper records fruitless sightings after the transaction ended" >&2; exit 1
+fi
+echo "code signing harness: ok: a nothing-to-learn result is recorded inside the transaction that read the rules"
+
 SHARED=()
 while IFS= read -r file; do SHARED+=("$file"); done < <(find "$ROOT/Sources/Shared" -name '*.swift' | sort)
 xcrun swiftc -swift-version 5 -O -o "$TMP/harness" "${SHARED[@]}" "$TMP/cache.swift" "$TMP/main.swift" -lsqlite3
