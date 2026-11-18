@@ -49,10 +49,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
-    /// How long the uninstall waits for macOS to answer the deactivation,
-    /// including the time a person may need to approve it. Without a bound a
+    /// How long the uninstall waits for macOS to answer the deactivation
+    /// before macOS asks the person anything. Without a bound a
     /// request macOS never answers left the uninstall waiting for good.
     static let deactivationAnswerTimeout: TimeInterval = 120
+    /// Once macOS asks the person to allow the removal, they get this long.
+    static let approvalTimeout: TimeInterval = 600
     static let noAnswer = "macOS did not answer in time."
 
     private enum RequestKind {
@@ -198,15 +200,20 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// privileged helper is a later step of the same flow, and that flow is the
     /// only place FreeSnitch is allowed to do it: unregistering the service
     /// outside an uninstall the user confirmed is the failure #24 was filed for.
-    func deactivateForUninstall() {
-        uninstallState = .deactivating
-        uninstallNeedsApproval = false
+    /// Replaces any running limit on the deactivation answer with a new one.
+    private func startDeactivationTimeout(after seconds: TimeInterval) {
         deactivationAttempt &+= 1
         let attempt = deactivationAttempt
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.deactivationAnswerTimeout) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             guard let self, self.deactivationAttempt == attempt, self.uninstallState == .deactivating else { return }
             self.uninstallState = .failed(Self.noAnswer)
         }
+    }
+
+    func deactivateForUninstall() {
+        uninstallState = .deactivating
+        uninstallNeedsApproval = false
+        startDeactivationTimeout(after: Self.deactivationAnswerTimeout)
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
             // answer to wait for. Still drop the filter configuration, and
@@ -958,8 +965,9 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
         Task { @MainActor in
             guard self.requestKind != .deactivation else {
                 self.uninstallNeedsApproval = true
-                // Waiting on the person, not on macOS: no time limit then.
-                self.deactivationAttempt &+= 1
+                // Waiting on the person now: give them a longer limit, but
+                // never none, or the window-less brew run would wait forever.
+                self.startDeactivationTimeout(after: Self.approvalTimeout)
                 // Removal can need approval too. Do not repaint the firewall
                 // status as "waiting to be switched on" while the user is
                 // switching it off.

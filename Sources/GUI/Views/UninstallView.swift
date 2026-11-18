@@ -92,6 +92,7 @@ final class UninstallFlowModel: ObservableObject {
     /// The one confirmed action. Everything after it runs by itself.
     func start() {
         phase = .removingFilter
+        if demo { runDemo(); return }
         // Enforcement first: the pf anchor and the DNS proxy belong to the
         // helper, and the user asked for the firewall to stop. This is the
         // same path the Enforcement toggle uses.
@@ -99,7 +100,6 @@ final class UninstallFlowModel: ObservableObject {
             state.enforcementEnabled = false
         }
         state.appendLog(level: "info", message: "Uninstall: turning off and removing the network filter.")
-        if demo { runDemo(); return }
         if systemExtension.uninstallState.extensionIsGone {
             removeHelperAndData()
             return
