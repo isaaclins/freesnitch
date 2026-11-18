@@ -237,6 +237,20 @@ extension Rule {
     }
 }
 
+/// A rule's bundle id matches the signed one (#351). A deny rule also matches
+/// the id an unsigned Info.plist claims: a fake id can get a binary blocked,
+/// never let through, so a user's deny keeps blocking an unsigned app. An ask
+/// rule matched only by the claimed id can only make a verdict stricter: it
+/// turns an allow into an ask, never a deny into one (see
+/// `RuleMatcher.explainedDecision`). A rule that also names a path matches the
+/// claimed id whatever its action: the path already pins the binary, so it is
+/// never broader than the same rule without a bundle id. Rules made from
+/// alerts and the Monitor tree carry both, and an unsigned app keeps them.
+fileprivate func bundleIdMatches(_ ruleBundleId: String, _ connection: Connection, trustingClaimed: Bool) -> Bool {
+    if connection.processBundleId == ruleBundleId { return true }
+    return trustingClaimed && connection.claimedBundleId == ruleBundleId
+}
+
 fileprivate struct PreparedRule: Sendable {
     let action: RuleAction
     let expiresAt: Date?
@@ -266,8 +280,24 @@ fileprivate struct PreparedRule: Sendable {
     var needsIPv6: Bool { (remoteIP?.needsIPv6 ?? false) || (remoteHostAddress?.needsIPv6 ?? false) }
 
     func matches(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        matches(connection: connection, address: address,
+                trustingClaimedBundleId: action == .deny || processPath != nil)
+    }
+
+    /// True when the rule would match if the connection's unsigned bundle id
+    /// were verified: an allow or ask rule that misses only for that reason.
+    func matchesOnlyByClaimedBundleId(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        guard action != .deny, let processBundleId,
+              connection.claimedBundleId == processBundleId,
+              connection.processBundleId != processBundleId else { return false }
+        return matches(connection: connection, address: address, trustingClaimedBundleId: true)
+    }
+
+    private func matches(connection: Connection, address: PreparedConnectionAddress,
+                         trustingClaimedBundleId: Bool) -> Bool {
         if let direction, direction != connection.direction { return false }
-        if let processBundleId, (connection.processBundleId ?? "") != processBundleId { return false }
+        if let processBundleId,
+           !bundleIdMatches(processBundleId, connection, trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
         if let remotePort, connection.remotePort != remotePort { return false }
         if let remoteHost, !remoteHost.matches(connection.remoteHost),
@@ -320,6 +350,13 @@ public struct RuleMatcher: Sendable {
     }
 
     public func decision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> RuleAction {
+        explainedDecision(for: c, prepared: prepared, defaultMode: defaultMode).action
+    }
+
+    /// The decision, plus the allow or ask rule that would have come first had
+    /// the connection's bundle id been signed rather than only claimed by its
+    /// Info.plist (#351), so the caller can say why the user was asked.
+    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> (action: RuleAction, skippedUnverified: Rule?) {
         // Expiry is the one predicate that cannot be precomputed, because it
         // depends on when the flow arrives rather than on the snapshot. It
         // stays a test inside the scan, which allocates nothing.
@@ -329,22 +366,44 @@ public struct RuleMatcher: Sendable {
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
+        // A rule that names the bundle id the Info.plist claims, but not the
+        // signed one (#351): an allow is skipped and reported, and an ask is
+        // kept as a floor, so the verdict found further down can be raised
+        // from allow to ask but never lowered.
+        let mayHaveSkipped = c.claimedBundleId != nil && c.claimedBundleId != c.processBundleId
+        var skipped: Rule?
+        var askFloor = false
+        var index = -1
         for r in prepared.compiled {
+            index += 1
             if let exp = r.expiresAt, exp < now { continue }
-            if r.matches(connection: c, address: address) { return r.action }
+            if r.matches(connection: c, address: address) {
+                return (askFloor && r.action == .allow ? .ask : r.action, skipped)
+            }
+            if mayHaveSkipped, r.matchesOnlyByClaimedBundleId(connection: c, address: address) {
+                if r.action == .ask {
+                    askFloor = true
+                } else if skipped == nil {
+                    skipped = prepared.ordered[index]
+                }
+            }
         }
 
         switch defaultMode {
-        case .alert: return .ask
-        case .silentAllow: return .allow
-        case .silentDeny: return .deny
+        case .alert: return (.ask, skipped)
+        case .silentAllow: return (askFloor ? .ask : .allow, skipped)
+        case .silentDeny: return (.deny, skipped)
         }
     }
 
     public func matches(rule r: Rule, connection c: Connection) -> Bool {
         if r.direction != .any && r.direction != c.direction { return false }
         if let bid = r.processBundleId, !bid.isEmpty {
-            if (c.processBundleId ?? "") != bid { return false }
+            // Deny and ask rules count a claimed id (an ask one only ever
+            // raises an allow to an ask), and so does any rule that also names
+            // a path; an allow with no path needs the signed id.
+            let pinnedByPath = !(r.processPath ?? "").isEmpty
+            if !bundleIdMatches(bid, c, trustingClaimed: r.action != .allow || pinnedByPath) { return false }
         }
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }

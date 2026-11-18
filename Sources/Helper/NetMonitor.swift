@@ -10,7 +10,12 @@ final class NetMonitor: @unchecked Sendable {
     /// Bumped on every start and stop, so output from a nettop that has
     /// already been replaced is dropped instead of landing in the new frame.
     private var nettopGeneration = 0
-    private var bundleIDs: [String: String?] = [:]
+    /// Signed bundle id per process (pid and its executable path), so a
+    /// binary swapped in at a path never inherits an earlier process's id.
+    private var bundleIDs: [Int32: (path: String, id: String?)] = [:]
+    /// Processes whose signature could not be read, and when to try again, so
+    /// an app updated on disk while it runs is not checked on every poll.
+    private var bundleIDRetry: [Int32: (path: String, after: Date)] = [:]
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.netmon", qos: .utility)
 
     var onConnections: (([Connection]) -> Void)?
@@ -104,7 +109,7 @@ final class NetMonitor: @unchecked Sendable {
         guard let (rip, rport) = splitHostPort(remoteRaw) else { return nil }
         _ = lip
         let path = pidPath(pid)
-        let bundle = bundleID(forPath: path)
+        let bundle = bundleID(forPath: path, pid: pid)
         return Connection(
             pid: pid,
             processName: name,
@@ -144,22 +149,28 @@ final class NetMonitor: @unchecked Sendable {
         return String(cString: buf)
     }
 
-    private func bundleID(forPath path: String) -> String? {
-        guard !path.isEmpty else { return nil }
-        if let cached = bundleIDs[path] { return cached }
+    /// The bundle id from the process's valid, Apple-issued code signature,
+    /// never from its unsigned Info.plist (#351, see `CodeSigningIdentity`).
+    /// It is checked for the running process and cached per process; a
+    /// lookup that could not read any signature is not cached, so the next
+    /// poll tries again.
+    private func bundleID(forPath path: String, pid: Int32) -> String? {
+        guard !path.isEmpty, pid > 0 else { return nil }
+        if let cached = bundleIDs[pid], cached.path == path { return cached.id }
+        if let retry = bundleIDRetry[pid], retry.path == path, retry.after > Date() { return nil }
         if bundleIDs.count > 1024 { bundleIDs.removeAll() }
-        let found = readBundleID(forPath: path)
-        bundleIDs[path] = found
-        return found
-    }
-
-    private func readBundleID(forPath path: String) -> String? {
-        var p = path
-        if let r = p.range(of: ".app/", options: .backwards) { p = String(p[..<r.upperBound]) }
-        let plist = AppBundleIdentity.infoPlistPath(forAppPath: p)
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)) else { return nil }
-        guard let d = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
-        return d["CFBundleIdentifier"] as? String
+        if bundleIDRetry.count > 1024 { bundleIDRetry.removeAll() }
+        switch CodeSigningIdentity.resolve(executablePath: path, auditToken: nil, pid: pid, fileFallback: false) {
+        case .unavailable:
+            bundleIDRetry[pid] = (path, Date().addingTimeInterval(60))
+            return nil
+        case .noBundle:
+            bundleIDs[pid] = (path, nil)
+            return nil
+        case .resolved(let id):
+            bundleIDs[pid] = (path, id)
+            return id
+        }
     }
 
     private func startNettop() {
