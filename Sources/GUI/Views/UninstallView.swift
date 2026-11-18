@@ -344,7 +344,9 @@ struct UninstallFlowSheet: View {
     private func failureText(_ failure: UninstallFlowModel.Failure) -> some View {
         switch failure {
         case .filterKept(let reason):
-            failureHeadline("macOS didn’t let FreeSnitch remove its network filter")
+            failureHeadline(reason == SystemExtensionManager.noAnswer
+                            ? "macOS didn’t answer FreeSnitch’s request to remove its network filter"
+                            : "macOS didn’t let FreeSnitch remove its network filter")
             Text("Nothing else was removed. Try again. If it keeps failing, restart your Mac and try once more.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)

@@ -53,6 +53,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// including the time a person may need to approve it. Without a bound a
     /// request macOS never answers left the uninstall waiting for good.
     static let deactivationAnswerTimeout: TimeInterval = 120
+    static let noAnswer = "macOS did not answer in time."
 
     private enum RequestKind {
         case activation
@@ -204,13 +205,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         let attempt = deactivationAttempt
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.deactivationAnswerTimeout) { [weak self] in
             guard let self, self.deactivationAttempt == attempt, self.uninstallState == .deactivating else { return }
-            self.uninstallState = .failed("macOS did not answer.")
+            self.uninstallState = .failed(Self.noAnswer)
         }
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
-            // answer to wait for. Still drop the filter configuration.
-            removeFilterConfiguration { }
-            uninstallState = .notInstalled
+            // answer to wait for. Still drop the filter configuration, and
+            // answer once that is done.
+            removeFilterConfiguration { [weak self] in self?.uninstallState = .notInstalled }
             return
         }
         // Remove the filter configuration and WAIT for it, then deactivate.

@@ -406,6 +406,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The status item is the last visible trace of the app, so it goes before
     /// the process does rather than at whatever moment AppKit gets around to it.
+    /// Once the bundle is gone (the uninstall moved it to the Trash, or it was
+    /// dragged there), quitting ends the process outright from every path,
+    /// the menu bar and ⌘Q included: the orderly shutdown from a bundle that
+    /// is no longer there is where 1.1.0 hung until Force Quit (#391).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if !FileManager.default.fileExists(atPath: Bundle.main.bundlePath) {
+            menubar?.removeStatusItem()
+            exit(0)
+        }
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         menubar?.removeStatusItem()
     }

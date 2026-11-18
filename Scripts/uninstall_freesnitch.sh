@@ -205,15 +205,15 @@ sip_enabled() {
 # Ask macOS, do not infer. A listing that failed is not evidence that the
 # extension is gone, so "cannot tell" counts as still active.
 #
-# Only an "[activated ...]" entry counts. Once FreeSnitch removed it, macOS
-# lists the extension as "terminated waiting to uninstall on reboot" until the
-# next restart: it no longer runs and nothing filters, so it does not need to
-# hold the uninstall up (#391).
+# Every entry counts except "terminated waiting to uninstall on reboot": once
+# FreeSnitch removed it, macOS lists the extension that way until the next
+# restart. It no longer runs and nothing filters, so it does not need to hold
+# the uninstall up (#391). Any other state, known or not, does.
 extension_still_active() {
   local listing line
   listing="$("$SYSTEMEXTENSIONSCTL" list 2>/dev/null)" || return 0
   while IFS= read -r line; do
-    [[ "$line" == *"$NETEXT_BUNDLE_ID"* && "$line" == *"[activated"* ]] && return 0
+    [[ "$line" == *"$NETEXT_BUNDLE_ID"* && "$line" != *"waiting to uninstall on reboot"* ]] && return 0
   done <<<"$listing"
   return 1
 }
