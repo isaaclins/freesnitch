@@ -725,6 +725,38 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
         return text + "."
     }
 
+    /// True when an enabled rule already covers this destination for this app,
+    /// so Insights should not offer it again. An address is compared the way
+    /// the matcher compares it: one IPv6 address in any spelling, a range that
+    /// contains it, and an address or range typed into the hostname field.
+    public func isCovered(by rules: [Rule]) -> Bool {
+        let matcher = RuleMatcher()
+        return rules.contains { rule in
+            guard rule.enabled else { return false }
+            let destinationMatches: Bool
+            if let domain {
+                destinationMatches = rule.remoteHost?.lowercased() == domain.lowercased()
+            } else if let remoteIP, !remoteIP.isEmpty {
+                let ruleAddress = (rule.remoteIP ?? "").isEmpty ? rule.addressInHostField : rule.remoteIP
+                if let ruleAddress {
+                    destinationMatches = matcher.ipMatches(pattern: ruleAddress, ip: remoteIP)
+                } else {
+                    destinationMatches = false
+                }
+            } else {
+                return false
+            }
+            guard destinationMatches else { return false }
+
+            // A selector-free rule is wider and therefore covers this app too.
+            let hasAppSelector = rule.processBundleId != nil || rule.processPath != nil || rule.processName != nil
+            guard hasAppSelector else { return true }
+            if let bundle = processBundleId, rule.processBundleId == bundle { return true }
+            if let path = processPath, rule.processPath == path { return true }
+            return rule.processName == appDisplayName
+        }
+    }
+
     /// App-specific and domain-scoped whenever a name is known (D7).
     public func rule(action: RuleAction = .deny, profile: String = "default") -> Rule {
         if let domain {
