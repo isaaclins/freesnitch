@@ -57,6 +57,12 @@ final class UninstallFlowModel: ObservableObject {
 
     func begin() {
         startedAt = Date()
+        guard !DemoMode.isOn else {
+            // Sample data only: the steps are shown, nothing is turned off or
+            // removed on this Mac (#389).
+            systemExtension.deactivateForUninstall()
+            return
+        }
         // Enforcement first: the pf anchor and the DNS proxy belong to the
         // helper, and the user asked for the firewall to stop. This is the same
         // path the Enforcement toggle uses.
@@ -71,6 +77,11 @@ final class UninstallFlowModel: ObservableObject {
     /// the root-owned data and the app itself behind one authorization prompt,
     /// then the user's own files, which need no authorization at all.
     func finish() {
+        guard !DemoMode.isOn else {
+            // The helper, the data and the app of a real install stay (#389).
+            finishState = .done
+            return
+        }
         finishState = .working
         if let problem = state.helper.unregisterDaemonForUninstall() {
             // Not fatal: the removal below still takes the bundle away, and the

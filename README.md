@@ -47,6 +47,14 @@
 
 **[Download FreeSnitch 1.1.0](https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg)** (`FreeSnitch-1.1.0.dmg`, 12.5 MB) or pick a file from the [release page](https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0).
 
+Or install it with [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask isaaclins/tap/freesnitch
+```
+
+FreeSnitch keeps updating itself, so a plain `brew upgrade` skips it; `brew upgrade --greedy` moves the Homebrew copy along too.
+
 - macOS 13 or later, one universal build for Apple Silicon and Intel.
 - Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
 - Later versions arrive through the built-in Sparkle updater.
@@ -121,6 +129,8 @@ sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
 The script refuses to remove the app while macOS still holds a record for the extension, or while the helper is still running from that bundle. Without `--remove-database` it keeps `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds your rules and can exceed 300 MB, so a reinstall finds them again. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
 
 Without a checkout, the Uninstall tab shows and copies the equivalent commands.
+
+Installed with Homebrew? Use the Uninstall tab in the app and restart, then run `brew uninstall --cask freesnitch` instead of the script. It stops the helper and empties the `pf` anchor the same way, and `--zap` also deletes your rules and settings. It refuses while macOS still lists the extension.
 
 ## Why this exists
 
@@ -203,7 +213,7 @@ Live up and down throughput when enabled, a five-minute traffic graph, a top-pro
 Four parts make up the monitoring and enforcement path:
 
 1. **DNS interception.** When Enforcement is enabled, a local DNS proxy on `127.0.0.1:53` answers queries sent to it. Blocklisted domains return NXDOMAIN. Everything else forwards over DoH to the resolver of your choice. This is the only blocklist enforcement path: the Network Extension and `pfctl` do not receive blocklist entries, so hardcoded IP connections and names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH, are not covered.
-2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports that apply to every app. A deny rule that names an app is never written there, because `pf` cannot tell apps apart; the Network Extension enforces it per process. An app's allow rule is, so an address feed never blocks what you allowed.
+2. **pfctl anchor.** When Enforcement is enabled, a `puresnitch` anchor in `/etc/pf.conf` carries block rules for IPs, CIDR ranges, and ports that apply to every app. A deny rule that names an app is never written there, because `pf` cannot tell apps apart; the Network Extension enforces it per process. An app's allow rule is, so an address feed never blocks what you allowed. Every rule is written for its own direction and names the other end of the connection. An outgoing rule becomes `to` that address and port, an incoming rule becomes `from` it, and a rule for both directions becomes both lines. Every line in the anchor is `quick`, so a pass with no direction would also match the other direction and skip a block in `/etc/pf.conf`. That's why none is written. An incoming allow with only a port and no address stays with the Network Extension, because in `pf` it would let anyone using that source port reach every port on your Mac.
 3. **Process and connection observability.** `nettop -P -L 0 -x -J bytes_in,bytes_out` is parsed continuously for per-process bandwidth. `lsof -i -n -P -F pcnT` snapshots active connections every two seconds. Both feed the GUI's process list and world map. The menu bar speed and the traffic graph come from the network interfaces' byte counters, read once a second.
 4. **Per-process filtering.** In the firewall flavour, the Network System Extension evaluates each new socket flow against the shared rule set and can allow, drop, or pause it for a GUI decision.
 

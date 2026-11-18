@@ -66,7 +66,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Every load-then-save on the shared NEFilterManager (boot-policy saves,
     /// turning the filter off, removing it, restarting it) waits here for the
     /// one before it, so the last thing asked for is what gets saved (#309).
-    private let filterPreferences = FilterPreferencesLine()
+    /// Closed in demo mode: the demo never touches the real filter (#388).
+    private let filterPreferences: FilterPreferencesLine
+    /// `FREESNITCH_DEMO=1`: sample data only. Nothing here reads or saves the
+    /// content filter configuration or submits a system extension request, so
+    /// a demo on a Mac where FreeSnitch is installed leaves it alone (#388).
+    private let demo: Bool
     private var persistenceWorkItem: DispatchWorkItem?
     /// Whether the filter is turned off (by the app, or in System Settings) or
     /// has no configuration, as last seen. A failed boot-policy save then has no
@@ -77,13 +82,22 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// save that was already running can tell it was overtaken and must not
     /// report the firewall as active (#318).
     private var filterTurnOffs = 0
+    /// The pending turn-on follows the filter being turned on in System
+    /// Settings, so it must not turn it on against a later turn-off there.
+    private var turnOnFromSettings = false
+    /// The status shows a turn-on that was given up because the helper had
+    /// no rules. Turning the filter off in System Settings afterwards means
+    /// not filtering, not that failure (#382).
+    private var abandonedTurnOnShown = false
     /// Bounded, spaced automatic recovery from an extension that is holding a
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
     private var filterRestartInFlight = false
 
-    init(state: AppState) {
+    init(state: AppState, demo: Bool = DemoMode.isOn) {
         self.state = state
+        self.demo = demo
+        self.filterPreferences = FilterPreferencesLine(closed: demo)
         super.init()
         state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
             self?.recordSnapshotStatus(snapshotStatus)
@@ -91,6 +105,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
             self?.requestPersistedSnapshot(snapshot)
         }
+        // The demo shows sample data: what System Settings does to the real
+        // filter is none of its business, and reacting to it could save the
+        // demo's rules into the real filter (#388).
+        guard !demo else { return }
         // The filter can be turned on or off in System Settings too. Without
         // this, a failure before the next save cycle's load (an encode over
         // the size limit, or a failed load) would go by a stale answer (#321).
@@ -98,6 +116,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshFilterOffState() }
         }
+        // The filter may have been left off. Read it once at launch, so a
+        // failure before the first save cycle's load (an encode over the size
+        // limit, or a failed load) follows the same rule as later ones (#348).
+        if hasEmbeddedExtension { refreshFilterOffState() }
     }
 
     private func apply(_ change: FilterOffState.Change) {
@@ -107,10 +129,39 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case .clearBanner:
             // Nothing restarts with these rules while it is off.
             state?.clearFilterPersistenceFailure()
+            // Turned off or removed in System Settings: nothing filters, so
+            // stop saying the firewall is active (#361). Only a firewall shown
+            // as on changes; approval or a turn-on in progress keep their state.
+            // A turn-on shown as failed for lack of rules counts too (#382).
+            if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {
+                showNotFiltering()
+            }
         case .saveCurrentRules:
-            // Turned on outside the app: save the current rules again, as
-            // turning it on in the app does.
-            state?.syncSharedRules()
+            // Turned on outside the app: turn it on as activation at launch
+            // does, so the current rules are saved again and the firewall
+            // shows as active once that save went through (#361). A build
+            // without the extension only saves the rules, as before, and so
+            // does any state but "not filtering": an activation waiting for
+            // approval or running turns the filter on and reports the state
+            // itself, and after a failed activation the status stays failed
+            // until the extension really connects (#383).
+            if hasEmbeddedExtension && settingsTurnOnMayRun {
+                enableFilter(fromSettings: true)
+            } else {
+                state?.syncSharedRules()
+            }
+        }
+    }
+
+    /// Shown as not filtering, or an earlier turn-on from System Settings
+    /// failed (the helper gave no rules): turning it on there runs the
+    /// turn-on, so a failed one can be tried again. A failed activation is
+    /// not, it stays failed until the extension connects (#383).
+    private var settingsTurnOnMayRun: Bool {
+        switch status {
+        case .idle: return true
+        case .failed: return turnOnFromSettings
+        default: return false
         }
     }
 
@@ -132,7 +183,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// False in demo mode, so the demo treats this build like the monitor-only
+    /// one and never submits a system extension request (#388).
     private var hasEmbeddedExtension: Bool {
+        guard !demo else { return false }
         let dir = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/SystemExtensions")
         guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return false }
         return urls.contains { $0.pathExtension == "systemextension" }
@@ -145,6 +199,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             return
         }
         status = .activating
+        // A failure from here on is the activation's, not a System Settings
+        // turn-on's (#383).
+        turnOnFromSettings = false
         requestKind = .activation
         let request = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main)
         request.delegate = self
@@ -169,6 +226,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// only place FreeSnitch is allowed to do it: unregistering the service
     /// outside an uninstall the user confirmed is the failure #24 was filed for.
     func deactivateForUninstall() {
+        // The demo's uninstall screen walks through the steps on sample data:
+        // the real extension and filter configuration stay as they are (#389).
+        guard !demo else {
+            uninstallState = .removed
+            return
+        }
         uninstallState = .deactivating
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
@@ -236,7 +299,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.state?.clearFilterPersistenceFailure()
                                 // A turn-on asked for meanwhile waits behind this
                                 // and decides the state, not this late answer.
-                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)
+                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {
+                                    self.showNotFiltering()
+                                }
                             }
                             done()
                             completion()
@@ -268,7 +333,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     // MARK: - Content filter configuration
 
-    private func enableFilter() {
+    private func enableFilter(fromSettings: Bool = false) {
+        turnOnFromSettings = fromSettings
+        abandonedTurnOnShown = false
         // A snapshot kept for a retry is never the policy activation saves:
         // only the helper's fresh answer below may enable the filter.
         dropScheduledSave()
@@ -301,9 +368,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             // goes ahead with the live policy.
             dropScheduledSave()
             persistenceCycle.queueRemoval()
-            let reason = snapshot.rules.count > SharedRuleBridge.maximumBootSnapshotRuleCount
-                ? "There are \(snapshot.rules.count) rules and at most \(SharedRuleBridge.maximumBootSnapshotRuleCount) can be kept for the next start."
-                : "They could not be saved for the next start."
+            let reason = Self.unsavableReason(SharedRuleBridge.BootSnapshotProblem(error, ruleCount: snapshot.rules.count),
+                                              error: error)
             // Without the per-process filter there is nothing to keep for a
             // restart: no banner and no log (it would only flash, #342). The
             // removal still runs, so an installed but disabled filter never
@@ -354,6 +420,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 // Before the cycle may drop it: a removal of the saved policy
                 // that fails while the filter isn't in use shows no banner (#349).
                 let removalQueued = self.persistenceCycle.queue.peekNewest == SharedRuleBridge.bootSnapshotRemoval
+                // Turned on in System Settings and turned off or removed there
+                // again before this load: what is set there wins, so this
+                // cycle neither turns it back on nor recreates it (#361).
+                if loadError == nil && self.persistenceCycle.enableRequested
+                    && !FilterOffState.turnOnStands(fromSettings: self.turnOnFromSettings,
+                                                    configured: mgr.providerConfiguration != nil,
+                                                    enabled: mgr.isEnabled) {
+                    self.persistenceCycle.dropEnableRequest()
+                }
                 let decision = self.persistenceCycle.afterLoad(
                     load, loadFailed: loadError != nil,
                     configurationExists: mgr.providerConfiguration != nil,
@@ -397,6 +472,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     // warning no longer applies (#311).
                     self.state?.clearFilterPersistenceFailure()
                     self.filterOff.turnedOff(turnOnPending: false)
+                    // Removed outside the app before the change notice came:
+                    // nothing filters any more (#361).
+                    if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }
                     return
                 case .stop(.cancelledDuringLoad):
                     self.endPersistenceTurn()
@@ -417,6 +495,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
                 let shouldEnable = save.enable
                 let removesBootSnapshot = save.removesSavedPolicy
+                // What the preferences hold, put back on the shared manager if
+                // turning the filter on fails (#345). Every later operation
+                // reloads first, so this is defensive: no path that ever skips
+                // the reload can save the failed attempt's enable.
+                let loadedEnabled = mgr.isEnabled
+                // A copy: the configuration below is changed in place.
+                let loadedConfiguration = mgr.providerConfiguration?.copy() as? NEFilterProviderConfiguration
+                let loadedDescription = mgr.localizedDescription
                 let configuration = mgr.providerConfiguration ?? NEFilterProviderConfiguration()
                 configuration.filterSockets = true
                 configuration.filterPackets = false
@@ -436,7 +522,17 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
                 mgr.saveToPreferences { saveError in
                     DispatchQueue.main.async {
-                        let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)
+                        if saveError != nil && shouldEnable {
+                            // Before the next preferences operation may start.
+                            mgr.isEnabled = loadedEnabled
+                            mgr.providerConfiguration = loadedConfiguration
+                            mgr.localizedDescription = loadedDescription
+                        }
+                        // Turned on or off in System Settings after the load:
+                        // the system refused to write back what was loaded (#368).
+                        let changedOutside = Self.changedOutside(saveError)
+                        let result = self.persistenceCycle.afterSave(save, saveFailed: saveError != nil,
+                                                                     changedOutside: changedOutside)
                         self.endPersistenceTurn()
                         // Turned off or removed while this enabling save
                         // was running: the turn-off is saved after it, so
@@ -453,7 +549,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                                   message: "The filter was turned off while it was being turned on; it stays off.")
                         }
                         if let saveError {
-                            if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
+                            if changedOutside && result.runAgainNow {
+                                // Saved again below onto what the user set.
+                                os_log("The filter settings changed outside FreeSnitch during a boot policy save; saving the rules again onto them: %{public}@",
+                                       log: self.log, type: .info, saveError.sentence)
+                            } else if removesBootSnapshot && self.state?.filterPersistenceUnsavable == nil {
                                 // A removal while the filter isn't in use: no
                                 // banner was shown for it, so none for this.
                                 os_log("Removing the saved boot policy failed: %{public}@", log: self.log, type: .info,
@@ -520,6 +620,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
+    /// The system refused a save because the filter preferences changed after
+    /// they were loaded, for example the filter was turned on or off in System
+    /// Settings (#368).
+    static func changedOutside(_ error: Error?) -> Bool {
+        error.map { ($0 as NSError).domain == NEFilterErrorDomain && ($0 as NSError).code == NEFilterManagerError.configurationStale.rawValue } ?? false
+    }
+
     /// The save cycle's turn on `filterPreferences` is over: the next
     /// preferences operation may run.
     private func endPersistenceTurn() {
@@ -583,7 +690,26 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
     }
 
-    /// `unsavable` says why the current rules can never be kept for the next
+    /// What the banner says about rules that could not be kept for the next
+    /// start. Only a size or count problem is solved by removing rules; for
+    /// anything else it says what happened instead (#341).
+    static func unsavableReason(_ problem: SharedRuleBridge.BootSnapshotProblem, error: Error) -> String {
+        switch problem {
+        case .tooManyRules(let count, let maximum):
+            return "There are \(count) rules and at most \(maximum) can be kept for the next start. "
+                + "Remove some rules to keep them across restarts."
+        case .tooLarge(_, let maximumBytes):
+            return "The rules take up more than the \(maximumBytes / 1024) KB that can be kept for the next start. "
+                + "Remove some rules or shorten long notes to keep them across restarts."
+        case .datedInFuture:
+            return "They are dated later than the Mac's clock, which happens when the clock is set back. "
+                + "This fixes itself the next time the rules are saved, for example with the next rule change."
+        case .other:
+            return "They could not be saved for the next start: \(error.sentence)"
+        }
+    }
+
+    /// `unsavable` says why the current rules can't be kept for the next
     /// start; a retry or Send Rules Again cannot fix that (#320).
     private func recordPersistenceFailure(_ operation: String, error: Error, unsavable: String? = nil,
                                           writeLog: Bool = true) {
@@ -639,7 +765,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.state?.clearFilterPersistenceFailure()
                                 // A turn-on asked for meanwhile waits behind this
                                 // and decides the state, not this late answer.
-                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)
+                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {
+                                    self.showNotFiltering()
+                                }
                             }
                             done()
                         }
@@ -647,6 +775,17 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// The filter configuration was turned off or removed, so nothing is
+    /// filtering any more. Uninstalling usually gets "finishes after a
+    /// restart" from macOS rather than a completed deactivation, and the
+    /// menu bar and banner must not keep saying the firewall is active until
+    /// then (#335). A build without the extension stays "unsupported".
+    private func showNotFiltering() {
+        filterConfigurationActive = false
+        abandonedTurnOnShown = false
+        if status != .unsupported { status = .idle }
     }
 
     private func recordFilterDiagnostic(state: String, detail: String) {
@@ -775,7 +914,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {
-            fail("filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")")
+            let message = "filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")"
+            if turnOnFromSettings {
+                reportAbandonedSettingsTurnOn(message)
+            } else {
+                failAbandonedTurnOn(message)
+            }
             return
         }
         guard filterConfigurationActive else { return }
@@ -785,6 +929,46 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         let detail = snapshotStatus.message ?? "no snapshot has been received"
         status = .failed("filter snapshot unavailable: \(detail)")
+    }
+
+    /// The helper gave no rules for a turn-on that followed the filter being
+    /// turned on in System Settings. Changes made there are not read while a
+    /// turn-on is pending, so it may have been turned off or removed there
+    /// again meanwhile: then the filter is off as the user set it, and the
+    /// app says not filtering instead of a failed turn-on (#382). Read in its
+    /// turn on the preferences line, so it sees every earlier save.
+    private func reportAbandonedSettingsTurnOn(_ message: String) {
+        turnOnFromSettings = false
+        filterPreferences.run { [weak self] done in
+            NEFilterManager.shared().loadFromPreferences { error in
+                DispatchQueue.main.async {
+                    guard let self else { done(); return }
+                    let mgr = NEFilterManager.shared()
+                    let configured = mgr.providerConfiguration != nil
+                    let enabled = mgr.isEnabled
+                    done()
+                    // A newer turn-on reports the state itself.
+                    guard !self.persistenceCycle.enableRequested else { return }
+                    if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: error != nil,
+                                                            configured: configured, enabled: enabled) {
+                        self.failAbandonedTurnOn(message)
+                        return
+                    }
+                    self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))
+                    // Approval or an activation started meanwhile keep their state.
+                    guard self.status != .needsApproval && self.status != .activating else { return }
+                    self.showNotFiltering()
+                    self.state?.appendLog(level: "info",
+                                          message: "Firewall not filtering: the helper sent no rules to turn it on with, "
+                                              + "and the filter was turned off or removed in System Settings meanwhile.")
+                }
+            }
+        }
+    }
+
+    private func failAbandonedTurnOn(_ message: String) {
+        fail(message)
+        abandonedTurnOnShown = true
     }
 
     private func fail(_ message: String) {

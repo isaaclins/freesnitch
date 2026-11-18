@@ -271,6 +271,10 @@ final class PFManager: @unchecked Sendable {
         lines.append("# If that filter is inactive, hostname rules are not enforced by this anchor.")
         lines.append("# Deny rules that name an app are not emitted either: pf cannot tell processes apart,")
         lines.append("# so an app's address or port deny would block every app on the Mac.")
+        lines.append("# A deny's incoming half names the remote side (from) and stops only new TCP connections")
+        lines.append("# (flags S/SA). Incoming UDP is blocked only by a deny in both directions.")
+        lines.append("# An allow names the remote peer: pass out ... to it, pass in ... from it. An incoming allow")
+        lines.append("# with only a port is left to the Network Extension; from any port N would open every local port.")
         lines.append("# Allow rules are emitted even when they name an app, so the address feeds below,")
         lines.append("# which only this anchor enforces, never block what the user allowed.")
         lines.append("set block-policy drop")
@@ -281,13 +285,13 @@ final class PFManager: @unchecked Sendable {
         let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }
 
         for rule in denyRules {
-            if let line = pfLine(rule: rule, verb: "block", onRejected: onRejected) {
-                lines.append(line)
+            if let ruleLines = pfLines(rule: rule, verb: "block", onRejected: onRejected) {
+                lines.append(contentsOf: ruleLines)
             }
         }
         for rule in allowRules {
-            if let line = pfLine(rule: rule, verb: "pass", onRejected: onRejected) {
-                lines.append(line)
+            if let ruleLines = pfLines(rule: rule, verb: "pass", onRejected: onRejected) {
+                lines.append(contentsOf: ruleLines)
             }
         }
 
@@ -356,12 +360,12 @@ final class PFManager: @unchecked Sendable {
         return lines
     }
 
-    private func pfLine(
+    private func pfLines(
         rule r: Rule,
         verb: String,
         onRejected: ((Rule, String) -> Void)?
-    ) -> String? {
-        func reject(_ reason: String) -> String? {
+    ) -> [String]? {
+        func reject(_ reason: String) -> [String]? {
             onRejected?(r, reason)
             return nil
         }
@@ -426,14 +430,70 @@ final class PFManager: @unchecked Sendable {
             }
         }
 
-        var line = verb
-        if r.direction != .any {
-            line += r.direction == .incoming ? " in" : " out"
+        // pf only takes `port` after a host (pf.conf(5), `hosts`): a bare
+        // `port 8443` is a syntax error that makes pfctl refuse the whole
+        // anchor (issue #298), so a port-only rule matches `to any`.
+        var host = " \(destination ?? "any")"
+        if let port { host += " port \(port)" }
+        let target = " to" + host
+
+        guard verb == "block" else {
+            // The rule names the remote side, as the matcher and the Network
+            // Extension read it. For an incoming connection that is where the
+            // packet comes from, so pf gets `pass in ... from X port N`;
+            // `pass in ... to X port N` would name this Mac's own address
+            // and port (#301). The pass keeps state, so this Mac's replies to
+            // an allowed incoming peer also pass the address feed below. A
+            // rule for both directions is written as both halves.
+            //
+            // An incoming half needs an address. With only a port it would
+            // be `pass in ... from any port N`: anyone who picks N as their
+            // source port could reach every port on this Mac, for every app,
+            // past the blocks in /etc/pf.conf. That half is left to the
+            // Network Extension, which sees the process.
+            if r.direction == .incoming && destination == nil {
+                return reject("an incoming allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port")
+            }
+            var passes: [String] = []
+            if r.direction != .incoming {
+                passes.append("pass out quick proto { tcp udp }" + target)
+            }
+            if r.direction != .outgoing {
+                if destination != nil {
+                    passes.append("pass in quick proto { tcp udp } from" + host)
+                } else {
+                    onRejected?(r, "the incoming half of an allow with only a port is enforced by the Network Extension filter layer when active and is not emitted to PF, where it would let any sender using that source port reach every local port; only the outgoing half is written")
+                }
+            }
+            return passes
         }
-        line += " quick proto { tcp udp }"
-        if let destination { line += " to \(destination)" }
-        if let port { line += " port \(port)" }
-        return line
+        // A deny names the remote side, as the matcher and the Network
+        // Extension read it: `to` it going out, `from` it coming in. A
+        // `block in ... to X port N` would name this Mac's own address and
+        // port instead (#298).
+        //
+        // The outgoing half blocks every packet, so blocking an address
+        // also cuts a connection to it that is already open; the Network
+        // Extension only judges new connections. A block keeps no state, so
+        // the incoming half must not catch replies to this Mac's own
+        // connections: for TCP, `flags S/SA` limits it to the SYN that opens
+        // a new incoming connection. UDP has no such marker, so its incoming
+        // half is written only when the deny covers both directions, where
+        // the replies it catches belong to connections the outgoing half
+        // already blocks. An incoming-only deny of UDP is left to the
+        // extension.
+        let source = " from" + host
+        var lines: [String] = []
+        if r.direction != .incoming {
+            lines.append("block out quick proto { tcp udp }" + target)
+        }
+        if r.direction != .outgoing {
+            lines.append("block in quick proto tcp" + source + " flags S/SA")
+        }
+        if r.direction == .any {
+            lines.append("block in quick proto udp" + source)
+        }
+        return lines
     }
 
     private func reportRejected(rule: Rule, reason: String) {

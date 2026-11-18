@@ -148,21 +148,21 @@ do {
         expect(app.reported == expected, "\(name): reported \(app.reported), expected \(expected)")
         expect(mgr.storedEnabled == storedEnabled, "\(name): stored isEnabled \(mgr.storedEnabled)")
     }
-    let turnOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
+    let userTurnsOff: (inout App, FakeFilterManager, FilterPreferencesLine) -> Void = { app, mgr, line in
         app.turnOffs &+= 1   // disableFilter / removeFilterConfiguration
         app.enableRequested = false
         line.run { done in turnOff(mgr, done: done) }
     }
     run("nothing overtakes", between: { _, _, _ in }, expected: [.active], storedEnabled: true)
     run("save fails", saveFails: true, between: { _, _, _ in }, expected: [.failed], storedEnabled: true)
-    run("off while loading", between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off while loading", between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off while saving", between: { app, mgr, line in
         mgr.deliver("save load")
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
     }, expected: [.stayedOff], storedEnabled: false)
-    run("off, then the save fails", saveFails: true, between: turnOff, expected: [.stayedOff], storedEnabled: false)
+    run("off, then the save fails", saveFails: true, between: userTurnsOff, expected: [.stayedOff], storedEnabled: false)
     run("off then on again", between: { app, mgr, line in
-        turnOff(&app, mgr, line)
+        userTurnsOff(&app, mgr, line)
         app.enableRequested = true // enableFilter: the next cycle reports
     }, expected: [.awaitReenable], storedEnabled: false)
     expect(FilterSaveCompletion.decide(enabling: false, turnOffsAtLoad: 0, turnOffsNow: 1,
@@ -171,7 +171,150 @@ do {
     print("filter off harness: an enabling save overtaken by a turn-off reports the filter off, not active")
 }
 
-// 5. A sequence that finishes with an error still lets the next one run, and
+// 5. #361: the filter is turned on in System Settings, the app turns it on
+//    with the current rules, and the user turns it off or removes it there
+//    again before that save cycle loads. The real save cycle and the real
+//    turn-on rule, driven through the fake manager.
+do {
+    typealias Cycle = SharedRuleBridge.BootPolicySaveCycle
+    struct Outcome { var decision: Cycle.AfterLoad; var storedEnabled: Bool; var storedConfigured: Bool }
+    /// What System Settings holds besides isEnabled.
+    final class Settings { var configured = true }
+    func run(fromSettings: Bool, guarded: Bool = true,
+             userAction: (FakeFilterManager, Settings) -> Void) -> Outcome {
+        let mgr = FakeFilterManager()
+        mgr.storedEnabled = true            // turned on in System Settings
+        let settings = Settings()
+        var cycle = Cycle()
+        cycle.requestEnable()               // enableFilter(fromSettings:)
+        cycle.enqueue(Data("rules".utf8))   // the helper's current rules
+        guard let load = cycle.begin() else { expect(false, "no cycle started"); exit(1) }
+        var decision: Cycle.AfterLoad?
+        mgr.loadFromPreferences("save") {
+            let configured = settings.configured
+            if guarded && cycle.enableRequested
+                && !FilterOffState.turnOnStands(fromSettings: fromSettings, configured: configured,
+                                                enabled: mgr.isEnabled) {
+                cycle.dropEnableRequest()
+            }
+            let decided = cycle.afterLoad(load, loadFailed: false, configurationExists: configured,
+                                          hasSavedPolicy: configured)
+            decision = decided
+            guard case .save(let save) = decided else { return }
+            if save.enable { mgr.isEnabled = true }
+            settings.configured = true      // saving writes the configuration
+            mgr.saveToPreferences("save") {}
+        }
+        userAction(mgr, settings)           // before the cycle's load lands
+        mgr.deliverAll()
+        return Outcome(decision: decision!, storedEnabled: mgr.storedEnabled,
+                       storedConfigured: settings.configured)
+    }
+    let turnOffThere: (FakeFilterManager, Settings) -> Void = { mgr, _ in mgr.storedEnabled = false }
+    let removeThere: (FakeFilterManager, Settings) -> Void = { mgr, settings in
+        mgr.storedEnabled = false
+        settings.configured = false
+    }
+
+    // Without the rule the bug reproduces: the save turns it back on.
+    let unguarded = run(fromSettings: true, guarded: false, userAction: turnOffThere)
+    expect(unguarded.storedEnabled, "the off-again race did not reproduce, so this test proves nothing")
+
+    let off = run(fromSettings: true, userAction: turnOffThere)
+    expect(!off.storedEnabled, "turned off again in System Settings, the app's save turned the filter back on")
+    if case .save(let save) = off.decision {
+        expect(!save.enable, "the cycle still counts as turning the filter on")
+    } else { expect(false, "the current rules were not saved for the next turn-on: \(off.decision)") }
+
+    let removed = run(fromSettings: true, userAction: removeThere)
+    expect(removed.decision == .stop(.noConfiguration), "removed in System Settings, the cycle went on: \(removed.decision)")
+    expect(!removed.storedConfigured && !removed.storedEnabled, "a filter removed in System Settings was recreated")
+
+    let stays = run(fromSettings: true, userAction: { _, _ in })
+    expect(stays.storedEnabled, "a turn-on in System Settings that nobody undid was dropped")
+    if case .save(let save) = stays.decision { expect(save.enable, "the turn-on save does not report active") }
+    else { expect(false, "the turn-on did not save: \(stays.decision)") }
+
+    // Activation at launch turns the filter on even if it was off.
+    let activation = run(fromSettings: false, userAction: turnOffThere)
+    expect(activation.storedEnabled, "activation no longer turns the filter on")
+    print("filter off harness: turned on and off again in System Settings, what is set there wins")
+}
+
+// 6. #382: the filter is turned on in System Settings, so the app asks the
+//    helper for the current rules to turn it on. The user turns it off (or
+//    removes it) there again before the helper answers, and the helper then
+//    gives no rules. The app reads System Settings only after giving up, as
+//    the change notice is skipped while a turn-on is pending. The real save
+//    cycle and the real off-state rules, step by step.
+do {
+    typealias Cycle = SharedRuleBridge.BootPolicySaveCycle
+    enum Shown: Equatable { case notFiltering, failed }
+    func run(_ name: String, guarded: Bool = true, readFails: Bool = false,
+             userAction: (FakeFilterManager, inout Bool) -> Void) -> Shown {
+        let mgr = FakeFilterManager()
+        var configured = true
+        var off = FilterOffState()
+        var cycle = Cycle()
+        // Shown as not filtering: off in System Settings.
+        _ = off.observed(configured: true, enabled: false, fromOutside: true)
+        // Turned on there: the change notice asks for the current rules.
+        mgr.storedEnabled = true
+        let change = off.observed(configured: true, enabled: true, fromOutside: true)
+        expect(change == .saveCurrentRules, "\(name): turning it on in System Settings did not start a turn-on")
+        cycle.requestEnable()
+        off.turnedOn()
+        // Turned off there again: the notice is skipped while the turn-on is pending.
+        userAction(mgr, &configured)
+        expect(cycle.enableRequested, "\(name): the turn-on was dropped before the helper answered")
+        // The helper gives no rules.
+        expect(cycle.abandonEnableIfIdle(), "\(name): no rules did not give up the turn-on")
+        // Before #382 the app reported a failed turn-on right here, without
+        // reading System Settings again, even though the off-state still
+        // counts the filter as on.
+        guard guarded else {
+            expect(!off.isOff, "\(name): the app already knew the filter was off")
+            return .failed
+        }
+        var shown: Shown?
+        mgr.loadFromPreferences("read") {
+            if FilterOffState.abandonedTurnOnFailed(fromSettings: true, readFailed: readFails,
+                                                     configured: configured, enabled: mgr.isEnabled) {
+                shown = .failed
+                return
+            }
+            expect(off.observed(configured: configured, enabled: mgr.isEnabled, fromOutside: true) == .clearBanner,
+                   "\(name): the filter off in System Settings did not count as off")
+            shown = .notFiltering
+        }
+        mgr.deliverAll()
+        expect(!off.isOff || shown == .notFiltering, "\(name): off but not shown as not filtering")
+        return shown!
+    }
+    let turnOffThere: (FakeFilterManager, inout Bool) -> Void = { mgr, _ in mgr.storedEnabled = false }
+    let removeThere: (FakeFilterManager, inout Bool) -> Void = { mgr, configured in
+        mgr.storedEnabled = false
+        configured = false
+    }
+    let leaveOn: (FakeFilterManager, inout Bool) -> Void = { _, _ in }
+
+    // Without the read the app can't know: it still counts the filter as on.
+    expect(run("unguarded", guarded: false, userAction: turnOffThere) == .failed,
+           "the failed turn-on did not reproduce, so this test proves nothing")
+    expect(run("off again", userAction: turnOffThere) == .notFiltering,
+           "turned off again in System Settings, the app said the turn-on failed")
+    expect(run("removed", userAction: removeThere) == .notFiltering,
+           "removed in System Settings, the app said the turn-on failed")
+    expect(run("still on", userAction: leaveOn) == .failed,
+           "still on in System Settings with no rules, the app did not say the turn-on failed")
+    expect(run("read fails", readFails: true, userAction: turnOffThere) == .failed,
+           "a failed read of System Settings hid the failed turn-on")
+    expect(FilterOffState.abandonedTurnOnFailed(fromSettings: false, readFailed: false, configured: false, enabled: false),
+           "a turn-on by activation that got no rules no longer counts as failed")
+    print("filter off harness: turned on and off again in System Settings with no rules, the app says not filtering")
+}
+
+// 7. A sequence that finishes with an error still lets the next one run, and
 //    calling done twice does not skip anyone.
 do {
     let line = FilterPreferencesLine()
@@ -186,6 +329,22 @@ do {
     expect(order == [1, 2, 3], "the queue stalled or ran out of order: \(order)")
     expect(!line.isBusy, "the line is busy with nothing left to run")
     print("filter off harness: sequences run one at a time, in order, and never stall")
+}
+
+// 6. #388: demo mode closes the line. Turning the filter on in System Settings
+//    then asks for a read and a save of the current rules; neither may reach
+//    the real preferences.
+do {
+    let mgr = FakeFilterManager()
+    let line = FilterPreferencesLine(closed: true)
+    var ran = 0
+    line.run { done in ran += 1; mgr.loadFromPreferences("demo read") { done() } }
+    line.run { done in ran += 1; enablingSave(mgr, done: done) }
+    line.run { done in ran += 1; turnOff(mgr, done: done) }
+    expect(ran == 0 && mgr.callbacks.isEmpty, "a closed line ran \(ran) operation(s) on the filter preferences")
+    expect(!mgr.storedEnabled, "a closed line saved the filter on")
+    expect(!line.isBusy, "a closed line holds operations it will never run")
+    print("filter off harness: a closed line (demo mode) never reads or saves the filter preferences")
 }
 SWIFT
   swiftc "$ROOT"/Sources/Shared/*.swift "$dir/main.swift" -lsqlite3 -o "$dir/harness"
@@ -264,4 +423,65 @@ mutate_and_expect_failure disable-not-counted "$SEM" \
 mutate_and_expect_failure remove-not-counted "$SEM" \
   $'        cancelPendingPersistence()\n        filterTurnOffs &+= 1\n        persistenceCycle.dropEnableRequest()\n        filterPreferences.run' \
   $'        cancelPendingPersistence()\n        persistenceCycle.dropEnableRequest()\n        filterPreferences.run'
+mutate_and_expect_failure removal-keeps-active-status "$SEM" \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
+mutate_and_expect_failure disable-keeps-active-status "$SEM" \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {\n                                    self.showNotFiltering()\n                                }' \
+  $'these rules; turning it on saves the current ones again.\n                                self.state?.clearFilterPersistenceFailure()\n                                // A turn-on asked for meanwhile waits behind this\n                                // and decides the state, not this late answer.\n                                self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)'
+mutate_and_expect_failure not-filtering-keeps-status "$SEM" \
+  'if status != .unsupported { status = .idle }' ''
+mutate_and_expect_failure outside-off-keeps-active-status "$SEM" \
+  'if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {
+                showNotFiltering()
+            }' ''
+mutate_and_expect_failure outside-off-hides-approval "$SEM" \
+  'if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {' 'if true {'
+mutate_and_expect_failure outside-on-stays-not-filtering "$SEM" \
+  $'            if hasEmbeddedExtension && settingsTurnOnMayRun {\n                enableFilter(fromSettings: true)' \
+  $'            if hasEmbeddedExtension {\n                state?.syncSharedRules()'
+mutate_and_expect_failure outside-on-skips-rules "$SEM" \
+  $'            } else {\n                state?.syncSharedRules()\n            }' \
+  $'            } else {\n            }'
+mutate_and_expect_failure outside-removal-keeps-active-status "$SEM" \
+  'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' ''
+mutate_and_expect_failure settings-turn-on-overrides-off "$SEM" \
+  $'                    self.persistenceCycle.dropEnableRequest()\n                }\n                let decision' \
+  $'                }\n                let decision'
+mutate_and_expect_failure settings-turn-on-not-checked "$SEM" \
+  'fromSettings: self.turnOnFromSettings,' 'fromSettings: false,'
+mutate_and_expect_failure settings-turn-on-skips-approval "$SEM" \
+  '        default: return false' '        default: return true'
+mutate_and_expect_failure settings-turn-on-after-failed-activation "$SEM" \
+  '        case .failed: return turnOnFromSettings' '        case .failed: return true'
+mutate_and_expect_failure settings-turn-on-failure-sticks "$SEM" \
+  '        case .failed: return turnOnFromSettings' '        case .failed: return false'
+mutate_and_expect_failure activation-failure-counts-as-settings "$SEM" \
+  $'        // turn-on\'s (#383).\n        turnOnFromSettings = false' $'        // turn-on\'s (#383).'
+mutate_and_expect_failure settings-turn-on-not-marked "$SEM" \
+  'enableFilter(fromSettings: true)' 'enableFilter()'
+mutate_and_expect_failure abandoned-settings-turn-on-fails "$SEM" \
+  'if turnOnFromSettings {
+                reportAbandonedSettingsTurnOn(message)' \
+  'if false {
+                reportAbandonedSettingsTurnOn(message)'
+mutate_and_expect_failure abandoned-settings-read-failure-hidden "$SEM" \
+  'readFailed: error != nil,' 'readFailed: false,'
+mutate_and_expect_failure abandoned-settings-keeps-status "$SEM" \
+  $'else { return }\n                    self.showNotFiltering()' \
+  $'else { return }'
+mutate_and_expect_failure failed-turn-on-then-off-keeps-error "$SEM" \
+  'if (filterConfigurationActive || abandonedTurnOnShown) &&' 'if (filterConfigurationActive) &&'
+mutate_and_expect_failure failed-turn-on-not-marked "$SEM" \
+  $'        fail(message)\n        abandonedTurnOnShown = true' $'        fail(message)'
+mutate_and_expect_failure abandoned-settings-hides-approval "$SEM" \
+  'guard self.status != .needsApproval && self.status != .activating else { return }
+                    self.showNotFiltering()' \
+  'self.showNotFiltering()'
+mutate_and_expect_failure abandoned-settings-overrides-newer-turn-on "$SEM" \
+  $'                    // A newer turn-on reports the state itself.\n                    guard !self.persistenceCycle.enableRequested else { return }\n' \
+  $'                    // A newer turn-on reports the state itself.\n'
+mutate_and_expect_failure abandoned-settings-read-unserialized "$SEM" \
+  $'        turnOnFromSettings = false\n        filterPreferences.run { [weak self] done in' \
+  $'        turnOnFromSettings = false\n        do { let done = {}'
 printf 'filter off vs boot-policy save verification: PASS\n'

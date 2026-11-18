@@ -46,7 +46,8 @@ extension SharedRuleBridge {
         /// What `afterLoad` decided.
         public enum AfterLoad: Equatable, Sendable {
             /// The preferences could not be loaded. `failActivation` when the
-            /// user was turning the filter on.
+            /// user was turning the filter on; the enable request is then
+            /// over, and the queued work is retried as a plain save (#345).
             case loadFailed(failActivation: Bool, next: Next)
             /// The load failed, but the filter was turned on, off or removed
             /// meanwhile: it no longer matters, raise no warning and fail no
@@ -91,7 +92,8 @@ extension SharedRuleBridge {
             /// The filter was turned on.
             public var activated = false
             /// What happens to a failed save: `.retry`, `.retriesUsedUp`, or
-            /// `.none` when it was not kept (activation, or newer work won).
+            /// `.none` when it was not kept (cancelled, or newer work won).
+            /// A failed turn-on is kept too and retried without enabling.
             public var next = Next.none
             /// Start another cycle right away (newer work, or an enable
             /// request arrived during this one). Replaces a scheduled retry.
@@ -105,6 +107,10 @@ extension SharedRuleBridge {
         /// Bumped by every `cancel`, so a cycle already running can tell its
         /// result no longer matters.
         public private(set) var cancellations = 0
+        /// A save was refused because the filter settings changed outside the
+        /// app after the load, and the one immediate save again is used up.
+        /// Cleared by a save that goes through or a newer policy (#368).
+        public private(set) var changedOutsideRetried = false
 
         public init(retryDelays: [TimeInterval] = RetrySchedule.defaultDelays) {
             retry = RetrySchedule(delays: retryDelays)
@@ -116,6 +122,7 @@ extension SharedRuleBridge {
         public mutating func enqueue(_ data: Data) {
             queue.enqueue(data)
             retry.reset()
+            changedOutsideRetried = false
         }
 
         /// The newest policy cannot be kept for the next start (for example
@@ -128,6 +135,7 @@ extension SharedRuleBridge {
         public mutating func queueRemoval() {
             cancel()
             queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)
+            changedOutsideRetried = false
         }
 
         /// The user turns the filter on. A snapshot kept for a retry is never
@@ -186,17 +194,19 @@ extension SharedRuleBridge {
                 if cancellations != load.cancellations {
                     return .cancelledLoadFailed(next: queue.hasPending || enableRequested ? .now : .none)
                 }
-                if enableRequested {
-                    let hasNewer = queue.hasNewerWork(since: generationAtLoad)
-                    queue.discardThrough(generationAtLoad)
-                    return .loadFailed(failActivation: true, next: hasNewer ? .now : .none)
-                }
+                // Turning the filter on failed. The request ends here, so the
+                // retry below or a later rule change saves without turning the
+                // filter on; only the user does that.
+                let failActivation = enableRequested
+                enableRequested = false
                 if queue.hasNewerWork(since: generationAtLoad) {
-                    return .loadFailed(failActivation: false, next: .now)
+                    return .loadFailed(failActivation: failActivation, next: .now)
                 }
-                // The snapshot was never taken, so it is still queued. Leaving
-                // the older saved policy as the last word is #213: retry.
-                return .loadFailed(failActivation: false, next: nextRetry())
+                // The snapshot (or the removal of an older saved policy, #320)
+                // was never taken, so it is still queued, also when turning
+                // the filter on failed. Leaving the older saved policy as the
+                // last word is #213 and #345: retry.
+                return .loadFailed(failActivation: failActivation, next: nextRetry())
             }
 
             let enable = enableRequested
@@ -224,19 +234,36 @@ extension SharedRuleBridge {
                               removesSavedPolicy: removes, hadSavedPolicy: hasSavedPolicy))
         }
 
-        public mutating func afterSave(_ save: Save, saveFailed: Bool) -> AfterSave {
+        /// `changedOutside`: the system refused the save because the filter
+        /// settings changed after this cycle loaded them, for example the
+        /// filter was turned off in System Settings (#368). Writing what was
+        /// loaded would undo that change, so nothing was written: load again
+        /// right away and save the same policy onto what the user set. Once
+        /// per policy; after that it is an ordinary failed save.
+        public mutating func afterSave(_ save: Save, saveFailed: Bool, changedOutside: Bool = false) -> AfterSave {
             inFlight = false
             var result = AfterSave()
+            if saveFailed && changedOutside && !save.enable && !changedOutsideRetried
+                && cancellations == save.load.cancellations {
+                changedOutsideRetried = true
+                // Requeue fails only when newer work arrived; that runs next.
+                if let pending = save.pending { queue.requeueFailed(pending) }
+                result.runAgainNow = queue.hasPending || enableRequested
+                return result
+            }
             if saveFailed {
                 result.reportFailure = cancellations == save.load.cancellations
-                if save.enable {
-                    result.failActivation = true
-                } else if let pending = save.pending, queue.requeueFailed(pending) {
+                result.failActivation = save.enable
+                // Also after a failed turn-on (#345): the enable request was
+                // cleared when this cycle loaded, so the retry saves the
+                // policy (or the removal) and never turns the filter on.
+                if let pending = save.pending, queue.requeueFailed(pending) {
                     // Nothing newer arrived during the save, so the saved
                     // policy is still older than the one being enforced.
                     result.next = nextRetry()
                 }
             } else {
+                changedOutsideRetried = false
                 if save.removesSavedPolicy {
                     // The live rules could not be kept for the next start;
                     // the warning stays until a policy that can be kept is saved.

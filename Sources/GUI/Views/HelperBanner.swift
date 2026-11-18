@@ -154,7 +154,9 @@ private struct BannerInfo {
     /// The extension accepted the policy but it could not be saved. Until a
     /// save succeeds, the next start refuses saved rules older than the ones
     /// it last enforced and fails open (#213).
-    /// The technical reason stays in the log; the banner says what it means.
+    /// The technical reason stays in the log; the banner says what it means,
+    /// except for an encode failure with no known cause, whose error text is
+    /// the only thing it can say (#341).
     /// `unsavableReason` is set when the current rules can never be kept for
     /// the next start (#320): sending them again cannot help, so the banner
     /// says what a restart does instead and offers no retry.
@@ -169,7 +171,9 @@ private struct BannerInfo {
             // (the filter may be off while rules still sync).
             detail = [unsavableReason,
                       liveRulesReady ? "The filter is using them now." : nil,
-                      "After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again. Remove some rules to keep them across restarts.",
+                      // The reason carries its own advice: removing rules
+                      // only helps when the count or size is the cause (#341).
+                      "After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again.",
                       recoveryMessage]
                 .compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: " ")

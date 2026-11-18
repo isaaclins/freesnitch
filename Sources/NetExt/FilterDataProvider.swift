@@ -938,42 +938,74 @@ final class FilterDataProvider: NEFilterDataProvider {
 /// Staleness: a path can be reused by a replaced app, so an entry older than
 /// `entryLifetime` is re-read in the background while the previous identifier
 /// is still answered from memory. The stale window is therefore bounded by the
-/// lifetime plus one background read, and an identifier is never invented for
-/// a path that has not been read at least once.
+/// lifetime plus one background read (two lifetimes while the refresh keeps
+/// failing, see below), and an identifier is never invented for a path that has
+/// not been read at least once.
+///
+/// Failed reads: an Info.plist that cannot be read or parsed (an app mid-update,
+/// a permissions problem) is not an app without a bundle identifier. It is
+/// logged once, keeps the identity the path had before (for at most one more
+/// lifetime past its last good read), and is read again after
+/// `failureRetryInterval`, doubling up to `entryLifetime` while it keeps
+/// failing. Otherwise one bad read would hide the app from every rule scoped to
+/// its bundle id for the whole lifetime, without a trace (#268).
 struct AppBundleMetadata: Sendable {
     let bundleIdentifier: String?
     let version: String?
+}
+
+/// The outcome of one Info.plist read. `.read(nil)` is a real answer (the plist
+/// names neither an identifier nor a version); `.failed` means nothing is known.
+enum AppBundleMetadataRead: Sendable {
+    case read(AppBundleMetadata?)
+    case failed(String)
 }
 
 final class BundleIdentifierCache: @unchecked Sendable {
     private struct Entry {
         let metadata: AppBundleMetadata?
         let resolvedAtNanos: UInt64
+        /// When this entry is due for another read. `entryLifetime` after a good
+        /// read, much sooner after a failed one.
+        let refreshAfterNanos: UInt64
+        /// Failed reads in a row since the last good one.
+        let failures: Int
     }
 
     let capacity: Int
     let entryLifetime: TimeInterval
+    let failureRetryInterval: TimeInterval
 
     private var entries: [String: Entry] = [:]
     private var evictionOrder: [String] = []
     private var pending: Set<String> = []
     private let lifetimeNanos: UInt64
+    private let failureRetryNanos: UInt64
     /// Stable address for the whole lifetime of the cache. A Swift property of
     /// type `os_unfair_lock_s` gives no such guarantee, and a lock that moves
     /// is not a lock.
     private let lock: UnsafeMutablePointer<os_unfair_lock_s>
     private let resolveQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.bundleid", qos: .utility)
-    private let read: @Sendable (String) -> AppBundleMetadata?
+    private let read: @Sendable (String) -> AppBundleMetadataRead
+    /// Monotonic nanoseconds. A test seam, so lifetimes and retries can be
+    /// checked without sleeping.
+    private let clock: @Sendable () -> UInt64
 
     init(capacity: Int = 512,
          entryLifetime: TimeInterval = 300,
-         read: @escaping @Sendable (String) -> AppBundleMetadata? = { BundleIdentifierCache.readBundleMetadata(atAppPath: $0) }) {
+         failureRetryInterval: TimeInterval = 1,
+         read: @escaping @Sendable (String) -> AppBundleMetadataRead = { BundleIdentifierCache.readBundleMetadata(atAppPath: $0) },
+         clock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         precondition(capacity > 0)
         precondition(entryLifetime > 0)
+        precondition(failureRetryInterval > 0)
         self.capacity = capacity
         self.entryLifetime = entryLifetime
+        self.failureRetryInterval = min(failureRetryInterval, entryLifetime)
         self.lifetimeNanos = UInt64(entryLifetime * 1_000_000_000)
+        self.failureRetryNanos = UInt64(self.failureRetryInterval * 1_000_000_000)
         self.read = read
+        self.clock = clock
         self.lock = .allocate(capacity: 1)
         self.lock.initialize(to: os_unfair_lock_s())
     }
@@ -996,10 +1028,10 @@ final class BundleIdentifierCache: @unchecked Sendable {
     /// plist. Cache misses and stale entries are refreshed on `resolveQueue`.
     func cachedMetadata(forExecutablePath path: String) -> AppBundleMetadata? {
         guard !path.isEmpty else { return nil }
-        let now = DispatchTime.now().uptimeNanoseconds
+        let now = clock()
         os_unfair_lock_lock(lock)
         let entry = entries[path]
-        let stale = entry.map { now &- $0.resolvedAtNanos >= lifetimeNanos } ?? false
+        let stale = entry.map { now >= $0.refreshAfterNanos } ?? false
         let shouldRefresh = !pending.contains(path) && pending.count < capacity &&
             (entry == nil || stale)
         if shouldRefresh { pending.insert(path) }
@@ -1010,12 +1042,49 @@ final class BundleIdentifierCache: @unchecked Sendable {
 
     /// Background only.
     private func resolve(_ path: String) {
-        let metadata = Self.appBundlePath(forExecutablePath: path).flatMap(read)
-        let now = DispatchTime.now().uptimeNanoseconds
+        let outcome: AppBundleMetadataRead
+        if let appPath = Self.appBundlePath(forExecutablePath: path) {
+            outcome = read(appPath)
+        } else {
+            outcome = .read(nil)
+        }
+        let now = clock()
         os_unfair_lock_lock(lock)
-        defer { os_unfair_lock_unlock(lock) }
         pending.remove(path)
-        insertLocked(path, entry: Entry(metadata: metadata, resolvedAtNanos: now))
+        let previous = entries[path]
+        let entry: Entry
+        switch outcome {
+        case .read(let metadata):
+            entry = Entry(metadata: metadata, resolvedAtNanos: now,
+                          refreshAfterNanos: now &+ lifetimeNanos, failures: 0)
+        case .failed:
+            // Keep the identity read before, for at most one more lifetime, so
+            // a path taken over by another app cannot keep the old identity
+            // forever; retry soon, backing off.
+            let failures = (previous?.failures ?? 0) + 1
+            let shift = UInt64(min(failures - 1, 20))
+            let delay = min(failureRetryNanos << shift, lifetimeNanos)
+            let keep = previous.map { now &- $0.resolvedAtNanos < lifetimeNanos &* 2 } ?? false
+            entry = Entry(metadata: keep ? previous?.metadata : nil,
+                          resolvedAtNanos: keep ? previous!.resolvedAtNanos : now,
+                          refreshAfterNanos: now &+ delay, failures: failures)
+        }
+        insertLocked(path, entry: entry)
+        os_unfair_lock_unlock(lock)
+
+        // Log outside the lock: once when a path starts failing, once when it recovers.
+        switch outcome {
+        case .failed(let reason) where entry.failures == 1:
+            let kept = entry.metadata?.bundleIdentifier.map { "keeps answering '\($0)'" }
+                ?? "has no bundle identifier, so rules scoped to its bundle id cannot match it yet"
+            PSLog.error(PSLog.netext,
+                        "Could not read the app bundle identity for \(path): \(reason). The app \(kept); retrying in \(Int(failureRetryInterval.rounded(.up))) s.")
+        case .read(let metadata) where (previous?.failures ?? 0) > 0:
+            PSLog.info(PSLog.netext,
+                       "App bundle identity for \(path) readable again after \(previous!.failures) failed reads: \(metadata?.bundleIdentifier ?? "no bundle identifier").")
+        default:
+            break
+        }
     }
 
     /// Caller must hold the lock.
@@ -1036,11 +1105,22 @@ final class BundleIdentifierCache: @unchecked Sendable {
     }
 
     /// The one filesystem read, reached only from `resolveQueue`.
-    static func readBundleMetadata(atAppPath appPath: String) -> AppBundleMetadata? {
-        let plist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)),
-              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            return nil
+    static func readBundleMetadata(atAppPath appPath: String) -> AppBundleMetadataRead {
+        let plist = AppBundleIdentity.infoPlistPath(forAppPath: appPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: plist))
+        } catch {
+            return .failed("reading Info.plist failed (\(error.localizedDescription))")
+        }
+        let dict: [String: Any]
+        do {
+            guard let parsed = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+                return .failed("Info.plist is not a dictionary")
+            }
+            dict = parsed
+        } catch {
+            return .failed("Info.plist could not be parsed (\(error.localizedDescription))")
         }
         let bundleIdentifier = dict["CFBundleIdentifier"] as? String
         let shortVersion = dict["CFBundleShortVersionString"] as? String
@@ -1051,12 +1131,8 @@ final class BundleIdentifierCache: @unchecked Sendable {
         } else {
             version = nil
         }
-        guard bundleIdentifier != nil || version != nil else { return nil }
-        return AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: version)
-    }
-
-    static func readBundleIdentifier(atAppPath appPath: String) -> String? {
-        readBundleMetadata(atAppPath: appPath)?.bundleIdentifier
+        guard bundleIdentifier != nil || version != nil else { return .read(nil) }
+        return .read(AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: version))
     }
 
     /// Test seam: how many executable paths are currently held.
