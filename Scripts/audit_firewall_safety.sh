@@ -369,7 +369,7 @@ require_text "$SAVE_CYCLE" "let pending = queue.takeNewest()" \
   "the save cycle does not take the newest persisted snapshot"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterLoad(" \
   "the GUI does not let the save cycle decide what happens after loading the preferences"
-require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterSave(save, saveFailed: saveError != nil)" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterSave(save, saveFailed: saveError != nil," \
   "the GUI does not let the save cycle decide what happens after a save"
 require_text "$SYSTEM_EXTENSION_MANAGER" "if result.clearWarning {" \
   "persistence degradation is not cleared after a successful save"
@@ -501,6 +501,15 @@ not_filtering_body="$(awk '/private func showNotFiltering\(\)/ {a=1} a {print} a
 printf '%s\n' "$not_filtering_body" | grep -Fq 'filterConfigurationActive = false' \
   && printf '%s\n' "$not_filtering_body" | grep -Fq 'status = .idle' \
   || fail "turning the filter off or removing it does not reset the firewall status"
+# A save refused because the filter was turned on or off in System Settings
+# after the load is loaded and saved again onto that change, never reported
+# as a failure or written back from the stale load (#368).
+require_text "$SYSTEM_EXTENSION_MANAGER" "NEFilterManagerError.configurationStale.rawValue" \
+  "a save refused because the filter changed in System Settings is not recognised (#368)"
+require_text "$SYSTEM_EXTENSION_MANAGER" "let changedOutside = Self.changedOutside(saveError)" \
+  "a rule save does not tell a save refused after a change in System Settings from other failures (#368)"
+require_text "$SYSTEM_EXTENSION_MANAGER" "changedOutside: changedOutside)" \
+  "a save refused because the filter changed in System Settings is reported as a failure instead of saved again (#368)"
 require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
   "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
 init_body="$(awk '/^    init\(state: AppState\) [{]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"

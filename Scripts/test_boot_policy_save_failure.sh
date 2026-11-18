@@ -655,6 +655,90 @@ let midLoadFailed = midLoadCycle.afterSave(midLoadSave, saveFailed: true)
 expect(midLoadFailed.next == .retry(after: 5) && !midLoadFailed.runAgainNow,
        "a failed save taken mid-load started an extra cycle besides its retry")
 print("boot save harness: cycle: a failed save taken mid-load is retried once, not twice")
+
+// 11j. Turned off in System Settings during a rule save (#368). The harness
+//      plays the filter preferences the way the system keeps them: every
+//      change bumps a version, and a save from an older load is refused as
+//      stale (NEFilterManagerError.configurationStale) instead of written.
+//      The app saves what it loaded, isEnabled included, exactly as
+//      SystemExtensionManager.runPersistenceCycle does.
+struct Preferences {
+    var enabled = true
+    var policy: Data? = policyA
+    var version = 0
+    struct Loaded { var enabled: Bool; var policy: Data?; let version: Int }
+    func load() -> Loaded { Loaded(enabled: enabled, policy: policy, version: version) }
+    /// Nil when written, `stale` when refused.
+    mutating func save(_ loaded: Loaded) -> String? {
+        guard loaded.version == version else { return "stale" }
+        enabled = loaded.enabled
+        policy = loaded.policy
+        version += 1
+        return nil
+    }
+    mutating func turnOffInSystemSettings() { enabled = false; version += 1 }
+}
+/// One app cycle. `between` runs after the load and before the save, like a
+/// click in System Settings while the app is building the configuration.
+func runAppCycle(_ cycle: inout Cycle, _ prefs: inout Preferences,
+                 between: (inout Preferences) -> Void = { _ in }) -> Cycle.AfterSave? {
+    guard let at = cycle.begin() else { return nil }
+    var loaded = prefs.load()
+    let plan = savePlan(cycle.afterLoad(at, loadFailed: false, configurationExists: true,
+                                        hasSavedPolicy: loaded.policy != nil), "the rule save did not run")
+    if let data = plan.pending?.data { loaded.policy = plan.removesSavedPolicy ? nil : data }
+    if plan.enable { loaded.enabled = true }
+    between(&prefs)
+    let refused = prefs.save(loaded)
+    return cycle.afterSave(plan, saveFailed: refused != nil, changedOutside: refused == "stale")
+}
+var settingsOff = Cycle()
+var settingsPrefs = Preferences()
+settingsOff.enqueue(policyB)
+let refused = runAppCycle(&settingsOff, &settingsPrefs) { $0.turnOffInSystemSettings() }!
+expect(!settingsPrefs.enabled, "the rule save wrote back the loaded on state over the turn-off in System Settings")
+expect(refused.runAgainNow && refused.next == .none && !refused.reportFailure && !refused.failActivation,
+       "a save refused after a turn-off in System Settings was reported, or not saved again right away")
+let resaved = runAppCycle(&settingsOff, &settingsPrefs)!
+expect(!settingsPrefs.enabled, "saving the rules again turned the filter back on after it was turned off in System Settings")
+expect(settingsPrefs.policy == policyB && resaved.savedPolicy && resaved.clearWarning && !resaved.runAgainNow,
+       "the rules were not saved onto the turn-off in System Settings")
+//      Refused again right away: that is an ordinary failed save with the
+//      spaced retries, never an endless loop of immediate saves.
+var keepsChanging = Cycle()
+var changingPrefs = Preferences()
+keepsChanging.enqueue(policyB)
+_ = runAppCycle(&keepsChanging, &changingPrefs) { $0.version += 1 }
+let refusedTwice = runAppCycle(&keepsChanging, &changingPrefs) { $0.version += 1 }!
+expect(refusedTwice.next == .retry(after: 5) && refusedTwice.reportFailure && !refusedTwice.runAgainNow,
+       "a save refused twice in a row was saved again right away instead of retried on the schedule")
+let laterSave = runAppCycle(&keepsChanging, &changingPrefs)!
+expect(laterSave.savedPolicy && changingPrefs.policy == policyB, "the spaced retry after two refused saves did not save")
+//      Turning the filter on in the app while it changed in System Settings
+//      still fails that activation visibly: the user turns it on again.
+var enableRefused = Cycle()
+var enablePrefs = Preferences()
+enablePrefs.enabled = false
+enableRefused.requestEnable()
+enableRefused.enqueue(policyB)
+let enableStale = runAppCycle(&enableRefused, &enablePrefs) { $0.version += 1 }!
+expect(enableStale.failActivation && !enableStale.activated && !enablePrefs.enabled,
+       "a turn-on refused as stale was not reported as a failed activation")
+//      Over the limit the newest save is the removal of the saved policy:
+//      after two refusals of an older policy, it gets its own immediate save
+//      again when System Settings changes during it.
+var removalRefused = Cycle()
+var removalPrefs = Preferences()
+removalRefused.enqueue(policyB)
+_ = runAppCycle(&removalRefused, &removalPrefs) { $0.version += 1 }
+_ = runAppCycle(&removalRefused, &removalPrefs) { $0.version += 1 }
+removalRefused.queueRemoval()
+let removalStale = runAppCycle(&removalRefused, &removalPrefs) { $0.turnOffInSystemSettings() }!
+expect(removalStale.runAgainNow && !removalStale.reportFailure && removalStale.next == .none,
+       "a removal refused after a change in System Settings was not saved again right away")
+_ = runAppCycle(&removalRefused, &removalPrefs)
+expect(!removalPrefs.enabled && removalPrefs.policy == nil, "the removal was not saved onto the turn-off in System Settings")
+print("boot save harness: cycle: a turn-off in System Settings during a rule save stays off and the rules are saved onto it")
 SWIFT
   swiftc "$root"/Sources/Shared/*.swift "$dir/main.swift" -lsqlite3 -o "$dir/harness"
   rm -rf "$TMP/container" && mkdir -p "$TMP/container"
@@ -875,6 +959,20 @@ mutate_cycle_and_expect_harness_failure failed-activation-save-unreported \
   'result.failActivation = save.enable' 'result.failActivation = false'
 mutate_cycle_and_expect_harness_failure off-keeps-enable \
   $'public mutating func dropEnableRequest() {\n            enableRequested = false' 'public mutating func dropEnableRequest() {'
+mutate_cycle_and_expect_harness_failure stale-save-reported \
+  'if saveFailed && changedOutside && !save.enable && !changedOutsideRetried' 'if false && changedOutside && !save.enable && !changedOutsideRetried'
+mutate_cycle_and_expect_harness_failure stale-save-loops \
+  $'&& cancellations == save.load.cancellations {\n                changedOutsideRetried = true' '&& cancellations == save.load.cancellations {'
+mutate_cycle_and_expect_harness_failure stale-removal-keeps-used-retry \
+  $'queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)\n            changedOutsideRetried = false' 'queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)'
+mutate_cycle_and_expect_harness_failure stale-save-not-requeued \
+  'if let pending = save.pending { queue.requeueFailed(pending) }' ''
+mutate_and_expect_failure settings-off-overwritten \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'let changedOutside = Self.changedOutside(saveError)' 'let changedOutside = false'
+mutate_and_expect_failure stale-not-recognised \
+  Sources/GUI/App/SystemExtensionManager.swift \
+  'error.map { ($0 as NSError).domain == NEFilterErrorDomain && ($0 as NSError).code == NEFilterManagerError.configurationStale.rawValue } ?? false' 'false'
 mutate_cycle_and_expect_harness_failure endless-retries \
   'guard let delay = retry.nextDelay() else { return .retriesUsedUp }' 'let delay = retry.nextDelay() ?? 120'
 

@@ -107,6 +107,10 @@ extension SharedRuleBridge {
         /// Bumped by every `cancel`, so a cycle already running can tell its
         /// result no longer matters.
         public private(set) var cancellations = 0
+        /// A save was refused because the filter settings changed outside the
+        /// app after the load, and the one immediate save again is used up.
+        /// Cleared by a save that goes through or a newer policy (#368).
+        public private(set) var changedOutsideRetried = false
 
         public init(retryDelays: [TimeInterval] = RetrySchedule.defaultDelays) {
             retry = RetrySchedule(delays: retryDelays)
@@ -118,6 +122,7 @@ extension SharedRuleBridge {
         public mutating func enqueue(_ data: Data) {
             queue.enqueue(data)
             retry.reset()
+            changedOutsideRetried = false
         }
 
         /// The newest policy cannot be kept for the next start (for example
@@ -130,6 +135,7 @@ extension SharedRuleBridge {
         public mutating func queueRemoval() {
             cancel()
             queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)
+            changedOutsideRetried = false
         }
 
         /// The user turns the filter on. A snapshot kept for a retry is never
@@ -228,9 +234,23 @@ extension SharedRuleBridge {
                               removesSavedPolicy: removes, hadSavedPolicy: hasSavedPolicy))
         }
 
-        public mutating func afterSave(_ save: Save, saveFailed: Bool) -> AfterSave {
+        /// `changedOutside`: the system refused the save because the filter
+        /// settings changed after this cycle loaded them, for example the
+        /// filter was turned off in System Settings (#368). Writing what was
+        /// loaded would undo that change, so nothing was written: load again
+        /// right away and save the same policy onto what the user set. Once
+        /// per policy; after that it is an ordinary failed save.
+        public mutating func afterSave(_ save: Save, saveFailed: Bool, changedOutside: Bool = false) -> AfterSave {
             inFlight = false
             var result = AfterSave()
+            if saveFailed && changedOutside && !save.enable && !changedOutsideRetried
+                && cancellations == save.load.cancellations {
+                changedOutsideRetried = true
+                // Requeue fails only when newer work arrived; that runs next.
+                if let pending = save.pending { queue.requeueFailed(pending) }
+                result.runAgainNow = queue.hasPending || enableRequested
+                return result
+            }
             if saveFailed {
                 result.reportFailure = cancellations == save.load.cancellations
                 result.failActivation = save.enable
@@ -243,6 +263,7 @@ extension SharedRuleBridge {
                     result.next = nextRetry()
                 }
             } else {
+                changedOutsideRetried = false
                 if save.removesSavedPolicy {
                     // The live rules could not be kept for the next start;
                     // the warning stays until a policy that can be kept is saved.
