@@ -11,8 +11,9 @@
 #   3. Loopback, the configured resolvers, DHCP and the app's own traffic are
 #      never blocked, even when a feed lists them explicitly, and the pf anchor
 #      never emits them.
-#      Deny rules that name an app are never written to pf (issue #155), and
-#      the anchor follows the matcher's priority order (issue #181).
+#      Deny rules that name an app are never written to pf (issue #155), nor
+#      are denies that name a hostname and an address (issue #302), and the
+#      anchor follows the matcher's priority order (issue #181).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
@@ -333,6 +334,37 @@ struct IPBlocklistHarness {
         let feedIndex = appScoped.range(of: "to <freesnitch_ipblock>")?.lowerBound
         checks.expect(allowIndex != nil && feedIndex != nil && allowIndex! < feedIndex!,
                       "the user's allow must come before the feed's block")
+
+        // A rule that names a hostname and an address matches only when both
+        // fit, but pf sees only the address (issue #302). A deny written as
+        // the address would block every name on it, so it stays out of pf and
+        // the refusal is reported. An allow still goes out as the address,
+        // without quick like an app's allow (#183), so the feed cannot block
+        // what the user allowed.
+        var hostAndAddressRefusals: [String] = []
+        let hostAndAddress = pf.renderAnchor(rules: [
+            Rule(remoteHost: "tracker.example.com", remoteIP: "198.51.100.40", action: .deny, scope: .ip),
+            Rule(remoteHost: "*.example.net", remoteIP: "198.51.100.0/24", remotePort: 443, action: .deny, scope: .ip),
+            Rule(remoteHost: "api.example.org", remoteIP: "198.51.100.41", action: .allow, scope: .ip),
+            Rule(remoteIP: "198.51.100.42", action: .deny, scope: .ip)
+        ], ipBlocklist: hostile, resolverAddresses: resolvers) { _, reason in
+            hostAndAddressRefusals.append(reason)
+        }
+        for leaked in ["198.51.100.40", "198.51.100.0/24"] {
+            checks.expect(!hostAndAddress.contains(leaked),
+                          "a deny that names a hostname and an address must not reach pf as the address alone, but the anchor carries \(leaked)")
+        }
+        checks.expect(hostAndAddressRefusals.count == 2
+                      && hostAndAddressRefusals.allSatisfy { $0.contains("names hostname") },
+                      "both skipped hostname-and-address denies must be reported, got \(hostAndAddressRefusals)")
+        checks.expect(hostAndAddress.contains("pass out proto { tcp udp } to 198.51.100.41 tag"),
+                      "an allow that names a hostname and an address must still reach pf as the address")
+        checks.expect(blocks(hostAndAddress, "to 198.51.100.42"),
+                      "a deny with an address and no hostname must still be written to pf")
+        let hostAllowIndex = hostAndAddress.range(of: "to 198.51.100.41")?.lowerBound
+        let hostFeedIndex = hostAndAddress.range(of: "to <freesnitch_ipblock>")?.lowerBound
+        checks.expect(hostAllowIndex != nil && hostFeedIndex != nil && hostAllowIndex! < hostFeedIndex!,
+                      "the hostname-and-address allow must come before the feed's block")
 
         // pf stops at the first quick line that matches, so the lines must
         // come in the matcher's order. A lower-priority deny must never
