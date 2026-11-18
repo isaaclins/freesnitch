@@ -215,6 +215,35 @@ enum InstallLocation {
         return urls.contains { $0.pathExtension == "systemextension" }
     }
 
+    /// Passed to the copy FreeSnitch reopens after clearing the flag on its
+    /// own Applications copy (#375). If macOS still translocates that copy,
+    /// the reopened app sees this and explains instead of reopening again, so
+    /// the automatic reopen happens at most once per launch.
+    static let reopenedAfterClearingArgument = "--freesnitch-reopened-after-clearing-quarantine"
+
+    /// Whether to reopen the Applications copy after clearing its flag: only
+    /// when the flag really went and this launch isn't already that reopen.
+    static func shouldReopenAfterClearing(cleared: Bool, arguments: [String]) -> Bool {
+        cleared && !arguments.contains(reopenedAfterClearingArgument)
+    }
+
+    /// The copy in Applications that macOS is running translocated, when
+    /// there is one. Moving can't help that copy: it is already installed,
+    /// and every "move" would only offer to open it again (#375).
+    static func translocatedInstalledCopy(original: URL?) -> URL? {
+        guard let original, isInApplications(original) else { return nil }
+        return original
+    }
+
+    /// The /bin/sh arguments that wait for `pid` to exit and then open `app`,
+    /// handing `arguments` to the new copy. The path and the arguments go in
+    /// as positional values, never into the script text.
+    static func relaunchScript(pid: Int32, app: URL, arguments: [String], open: String = "/usr/bin/open") -> [String] {
+        let openApp = arguments.isEmpty ? "\"$open\" \"$app\"" : "\"$open\" \"$app\" --args \"$@\""
+        return ["-c", "pid=\"$1\"; app=\"$2\"; open=\"$3\"; shift 3; while /bin/kill -0 \"$pid\" 2>/dev/null; do /bin/sleep 0.2; done; \(openApp)",
+                "sh", String(pid), app.path, open] + arguments
+    }
+
     /// Whether launch should ask the move question: only for a copy that came
     /// from a download, meaning a disk image (read-only), anything under
     /// ~/Downloads, or a copy still carrying the download flag (which macOS
@@ -226,7 +255,107 @@ enum InstallLocation {
         let downloads = (home as NSString).appendingPathComponent("Downloads") + "/"
         return isOnReadOnlyVolume(url)
             || path.hasPrefix(downloads)
-            || getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+            || hasQuarantine(url)
+    }
+
+    /// Where Homebrew keeps the casks it installed, on Apple silicon and Intel.
+    static let homebrewCaskrooms = ["/opt/homebrew/Caskroom/freesnitch", "/usr/local/Caskroom/freesnitch"]
+
+    /// Whether FreeSnitch was installed with `brew install --cask` (#407):
+    /// Homebrew then owns the copy, and reinstalling goes through it. Only the
+    /// two standard Homebrew prefixes are known; anything else gets the disk
+    /// image advice, which also works.
+    static func installedWithHomebrew(caskrooms: [String] = homebrewCaskrooms,
+                                      exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Bool {
+        caskrooms.contains(where: exists)
+    }
+
+    /// The command a Homebrew install reinstalls with (#407, #408).
+    static let brewReinstallCommand = "brew reinstall --cask freesnitch"
+
+    /// How to put a stuck installed copy back so macOS runs it from
+    /// Applications again, for the way it was installed (#375, #407).
+    /// The Homebrew advice is only given for a copy this user owns whose flag
+    /// is already gone (homebrewRouteApplies). Whether a brew reinstall then
+    /// gets it out of translocation is not checked on a real Mac.
+    static func reinstallSteps(homebrew: Bool) -> String {
+        homebrew
+            ? "Reinstall it with \(brewReinstallCommand) in Terminal."
+            : "Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+    }
+
+    /// Whether this Mac's copy came from Homebrew. Worked out once: the
+    /// install doesn't change while the app runs. The demo shows the Homebrew
+    /// wording with FREESNITCH_DEMO_HOMEBREW=1 so it can be reviewed.
+    static let isHomebrewInstall: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        if env["FREESNITCH_DEMO"] == "1" { return env["FREESNITCH_DEMO_HOMEBREW"] == "1" }
+        return installedWithHomebrew()
+    }()
+
+    /// Whether the Homebrew advice can help (#380 review): only when this
+    /// user could clear the flag, i.e. owns the copy. A copy whose flag stays
+    /// belongs to another account, whose Homebrew this user can't run
+    /// either, so it gets the Finder and disk image advice.
+    /// `canRunBrew`: this user can write to FreeSnitch's Caskroom folder, so
+    /// the brew command will work for them; a missing flag alone doesn't
+    /// prove the copy is theirs.
+    static func homebrewRouteApplies(homebrew: Bool, flagCleared: Bool, canRunBrew: Bool) -> Bool {
+        homebrew && flagCleared && canRunBrew
+    }
+
+    /// Whether this user can write to an existing FreeSnitch Caskroom folder.
+    static func canRunBrewReinstall(caskrooms: [String] = homebrewCaskrooms,
+                                    writable: (String) -> Bool = { access($0, W_OK) == 0 }) -> Bool {
+        caskrooms.contains(where: writable)
+    }
+
+    static func hasQuarantine(_ url: URL) -> Bool {
+        getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+    }
+
+    /// The route for this Mac's stuck copy. The demo follows
+    /// FREESNITCH_DEMO_HOMEBREW alone.
+    @MainActor
+    static var usesHomebrewRoute: Bool {
+        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" { return isHomebrewInstall }
+        guard let installed = stuckInstalledCopy else { return false }
+        return homebrewRouteApplies(homebrew: isHomebrewInstall, flagCleared: !hasQuarantine(installed),
+                                    canRunBrew: canRunBrewReinstall())
+    }
+
+    @MainActor
+    static var reinstallAdvice: String { reinstallSteps(homebrew: usesHomebrewRoute) }
+
+    /// The stuck-copy title and button, matched to the advice (#408): a
+    /// Homebrew install is fixed in Terminal, so its button copies the
+    /// command; a disk image install is fixed in Finder.
+    @MainActor
+    static var stuckCopyTitle: String {
+        usesHomebrewRoute ? "Reinstall FreeSnitch with Homebrew" : "Put FreeSnitch into Applications again"
+    }
+    @MainActor
+    static var stuckCopyButton: String { usesHomebrewRoute ? "Copy Command" : "Show in Finder" }
+
+    /// What the stuck-copy button does. The demo only shows the button.
+    /// `confirm` says the command was copied when nothing else on screen
+    /// would show it (the banner); the explanation closes instead.
+    @MainActor
+    static func stuckCopyAction(_ installed: URL, confirm: Bool = false) {
+        guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" else { return }
+        if usesHomebrewRoute {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(brewReinstallCommand, forType: .string)
+            if confirm {
+                let alert = NSAlert()
+                alert.messageText = "Command copied"
+                alert.informativeText = "Paste it into Terminal and press Return, then open FreeSnitch again."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([installed])
+        }
     }
 
     /// After a successful move, only a downloaded original is moved to the
@@ -276,12 +405,18 @@ extension InstallLocation {
     /// reopen from Applications, so the caller must start nothing else.
     @discardableResult
     static func offerMoveAtLaunch() -> Bool {
-        // The demo never moves anything; FREESNITCH_DEMO_WINDOW=move only
-        // shows the question so it can be reviewed.
+        // The demo never moves anything; FREESNITCH_DEMO_WINDOW=move or
+        // =stuck only shows the question so it can be reviewed.
         if isDemo {
-            guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] == "move" else { return false }
-            NSApp.activate(ignoringOtherApps: true)
-            _ = moveAlert().runModal()
+            switch ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] {
+            case "move":
+                NSApp.activate(ignoringOtherApps: true)
+                _ = moveAlert().runModal()
+            case "stuck":
+                // The Homebrew advice only goes with a cleared flag, as for real.
+                explainStuckInstalledCopy(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), flagCleared: isHomebrewInstall)
+            default: break
+            }
             return false
         }
         // A move cut off mid-copy (crash, force quit) leaves its hidden
@@ -292,26 +427,17 @@ extension InstallLocation {
         guard !HelperClient.isInApplicationsFolder else { return false }
         // Already in Applications but quarantined and put there without
         // Finder, so macOS runs it translocated. Moving can't help; clearing
-        // the flag on that copy and reopening it does.
-        // Only when the flag really went: a bundle this user can't change
-        // (installed by another account or with sudo) would otherwise reopen
-        // translocated and land here again, forever.
-        if let original = translocatedOriginal(of: Bundle.main.bundleURL), isInApplications(original) {
-            if clearQuarantine(at: original) {
-                relaunch(at: original)
+        // the flag on that copy and reopening it does, once. A bundle this
+        // user can't change (installed by another account or with sudo), or
+        // one macOS translocates even without the flag, would otherwise
+        // reopen and land here again, forever.
+        if let installed = stuckInstalledCopy {
+            let cleared = clearQuarantine(at: installed)
+            if shouldReopenAfterClearing(cleared: cleared, arguments: CommandLine.arguments) {
+                relaunch(at: installed, arguments: [reopenedAfterClearingArgument])
                 return true
             }
-            // Moving would only offer to open this same copy again.
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "macOS is running FreeSnitch from a temporary copy"
-            alert.informativeText = "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it, so macOS won't let it install its helper. Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
-            alert.addButton(withTitle: "Show in Finder")
-            alert.addButton(withTitle: "Not Now")
-            if alert.runModal() == .alertFirstButtonReturn {
-                NSWorkspace.shared.activateFileViewerSelecting([original])
-            }
+            explainStuckInstalledCopy(installed, flagCleared: cleared)
             return false
         }
         // Translocated means it still carries the download flag.
@@ -320,6 +446,40 @@ extension InstallLocation {
         NSApp.activate(ignoringOtherApps: true)
         guard moveAlert().runModal() == .alertFirstButtonReturn else { return false }
         return moveToApplications()
+    }
+
+    /// The installed copy macOS keeps running from a temporary location,
+    /// worked out once: the running bundle doesn't change.
+    /// The demo never touches the real bundle; FREESNITCH_DEMO_STUCK=1 makes
+    /// it act as such a copy so the banner can be reviewed.
+    static let stuckInstalledCopy: URL? = isDemo
+        ? (ProcessInfo.processInfo.environment["FREESNITCH_DEMO_STUCK"] == "1" ? URL(fileURLWithPath: "/Applications/FreeSnitch.app") : nil)
+        : translocatedInstalledCopy(original: translocatedOriginal(of: Bundle.main.bundleURL))
+
+    /// What the helper repair says when FreeSnitch isn't running from
+    /// Applications. A stuck installed copy needs a reinstall, not a move.
+    static var wrongLocationRepairAdvice: String {
+        stuckInstalledCopy == nil
+            ? "Move FreeSnitch to /Applications before registering the helper."
+            : "macOS runs FreeSnitch from a temporary copy. \(reinstallAdvice) Then register the helper."
+    }
+
+    /// Says what the user has to do (in Finder, or in Terminal for a
+    /// Homebrew install), since FreeSnitch can't.
+    static func explainStuckInstalledCopy(_ installed: URL, flagCleared: Bool) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = usesHomebrewRoute ? stuckCopyTitle : "macOS is running FreeSnitch from a temporary copy"
+        let why = flagCleared
+            ? "macOS still runs the copy in Applications from a temporary location"
+            : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
+        alert.informativeText = "\(why), so FreeSnitch can't install its helper. \(reinstallAdvice)"
+        alert.addButton(withTitle: stuckCopyButton)
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn {
+            stuckCopyAction(installed)
+        }
     }
 
     private static func moveAlert() -> NSAlert {
@@ -345,6 +505,15 @@ extension InstallLocation {
     static func moveToApplications() -> Bool {
         // The demo's banner only shows the button; it never moves anything.
         guard !isDemo else { return false }
+        // Opening the installed copy would only run this same copy again.
+        // Defensive: launch and the banner already route a stuck copy to the
+        // explanation, so nothing should reach this today. It only explains;
+        // the one automatic clear-and-reopen belongs to launch.
+        if let installed = stuckInstalledCopy {
+            let flagGone = !hasQuarantine(installed)
+            explainStuckInstalledCopy(installed, flagCleared: flagGone)
+            return false
+        }
         let running = Bundle.main.bundleURL
         // Where the user actually put it, not the translocated mirror.
         let original = translocatedOriginal(of: running) ?? running
@@ -414,11 +583,10 @@ extension InstallLocation {
     /// Opens `app` once this process has exited, so two copies never run at
     /// once, then quits. The path goes in as an argument, never into the
     /// script text.
-    private static func relaunch(at app: URL) {
+    private static func relaunch(at app: URL, arguments: [String] = []) {
         let waiter = Process()
         waiter.executableURL = URL(fileURLWithPath: "/bin/sh")
-        waiter.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
-                            "sh", String(ProcessInfo.processInfo.processIdentifier), app.path]
+        waiter.arguments = relaunchScript(pid: ProcessInfo.processInfo.processIdentifier, app: app, arguments: arguments)
         try? waiter.run()
         NSApp.terminate(nil)
     }

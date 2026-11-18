@@ -313,7 +313,7 @@ final class HelperClient: NSObject, ObservableObject {
         repairState = .inProgress
         guard Self.isInApplicationsFolder else {
             installState = .wrongLocation
-            finishRepairFailure("Move FreeSnitch to /Applications before registering the helper.")
+            finishRepairFailure(InstallLocation.wrongLocationRepairAdvice)
             return
         }
         guard let service else {
@@ -388,7 +388,7 @@ final class HelperClient: NSObject, ObservableObject {
                 case .notRegistered, .notFound:
                     self.repairState = .manualRequired("SMAppService did not leave a usable registration record. Do not run the kickstart command yet; run the helper recheck again and report the registration state.")
                 case .wrongLocation:
-                    self.repairState = .manualRequired("Move FreeSnitch to /Applications before retrying helper registration.")
+                    self.repairState = .manualRequired(InstallLocation.wrongLocationRepairAdvice)
                 case .failed(let message):
                     self.repairState = .manualRequired("Helper registration failed: \(message)")
                 case .unknown:

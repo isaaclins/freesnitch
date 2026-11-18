@@ -295,6 +295,7 @@ struct SettingsView: View {
         case .requiresApproval: return "Waiting for your approval"
         case .notRegistered, .unknown: return "Not installed"
         case .wrongLocation:
+            if InstallLocation.stuckInstalledCopy != nil { return "macOS runs a temporary copy, so reinstall FreeSnitch" }
             return InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
                 ? "Copy FreeSnitch to /Applications" : "Move FreeSnitch to /Applications"
         case .notFound: return "Registration record missing"

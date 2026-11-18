@@ -149,6 +149,18 @@ private struct BannerInfo {
             title = "The FreeSnitch helper state is unknown"
             detail = "Refresh the helper state or run the CLI diagnostics. No registration change was attempted."
             action = BannerAction(title: "Check Again") { state, _ in state.helper.refreshInstallState(); state.helper.ping() }
+        case .wrongLocation where InstallLocation.stuckInstalledCopy != nil:
+            // Already in Applications, but macOS runs it from a temporary
+            // copy; a move would only reopen this same copy (#375).
+            icon = "arrow.down.app.fill"
+            tint = Color.red
+            title = InstallLocation.stuckCopyTitle
+            detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. \(InstallLocation.reinstallAdvice)"
+            action = BannerAction(title: InstallLocation.stuckCopyButton) { _, _ in
+                if let installed = InstallLocation.stuckInstalledCopy {
+                    InstallLocation.stuckCopyAction(installed, confirm: true)
+                }
+            }
         case .wrongLocation:
             icon = "arrow.down.app.fill"
             tint = Color.red

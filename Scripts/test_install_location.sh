@@ -161,6 +161,73 @@ check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeS
       && !InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Downloads/FreeSnitch.app"), home: "/Users/x"),
       "Applications and ~/Applications count as installed, Downloads doesn't")
 
+// #375: an Applications copy that macOS still translocates reopens itself at
+// most once per launch chain, and is never offered as a "move".
+let again = InstallLocation.reopenedAfterClearingArgument
+check(InstallLocation.shouldReopenAfterClearing(cleared: true, arguments: ["/x/FreeSnitch"]),
+      "a cleared flag reopens the installed copy once")
+check(!InstallLocation.shouldReopenAfterClearing(cleared: true, arguments: ["/x/FreeSnitch", again]),
+      "the reopened copy, still translocated, explains instead of reopening again")
+check(!InstallLocation.shouldReopenAfterClearing(cleared: false, arguments: ["/x/FreeSnitch"]),
+      "a flag that can't be cleared explains instead of reopening")
+check(InstallLocation.translocatedInstalledCopy(original: URL(fileURLWithPath: "/Applications/FreeSnitch.app"))
+        == URL(fileURLWithPath: "/Applications/FreeSnitch.app"),
+      "a translocated copy whose original is in Applications counts as stuck, so no move is offered")
+check(InstallLocation.translocatedInstalledCopy(original: URL(fileURLWithPath: NSHomeDirectory() + "/Downloads/FreeSnitch.app")) == nil
+      && InstallLocation.translocatedInstalledCopy(original: nil) == nil,
+      "a copy translocated from Downloads, or not translocated, still gets the move")
+
+// The relaunch hands the marker to the new copy, and only the marker. A fake
+// "open" records what it gets; pid 0x7fffffff isn't running, so no wait.
+let fakeOpen = work.appendingPathComponent("fake-open")
+let openLog = work.appendingPathComponent("open.log")
+try! "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"\(openLog.path)\"\n".write(to: fakeOpen, atomically: true, encoding: .utf8)
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeOpen.path)
+func runRelaunch(_ arguments: [String]) -> [String] {
+    let sh = Process()
+    sh.executableURL = URL(fileURLWithPath: "/bin/sh")
+    sh.arguments = InstallLocation.relaunchScript(pid: Int32.max, app: URL(fileURLWithPath: "/Applications/Free Snitch.app"),
+                                                  arguments: arguments, open: fakeOpen.path)
+    try! sh.run(); sh.waitUntilExit()
+    return (try! String(contentsOf: openLog, encoding: .utf8)).split(separator: "\n").map(String.init)
+}
+check(runRelaunch([again]) == ["/Applications/Free Snitch.app", "--args", again],
+      "the reopened copy receives exactly the marker, and a path with a space survives")
+check(runRelaunch([]) == ["/Applications/Free Snitch.app"], "a plain relaunch passes no arguments")
+
+// #407: a Homebrew install is told to reinstall through Homebrew, anything
+// else to drag it in again from the disk image.
+var looked: [String] = []
+check(!InstallLocation.installedWithHomebrew(exists: { looked.append($0); return false }),
+      "no Caskroom folder, not a Homebrew install")
+check(looked == ["/opt/homebrew/Caskroom/freesnitch", "/usr/local/Caskroom/freesnitch"],
+      "the Homebrew check looks at both Caskroom folders")
+check(InstallLocation.installedWithHomebrew(exists: { $0.hasPrefix("/usr/local/") }),
+      "an Intel Homebrew install is recognised")
+check(InstallLocation.reinstallSteps(homebrew: true).contains("brew reinstall --cask freesnitch")
+      && !InstallLocation.reinstallSteps(homebrew: true).contains("disk image"),
+      "a Homebrew install is told to reinstall with brew, not to use a disk image")
+check(InstallLocation.reinstallSteps(homebrew: false).contains("disk image"),
+      "a disk image install keeps the drag-in-again advice")
+check(InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: true, canRunBrew: true)
+      && !InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: false, canRunBrew: true)
+      && !InstallLocation.homebrewRouteApplies(homebrew: false, flagCleared: true, canRunBrew: true),
+      "the brew advice is only given for a Homebrew copy whose flag this user could clear; another account's copy gets the disk image advice")
+check(!InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: true, canRunBrew: false),
+      "a flag-free copy installed by another account's Homebrew, which this user can't write to, gets the disk image advice")
+// A Caskroom folder this user can't write to (another account's Homebrew).
+let otherCaskroom = work.appendingPathComponent("OtherCaskroom", isDirectory: true)
+try! fm.createDirectory(at: otherCaskroom, withIntermediateDirectories: true)
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: otherCaskroom.path)
+let otherWritable = access(otherCaskroom.path, W_OK) == 0  // root can still write
+check(otherWritable || !InstallLocation.canRunBrewReinstall(caskrooms: [otherCaskroom.path]),
+      "a Caskroom folder this user can't write to means brew can't be run for them")
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: otherCaskroom.path)
+check(InstallLocation.canRunBrewReinstall(caskrooms: [otherCaskroom.path]),
+      "this user's own Caskroom folder lets them run brew")
+check(InstallLocation.reinstallSteps(homebrew: true).contains(InstallLocation.brewReinstallCommand),
+      "the Homebrew advice names the same command its Copy Command button copies")
+
 // #412: macOS activates a system extension only from /Applications, so the
 // firewall build in ~/Applications is not installed. Real bundles, so the
 // rule reads the extension from the bundle itself, as the app does.
@@ -342,3 +409,23 @@ grep -q 'delegate.windowManager?.showPage' <<<"$outside" \
   || { echo "install location: FAIL: could not find the menu commands to check" >&2; exit 1; }
 echo "install location: PASS: menu commands and reopen do nothing until the window manager exists"
 
+
+# #375: every helper-repair message for the wrong location goes through the
+# one advice that knows about a stuck installed copy, so none of them tells
+# someone whose copy is already in Applications to move it there.
+if grep -n '"Move FreeSnitch to /Applications' "$ROOT/Sources/GUI/App/HelperClient.swift"; then
+  echo "install location: FAIL: a repair message gives move advice without checking for a stuck installed copy" >&2; exit 1
+fi
+[ "$(grep -c 'InstallLocation.wrongLocationRepairAdvice' "$ROOT/Sources/GUI/App/HelperClient.swift")" -ge 2 ] \
+  || { echo "install location: FAIL: could not find both repair messages to check" >&2; exit 1; }
+echo "install location: PASS: helper repair gives reinstall advice for a stuck installed copy"
+
+# #408: the stuck-copy banner and explanation take their title and button
+# from the install route, so a Homebrew install never gets a Finder button.
+banner="$ROOT/Sources/GUI/Views/HelperBanner.swift"
+grep -q 'title = InstallLocation.stuckCopyTitle' "$banner" \
+  && grep -q 'BannerAction(title: InstallLocation.stuckCopyButton)' "$banner" \
+  && grep -q 'alert.addButton(withTitle: stuckCopyButton)' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+  && grep -q 'alert.messageText = usesHomebrewRoute ? stuckCopyTitle' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+  || { echo "install location: FAIL: the stuck-copy title or button doesn't follow the install route" >&2; exit 1; }
+echo "install location: PASS: the stuck-copy title and button follow the install route"
