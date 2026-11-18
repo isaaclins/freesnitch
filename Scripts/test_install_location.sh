@@ -152,6 +152,16 @@ check(InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path),
       "a firewall build in ~/Applications is asked to move at launch")
 check(!InstallLocation.shouldTrashOriginal(firewallCopy, home: homeDir.path),
       "after a move, the ~/Applications copy stays, since its helper may still be registered")
+let oldMonitor = work.appendingPathComponent("home2/Applications/FreeSnitch.app", isDirectory: true)
+makeBundle(at: oldMonitor, build: "30")
+let downloadedMonitor = homeDir.appendingPathComponent("Downloads/Monitor/FreeSnitch.app", isDirectory: true)
+makeBundle(at: downloadedMonitor, build: "35")
+check(!InstallLocation.userCopyCountsAsInstalled(source: firewallCopy, userCopy: oldMonitor),
+      "a firewall build never stops at a monitor copy in ~/Applications; it goes to /Applications")
+check(!InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userCopy: firewallCopy),
+      "a firewall copy in ~/Applications isn't counted as installed for a monitor download either")
+check(InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userCopy: oldMonitor),
+      "a monitor download stops at the monitor copy in ~/Applications, as before")
 check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path)),
       "a ~/Applications copy of an installed build offers to open the /Applications one")
 

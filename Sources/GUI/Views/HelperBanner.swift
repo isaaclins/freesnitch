@@ -126,7 +126,7 @@ private struct BannerInfo {
         case .wrongLocation:
             icon = "arrow.down.app.fill"
             tint = Color.red
-            if InstallLocation.isInUserApplications(Bundle.main.bundleURL) {
+            if InstallLocation.isInUserApplications(InstallLocation.runningOriginal) {
                 title = "Move FreeSnitch to the main Applications folder"
                 detail = InstallLocation.userApplicationsReason + " FreeSnitch can copy itself there and reopen."
             } else {

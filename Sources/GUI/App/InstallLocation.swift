@@ -148,6 +148,19 @@ enum InstallLocation {
         return url.resolvingSymlinksInPath().path.hasPrefix(userApps)
     }
 
+    /// Whether a FreeSnitch already in ~/Applications is where the move should
+    /// stop. Not when either build carries the network filter: a firewall
+    /// build must land in /Applications, and an old monitor copy there is not
+    /// a substitute for it (#412).
+    static func userCopyCountsAsInstalled(source: URL, userCopy: URL) -> Bool {
+        !embedsSystemExtension(source) && !embedsSystemExtension(userCopy)
+    }
+
+    /// Where this copy really is: the original behind a translocated copy.
+    static var runningOriginal: URL {
+        translocatedOriginal(of: Bundle.main.bundleURL) ?? Bundle.main.bundleURL
+    }
+
     /// Whether the bundle carries the network filter (the firewall build).
     /// The monitor-only build doesn't.
     static func embedsSystemExtension(_ bundle: URL) -> Bool {
@@ -261,7 +274,7 @@ extension InstallLocation {
     private static func moveAlert() -> NSAlert {
         let alert = NSAlert()
         alert.messageText = "Move FreeSnitch to Applications?"
-        if isInUserApplications(Bundle.main.bundleURL) {
+        if isInUserApplications(runningOriginal) {
             alert.informativeText = userApplicationsReason + " FreeSnitch can copy itself there and reopen. The copy in your home folder stays until you delete it."
         } else {
             alert.informativeText = "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen."
@@ -286,7 +299,7 @@ extension InstallLocation {
         // build it doesn't, and the move goes to /Applications (#412).
         let userPlan = plan(source: running, applications: userApplications)
         let chosen: Plan
-        if case .existing(let userCopy, _) = userPlan, isInApplications(userCopy) {
+        if case .existing(let userCopy, _) = userPlan, userCopyCountsAsInstalled(source: running, userCopy: userCopy) {
             chosen = userPlan
         } else {
             chosen = plan(source: running, applications: applications)
