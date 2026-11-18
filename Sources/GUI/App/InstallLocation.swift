@@ -77,6 +77,27 @@ enum InstallLocation {
         }
     }
 
+    /// Moves a copy out of ~/Applications into /Applications (#418). Both sit
+    /// on the same volume, so this is one rename: the bundle is either still
+    /// in the home folder or already in /Applications, never half of each.
+    /// The download flag is cleared first, so the moved copy isn't run
+    /// translocated.
+    static func moveBundle(from source: URL, to destination: URL) -> Result<Void, MoveError> {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: destination.path) else {
+            return .failure(.failed("\(destination.path) already exists."))
+        }
+        guard clearQuarantine(at: source) else {
+            return .failure(.failed("The download flag could not be removed from FreeSnitch."))
+        }
+        do {
+            try fm.moveItem(at: source, to: destination)
+            return .success(())
+        } catch {
+            return .failure(.failed(error.localizedDescription))
+        }
+    }
+
     /// The copy keeps the source's permissions, and a read-only folder can't
     /// be emptied, so make the staging tree writable before removing it.
     private static func removeStaging(_ staging: URL) {
@@ -293,18 +314,15 @@ extension InstallLocation {
 
     private static func moveAlert() -> NSAlert {
         let alert = NSAlert()
-        // From ~/Applications it copies and leaves the original, whose helper
-        // may still be registered, so it says copy and doesn't suggest
-        // deleting that copy.
         let fromHome = isInUserApplications(runningOriginal)
         if fromHome {
-            alert.messageText = "Copy FreeSnitch to the main Applications folder?"
-            alert.informativeText = userApplicationsReason + " FreeSnitch can copy itself there and reopen."
+            alert.messageText = "Move FreeSnitch to the main Applications folder?"
+            alert.informativeText = userApplicationsReason + " FreeSnitch can move itself there and reopen."
         } else {
             alert.messageText = "Move FreeSnitch to Applications?"
             alert.informativeText = "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen."
         }
-        alert.addButton(withTitle: fromHome ? "Copy to Applications" : "Move to Applications")
+        alert.addButton(withTitle: "Move to Applications")
         alert.addButton(withTitle: "Not Now")
         return alert
     }
@@ -350,7 +368,12 @@ extension InstallLocation {
             relaunch(at: installed)
             return true
         case .copy(let destination):
-            switch copyBundle(from: running, to: destination) {
+            // Out of ~/Applications it is moved, not copied: no second copy
+            // stays behind for launchd to keep running the helper from, and
+            // launchd follows a moved bundle (#418).
+            let fromHome = isInUserApplications(original)
+            let result = fromHome ? moveBundle(from: original, to: destination) : copyBundle(from: running, to: destination)
+            switch result {
             case .failure(.failed(let reason)):
                 let alert = NSAlert()
                 alert.alertStyle = .warning
@@ -363,10 +386,11 @@ extension InstallLocation {
                 }
                 return false
             case .success:
-                // The home-folder copy stays, and its helper registration may
-                // still point into it. The new copy registers the helper again
-                // once at launch, so launchd runs it from /Applications (#418).
-                if isInUserApplications(original) {
+                // The helper may still be registered at the old path. The
+                // moved copy registers it again once at launch, which points
+                // launchd at /Applications right away instead of at the next
+                // login (#418).
+                if fromHome {
                     UserDefaults.standard.set(destination.resolvingSymlinksInPath().path, forKey: reregisterKey)
                     UserDefaults.standard.synchronize()
                 }

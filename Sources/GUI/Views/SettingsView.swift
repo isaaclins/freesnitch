@@ -294,9 +294,7 @@ struct SettingsView: View {
         case .enabled: return state.helperConnected ? "Connected" : "Approved, connecting…"
         case .requiresApproval: return "Waiting for your approval"
         case .notRegistered, .unknown: return "Not installed"
-        case .wrongLocation:
-            return InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
-                ? "Copy FreeSnitch to /Applications" : "Move FreeSnitch to /Applications"
+        case .wrongLocation: return "Move FreeSnitch to /Applications"
         case .notFound: return "Registration record missing"
         case .failed(let m): return "Failed: \(m)"
         }

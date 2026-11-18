@@ -162,11 +162,27 @@ check(!InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, user
       "a firewall copy in ~/Applications isn't counted as installed for a monitor download either")
 check(InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userCopy: oldMonitor),
       "a monitor download stops at the monitor copy in ~/Applications, as before")
-// #418: the new /Applications copy registers the helper again, once, so
+// #418: out of ~/Applications FreeSnitch moves itself, so no copy stays
+// behind holding the helper registration.
+let moveHome = work.appendingPathComponent("home3/Applications/FreeSnitch.app", isDirectory: true)
+makeBundle(at: moveHome, build: "35")
+_ = flag.withCString { setxattr(moveHome.path, "com.apple.quarantine", $0, strlen($0), 0, XATTR_NOFOLLOW) }
+let moveApps = work.appendingPathComponent("system3/Applications", isDirectory: true)
+try! fm.createDirectory(at: moveApps, withIntermediateDirectories: true)
+let moved = moveApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+check(ok(InstallLocation.moveBundle(from: moveHome, to: moved)), "the move out of ~/Applications succeeds")
+check(!fm.fileExists(atPath: moveHome.path), "no copy stays behind in ~/Applications")
+check(fm.fileExists(atPath: moved.appendingPathComponent("Contents/MacOS/FreeSnitch").path) && !quarantined(moved.path),
+      "the moved bundle is complete and carries no download flag")
+makeBundle(at: moveHome, build: "35")
+check(!ok(InstallLocation.moveBundle(from: moveHome, to: moved)) && fm.fileExists(atPath: moveHome.path),
+      "with a FreeSnitch already in /Applications nothing is moved over it")
+
+// #418: the moved /Applications copy registers the helper again, once, so
 // launchd stops running it from the ~/Applications copy.
 let newCopy = URL(fileURLWithPath: "/Applications/FreeSnitch.app")
 check(InstallLocation.shouldReregister(requestedPath: "/Applications/FreeSnitch.app", running: newCopy),
-      "the copy the move made registers the helper again")
+      "the copy the move put in /Applications registers the helper again")
 check(!InstallLocation.shouldReregister(requestedPath: "/Applications/FreeSnitch.app", running: firewallCopy),
       "the old ~/Applications copy never acts on the request")
 check(!InstallLocation.shouldReregister(requestedPath: nil, running: newCopy),
@@ -286,11 +302,11 @@ grep -q 'versionState, installState != .wrongLocation' "$ROOT/Sources/GUI/Views/
   || { echo "install location: FAIL: a helper mismatch can hide the Move banner of a copy outside Applications" >&2; exit 1; }
 echo "install location: PASS: a copy outside Applications shows Move before Repair Helper"
 helper_swift="$ROOT/Sources/GUI/App/HelperClient.swift"
-awk '/func reregisterAfterCopy/ { inside = 1 } inside && /unregister/ { bad = 1 } inside && /^    }$/ { inside = 0 } END { exit bad ? 1 : 0 }' "$helper_swift" \
-  && grep -q 'if isInUserApplications(original) {' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+awk '/func reregisterAfterMove/ { inside = 1 } inside && /unregister/ { bad = 1 } inside && /^    }$/ { inside = 0 } END { exit bad ? 1 : 0 }' "$helper_swift" \
+  && grep -q 'fromHome ? moveBundle(from: original' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
   && grep -A2 'case .alreadyEnabled:' "$helper_swift" | grep -q 'takeReregisterRequest' \
   || { echo "install location: FAIL: the copy out of ~/Applications doesn't hand the helper over, or the handover can unregister" >&2; exit 1; }
-echo "install location: PASS: a copy out of ~/Applications registers the helper again from /Applications, without unregistering"
+echo "install location: PASS: a copy in ~/Applications is moved, not copied, and registers the helper again without unregistering"
 app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
 [ "$(grep -c 'systemExtension.activate()' "$app_swift")" = 1 ] \
   && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \

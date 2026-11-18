@@ -130,13 +130,13 @@ private struct BannerInfo {
             tint = Color.red
             let fromHome = InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
             if fromHome {
-                title = "Copy FreeSnitch to the main Applications folder"
-                detail = InstallLocation.userApplicationsReason + " FreeSnitch can copy itself there and reopen."
+                title = "Move FreeSnitch to the main Applications folder"
+                detail = InstallLocation.userApplicationsReason + " FreeSnitch can move itself there and reopen."
             } else {
                 title = "Move FreeSnitch to your Applications folder"
                 detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there."
             }
-            action = BannerAction(title: fromHome ? "Copy to Applications" : "Move to Applications") { _, _ in
+            action = BannerAction(title: "Move to Applications") { _, _ in
                 InstallLocation.moveToApplications()
             }
         case .notFound:
