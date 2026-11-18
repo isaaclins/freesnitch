@@ -62,8 +62,12 @@ public struct RuleEdit: Equatable, Sendable {
             rule.processPath = path
             rule.processName = name
         case .anyApp:
-            rule.processPath = nil
-            rule.processName = nil
+            // Only a removal: a rule that opened without an app keeps a path
+            // set elsewhere meanwhile.
+            if Self.present(snapshot.processPath) || Self.present(snapshot.processName) {
+                rule.processPath = nil
+                rule.processName = nil
+            }
         }
         if bundleId != snapshot.processBundleId {
             rule.processBundleId = bundleId
@@ -74,13 +78,22 @@ public struct RuleEdit: Equatable, Sendable {
         }
         if remoteHost != snapshot.remoteHost { rule.remoteHost = remoteHost }
         if remoteIP != snapshot.remoteIP { rule.remoteIP = remoteIP }
-        if remotePort != snapshot.remotePort { rule.remotePort = remotePort }
+        // The sheet shows port 0 as an empty field and trims notes, so neither
+        // counts as a change on its own.
+        if Self.port(remotePort) != Self.port(snapshot.remotePort) { rule.remotePort = remotePort }
         if direction != snapshot.direction { rule.direction = direction }
         if action != snapshot.action { rule.action = action }
         if scope != snapshot.scope { rule.scope = scope }
         if profile != snapshot.profile { rule.profile = profile }
-        if notes != snapshot.notes { rule.notes = notes }
+        if Self.text(notes) != Self.text(snapshot.notes) { rule.notes = notes }
         if enabled != snapshot.enabled { rule.enabled = enabled }
         return rule
+    }
+
+    private static func present(_ value: String?) -> Bool { !(value ?? "").isEmpty }
+    private static func port(_ value: Int?) -> Int? { (value ?? 0) > 0 ? value : nil }
+    private static func text(_ value: String?) -> String? {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
