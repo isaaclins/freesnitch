@@ -354,7 +354,7 @@ freesnitch/
 - The DNS proxy listens on port 53 only when Enforcement is enabled.
 - Rule removal, including removal of selected rules, is exposed in the Rules Manager. There is no blocklist reset operation in the current UI.
 
-If you find a security issue, please open a private security advisory rather than a public issue.
+If you find a security issue, please report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 ## Contributing
 
