@@ -345,12 +345,15 @@ final class FilterDataProvider: NEFilterDataProvider {
             // not ready.
             return .allow()
         }
-        // Checked only for flows from the resolver's path, and cached per
-        // running process, so other flows pay nothing for it (#422).
-        let resolverSigned = RuleMatcher.isSystemResolver(conn)
-            && systemResolverIdentity.isSigned(auditToken: socketFlow.sourceAppAuditToken)
+        // The process that sent the flow, not the app it is attributed to:
+        // a lookup the resolver makes on an app's behalf is attributed to
+        // that app (#422). Remembered per process, so this costs a path read
+        // per flow and a signature check per process.
+        let sentByResolver = conn.direction == .outgoing
+            && systemResolverIdentity.isSystemResolver(
+                processAuditToken: socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken)
         let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode,
-                                                 systemResolverSigned: resolverSigned)
+                                                 sentBySystemResolver: sentByResolver)
         // Only once the flow's own code was checked: before that, a missing
         // signed id means "not known yet", and the log would wrongly say the
         // signature does not vouch for a signed app. And only when the flow was
