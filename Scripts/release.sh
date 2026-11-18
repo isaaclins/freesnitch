@@ -165,7 +165,7 @@ read_unique_spec_value() {
     printf '%s\n' "$values" | sort -u | sed 's/^/  /' >&2
     die "$key values disagree in $PROJECT_SPEC"
   fi
-  printf '%s\n' "$values" | head -1
+  sed -n 1p <<<"$values"
 }
 
 CURRENT_VERSION="$(read_unique_spec_value CFBundleShortVersionString)"
@@ -308,8 +308,9 @@ require_release_tooling() {
   printf 'Found provisioning profiles:\n  %s\n  %s\n' "$app_profile" "$netext_profile"
 
   gh auth status >/dev/null 2>&1 || die "gh is not authenticated for GitHub"
-  gh repo view "$REPOSITORY" --json nameWithOwner --jq .nameWithOwner 2>/dev/null | \
-    grep -Fxq "$REPOSITORY" || die "gh cannot access $REPOSITORY"
+  local repo_name
+  repo_name="$(gh repo view "$REPOSITORY" --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+  grep -Fxq "$REPOSITORY" <<<"$repo_name" || die "gh cannot access $REPOSITORY"
   if gh release view "v${VERSION}" --repo "$REPOSITORY" >/dev/null 2>&1; then
     die "a GitHub Release already exists for v${VERSION}"
   fi
@@ -489,7 +490,7 @@ assert_framework_code_signatures() {
   assert_file "$frameworks_dir"
 
   while IFS= read -r -d '' candidate; do
-    if ! file -b "$candidate" | grep -Fq 'Mach-O'; then
+    if ! grep -Fq 'Mach-O' <<<"$(file -b "$candidate")"; then
       continue
     fi
 
