@@ -306,8 +306,11 @@ struct IPBlocklistHarness {
         checks.expect(blocks(infrastructure, "to any port 548"),
                       "a deny on an ordinary port next to DHCPv6 must still be written")
         // A rule with only a port matches any host (issue #298).
-        checks.expect(infrastructure.contains("pass quick proto { tcp udp } to any port 550"),
-                      "a port-only allow in both directions must be written as to any port")
+        checks.expect(infrastructure.contains("pass out quick proto { tcp udp } to any port 550\n")
+                        && !infrastructure.contains("from any port 550"),
+                      "a port-only allow in both directions must be written as its outgoing half only")
+        checks.expect(refusedPorts.contains { $0.contains("incoming half of an allow with only a port") },
+                      "a port-only allow in both directions must report that its incoming half stays out of pf, got \(refusedPorts)")
         // An incoming deny names the remote side, so pf gets `from`, never
         // `in ... to`, which would be this Mac's own port. Its TCP half only
         // stops new connections, and its UDP half is left to the extension,
@@ -348,6 +351,45 @@ struct IPBlocklistHarness {
                       "only a deny in both directions may block incoming UDP, which pf cannot tell from a reply")
         checks.expect(refusedPorts.filter { $0.contains("could disable DHCPv6") }.count == 3,
                       "every DHCPv6 refusal must be reported with a reason, got \(refusedPorts)")
+
+        // An allow names the remote peer, as the matcher and the Network
+        // Extension read remoteIP and remotePort. For an incoming connection
+        // that peer is where the packet comes from, so pf must get `from`;
+        // `pass in ... to X port N` would name this Mac's own address and
+        // port, letting anything in on that local port past the system's own
+        // pf.conf (#301). The peer is also in a feed: the pass keeps state,
+        // so this Mac's replies to it are not dropped by the feed's block.
+        let peerFeed = IPBlocklistSet(entries: ["203.0.113.50"])
+        var incomingRefusals: [String] = []
+        let incomingAllows = pf.renderAnchor(rules: [
+            Rule(remoteIP: "203.0.113.50", remotePort: 51000, direction: .incoming, action: .allow, scope: .ip),
+            Rule(remotePort: 51001, direction: .incoming, action: .allow, scope: .port),
+            Rule(remoteIP: "203.0.113.51", direction: .any, action: .allow, scope: .ip),
+            Rule(remoteIP: "203.0.113.52", remotePort: 51002, direction: .outgoing, action: .allow, scope: .ip)
+        ], ipBlocklist: peerFeed, resolverAddresses: resolvers) { _, reason in incomingRefusals.append(reason) }
+        checkPFSyntax("incoming-allows", incomingAllows, checks)
+        let passLines = incomingAllows.split(separator: "\n").map(String.init).filter { $0.hasPrefix("pass") }
+        checks.expect(passLines.contains("pass in quick proto { tcp udp } from 203.0.113.50 port 51000"),
+                      "an incoming allow with an address and port must be written as from the remote peer")
+        // `pass in ... from any port N` would let anyone using source port N
+        // reach every local port, so a port-only incoming allow stays with
+        // the extension, and says so.
+        checks.expect(!incomingAllows.contains("51001"),
+                      "a port-only incoming allow must never be written to pf")
+        checks.expect(incomingRefusals.contains { $0.contains("incoming allow with only a port") },
+                      "a port-only incoming allow left out of pf must be reported with a reason, got \(incomingRefusals)")
+        checks.expect(!passLines.contains { $0.hasPrefix("pass in") && $0.contains("from any") },
+                      "an incoming pass must always name the peer's address")
+        checks.expect(passLines.contains("pass out quick proto { tcp udp } to 203.0.113.51")
+                        && passLines.contains("pass in quick proto { tcp udp } from 203.0.113.51"),
+                      "an allow in both directions must be written as both halves")
+        checks.expect(passLines.contains("pass out quick proto { tcp udp } to 203.0.113.52 port 51002")
+                        && !incomingAllows.contains("from 203.0.113.52"),
+                      "an outgoing allow must stay to the remote peer and nothing else")
+        checks.expect(!passLines.contains { $0.hasPrefix("pass in") && $0.contains(" to ") },
+                      "an incoming allow must never name this Mac's own side with to")
+        checks.expect(!passLines.contains { $0.hasPrefix("pass quick") },
+                      "an allow must always name its direction, so to and from mean the remote peer")
 
         // A temporary rule leaves pf when it expires, as it leaves the matcher,
         // and the next expiry is when the anchor must be rendered again
