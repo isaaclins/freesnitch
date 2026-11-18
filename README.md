@@ -47,6 +47,14 @@
 
 **[Download FreeSnitch 1.1.0](https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.dmg)** (`FreeSnitch-1.1.0.dmg`, 12.5 MB) or pick a file from the [release page](https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0).
 
+Or install it with [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask isaaclins/tap/freesnitch
+```
+
+FreeSnitch keeps updating itself, so a plain `brew upgrade` skips it; `brew upgrade --greedy` moves the Homebrew copy along too.
+
 - macOS 13 or later, one universal build for Apple Silicon and Intel.
 - Signed with a Developer ID, notarized and stapled by Apple. It is the firewall build, with the Network System Extension.
 - Later versions arrive through the built-in Sparkle updater.
@@ -115,6 +123,8 @@ sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
 The script refuses to remove the app while macOS still holds a record for the extension, or while the helper is still running from that bundle. Without `--remove-database` it keeps `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds your rules and can exceed 300 MB, so a reinstall finds them again. It flushes only the shared `puresnitch` `pf` anchor and never disables `pf` globally, and it keeps the empty anchor file because `/etc/pf.conf` still references it. Legacy PureSnitch data is never touched.
 
 Without a checkout, the Uninstall tab shows and copies the equivalent commands.
+
+Installed with Homebrew? Use the Uninstall tab in the app and restart, then run `brew uninstall --cask freesnitch` instead of the script. It stops the helper and empties the `pf` anchor the same way, and `--zap` also deletes your rules and settings. It refuses while macOS still lists the extension.
 
 ## Why this exists
 

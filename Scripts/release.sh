@@ -16,13 +16,22 @@ APP_BUNDLE_ID="io.isaaclins.freesnitch"
 NETEXT_BUNDLE_ID="io.isaaclins.freesnitch.netext"
 NETEXT_BUNDLE_NAME="io.isaaclins.freesnitch.netext.systemextension"
 HELPER_LABEL="io.isaaclins.freesnitch.helper"
-APP_PROFILE_NAME="FreeSnitch App DeveloperID 2026"
-NETEXT_PROFILE_NAME="FreeSnitch NetExt DeveloperID 2026"
+APP_PROFILE_NAME="FreeSnitch App DeveloperID 2026-11"
+NETEXT_PROFILE_NAME="FreeSnitch NetExt DeveloperID 2026-11"
 NOTARY_PROFILE="${NOTARY_PROFILE:-puresnitch-dev}"
+# Optional keychain that holds the notarytool profile when it is not in the
+# default keychain.
+NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
+NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+[[ -z "$NOTARY_KEYCHAIN" ]] || NOTARY_ARGS+=(--keychain "$NOTARY_KEYCHAIN")
 SPARKLE_VERSION="2.10.1"
 SPARKLE_ACCOUNT="puresnitch"
 FEED_URL="https://isaaclins.com/freesnitch/appcast.xml"
 DOWNLOAD_PAGE_URL="https://github.com/isaaclins/freesnitch/releases/latest"
+# `brew install --cask isaaclins/tap/freesnitch` reads this cask. Every release
+# bumps its version and checksum, see update_homebrew_tap.
+HOMEBREW_TAP_REPOSITORY="isaaclins/homebrew-tap"
+HOMEBREW_CASK_PATH="Casks/freesnitch.rb"
 # Builds below this one (1.0.0 and older) trust an EdDSA key that was lost.
 # Sparkle could never verify an update signed with the current key for them,
 # so new feed items are informational there: they announce the update and
@@ -39,6 +48,7 @@ usage() {
   cat <<'EOF'
 Usage:
   Scripts/release.sh [--validate-only|--dry-run] VERSION [BUILD] [NOTES_FILE]
+  Scripts/release.sh --update-tap VERSION
 
 Examples:
   Scripts/release.sh 0.3.0 12 /tmp/freesnitch-v0.3.0.md
@@ -56,6 +66,11 @@ Release notes are optional in validation-only mode; a supplied notes file is
 still checked for existence and content.
 --dry-run validates arguments and the safety audit without requiring main or
 running any build, signing, notarization, tag, or GitHub operation.
+
+After the GitHub Release exists, a real release also bumps the version and
+checksum of the FreeSnitch cask in isaaclins/homebrew-tap. If that step fails,
+the release stays published and the script says so; --update-tap VERSION
+repeats only that step for an already published release.
 
 The environment variables SPARKLE_RELEASE_VALIDATE_ONLY=1 and
 SPARKLE_RELEASE_DRY_RUN=1 are equivalent to the corresponding options.
@@ -83,6 +98,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       MODE="dry-run"
+      shift
+      ;;
+    --update-tap)
+      MODE="update-tap"
       shift
       ;;
     --notes|-n)
@@ -159,7 +178,7 @@ if [[ ! "$CURRENT_BUILD" =~ ^[1-9][0-9]*$ ]]; then
   die "current project build is not a positive integer: $CURRENT_BUILD"
 fi
 
-if [[ -z "$BUILD_NUMBER" ]]; then
+if [[ -z "$BUILD_NUMBER" && "$MODE" != "update-tap" ]]; then
   BUILD_NUMBER="$((CURRENT_BUILD + 1))"
   printf 'No build supplied, using current project build plus one: %s\n' "$BUILD_NUMBER"
 fi
@@ -278,7 +297,7 @@ require_release_tooling() {
   codesigning_identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
   grep -Fq "\"$SIGN_ID\"" <<<"$codesigning_identities" || \
     die "Developer ID identity is not installed: $SIGN_ID"
-  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || \
+  xcrun notarytool history "${NOTARY_ARGS[@]}" >/dev/null 2>&1 || \
     die "notarytool keychain profile is unavailable: $NOTARY_PROFILE"
 
   local app_profile netext_profile
@@ -294,6 +313,102 @@ require_release_tooling() {
   if gh release view "v${VERSION}" --repo "$REPOSITORY" >/dev/null 2>&1; then
     die "a GitHub Release already exists for v${VERSION}"
   fi
+  require_homebrew_tap_access
+}
+
+# Checked before anything is published, so a release never goes out with a tap
+# it cannot update.
+require_homebrew_tap_access() {
+  local permission
+  permission="$(gh repo view "$HOMEBREW_TAP_REPOSITORY" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
+  case "$permission" in
+    ADMIN|MAINTAIN|WRITE) ;;
+    *) die "gh cannot push to $HOMEBREW_TAP_REPOSITORY, so the Homebrew cask could not be bumped after the release" ;;
+  esac
+}
+
+# Prints the version a cask file points at, or fails when it has no
+# MAJOR.MINOR.PATCH version line.
+cask_version() {
+  sed -nE 's/^  version "((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))"$/\1/p' "$1" | \
+    awk 'NR == 1 { print; found = 1 } END { exit !found }'
+}
+
+# True when MAJOR.MINOR.PATCH version $1 is lower than version $2.
+version_is_older() {
+  local a b i
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  for i in 0 1 2; do
+    (( 10#${a[i]} < 10#${b[i]} )) && return 0
+    (( 10#${a[i]} > 10#${b[i]} )) && return 1
+  done
+  return 1
+}
+
+# Point the Homebrew cask at this release. A version lower than the one the
+# cask already has is refused, so a typo cannot send every brew install back
+# to an old release. The checksum is the one GitHub
+# reports for the published disk image, because that file is what brew
+# downloads and verifies, and in a real release it must also match the disk
+# image built above. Returns non-zero without touching the tap when anything
+# does not add up.
+update_homebrew_tap() {
+  local digest sha work cask current status=0
+  digest="$(gh release view "v${VERSION}" --repo "$REPOSITORY" --json assets \
+    --jq ".assets[] | select(.name == \"${DMG_NAME}\") | .digest" 2>/dev/null || true)"
+  sha="${digest#sha256:}"
+  if [[ "$MODE" == "release" ]]; then
+    local built
+    built="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+    # Older gh versions do not report digests. The disk image built above is
+    # the file that was just uploaded, so its checksum stands in.
+    [[ -n "$digest" ]] || sha="$built"
+    if [[ "$built" != "$sha" ]]; then
+      printf 'The published %s does not match the disk image built here.\n' "$DMG_NAME" >&2
+      return 1
+    fi
+  fi
+  if [[ ! "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+    printf 'Could not read the SHA-256 of %s from the v%s GitHub Release.\n' "$DMG_NAME" "$VERSION" >&2
+    return 1
+  fi
+
+  work="$(mktemp -d "${TMPDIR:-/tmp}/freesnitch-tap.XXXXXX")"
+  cask="$work/tap/$HOMEBREW_CASK_PATH"
+  if ! gh repo clone "$HOMEBREW_TAP_REPOSITORY" "$work/tap" -- --quiet --depth 1; then
+    printf 'Could not clone %s.\n' "$HOMEBREW_TAP_REPOSITORY" >&2
+    status=1
+  elif ! current="$(cask_version "$cask")"; then
+    printf 'Could not read the current version from %s.\n' "$HOMEBREW_CASK_PATH" >&2
+    status=1
+  elif version_is_older "$VERSION" "$current"; then
+    printf 'The Homebrew cask already points at FreeSnitch %s, which is newer than %s; refusing to move it back.\n' "$current" "$VERSION" >&2
+    status=1
+  else
+    sed -E \
+      -e "s/^  version \"[^\"]*\"\$/  version \"${VERSION}\"/" \
+      -e "s/^  sha256 \"[0-9a-f]{64}\"\$/  sha256 \"${sha}\"/" \
+      "$cask" > "$cask.new"
+    if ! grep -Fxq "  version \"${VERSION}\"" "$cask.new" || \
+       ! grep -Fxq "  sha256 \"${sha}\"" "$cask.new"; then
+      printf 'Could not find the version and sha256 lines in %s.\n' "$HOMEBREW_CASK_PATH" >&2
+      status=1
+    else
+      mv "$cask.new" "$cask"
+      if git -C "$work/tap" diff --quiet; then
+        printf 'The Homebrew cask already points at FreeSnitch %s.\n' "$VERSION"
+      elif git -C "$work/tap" commit --quiet -m "freesnitch ${VERSION}" -- "$HOMEBREW_CASK_PATH" && \
+           git -C "$work/tap" push --quiet origin HEAD; then
+        printf 'Bumped the Homebrew cask to FreeSnitch %s.\n' "$VERSION"
+      else
+        printf 'Could not push the cask bump to %s.\n' "$HOMEBREW_TAP_REPOSITORY" >&2
+        status=1
+      fi
+    fi
+  fi
+  rm -rf -- "$work"
+  return "$status"
 }
 
 BUILD_ROOT="$ROOT/build/release"
@@ -527,7 +642,7 @@ notarize_app() {
   printf 'Notarizing the app...\n'
   rm -f "$NOTARIZE_APP_ZIP"
   ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$NOTARIZE_APP_ZIP"
-  xcrun notarytool submit "$NOTARIZE_APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$NOTARIZE_APP_ZIP" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$APP_BUNDLE"
   xcrun stapler validate "$APP_BUNDLE"
   spctl --assess --verbose=4 --type execute "$APP_BUNDLE"
@@ -541,7 +656,7 @@ make_and_notarize_dmg() {
   ln -s /Applications "$stage/Applications"
   hdiutil create -volname "FreeSnitch $VERSION" -srcfolder "$stage" -ov -format UDZO "$DMG_PATH"
   codesign --force --timestamp --sign "$SIGN_ID" "$DMG_PATH"
-  xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
   spctl --assess --verbose=4 --type open --context context:primary-signature "$DMG_PATH"
@@ -809,6 +924,17 @@ commit_and_publish() {
   printf '  Sparkle feed: %s\n' "$FEED_URL"
 }
 
+if [[ "$MODE" == "update-tap" ]]; then
+  (( ${#POSITIONALS[@]} == 1 )) && [[ -z "$BUILD_NUMBER" && -z "$NOTES_INPUT" ]] || \
+    die "--update-tap takes only VERSION"
+  [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
+    die "release version must be MAJOR.MINOR.PATCH without leading zeroes: $VERSION"
+  require_command gh
+  require_homebrew_tap_access
+  update_homebrew_tap || die "the Homebrew cask was not bumped to $VERSION"
+  exit 0
+fi
+
 validate_semver_and_build
 run_firewall_safety_audit
 
@@ -879,3 +1005,10 @@ make_and_notarize_dmg
 generator="$(sparkle_tool)"
 generate_appcast "$generator"
 commit_and_publish
+
+# The release is public at this point. A failed tap bump must not look like a
+# failed release, so it only warns and says how to finish it.
+if ! update_homebrew_tap; then
+  printf 'WARNING: FreeSnitch %s is released, but the Homebrew cask still points at the previous version.\n' "$VERSION" >&2
+  printf '         Finish it with: Scripts/release.sh --update-tap %s\n' "$VERSION" >&2
+fi

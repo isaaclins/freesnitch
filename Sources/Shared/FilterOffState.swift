@@ -43,6 +43,15 @@ public struct FilterOffState: Equatable, Sendable {
         return true
     }
 
+    /// A turn-on that followed the filter being turned on in System Settings
+    /// stands at its save cycle's load only while it is still on there: turned
+    /// off or removed there again meanwhile, what is set there wins and the
+    /// cycle must neither turn it back on nor recreate it (#361). A turn-on
+    /// asked for by activation always stands.
+    public static func turnOnStands(fromSettings: Bool, configured: Bool, enabled: Bool) -> Bool {
+        !fromSettings || (configured && enabled)
+    }
+
     /// The filter preferences were read. `fromOutside` is true when the read
     /// follows a change notification rather than the app's own save cycle,
     /// which is already saving the current rules.
