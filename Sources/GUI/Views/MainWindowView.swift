@@ -116,6 +116,8 @@ final class MainWindowModel: ObservableObject {
     @Published var contentOwnsSearch = false
     /// Bumped by Find. Whichever search field is on screen takes the caret.
     @Published var searchFocusToken = 0
+    /// The Settings page's pane, here so a menu command can choose it.
+    @Published var settingsPane: SettingsView.Pane = .general
 
     init(page: MainPage) {
         self.page = page
@@ -247,7 +249,7 @@ struct MainWindowView: View {
             ProfilesSettingsView(profileClient: profileClient)
                 .padding(16)
         case .settings:
-            SettingsView(systemExtension: systemExtension, uninstall: uninstall)
+            SettingsView(systemExtension: systemExtension, uninstall: uninstall, pane: $model.settingsPane)
         }
     }
 }

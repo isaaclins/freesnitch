@@ -103,7 +103,7 @@ This build needs no system extension approval, because it has no extension to ap
 
 ## Uninstall
 
-Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor and deletes its data behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
+Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor, deletes its data and removes the `freesnitch` command link behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
 
 macOS often keeps a stopped extension listed until the next restart. Nothing of FreeSnitch runs or filters by then, so there is no need to restart for it; the app says so in one sentence when it happens.
 
@@ -168,6 +168,17 @@ Switching profiles affects new connections only. Verdicts are made in `handleNew
 
 ### Menubar Status Item
 Live up and down throughput when enabled, a five-minute traffic graph, a top-process list, a denied-count badge, and a one-click mode picker.
+
+### Command line
+Most of what the app does also works from Terminal with the `freesnitch` command (status, mode, rules, blocklists, alerts, DNS settings), and every command can answer in JSON for scripts. To set it up, open **FreeSnitch > Settings > Command Line** (or **Help > Command-Line Tool…**) and press **Install Command…**. That adds `/usr/local/bin/freesnitch`, a link to the tool inside the app, after one password prompt. Then try:
+
+```bash
+freesnitch status
+freesnitch rules list
+freesnitch --help
+```
+
+Without installing anything, the full path works too: `/Applications/FreeSnitch.app/Contents/Helpers/freesnitch status`. Every command and option is in the [command-line guide](docs/CLI.md).
 
 ## How it works
 

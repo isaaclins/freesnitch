@@ -364,6 +364,28 @@ test_refuses_symlinked_anchor() {
   [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed although the anchor could not be emptied"
 }
 
+# --- 4c. the command link goes only when it is FreeSnitch's (#423) ----------
+
+test_command_link() {
+  local root; root="$(make_fake_root command-link)"
+  mkdir -p "$root/usr/local/bin"
+  ln -s /Applications/FreeSnitch.app/Contents/Helpers/freesnitch "$root/usr/local/bin/freesnitch"
+  export FAKE_SIP=enabled FAKE_EXT_PRESENT=0 FAKE_HELPER_RUNNING=0
+  run_uninstall command-link --yes
+  (( RUN_STATUS == 0 )) || fail "the uninstall with a command link failed: $RUN_OUTPUT"
+  [[ -L "$root/usr/local/bin/freesnitch" ]] && fail "the uninstall left FreeSnitch's command link"
+  expect_contains "$RUN_OUTPUT" "Removed $root/usr/local/bin/freesnitch" "command link removal message"
+
+  local root2; root2="$(make_fake_root someone-elses-command)"
+  mkdir -p "$root2/usr/local/bin"
+  printf '#!/bin/sh\necho mine\n' >"$root2/usr/local/bin/freesnitch"
+  run_uninstall someone-elses-command --yes
+  unset FAKE_SIP FAKE_EXT_PRESENT FAKE_HELPER_RUNNING
+  (( RUN_STATUS == 0 )) || fail "the uninstall next to a user's freesnitch file failed: $RUN_OUTPUT"
+  [[ -f "$root2/usr/local/bin/freesnitch" ]] || fail "the uninstall deleted a freesnitch file it did not make"
+  expect_contains "$RUN_OUTPUT" "Left $root2/usr/local/bin/freesnitch alone" "kept user file message"
+}
+
 # --- 5. no real system path may appear in any privileged call ---------------
 
 test_never_touched_the_real_system() {
@@ -386,6 +408,7 @@ test_sip_refusal_is_honest
 test_stopped_extension_record
 test_flushes_only_named_anchor
 test_refuses_symlinked_anchor
+test_command_link
 test_never_touched_the_real_system
 
 if (( failures > 0 )); then
