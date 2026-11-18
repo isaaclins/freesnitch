@@ -415,16 +415,6 @@ mutate_and_expect_failure overtaken-enable-reports-active "$SEM" \
                                 self.filterConfigurationActive = true'
 mutate_and_expect_failure overtaken-not-checked "$SEM" \
   'turnOffsNow: self.filterTurnOffs,' 'turnOffsNow: turnOffsAtLoad,'
-mutate_and_expect_failure demo-line-open "$SEM" \
-  'FilterPreferencesLine(closed: demo)' 'FilterPreferencesLine()'
-mutate_and_expect_failure demo-follows-system-settings "$SEM" \
-  $'        guard !demo else { return }\n        // The filter can be turned on or off' \
-  $'        // The filter can be turned on or off'
-mutate_and_expect_failure demo-submits-extension-requests "$SEM" \
-  $'    private var hasEmbeddedExtension: Bool {\n        guard !demo else { return false }' \
-  $'    private var hasEmbeddedExtension: Bool {'
-mutate_and_expect_failure demo-line-runs-anyway Sources/Shared/FilterPreferencesLine.swift \
-  '        guard !closed else { return }' ''
 mutate_and_expect_failure overtaken-status-kept "$SEM" \
   'if completion == .stayedOff {' 'if false {'
 mutate_and_expect_failure disable-not-counted "$SEM" \

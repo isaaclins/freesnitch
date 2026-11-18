@@ -94,7 +94,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private var snapshotRecovery = FilterRestartRecovery()
     private var filterRestartInFlight = false
 
-    init(state: AppState, demo: Bool = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1") {
+    init(state: AppState, demo: Bool = DemoMode.isOn) {
         self.state = state
         self.demo = demo
         self.filterPreferences = FilterPreferencesLine(closed: demo)
@@ -226,6 +226,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// only place FreeSnitch is allowed to do it: unregistering the service
     /// outside an uninstall the user confirmed is the failure #24 was filed for.
     func deactivateForUninstall() {
+        // The demo's uninstall screen walks through the steps on sample data:
+        // the real extension and filter configuration stay as they are (#389).
+        guard !demo else {
+            uninstallState = .removed
+            return
+        }
         uninstallState = .deactivating
         guard hasEmbeddedExtension else {
             // Nothing was ever staged from this bundle, so there is no OS
