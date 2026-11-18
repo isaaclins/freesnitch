@@ -334,10 +334,23 @@ expect(decide(spoof, [allowSafari]).1?.id == allowSafari.id,
 expect(decide(spoof, [allowSafari], .silentDeny).0 == .deny,
        "with no allow, a spoofer falls to the default mode like any unknown app")
 expect(!matcher.matches(rule: allowSafari, connection: spoof), "the one-rule matcher agrees on the allow")
-expect(decide(spoof, [askSafari]).1?.id == askSafari.id && !matcher.matches(rule: askSafari, connection: spoof),
-       "an ask rule needs a signed id too")
+// Ask: a claimed id can only make a verdict stricter (allow -> ask).
+expect(decide(spoof, [askSafari], .silentAllow).0 == .ask && decide(spoof, [askSafari]).1 == nil,
+       "an ask rule for a claimed id still asks in Silent Allow mode, and is not reported as skipped")
+let allowSpoofPath = Rule(processPath: "/tmp/x/Safari.app/Contents/MacOS/Safari", action: .allow, priority: 50)
+expect(decide(spoof, [askSafari, allowSpoofPath]).0 == .ask,
+       "an ask rule for a claimed id raises a lower allow for the same binary to an ask")
+let denySpoofPath = Rule(processPath: "/tmp/x/Safari.app/Contents/MacOS/Safari", action: .deny, priority: 50)
+expect(decide(spoof, [askSafari, denySpoofPath], .silentAllow).0 == .deny,
+       "an ask rule for a claimed id never lowers a deny to an ask")
+expect(decide(spoof, [askSafari], .silentDeny).0 == .deny,
+       "an ask rule for a claimed id never lowers Silent Deny to an ask")
+expect(matcher.matches(rule: askSafari, connection: spoof), "the one-rule matcher counts a claimed id for an ask rule")
 let unsignedApp = flow(signed: nil, claimed: "org.example.homebrewed", path: "/Applications/Homebrewed.app/Contents/MacOS/Homebrewed")
 let allowUnsigned = Rule(processBundleId: "org.example.homebrewed", action: .allow, priority: 100)
+let askUnsigned = Rule(processBundleId: "org.example.homebrewed", action: .ask, priority: 100)
+expect(decide(unsignedApp, [askUnsigned], .silentAllow).0 == .ask,
+       "a user's ask rule for an unsigned app keeps asking in Silent Allow mode")
 expect(decide(unsignedApp, [allowUnsigned]).0 == .ask,
        "an allow rule for an unsigned app's own id now alerts (the one change in behaviour)")
 

@@ -1055,6 +1055,9 @@ final class BundleIdentifierCache: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private var evictionOrder: [String] = []
     private var pending: Set<String> = []
+    /// Set once the kernel failed to give a flow's code hash, so that is
+    /// logged once instead of every allow quietly turning into an alert.
+    private var codeHashFailureLogged = false
     private let lifetimeNanos: UInt64
     private let failureRetryNanos: UInt64
     /// Stable address for the whole lifetime of the cache. A Swift property of
@@ -1137,7 +1140,13 @@ final class BundleIdentifierCache: @unchecked Sendable {
         let checkDue = hash != nil && known == nil && retryDue
         let shouldRefresh = !pending.contains(path) && pending.count < capacity && (plistDue || checkDue)
         if shouldRefresh { pending.insert(path) }
+        let reportHashFailure = auditToken != nil && hash == nil && !codeHashFailureLogged
+        if reportHashFailure { codeHashFailureLogged = true }
         os_unfair_lock_unlock(lock)
+        if reportHashFailure {
+            PSLog.error(PSLog.netext,
+                        "Could not read the code hash of \(path) from the kernel, so its code signature cannot be checked: allow rules cannot match it by bundle id until this works. Logged once.")
+        }
         if shouldRefresh {
             let check = checkDue ? hash : nil
             resolveQueue.async { [weak self] in

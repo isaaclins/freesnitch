@@ -225,7 +225,10 @@ extension Rule {
 
 /// A rule's bundle id matches the signed one (#351). A deny rule also matches
 /// the id an unsigned Info.plist claims: a fake id can get a binary blocked,
-/// never let through, so a user's deny keeps blocking an unsigned app.
+/// never let through, so a user's deny keeps blocking an unsigned app. An ask
+/// rule matched only by the claimed id can only make a verdict stricter: it
+/// turns an allow into an ask, never a deny into one (see
+/// `RuleMatcher.explainedDecision`).
 fileprivate func bundleIdMatches(_ ruleBundleId: String, _ connection: Connection, trustingClaimed: Bool) -> Bool {
     if connection.processBundleId == ruleBundleId { return true }
     return trustingClaimed && connection.claimedBundleId == ruleBundleId
@@ -260,8 +263,8 @@ fileprivate struct PreparedRule: Sendable {
     }
 
     /// True when the rule would match if the connection's unsigned bundle id
-    /// were verified: an allow or ask rule skipped only for that reason.
-    func skippedForUnverifiedBundleId(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+    /// were verified: an allow or ask rule that misses only for that reason.
+    func matchesOnlyByClaimedBundleId(connection: Connection, address: PreparedConnectionAddress) -> Bool {
         guard action != .deny, let processBundleId,
               connection.claimedBundleId == processBundleId,
               connection.processBundleId != processBundleId else { return false }
@@ -340,21 +343,32 @@ public struct RuleMatcher: Sendable {
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
+        // A rule that names the bundle id the Info.plist claims, but not the
+        // signed one (#351): an allow is skipped and reported, and an ask is
+        // kept as a floor, so the verdict found further down can be raised
+        // from allow to ask but never lowered.
         let mayHaveSkipped = c.claimedBundleId != nil && c.claimedBundleId != c.processBundleId
         var skipped: Rule?
+        var askFloor = false
         var index = -1
         for r in prepared.compiled {
             index += 1
             if let exp = r.expiresAt, exp < now { continue }
-            if r.matches(connection: c, address: address) { return (r.action, skipped) }
-            if mayHaveSkipped, skipped == nil, r.skippedForUnverifiedBundleId(connection: c, address: address) {
-                skipped = prepared.ordered[index]
+            if r.matches(connection: c, address: address) {
+                return (askFloor && r.action == .allow ? .ask : r.action, skipped)
+            }
+            if mayHaveSkipped, r.matchesOnlyByClaimedBundleId(connection: c, address: address) {
+                if r.action == .ask {
+                    askFloor = true
+                } else if skipped == nil {
+                    skipped = prepared.ordered[index]
+                }
             }
         }
 
         switch defaultMode {
         case .alert: return (.ask, skipped)
-        case .silentAllow: return (.allow, skipped)
+        case .silentAllow: return (askFloor ? .ask : .allow, skipped)
         case .silentDeny: return (.deny, skipped)
         }
     }
@@ -362,7 +376,9 @@ public struct RuleMatcher: Sendable {
     public func matches(rule r: Rule, connection c: Connection) -> Bool {
         if r.direction != .any && r.direction != c.direction { return false }
         if let bid = r.processBundleId, !bid.isEmpty {
-            if !bundleIdMatches(bid, c, trustingClaimed: r.action == .deny) { return false }
+            // Deny and ask rules count a claimed id (an ask one only ever
+            // raises an allow to an ask); an allow needs the signed id.
+            if !bundleIdMatches(bid, c, trustingClaimed: r.action != .allow) { return false }
         }
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }
