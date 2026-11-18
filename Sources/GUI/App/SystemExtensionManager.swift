@@ -1049,11 +1049,13 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                     self.uninstallState = .deactivating
                     self.checkExtensionPresence()
                 } else {
-                    // Check this answer too: only a record that is stopped
-                    // or being uninstalled lets the uninstall go on.
+                    // macOS's own answer that the removal is accepted and
+                    // completes at the next restart. The filter settings are
+                    // already confirmed removed before the request went out,
+                    // so nothing filters; taken as is rather than read back
+                    // through flags macOS doesn't document for this state.
                     self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
-                    self.uninstallState = .deactivating
-                    self.checkExtensionPresence()
+                    self.uninstallState = .pendingReboot
                 }
                 return
             }
