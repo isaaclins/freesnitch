@@ -223,8 +223,8 @@ mutate_and_expect_failure \
 mutate_and_expect_failure \
   helper-replace-predecode-gate \
   Sources/Helper/HelperService.swift \
-  'func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {\n        do {\n            try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)' \
-  'func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void) {\n        do {\n            try RuleTransportBoundary.validateRuleBatchBytes(Data())'
+  'func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void) {\n        do {\n            try RuleTransportBoundary.validateRuleBatchBytes(rulesJSON)' \
+  'func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void) {\n        do {\n            try RuleTransportBoundary.validateRuleBatchBytes(Data())'
 
 mutate_and_expect_failure \
   helper-add-predecode-gate \

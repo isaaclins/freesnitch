@@ -111,7 +111,15 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     public var pid: Int32
     public var processName: String
     public var processPath: String
+    /// The bundle id from the process's valid, Apple-issued code signature
+    /// (#351). The only bundle id an allow or ask rule matches, and the one
+    /// new rules are written with.
     public var processBundleId: String?
+    /// The bundle id the app's unsigned Info.plist claims, when it differs
+    /// from `processBundleId` or there is no signed one. Anyone can write it,
+    /// so it can only ever make a deny rule match: claiming another app's id
+    /// can get a binary blocked, never let through.
+    public var claimedBundleId: String?
     public var localPort: Int
     public var remoteHost: String
     public var remoteIP: String
@@ -142,6 +150,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         processName: String,
         processPath: String,
         processBundleId: String? = nil,
+        claimedBundleId: String? = nil,
         localPort: Int = 0,
         remoteHost: String = "",
         remoteIP: String = "",
@@ -164,6 +173,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         self.processName = processName
         self.processPath = processPath
         self.processBundleId = processBundleId
+        self.claimedBundleId = claimedBundleId
         self.localPort = localPort
         self.remoteHost = remoteHost
         self.remoteIP = remoteIP

@@ -167,6 +167,14 @@ final class FilterDataProvider: NEFilterDataProvider {
     private let matcher = RuleMatcher()
     private let resolverBypass = ResolverBypass()
     private let bundleIdentifierCache = BundleIdentifierCache()
+    /// Processes already told about an allow rule their unsigned bundle id
+    /// could not use; bounded, cleared when full.
+    private var unverifiedBundleLoggedPIDs: Set<Int32> = []
+    private let unverifiedBundleLogLock: UnsafeMutablePointer<os_unfair_lock_s> = {
+        let lock = UnsafeMutablePointer<os_unfair_lock_s>.allocate(capacity: 1)
+        lock.initialize(to: os_unfair_lock_s())
+        return lock
+    }()
     private let snapshotLock = NSLock()
     private var snapshot: SharedRuleBridge.Snapshot?
     /// The evaluation order derived from `snapshot`. Ordering per flow repeated
@@ -180,6 +188,14 @@ final class FilterDataProvider: NEFilterDataProvider {
         "Network extension has not received a rule snapshot from the GUI."
     )
     private let workQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.work")
+    /// Serial, so watermark writes land in the order the policies were
+    /// accepted. Never on the verdict or XPC reply path (#213).
+    private let watermarkQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.watermark", qos: .utility)
+    /// In this extension's own sandbox container (root-owned, so no user
+    /// process can write it).
+    private let watermarkURL: URL? = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent(SharedRuleBridge.LivePolicyWatermark.fileName)
     private let observationQueue = FlowObservationQueue(capacity: 1024)
     private let observationDrainQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.observations", qos: .utility)
     private let observationSignalLock: UnsafeMutablePointer<os_unfair_lock_s>
@@ -295,15 +311,18 @@ final class FilterDataProvider: NEFilterDataProvider {
         os_unfair_lock_lock(observationSignalLock)
         observationStopped = true
         os_unfair_lock_unlock(observationSignalLock)
+        // Let a queued live-policy record land before this instance goes
+        // away, so the next start compares against the policy it enforced
+        // last (#213). The write is one small file.
+        watermarkQueue.sync {}
         completionHandler()
     }
 
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
-        let conn = connection(from: socketFlow)
+        let (conn, version, signatureChecked) = connection(from: socketFlow)
         // The compact evidence event is still created before any verdict work:
         // FlowObservation(connection: conn)
-        let version = bundleIdentifierCache.cachedMetadata(forExecutablePath: conn.processPath)?.version
         _ = observationQueue.enqueue(FlowObservation(connection: conn, processVersion: version))
         signalObservationDrain()
         // FreeSnitch must never hold up its own traffic. The helper shells out
@@ -325,7 +344,15 @@ final class FilterDataProvider: NEFilterDataProvider {
             // not ready.
             return .allow()
         }
-        switch matcher.decision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode) {
+        let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode)
+        // Only once the flow's own code was checked: before that, a missing
+        // signed id means "not known yet", and the log would wrongly say the
+        // signature does not vouch for a signed app. And only when the flow was
+        // not allowed anyway (by a path rule, say), since then nothing is asked.
+        if let skipped = decision.skippedUnverified, signatureChecked, decision.action != .allow {
+            noteUnverifiedBundleId(conn, skipped: skipped)
+        }
+        switch decision.action {
         case .allow:
             return reportingLateDestination(.allow(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
         case .deny:
@@ -406,6 +433,23 @@ final class FilterDataProvider: NEFilterDataProvider {
         let destination = FlowDestination.resolve(endpointHost: remoteAddress(of: socketFlow).host,
                                                   remoteHostname: socketFlow.remoteHostname)
         classifyFlaggedReport(socketFlow.identifier, destinationKnown: destination.isKnown, isClose: isClose)
+    }
+
+    /// Once per process: an allow rule named the bundle id this app's
+    /// Info.plist claims, but the process's code signature does not vouch for
+    /// that id, so the rule did not apply (#351). Says why the user got an
+    /// alert for an app they allowed. Trylock-only: a contended verdict skips
+    /// the note instead of waiting.
+    private func noteUnverifiedBundleId(_ conn: Connection, skipped: Rule) {
+        guard os_unfair_lock_trylock(unverifiedBundleLogLock) else { return }
+        if unverifiedBundleLoggedPIDs.count >= 1024 { unverifiedBundleLoggedPIDs.removeAll() }
+        let first = unverifiedBundleLoggedPIDs.insert(conn.pid).inserted
+        os_unfair_lock_unlock(unverifiedBundleLogLock)
+        guard first else { return }
+        PSLog.info(
+            PSLog.netext,
+            "The \(skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(conn.pid)): its Info.plist claims that bundle id, but its code signature does not vouch for it (signed id: \(conn.processBundleId ?? "none")), so only deny and ask rules for that id apply."
+        )
     }
 
     /// An IP or CIDR rule that cannot be evaluated is a limitation to state,
@@ -605,7 +649,9 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Flow -> Connection
 
-    private func connection(from flow: NEFilterSocketFlow) -> Connection {
+    /// The flow as a connection, and the app version shown with it. Both come
+    /// from one cache lookup, so a flow pays for one kernel code-hash call.
+    private func connection(from flow: NEFilterSocketFlow) -> (Connection, version: String?, signatureChecked: Bool) {
         let (host, port) = remoteAddress(of: flow)
         let destination = FlowDestination.resolve(endpointHost: host, remoteHostname: flow.remoteHostname)
         if let rejected = destination.rejectedHostname {
@@ -616,18 +662,21 @@ final class FilterDataProvider: NEFilterDataProvider {
         let pid = flow.sourceAppAuditToken.flatMap(auditTokenToPID) ?? 0
         let path = pid > 0 ? pathForPID(pid) : ""
         let name = path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
-        let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path)
-        return Connection(
+        let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path,
+                                                            auditToken: flow.sourceAppAuditToken)
+        let connection = Connection(
             pid: Int32(pid),
             processName: name,
             processPath: path,
             processBundleId: metadata?.bundleIdentifier,
+            claimedBundleId: metadata?.claimedBundleIdentifier,
             remoteHost: remoteHost,
             remoteIP: remoteIP,
             remotePort: port,
             direction: flow.direction == .outbound ? .outgoing : .incoming,
             status: .pending
         )
+        return (connection, metadata?.version, metadata?.signatureChecked ?? false)
     }
 
     /// `remoteEndpoint` is deprecated and reports the unspecified address
@@ -666,22 +715,25 @@ final class FilterDataProvider: NEFilterDataProvider {
         return n > 0 ? String(cString: buf) : ""
     }
 
-    /// Best-effort bundle id from the .app enclosing the executable.
-    /// (`NEFilterFlow.sourceAppIdentifier` is unavailable on macOS.)
-    ///
-    /// Memory only. The verdict path must never wait on a filesystem read, so
-    /// an unresolved path answers nil here, exactly like an executable that
-    /// lives outside an .app bundle already does, and the Info.plist read runs
-    /// on a background queue for the benefit of later flows.
-    private func bundleIdForApp(atPath path: String) -> String? {
-        bundleIdentifierCache.cachedBundleId(forExecutablePath: path)
-    }
-
     // MARK: - Rule snapshot
 
     private func loadBootSnapshot(_ data: Data) {
         do {
             let decoded = try SharedRuleBridge.decodeBootSnapshot(data)
+            // A saved policy older than the last live policy this extension
+            // enforced is one the app failed to replace. It may still hold a
+            // rule the user removed, so it never loads; filtering fails open
+            // until the app sends the current policy (#213).
+            if let watermarkURL,
+               let watermark = SharedRuleBridge.LivePolicyWatermark.read(from: watermarkURL),
+               watermark.supersedes(decoded) {
+                clearBootSnapshot(
+                    "persisted boot policy (session \(decoded.epoch), generation \(decoded.generation)) is older than the last live policy "
+                    + "(session \(watermark.epoch), generation \(watermark.generation)), usually because the app's last save failed, "
+                    + "so it is not loaded and filtering will fail open until the app sends the current rules"
+                )
+                return
+            }
             let received = SharedRuleBridge.applyingBootPolicySafety(decoded)
             if decoded.mode == .silentDeny && received.mode == .alert {
                 PSLog.error(
@@ -724,6 +776,24 @@ final class FilterDataProvider: NEFilterDataProvider {
                 return
             }
             PSLog.error(PSLog.netext, status.message ?? "Network extension persisted boot policy was invalid.")
+        }
+    }
+
+    /// Remembers which policy is now enforced, so a later start can refuse an
+    /// older saved policy (#213). A failed write is logged and leaves the
+    /// previous behaviour: the saved policy loads as before.
+    private func recordLiveWatermark(_ accepted: SharedRuleBridge.Snapshot) {
+        guard let url = watermarkURL else {
+            PSLog.error(PSLog.netext, "live policy watermark has no container location; a failed boot policy save cannot be detected at the next start")
+            return
+        }
+        let watermark = SharedRuleBridge.LivePolicyWatermark(accepted)
+        watermarkQueue.async {
+            do {
+                try watermark.write(to: url)
+            } catch {
+                PSLog.error(PSLog.netext, "live policy watermark write failed: \(error.localizedDescription); a failed boot policy save cannot be detected at the next start")
+            }
         }
     }
 
@@ -806,6 +876,10 @@ final class FilterDataProvider: NEFilterDataProvider {
                 setSnapshotLocked(accepted)
                 snapshotOrigin = .live
                 snapshotStatus = status
+                // Queued (not written) while the lock is held, so records land
+                // in the order the policies were accepted. The write itself
+                // runs on its own queue and never delays this reply.
+                if decision == .accepted { recordLiveWatermark(accepted) }
                 snapshotLock.unlock()
 
                 let allowCount = accepted.rules.filter { $0.action == .allow }.count
@@ -870,62 +944,163 @@ final class FilterDataProvider: NEFilterDataProvider {
 
 /// Bounded executable-path to bundle-identifier cache for the verdict path.
 ///
-/// `cachedBundleId(forExecutablePath:)` is memory only: it holds the lock just
-/// long enough for one dictionary lookup, and no lock holder ever touches the
-/// filesystem. Every Info.plist read happens on `resolveQueue`, so a cache
-/// miss answers nil immediately rather than blocking `handleNewFlow`, and only
-/// one read is scheduled per path even during a burst of new flows.
+/// `cachedMetadata(forExecutablePath:auditToken:)` is memory only apart from
+/// one `csops` call into the kernel for the flow's code hash: it holds the lock
+/// just long enough for dictionary lookups, and no lock holder ever touches the
+/// filesystem. Every signature check and Info.plist read happens on
+/// `resolveQueue`, so a cache miss answers nil immediately rather than blocking
+/// `handleNewFlow`, and only one resolve is scheduled per path even during a
+/// burst of new flows.
 ///
 /// The key is the executable path exactly as `proc_pidpath` reports it, not the
 /// enclosing .app, because splitting the path allocates a string and that
-/// allocation dominated the lookup. Finding the .app and reading its plist both
-/// belong to the background resolve. An executable outside an .app bundle is
-/// cached as nil, which is the answer the filter already gives it.
+/// allocation dominated the lookup. Finding the .app, checking the signature
+/// and reading its plist all belong to the background resolve. An executable
+/// outside an .app bundle is cached as nil, which is the answer the filter
+/// already gives it.
 ///
-/// Bound: at most `capacity` executable paths. When the map is full the path
-/// that was resolved longest ago is evicted (first resolved, first out), so
-/// this long-lived root-adjacent process cannot grow the map without limit.
-/// Eviction runs on `resolveQueue`, never on the verdict path.
+/// Two answers per path (#351). The bundle identifier rules may trust comes
+/// from the code signature; the version and the identifier the Info.plist
+/// claims come from the plist. The claimed identifier is unsigned, so only a
+/// deny rule matches it: a fake claim can get a binary blocked, never let
+/// through.
 ///
-/// Staleness: a path can be reused by a replaced app, so an entry older than
-/// `entryLifetime` is re-read in the background while the previous identifier
-/// is still answered from memory. The stale window is therefore bounded by the
-/// lifetime plus one background read, and an identifier is never invented for
-/// a path that has not been read at least once.
+/// A signed identifier is tied to the code it was checked for, not to the
+/// path: it is stored under the code directory hash the kernel reports for the
+/// checked process, and a flow only gets it when its own process runs code
+/// with that hash. A binary swapped in at a path whose earlier process was
+/// checked therefore never inherits that process's identifier; its own code is
+/// checked first. A check that could not read the signature at all is not an
+/// answer, so it is tried again after `failureRetryInterval`. A signed
+/// identifier needs no refresh: code with a given hash keeps the signature it
+/// was checked with.
+///
+/// Bound: at most `capacity` executable paths, and at most `signedPerPath`
+/// code hashes per path. When the map is full the path that was resolved
+/// longest ago is evicted (first resolved, first out), so this long-lived
+/// root-adjacent process cannot grow the map without limit. Eviction runs on
+/// `resolveQueue`, never on the verdict path.
+///
+/// Plist staleness: a path can be reused by a replaced app, so a plist read
+/// older than `entryLifetime` is read again in the background while the
+/// previous answer is still given from memory. The stale window is therefore
+/// bounded by the lifetime plus one background read (two lifetimes while the
+/// refresh keeps failing, see below).
+///
+/// Failed plist reads: an Info.plist that cannot be read or parsed (an app
+/// mid-update, a permissions problem) is not an app without a bundle
+/// identifier. It is logged once, keeps what the path had before (for at most
+/// one more lifetime past its last good read), and is read again after
+/// `failureRetryInterval`, doubling up to `entryLifetime` while it keeps
+/// failing (#268).
 struct AppBundleMetadata: Sendable {
+    /// From the plist, as read. In an answer from the cache: the signed
+    /// identifier (`CodeSigningIdentity`), never the plist's.
     let bundleIdentifier: String?
     let version: String?
+    /// What the unsigned Info.plist claims, when it differs from the signed
+    /// identifier. Only ever matched by deny rules.
+    var claimedBundleIdentifier: String? = nil
+    /// Whether the code this flow's process runs has been checked yet. Until
+    /// it has, a missing `bundleIdentifier` means "not known yet", not "the
+    /// signature does not vouch for it".
+    var signatureChecked = false
 }
+
+/// The outcome of one Info.plist read. `.read(nil)` is a real answer (the plist
+/// names neither an identifier nor a version); `.failed` means nothing is known.
+enum AppBundleMetadataRead: Sendable {
+    case read(AppBundleMetadata?)
+    case failed(String)
+}
+
+/// A code directory hash (20 bytes), held without a heap allocation so the
+/// verdict path can look one up.
+struct CDHash: Hashable, Sendable {
+    let head: UInt64
+    let middle: UInt64
+    let tail: UInt32
+
+    init(_ bytes: (UInt64, UInt64, UInt32)) {
+        head = bytes.0
+        middle = bytes.1
+        tail = bytes.2
+    }
+}
+
+@_silgen_name("csops_audittoken")
+private func csops_audittoken(_ pid: pid_t, _ ops: UInt32, _ useraddr: UnsafeMutableRawPointer?,
+                              _ usersize: Int, _ token: UnsafeMutablePointer<audit_token_t>?) -> Int32
 
 final class BundleIdentifierCache: @unchecked Sendable {
     private struct Entry {
-        let metadata: AppBundleMetadata?
-        let resolvedAtNanos: UInt64
+        /// The last good plist read (version and claimed identifier).
+        var plist: AppBundleMetadata?
+        var plistReadAtNanos: UInt64 = 0
+        /// When the plist is due for another read. `entryLifetime` after a
+        /// good read, much sooner after a failed one.
+        var plistRefreshAfterNanos: UInt64 = 0
+        /// Failed plist reads in a row since the last good one.
+        var plistFailures = 0
+        /// Code hashes checked at this path: the signed identifier, or nil
+        /// when the code's signature is not one rules may trust.
+        var signed: [CDHash: String?] = [:]
+        var signedOrder: [CDHash] = []
+        /// The code whose signature could not be read at all, when it may be
+        /// checked again, and how many such checks failed in a row. Kept per
+        /// code hash: a relaunched app runs new code and is checked at once,
+        /// whatever its predecessor's backoff was.
+        var unreadableHash: CDHash?
+        var signatureRetryAfterNanos: UInt64 = 0
+        var signatureFailures = 0
     }
 
     let capacity: Int
     let entryLifetime: TimeInterval
+    let failureRetryInterval: TimeInterval
+    let signedPerPath = 4
 
     private var entries: [String: Entry] = [:]
     private var evictionOrder: [String] = []
     private var pending: Set<String> = []
+    /// Set once the kernel failed to give a flow's code hash, so that is
+    /// logged once instead of every allow quietly turning into an alert.
+    private var codeHashFailureLogged = false
     private let lifetimeNanos: UInt64
+    private let failureRetryNanos: UInt64
     /// Stable address for the whole lifetime of the cache. A Swift property of
     /// type `os_unfair_lock_s` gives no such guarantee, and a lock that moves
     /// is not a lock.
     private let lock: UnsafeMutablePointer<os_unfair_lock_s>
     private let resolveQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.bundleid", qos: .utility)
-    private let read: @Sendable (String) -> AppBundleMetadata?
+    private let read: @Sendable (String) -> AppBundleMetadataRead
+    private let identify: @Sendable (String, Data?) -> CodeSigningIdentity.Resolution
+    private let codeHash: @Sendable (Data?) -> CDHash?
+    /// Monotonic nanoseconds. A test seam, so lifetimes and retries can be
+    /// checked without sleeping.
+    private let clock: @Sendable () -> UInt64
 
     init(capacity: Int = 512,
          entryLifetime: TimeInterval = 300,
-         read: @escaping @Sendable (String) -> AppBundleMetadata? = { BundleIdentifierCache.readBundleMetadata(atAppPath: $0) }) {
+         failureRetryInterval: TimeInterval = 1,
+         read: @escaping @Sendable (String) -> AppBundleMetadataRead = { BundleIdentifierCache.readBundleMetadata(atAppPath: $0) },
+         identify: @escaping @Sendable (String, Data?) -> CodeSigningIdentity.Resolution = {
+             CodeSigningIdentity.resolve(executablePath: $0, auditToken: $1, pid: 0, fileFallback: false)
+         },
+         codeHash: @escaping @Sendable (Data?) -> CDHash? = { BundleIdentifierCache.kernelCodeHash(auditToken: $0) },
+         clock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         precondition(capacity > 0)
         precondition(entryLifetime > 0)
+        precondition(failureRetryInterval > 0)
         self.capacity = capacity
         self.entryLifetime = entryLifetime
+        self.failureRetryInterval = min(failureRetryInterval, entryLifetime)
         self.lifetimeNanos = UInt64(entryLifetime * 1_000_000_000)
+        self.failureRetryNanos = UInt64(self.failureRetryInterval * 1_000_000_000)
         self.read = read
+        self.identify = identify
+        self.codeHash = codeHash
+        self.clock = clock
         self.lock = .allocate(capacity: 1)
         self.lock.initialize(to: os_unfair_lock_s())
     }
@@ -935,39 +1110,153 @@ final class BundleIdentifierCache: @unchecked Sendable {
         lock.deallocate()
     }
 
-    /// Verdict path. Every answer is a memory lookup. A first-seen path is
-    /// queued for background resolution and answers nil for this flow, so an
-    /// Info.plist read can never block `handleNewFlow` or its contact decision.
-    /// A temporary nil bundle identity is conservative: it may produce an
-    /// extra ask, but it cannot silently claim a process rule matched.
-    func cachedBundleId(forExecutablePath path: String) -> String? {
-        cachedMetadata(forExecutablePath: path)?.bundleIdentifier
+    /// The code directory hash of the code the process named by `auditToken`
+    /// is running, straight from the kernel: no filesystem access, and it is
+    /// what the process executed even if its file was replaced since.
+    static func kernelCodeHash(auditToken: Data?) -> CDHash? {
+        guard let auditToken, auditToken.count >= MemoryLayout<audit_token_t>.size else { return nil }
+        var token = audit_token_t()
+        _ = withUnsafeMutableBytes(of: &token) { auditToken.copyBytes(to: $0, count: $0.count) }
+        var hash: (UInt64, UInt64, UInt32) = (0, 0, 0)
+        let pid = pid_t(bitPattern: token.val.5)
+        // CS_OPS_CDHASH is 5; the hash is 20 bytes.
+        let status = withUnsafeMutableBytes(of: &hash) { buffer in
+            csops_audittoken(pid, 5, buffer.baseAddress, 20, &token)
+        }
+        return status == 0 ? CDHash(hash) : nil
     }
 
-    /// The bundle identifier and offline build identity from the cached app
-    /// plist. Cache misses and stale entries are refreshed on `resolveQueue`.
-    func cachedMetadata(forExecutablePath path: String) -> AppBundleMetadata? {
+    /// Verdict path. A first-seen path or code answers nil for the signed
+    /// identifier and queues a background check, so a signature check or an
+    /// Info.plist read can never block `handleNewFlow`. A temporary nil is
+    /// conservative: it may produce an extra ask, never a wrong allow.
+    func cachedBundleId(forExecutablePath path: String, auditToken: Data? = nil) -> String? {
+        cachedMetadata(forExecutablePath: path, auditToken: auditToken)?.bundleIdentifier
+    }
+
+    /// The signed bundle identifier of the flow's own code, and the plist's
+    /// version and claimed identifier for its path.
+    func cachedMetadata(forExecutablePath path: String, auditToken: Data? = nil) -> AppBundleMetadata? {
         guard !path.isEmpty else { return nil }
-        let now = DispatchTime.now().uptimeNanoseconds
+        let hash = codeHash(auditToken)
+        let now = clock()
         os_unfair_lock_lock(lock)
         let entry = entries[path]
-        let stale = entry.map { now &- $0.resolvedAtNanos >= lifetimeNanos } ?? false
-        let shouldRefresh = !pending.contains(path) && pending.count < capacity &&
-            (entry == nil || stale)
+        let known: String?? = hash.flatMap { entry?.signed[$0] }
+        let plistDue = entry.map { now >= $0.plistRefreshAfterNanos } ?? true
+        let retryDue = entry.map { hash != $0.unreadableHash || now >= $0.signatureRetryAfterNanos } ?? true
+        let checkDue = hash != nil && known == nil && retryDue
+        let shouldRefresh = !pending.contains(path) && pending.count < capacity && (plistDue || checkDue)
         if shouldRefresh { pending.insert(path) }
+        let reportHashFailure = auditToken != nil && hash == nil && !codeHashFailureLogged
+        if reportHashFailure { codeHashFailureLogged = true }
         os_unfair_lock_unlock(lock)
-        if shouldRefresh { resolveQueue.async { [weak self] in self?.resolve(path) } }
-        return entry?.metadata
+        if reportHashFailure {
+            PSLog.error(PSLog.netext,
+                        "Could not read the code hash of \(path) from the kernel, so its code signature cannot be checked: allow rules cannot match it by bundle id until this works. Logged once.")
+        }
+        if shouldRefresh {
+            let check = checkDue ? hash : nil
+            resolveQueue.async { [weak self] in
+                self?.resolve(path, auditToken: auditToken, hash: check, readPlist: plistDue)
+            }
+        }
+        var answer = Self.metadata(known ?? nil, entry?.plist)
+        answer?.signatureChecked = known != nil
+        return answer
     }
 
     /// Background only.
-    private func resolve(_ path: String) {
-        let metadata = Self.appBundlePath(forExecutablePath: path).flatMap(read)
-        let now = DispatchTime.now().uptimeNanoseconds
+    private func resolve(_ path: String, auditToken: Data?, hash: CDHash?, readPlist: Bool) {
+        let identity = hash == nil ? nil : identify(path, auditToken)
+        var outcome: AppBundleMetadataRead?
+        if readPlist {
+            if let appPath = Self.appBundlePath(forExecutablePath: path) {
+                outcome = read(appPath)
+            } else {
+                outcome = .read(nil)
+            }
+        }
+        let now = clock()
         os_unfair_lock_lock(lock)
-        defer { os_unfair_lock_unlock(lock) }
         pending.remove(path)
-        insertLocked(path, entry: Entry(metadata: metadata, resolvedAtNanos: now))
+        let previous = entries[path]
+        var entry = previous ?? Entry()
+        switch outcome {
+        case .read(let metadata)?:
+            entry.plist = metadata
+            entry.plistReadAtNanos = now
+            entry.plistRefreshAfterNanos = now &+ lifetimeNanos
+            entry.plistFailures = 0
+        case .failed?:
+            // Keep the plist read before, for at most one more lifetime, so a
+            // path taken over by another app cannot keep the old answer
+            // forever; retry soon, backing off.
+            entry.plistFailures += 1
+            let shift = UInt64(min(entry.plistFailures - 1, 20))
+            let delay = min(failureRetryNanos << shift, lifetimeNanos)
+            let keep = previous.map { $0.plist != nil && now &- $0.plistReadAtNanos < lifetimeNanos &* 2 } ?? false
+            if !keep {
+                entry.plist = nil
+                entry.plistReadAtNanos = now
+            }
+            entry.plistRefreshAfterNanos = now &+ delay
+        case nil:
+            break
+        }
+        if let hash, let identity {
+            switch identity {
+            case .unavailable:
+                // No signature could be read for this process (it exited, or
+                // its app was updated on disk while it ran). That is no
+                // answer: try again, backing off like a failed plist read,
+                // since an app updated under a running process can only be
+                // checked once it is relaunched.
+                entry.signatureFailures = entry.unreadableHash == hash ? entry.signatureFailures + 1 : 1
+                entry.unreadableHash = hash
+                let shift = UInt64(min(entry.signatureFailures - 1, 20))
+                entry.signatureRetryAfterNanos = now &+ min(failureRetryNanos << shift, lifetimeNanos)
+            case .noBundle, .resolved:
+                if entry.signed.updateValue(identity.bundleIdentifier, forKey: hash) == nil {
+                    entry.signedOrder.append(hash)
+                    if entry.signedOrder.count > signedPerPath {
+                        entry.signed.removeValue(forKey: entry.signedOrder.removeFirst())
+                    }
+                }
+                if entry.unreadableHash == hash {
+                    entry.unreadableHash = nil
+                    entry.signatureFailures = 0
+                }
+            }
+        }
+        insertLocked(path, entry: entry)
+        os_unfair_lock_unlock(lock)
+
+        // Log outside the lock: once when a path's code starts failing its
+        // signature check, and once when a plist starts failing or recovers.
+        if case .unavailable? = identity, entry.signatureFailures == 1 {
+            PSLog.error(PSLog.netext,
+                        "Could not check the code signature of \(path) (the app may have been updated on disk while it runs). Until it can be checked, only deny and ask rules match it by bundle id; checking again with growing gaps.")
+        }
+        switch outcome {
+        case .failed(let reason)? where entry.plistFailures == 1:
+            let kept = entry.plist?.bundleIdentifier.map { "keeps answering '\($0)'" }
+                ?? "has no bundle identifier from its Info.plist yet"
+            PSLog.error(PSLog.netext,
+                        "Could not read the app bundle identity for \(path): \(reason). The app \(kept); retrying in \(Int(failureRetryInterval.rounded(.up))) s.")
+        case .read(let metadata)? where (previous?.plistFailures ?? 0) > 0:
+            PSLog.info(PSLog.netext,
+                       "App bundle identity for \(path) readable again after \(previous!.plistFailures) failed reads: \(metadata?.bundleIdentifier ?? "no bundle identifier").")
+        default:
+            break
+        }
+    }
+
+    private static func metadata(_ bundleIdentifier: String?, _ plist: AppBundleMetadata?) -> AppBundleMetadata? {
+        let claimed = plist?.bundleIdentifier.flatMap { $0.isEmpty || $0 == bundleIdentifier ? nil : $0 }
+        guard bundleIdentifier != nil || plist?.version != nil || claimed != nil else { return nil }
+        return AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: plist?.version,
+                                 claimedBundleIdentifier: claimed)
     }
 
     /// Caller must hold the lock.
@@ -987,12 +1276,25 @@ final class BundleIdentifierCache: @unchecked Sendable {
         return String(path[..<r.upperBound])
     }
 
-    /// The one filesystem read, reached only from `resolveQueue`.
-    static func readBundleMetadata(atAppPath appPath: String) -> AppBundleMetadata? {
-        let plist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: plist)),
-              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            return nil
+    /// The plist read, reached only from `resolveQueue`. Its bundle identifier
+    /// is unsigned: the cache keeps it only as the claimed id, which nothing
+    /// but a deny rule matches (#351).
+    static func readBundleMetadata(atAppPath appPath: String) -> AppBundleMetadataRead {
+        let plist = AppBundleIdentity.infoPlistPath(forAppPath: appPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: plist))
+        } catch {
+            return .failed("reading Info.plist failed (\(error.localizedDescription))")
+        }
+        let dict: [String: Any]
+        do {
+            guard let parsed = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+                return .failed("Info.plist is not a dictionary")
+            }
+            dict = parsed
+        } catch {
+            return .failed("Info.plist could not be parsed (\(error.localizedDescription))")
         }
         let bundleIdentifier = dict["CFBundleIdentifier"] as? String
         let shortVersion = dict["CFBundleShortVersionString"] as? String
@@ -1003,12 +1305,8 @@ final class BundleIdentifierCache: @unchecked Sendable {
         } else {
             version = nil
         }
-        guard bundleIdentifier != nil || version != nil else { return nil }
-        return AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: version)
-    }
-
-    static func readBundleIdentifier(atAppPath appPath: String) -> String? {
-        readBundleMetadata(atAppPath: appPath)?.bundleIdentifier
+        guard bundleIdentifier != nil || version != nil else { return .read(nil) }
+        return .read(AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: version))
     }
 
     /// Test seam: how many executable paths are currently held.

@@ -20,8 +20,19 @@ import Foundation
     @objc optional func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void)
     /// Atomic replacement for the GUI import path. Older helpers do not have a
     /// safe replacement operation, so the GUI reports that rather than doing a
-    /// sequence of stale-prone removals.
-    @objc optional func replaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void)
+    /// sequence of stale-prone removals. `expectedRemovedIDsJSON` is a JSON
+    /// array of the rule IDs the user was told the import deletes or moves
+    /// (`RuleImportPlan.confirmedIDs`); the helper refuses the import when its
+    /// own plan would take away anything else (#247).
+    @objc optional func replaceRules(rulesJSON: Data, expectedRemovedIDsJSON: Data, reply: @escaping (Bool, String?) -> Void)
+    /// The import request apps sent before #300 added the confirmed IDs. The
+    /// helper keeps answering it so an app that is still running from before an
+    /// update gets a refusal it shows the user, instead of a request the helper
+    /// silently drops while that app waits with no timeout (#344). It never
+    /// imports anything: that request cannot say what the user agreed to delete.
+    /// The Swift name differs so it cannot be called by mistake.
+    @objc(replaceRulesWithRulesJSON:reply:)
+    optional func legacyReplaceRules(rulesJSON: Data, reply: @escaping (Bool, String?) -> Void)
     func listRules(profile: String, reply: @escaping (Data) -> Void)
 
     func startMonitoring(reply: @escaping (Bool, String?) -> Void)
@@ -101,6 +112,9 @@ import Foundation
 
 public enum HelperBridge {
     public static let machServiceName = AppConstants.xpcMachServiceName
+    /// What an app from before #300 is told when it sends the old import
+    /// request to a newer helper. The older app shows this text as is (#344).
+    public static let legacyImportRefusal = "FreeSnitch was updated. Quit and reopen FreeSnitch, then import the rules again. Nothing was imported."
 
     public static func remoteInterface() -> NSXPCInterface {
         let iface = NSXPCInterface(with: HelperProtocol.self)

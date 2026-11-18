@@ -202,13 +202,23 @@ sip_enabled() {
   [[ "$status" == *"status: enabled"* ]]
 }
 
-# Ask macOS, do not infer. An empty answer from a tool that failed is not
-# evidence that the record is gone, so the caller treats "cannot tell" as
-# "still registered".
-extension_record_present() {
-  local listing
-  listing="$("$SYSTEMEXTENSIONSCTL" list 2>/dev/null || true)"
-  [[ "$listing" == *"$NETEXT_BUNDLE_ID"* ]]
+# Ask macOS, do not infer. A listing that failed is not evidence that the
+# extension is gone, so "cannot tell" counts as still active.
+#
+# The same rule as the app (#391): an entry still runs unless macOS is
+# uninstalling it ("terminated waiting to uninstall on reboot") or it is not
+# enabled (an empty first column; enabled ones are marked "*"). Anything else,
+# known state or not, counts as still running.
+extension_still_active() {
+  local listing line
+  listing="$("$SYSTEMEXTENSIONSCTL" list 2>/dev/null)" || return 0
+  while IFS= read -r line; do
+    [[ "$line" == *"$NETEXT_BUNDLE_ID"* ]] || continue
+    [[ "$line" == *"uninstall"* ]] && continue
+    [[ "$line" == $'\t'* ]] && continue
+    return 0
+  done <<<"$listing"
+  return 1
 }
 
 # Best effort only, and it never claims the extension was removed. Under SIP
@@ -237,10 +247,10 @@ require_extension_unregistered() {
   if ! command -v "$SYSTEMEXTENSIONSCTL" >/dev/null 2>&1; then
     die "cannot verify whether $NETEXT_BUNDLE_ID is still registered, so the app is left in place. Removing it now could strand an extension record whose bundle is gone."
   fi
-  if extension_record_present; then
-    die "macOS still holds a record for $NETEXT_BUNDLE_ID, so the app is left in place. Removing it now would strand an extension record whose bundle is gone. Deactivate the extension in FreeSnitch under Settings > Uninstall, restart the Mac, then rerun this script."
+  if extension_still_active; then
+    die "macOS still holds a record for $NETEXT_BUNDLE_ID, so the app is left in place. Removing it now would strand an extension whose bundle is gone. Uninstall from FreeSnitch under Settings > Uninstall instead."
   fi
-  log "No system extension record for $NETEXT_BUNDLE_ID remains."
+  log "$NETEXT_BUNDLE_ID is not running any more."
 }
 
 # A deliberate uninstall may stop the service the user asked to remove. This is

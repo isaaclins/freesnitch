@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
 BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
+SAVE_CYCLE="$ROOT/Sources/Shared/BootPolicySaveCycle.swift"
 RULE_STORE="$ROOT/Sources/Shared/RuleStore.swift"
 HELPER_PROTOCOL="$ROOT/Sources/Shared/HelperProtocol.swift"
 IPC="$ROOT/Sources/Shared/IPCConnection.swift"
@@ -145,7 +146,7 @@ require_text "$RULE_MATCHER" "inet_pton(AF_INET6" \
 # stay a scan over the already ordered array.
 require_text "$RULE_MATCHER" "public struct PreparedRuleSet" \
   "the precomputed rule order is missing, so every flow pays a filter and a sort again"
-verdict_body="$(swift_function_body "$RULE_MATCHER" 'func decision(for c: Connection, prepared:')"
+verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for c: Connection, prepared:')"
 [[ -n "$verdict_body" ]] || fail "the shared matcher has no prepared-rule verdict path to audit"
 for forbidden in '.sorted' '.filter' '.map('; do
   if printf '%s\n' "$verdict_body" | grep -Fq -- "$forbidden"; then
@@ -361,12 +362,299 @@ require_text "$BRIDGE" "applyingBootPolicySafety" \
   "stale silent-deny boot policy downgrade is missing"
 require_text "$BRIDGE" "NewestWriteWinsQueue" \
   "persisted snapshot coalescing seam is missing"
-require_text "$SYSTEM_EXTENSION_MANAGER" "persistenceQueue.takeNewest()" \
-  "the GUI does not take the newest persisted snapshot"
+# The save cycle's decisions live in BootPolicySaveCycle, which
+# Scripts/test_boot_policy_save_failure.sh runs branch by branch (#310). These
+# gates keep the app wired to it.
+require_text "$SAVE_CYCLE" "let pending = queue.takeNewest()" \
+  "the save cycle does not take the newest persisted snapshot"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterLoad(" \
+  "the GUI does not let the save cycle decide what happens after loading the preferences"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.persistenceCycle.afterSave(save, saveFailed: saveError != nil," \
+  "the GUI does not let the save cycle decide what happens after a save"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if result.clearWarning {" \
+  "persistence degradation is not cleared after a successful save"
 require_text "$SYSTEM_EXTENSION_MANAGER" "self.state?.clearFilterPersistenceFailure()" \
   "persistence degradation is not cleared after a successful save"
-require_text "$SYSTEM_EXTENSION_MANAGER" "if snapshotData != nil" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "if let snapshotData = save.pending?.data" \
   "a successful save does not prove that a boot snapshot was persisted"
+# A failed boot-policy save must not leave an older saved policy as the last
+# word (#213): the app keeps the failed snapshot and retries, and the
+# extension refuses a saved policy older than the last live one it enforced.
+require_text "$SAVE_CYCLE" "queue.requeueFailed(pending)" \
+  "a failed boot-policy save is dropped instead of retried"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.carryOut(result.next, removal: removesBootSnapshot)" \
+  "the GUI does not schedule the retry of a failed boot-policy save"
+# A failed save while turning the filter on puts the loaded state back on the
+# shared manager before the next preferences operation may start (#345).
+save_turn_block="$(awk '/mgr.saveToPreferences [{] saveError in/ && !n++ {a=1} a {print} a && /self.endPersistenceTurn[(][)]/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$save_turn_block" | grep -Fq 'if saveError != nil && shouldEnable {' \
+  || fail "a failed save while turning the filter on does not put the loaded filter state back before the next preferences operation"
+for restore in 'mgr.isEnabled = loadedEnabled' 'mgr.providerConfiguration = loadedConfiguration' \
+               'mgr.localizedDescription = loadedDescription'; do
+  printf '%s\n' "$save_turn_block" | grep -Fq "$restore" \
+    || fail "a failed save while turning the filter on leaves the enable in memory, where the retry could save it"
+done
+require_text "$FILTER" "watermark.supersedes(decoded)" \
+  "the extension can load a saved boot policy older than the last live policy it enforced"
+require_text "$FILTER" "if decision == .accepted { recordLiveWatermark(accepted) }" \
+  "the extension does not remember which live policy it last enforced"
+enable_body="$(awk '/private func enableFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$enable_body" | grep -Fq 'persistenceCycle.requestEnable()' \
+  || fail "turning the filter on can save a snapshot kept for a retry instead of the helper's fresh answer"
+disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$disable_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a boot-policy retry can still run after the filter is turned off"
+remove_body="$(awk '/private func removeFilterConfiguration\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$remove_body" | grep -Fq 'cancelPendingPersistence()' \
+  || fail "a boot-policy retry can recreate the filter configuration after uninstall removed it"
+cancel_body="$(awk '/private func cancelPendingPersistence\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$cancel_body" | grep -Fq 'persistenceCycle.cancel()' \
+  || fail "cancelling a boot-policy save does not invalidate a save already in flight"
+request_body="$(awk '/private func requestPersistedSnapshot\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+require_text "$SAVE_CYCLE" "queue.hasNewerWork(since: attempted)" \
+  "a boot-policy save put back for a retry also starts an extra immediate cycle, which repeats the give-up message"
+# Rules too big for the boot policy are still enforced live, so turning the
+# filter on goes ahead; the older saved policy is removed so the next start
+# fails open instead of enforcing rules the user has since changed (#320).
+printf '%s\n' "$request_body" | grep -Fq 'persistenceCycle.queueRemoval()' \
+  || fail "a policy too big for the boot policy leaves an older saved policy in place for the next start"
+require_text "$SAVE_CYCLE" "queue.enqueue(SharedRuleBridge.bootSnapshotRemoval)" \
+  "a policy too big for the boot policy leaves an older saved policy in place for the next start"
+if printf '%s\n' "$request_body" | grep -Eq 'dropEnableRequest|abandonEnableIfIdle|fail\('; then
+  fail "a policy too big for the boot policy stops the filter from being turned on"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" \
+  "vendorConfiguration.removeValue(forKey: SharedRuleBridge.bootSnapshotVendorConfigurationKey)" \
+  "the boot-policy removal does not take the saved policy out of vendorConfiguration"
+removal_block="$(awk '/if result.removedSavedPolicy [{]/ {a=1} a {print} a && /[}] else if result.savedPolicy/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -n "$removal_block" ]] || fail "the boot-policy save cycle no longer handles a removal on its own"
+if printf '%s\n' "$removal_block" | grep -Fq 'clearFilterPersistenceFailure()'; then
+  fail "removing the saved policy clears the could-not-keep-for-restart banner"
+fi
+# Over the limit, every rule edit fails to encode again; the error is logged
+# once per change of state, also when no filter is configured (#342).
+printf '%s\n' "$request_body" | grep -Fq 'recordPersistenceFailure("encode", error: error, unsavable: reason, writeLog: firstTime)' \
+  || fail "every rule edit over the boot policy limit logs the same error again"
+printf '%s\n' "$request_body" | grep -Fq 'let firstTime = !unsavableLogged' \
+  || fail "the over-limit log-once check is no longer keyed on the state, so a changed rule count logs again"
+printf '%s\n' "$request_body" | grep -Fq 'if filterConfigurationActive || persistenceCycle.enableRequested {' \
+  || fail "with no per-process filter, every rule edit over the limit flashes the won't-survive-a-restart banner"
+no_config_block="$(awk '/case .stop\(.noConfiguration\):/ {a=1} a {print} a && /return$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -n "$no_config_block" ]] || fail "the save cycle no longer handles a missing filter configuration on its own"
+if printf '%s\n' "$no_config_block" | grep -Fq 'unsavableLogged'; then
+  fail "a save cycle with no filter configured forgets the over-limit error was logged, so the next edit logs it again"
+fi
+# A removal that gives up never suggests Send Rules Again, and one while the
+# filter isn't in use (no banner shown) leaves the activity log alone (#349).
+giveup_body="$(awk '/private func carryOut\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$giveup_body" | grep -Fq 'let message = removal' \
+  || fail "a boot-policy removal that gives up logs the generic Send Rules Again error"
+printf '%s\n' "$giveup_body" | grep -Fq 'if removal && state?.filterPersistenceUnsavable == nil {' \
+  || fail "a boot-policy removal while the filter isn't in use writes an error to the activity log when it gives up"
+if grep -F 'self.carryOut(' "$SYSTEM_EXTENSION_MANAGER" | grep -Fvq 'removal: '; then
+  fail "a boot-policy retry no longer says whether the failed save was a removal"
+fi
+require_text "$SYSTEM_EXTENSION_MANAGER" "let removalQueued = self.persistenceCycle.queue.peekNewest == SharedRuleBridge.bootSnapshotRemoval" \
+  "a failed load before a removal while the filter isn't in use raises a banner"
+require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: self.unsavableLogged ? self.state?.filterPersistenceUnsavable : nil" \
+  "a failed preferences load while the removal is queued swaps the over-limit banner for the Send Rules Again one"
+require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.state?.filterPersistenceUnsavable : nil" \
+  "a failed save of the boot-policy removal swaps the over-limit banner for the Send Rules Again one"
+# Removing rules only helps when the count or size is the cause; a policy
+# dated after the clock (or any other failure) must not say so (#341).
+if grep -Fq 'Remove some rules' "$ROOT/Sources/GUI/Views/HelperBanner.swift"; then
+  fail "the won't-survive-a-restart banner tells the user to remove rules whatever the cause"
+fi
+printf '%s\n' "$request_body" | grep -Fq 'Self.unsavableReason(SharedRuleBridge.BootSnapshotProblem(error, ruleCount: snapshot.rules.count)' \
+  || fail "a boot policy that can't be kept no longer says why"
+for problem_case in datedInFuture other; do
+  if awk -v c="case .$problem_case" 'index($0, c) {a=1; next} a && /case \.|^        }$/ {exit} a {print}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'Remove'; then
+    fail "a boot policy that can't be kept because of $problem_case tells the user to remove rules"
+  fi
+done
+require_text "$SYSTEM_EXTENSION_MANAGER" "if result.reportFailure {" \
+  "a save the user cancelled by turning the filter on, off or removing it can bring the warning back"
+require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
+  "the over-limit banner says the filter is using the rules when the extension does not hold them"
+printf '%s\n' "$remove_body" | grep -Fq 'clearFilterPersistenceFailure()' \
+  || fail "removing the filter configuration leaves the could-not-save banner up"
+printf '%s\n' "$no_config_block" | grep -Fq 'clearFilterPersistenceFailure()' \
+  || fail "a save cycle that finds no filter configuration leaves the could-not-save banner up"
+# With the filter off nothing restarts with the saved rules, so a failed
+# boot-policy save is logged without the could-not-save banner, and turning
+# the filter on saves the current rules again (#321). FilterOffState holds
+# the decisions; test_boot_policy_save_failure.sh runs them.
+failure_body="$(awk '/private func recordPersistenceFailure\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$failure_body" | awk '/if !filterOff.saveFailureShowsBanner/ {g=1} g && /return$/ {r=1} /recordFilterPersistenceFailure/ {seen=1; ok=g&&r; exit} END {exit !(seen&&ok)}' \
+  || fail "a boot-policy save that fails while the filter is off still raises the could-not-save banner"
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.apply(self.filterOff.observed(configured: true, enabled: mgr.isEnabled," \
+  "a save cycle does not notice the filter is off, so its failure raises the could-not-save banner"
+grep -A2 -F 'if completion == .active {' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'self.filterOff.turnedOn()' \
+  || fail "a turn-off that finishes after a turn-on was asked for leaves the filter treated as off while it is on"
+[[ "$(grep -cF 'self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested)' "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
+  || fail "turning the filter off or removing it does not record the filter as off, or overrides a turn-on asked for meanwhile"
+# Once the configuration is off or removed nothing filters, whatever macOS
+# answers about deactivating the extension; usually "after a restart" (#335).
+[[ "$(grep -A1 -F 'if self.filterOff.turnedOff(turnOnPending: self.persistenceCycle.enableRequested) {' "$SYSTEM_EXTENSION_MANAGER" | grep -cF 'self.showNotFiltering()')" -eq 2 ]] \
+  || fail "turning the filter off or removing it leaves the app saying the firewall is active"
+not_filtering_body="$(awk '/private func showNotFiltering\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$not_filtering_body" | grep -Fq 'filterConfigurationActive = false' \
+  && printf '%s\n' "$not_filtering_body" | grep -Fq 'status = .idle' \
+  || fail "turning the filter off or removing it does not reset the firewall status"
+# A save refused because the filter was turned on or off in System Settings
+# after the load is loaded and saved again onto that change, never reported
+# as a failure or written back from the stale load (#368).
+require_text "$SYSTEM_EXTENSION_MANAGER" "NEFilterManagerError.configurationStale.rawValue" \
+  "a save refused because the filter changed in System Settings is not recognised (#368)"
+require_text "$SYSTEM_EXTENSION_MANAGER" "let changedOutside = Self.changedOutside(saveError)" \
+  "a rule save does not tell a save refused after a change in System Settings from other failures (#368)"
+require_text "$SYSTEM_EXTENSION_MANAGER" "changedOutside: changedOutside)" \
+  "a save refused because the filter changed in System Settings is reported as a failure instead of saved again (#368)"
+require_text "$SYSTEM_EXTENSION_MANAGER" "forName: .NEFilterConfigurationDidChange" \
+  "turning the filter on or off in System Settings is not noticed, so a failure can be hidden while it is on"
+init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$init_body" | grep -Fq 'if hasEmbeddedExtension { refreshFilterOffState() }' \
+  || fail "the app does not read at launch whether the filter is off, so an early save failure can raise the banner (#348)"
+refresh_body="$(awk '/private func refreshFilterOffState\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$refresh_body" | grep -Fq 'fromOutside: true' \
+  && printf '%s\n' "$refresh_body" | grep -Fq 'self.apply(change)' \
+  || fail "turning the filter on in System Settings does not save the current rules again"
+apply_body="$(awk '/private func apply\(_ change: FilterOffState.Change\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+save_current_body="$(printf '%s\n' "$apply_body" | awk '/case \.saveCurrentRules:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
+printf '%s\n' "$save_current_body" | grep -Fq 'state?.syncSharedRules()' \
+  || fail "turning the filter on in System Settings does not save the current rules again"
+# Turned on there, the app turns it on as its own switch does, so the status
+# says active once the current rules are saved (#361).
+printf '%s\n' "$save_current_body" | grep -B1 -F 'enableFilter(fromSettings: true)' | grep -Fq 'if hasEmbeddedExtension && settingsTurnOnMayRun {' \
+  || fail "turning the filter on in System Settings leaves the app saying it is not filtering"
+may_run_body="$(awk '/private var settingsTurnOnMayRun: Bool/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$may_run_body" | grep -Fq 'case .idle: return true' \
+  && printf '%s\n' "$may_run_body" | grep -Fq 'case .failed: return turnOnFromSettings' \
+  && printf '%s\n' "$may_run_body" | grep -Fq 'default: return false' \
+  && grep -A3 -F 'status = .activating' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'turnOnFromSettings = false' \
+  || fail "a turn-on from System Settings runs during approval or after a failed activation, or a failed one can't be tried again (#383)"
+grep -A4 -F 'if loadError == nil && self.persistenceCycle.enableRequested' "$SYSTEM_EXTENSION_MANAGER" \
+    | tr -d '\n' | grep -Eq '!FilterOffState\.turnOnStands\(fromSettings: self\.turnOnFromSettings, +configured: mgr\.providerConfiguration != nil, +enabled: mgr\.isEnabled\) \{ +self\.persistenceCycle\.dropEnableRequest\(\)' \
+  && grep -Fq 'enableFilter(fromSettings: true)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "a turn-on that follows System Settings turns the filter back on after it was turned off there again (#361)"
+clear_banner_body="$(printf '%s\n' "$apply_body" | awk '/case \.clearBanner:/ {a=1; next} a && /^        (case |})/ {exit} a {print}')"
+printf '%s\n' "$clear_banner_body" | grep -A1 -F 'if (filterConfigurationActive || abandonedTurnOnShown) && !persistenceCycle.enableRequested {' | grep -Fq 'showNotFiltering()' \
+  || fail "turning the filter off in System Settings leaves the app saying the firewall is active (#361)"
+# A turn-on from System Settings that the helper gave no rules for: turned
+# off there again meanwhile, that is not a failed turn-on (#382).
+snapshot_status_body="$(awk '/private func recordSnapshotStatus\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$snapshot_status_body" | grep -A1 -F 'if turnOnFromSettings {' | grep -Fq 'reportAbandonedSettingsTurnOn(message)' \
+  && printf '%s\n' "$snapshot_status_body" | grep -Fq 'failAbandonedTurnOn(message)' \
+  && awk '/private func failAbandonedTurnOn\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'abandonedTurnOnShown = true' \
+  || fail "a turn-on from System Settings that was turned off there again reports a failed turn-on (#382)"
+abandoned_body="$(awk '/private func reportAbandonedSettingsTurnOn\(/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$abandoned_body" | grep -Fq 'filterPreferences.run {' \
+  && printf '%s\n' "$abandoned_body" | grep -Fq 'guard !self.persistenceCycle.enableRequested else { return }' \
+  && printf '%s\n' "$abandoned_body" | tr -d '\n' | grep -Eq 'FilterOffState\.abandonedTurnOnFailed\(fromSettings: true, readFailed: error != nil, +configured: configured, enabled: enabled\) \{ +self\.failAbandonedTurnOn\(message\) +return +\}' \
+  && printf '%s\n' "$abandoned_body" | grep -Fq 'guard self.status != .needsApproval && self.status != .activating else { return }' \
+  && printf '%s\n' "$abandoned_body" | grep -A3 -F 'self.apply(self.filterOff.observed(configured: configured, enabled: enabled, fromOutside: true))' | grep -Fq 'self.showNotFiltering()' \
+  || fail "a turn-on from System Settings given up for lack of rules does not check whether the filter is still on there (#382)"
+grep -A4 -F 'self.filterOff.turnedOff(turnOnPending: false)' "$SYSTEM_EXTENSION_MANAGER" | grep -Fq 'if self.filterConfigurationActive && !self.persistenceCycle.enableRequested { self.showNotFiltering() }' \
+  || fail "a save cycle that finds the filter removed leaves the app saying the firewall is active (#361)"
+printf '%s\n' "$apply_body" | grep -A2 -F 'case .clearBanner:' | grep -Fq 'state?.clearFilterPersistenceFailure()' \
+  || fail "finding the filter off leaves an earlier could-not-save banner up"
+printf '%s\n' "$enable_body" | grep -Fq 'filterOff.turnedOn()' \
+  || fail "turning the filter on keeps treating it as off, so a failed save there stays hidden"
+stop_body="$(awk '/override func stopFilter\(/ {a=1} a {print} a && /^    }$/ {exit}' "$FILTER")"
+printf '%s\n' "$stop_body" | grep -Fq 'watermarkQueue.sync {}' \
+  || fail "the extension can stop before its live-policy record is written"
+watermark_check_line="$(grep -nF 'watermark.supersedes(decoded)' "$FILTER" | head -1 | cut -d: -f1 || true)"
+boot_assign_line="$(grep -nF 'snapshotOrigin = .boot' "$FILTER" | head -1 | cut -d: -f1 || true)"
+if [[ -z "$watermark_check_line" || -z "$boot_assign_line" || "$watermark_check_line" -gt "$boot_assign_line" ]]; then
+  fail "the boot policy is applied before it is checked against the last live policy"
+fi
+# Every load-then-save on NEFilterManager.shared() runs one at a time, so a
+# boot-policy save cannot write the filter back on after the user turned it
+# off (#309).
+for writer in 'private func flushPersistence()' 'private func disableFilter()' \
+              'private func removeFilterConfiguration(' 'private func restartFilterProvider()' \
+              'private func refreshFilterOffState()' 'private func reportAbandonedSettingsTurnOn('; do
+  writer_body="$(awk -v w="$writer" 'index($0, w) {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+  printf '%s\n' "$writer_body" | grep -Fq 'filterPreferences.run {' \
+    || fail "${writer} changes the content filter preferences without waiting for the other writers"
+done
+outside_writers="$(awk '
+  /^    (private )?func / { fn = $0 }
+  /NEFilterManager\.shared\(\)/ {
+    if (fn !~ /func (disableFilter|removeFilterConfiguration|runPersistenceCycle|runFilterRestart|refreshFilterOffState|reportAbandonedSettingsTurnOn)\(/) print NR
+  }' "$SYSTEM_EXTENSION_MANAGER")"
+[[ -z "$outside_writers" ]] \
+  || fail "NEFilterManager is used outside the serialized writers (line ${outside_writers//$'\n'/, })"
+# Demo mode shows sample data and must leave the real content filter alone,
+# also on a Mac where FreeSnitch is installed (#388): the preferences line is
+# closed, System Settings changes are not followed, and no system extension
+# request is submitted.
+grep -Fq 'filterPreferences = FilterPreferencesLine(closed: demo)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "demo mode can read or save the real content filter configuration"
+grep -Fq 'guard !closed else { return }' "$ROOT/Sources/Shared/FilterPreferencesLine.swift" \
+  || fail "a closed filter preferences line still runs operations"
+init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$init_body" | awk '/guard !demo else [{] return [}]/ { g = 1 } /NEFilterConfigurationDidChange/ { ok = g; exit } END { exit !ok }' \
+  || fail "demo mode follows filter changes made in System Settings"
+embedded_body="$(awk '/private var hasEmbeddedExtension: Bool/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$embedded_body" | grep -Fq 'guard !demo else { return false }' \
+  || fail "demo mode can submit system extension requests"
+# #389: the same for the helper, the extension, the login item and files.
+# Each of these acts on the real install and must check demo mode first.
+DEMO_MODE_FILE="$ROOT/Sources/GUI/App/DemoMode.swift"
+grep -Fq 'static let isOn = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1"' "$DEMO_MODE_FILE" \
+  || fail "demo mode is not read from FREESNITCH_DEMO in one place"
+grep -Fq 'init(state: AppState, demo: Bool = DemoMode.isOn)' "$SYSTEM_EXTENSION_MANAGER" \
+  || fail "the content filter manager does not know it runs in demo mode"
+demo_guard() {
+  local file="$1" entry="$2" guard="$3" what="$4"
+  swift_function_body "$ROOT/$file" "$entry" | sed -n '2,5p' | grep -Fq "$guard" \
+    || fail "demo mode can $what"
+}
+demo_guard Sources/GUI/App/SystemExtensionManager.swift 'func deactivateForUninstall()' 'guard !demo else {' \
+  "deactivate the real network extension or remove the filter configuration"
+demo_guard Sources/GUI/App/HelperClient.swift 'func unregisterDaemonForUninstall()' 'guard !DemoMode.isOn else' \
+  "unregister the real helper"
+demo_guard Sources/GUI/App/HelperClient.swift 'func registerDaemon()' 'guard !DemoMode.isOn else' \
+  "register the real helper"
+demo_guard Sources/GUI/App/HelperClient.swift 'private func repairHelperInternal()' 'guard !DemoMode.isOn' \
+  "re-register or repair the real helper"
+demo_guard Sources/GUI/App/HelperClient.swift 'private func performPrivilegedKickstart()' 'guard !DemoMode.isOn else' \
+  "restart the real helper"
+demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func run(removingDatabase:' 'guard !DemoMode.isOn else' \
+  "run the privileged uninstall"
+demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func removeUserData()' 'guard !DemoMode.isOn else' \
+  "delete the real install's data"
+demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func trashApplicationBundle(' 'guard !DemoMode.isOn else' \
+  "move the real app to the Trash"
+demo_guard Sources/GUI/Views/UninstallView.swift 'func begin()' 'guard !DemoMode.isOn else' \
+  "turn enforcement off from the uninstall screen"
+demo_guard Sources/GUI/Views/UninstallView.swift 'func finish()' 'guard !DemoMode.isOn else' \
+  "start removing the helper, the data and the app"
+demo_guard Sources/GUI/Views/SettingsView.swift 'private func setLaunchAtLogin(' 'guard !DemoMode.isOn else' \
+  "change the real app's login item"
+for runner in 'runPersistenceCycle()' 'runFilterRestart(done:'; do
+  [[ "$(grep -cF "$runner" "$SYSTEM_EXTENSION_MANAGER")" -eq 2 ]] \
+    || fail "${runner%%(*} is called from somewhere other than its turn on the preferences line"
+done
+disable_body="$(awk '/private func disableFilter\(\)/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
+printf '%s\n' "$disable_body" | grep -Fq 'persistenceCycle.dropEnableRequest()' \
+  || fail "turning the filter off leaves an enable request that the helper's answer can still act on"
+require_text "$SYSTEM_EXTENSION_MANAGER" "guard mgr.isEnabled else {" \
+  "a filter restart can turn the filter back on after the user turned it off"
+# An enabling save that the user overtook by turning the filter off must not
+# report the firewall as active once it finishes (#318).
+printf '%s\n' "$disable_body" | grep -Fq 'filterTurnOffs &+= 1' \
+  || fail "an enabling save that finishes after the filter was turned off still reports it active"
+printf '%s\n' "$remove_body" | grep -Fq 'filterTurnOffs &+= 1' \
+  || fail "an enabling save that finishes after the filter was removed still reports it active"
+active_guard="$(grep -B1 -F 'self.filterConfigurationActive = true' "$SYSTEM_EXTENSION_MANAGER" | head -1)"
+printf '%s\n' "$active_guard" | grep -Fq 'if completion == .active {' \
+  || fail "an enabling save overtaken by a turn-off still marks the filter active"
+require_text "$SYSTEM_EXTENSION_MANAGER" "turnOffsNow: self.filterTurnOffs," \
+  "the enabling save's completion does not check whether the filter was turned off meanwhile"
+require_text "$SYSTEM_EXTENSION_MANAGER" "if completion == .stayedOff {" \
+  "an enabling save overtaken by a turn-off leaves the status as it was"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
   "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"
@@ -379,7 +667,7 @@ fi
 # A verdict must never wait on the filesystem. The bundle identifier comes from
 # a bounded in-memory cache, and the Info.plist read happens on a background
 # queue, so a cold page cache or a slow volume cannot become filter latency.
-require_text "$FILTER" "bundleIdentifierCache.cachedBundleId(forExecutablePath: path)" \
+require_text "$FILTER" "let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path," \
   "the verdict path no longer answers bundle identifiers from the bounded cache"
 require_text "$FILTER" "capacity: Int = 512" \
   "the bundle identifier cache capacity is not explicit and bounded"
@@ -387,8 +675,8 @@ require_text "$FILTER" "resolveQueue.async" \
   "bundle identifier plist reads are not handed to a background queue"
 require_text "$FILTER" "private let lock: UnsafeMutablePointer<os_unfair_lock_s>" \
   "the bundle identifier cache does not hold its lock at a stable address"
-bundle_id_body="$(awk '
-  /private func bundleIdForApp\(atPath path: String\)/ {
+connection_body="$(awk '
+  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, version: String\?, signatureChecked: Bool\)/ {
     active = 1
     depth = 0
   }
@@ -400,9 +688,19 @@ bundle_id_body="$(awk '
     if (depth == 0) exit
   }
 ' "$FILTER")"
-[[ -n "$bundle_id_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
-if printf '%s\n' "$bundle_id_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization'; then
-  fail "the verdict path reads and parses an Info.plist synchronously"
+[[ -n "$connection_body" ]] || fail "the extension no longer resolves a bundle identifier for the flow"
+if printf '%s\n' "$connection_body" | grep -Eq 'Data\(contentsOf:|PropertyListSerialization|SecStaticCode|SecCodeCopy'; then
+  fail "the verdict path reads an Info.plist or checks a signature synchronously"
+fi
+
+# A rule's bundle id comes from the process's code signature, never from an
+# unsigned Info.plist anyone can write next to a binary (#351).
+require_text "$FILTER" "CodeSigningIdentity.resolve(executablePath:" \
+  "the extension no longer takes bundle identifiers from the code signature"
+require_text "$ROOT/Sources/Helper/NetMonitor.swift" "CodeSigningIdentity.resolve(executablePath:" \
+  "the monitor no longer takes bundle identifiers from the code signature"
+if grep -Fq 'CFBundleIdentifier' "$ROOT/Sources/Helper/NetMonitor.swift"; then
+  fail "the monitor reads a bundle identifier from an unsigned Info.plist"
 fi
 
 # A flow can reach handleNewFlow with no destination at all: the SDK states
@@ -660,7 +958,7 @@ fi
 # FreeSnitch, its helper, and loopback are safety-critical exemptions. They
 # must be decided before the general matcher can pause or drop the flow.
 own_line="$(grep -nF 'if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { return .allow() }' "$FILTER" | head -1 | cut -d: -f1 || true)"
-matcher_line="$(grep -nF 'matcher.decision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
+matcher_line="$(grep -nF 'matcher.explainedDecision(for: conn' "$FILTER" | head -1 | cut -d: -f1 || true)"
 [[ -n "$own_line" ]] || fail "own-traffic and loopback exemption is missing"
 [[ -n "$matcher_line" ]] || fail "the extension no longer invokes the shared matcher"
 if (( own_line >= matcher_line )); then
@@ -966,7 +1264,7 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q "rm -rf '/Application
   fail "the privileged uninstall deletes the app bundle, which strands the system extension"
 fi
 require_text "$PRIVILEGED_UNINSTALL" "NSWorkspace.shared.recycle" \
-  "the uninstall does not hand the app bundle to Finder, so macOS will not remove the system extension"
+  "the uninstall deletes the app bundle instead of moving it to the Trash"
 require_text "$UNINSTALL_VIEW" "trashApplicationBundle" \
   "the uninstall screen never moves the app to the Trash"
 # Uninstall must REMOVE the content filter configuration, not merely disable
@@ -979,12 +1277,45 @@ require_text "$SYSEXT_MANAGER" "removeFromPreferences" \
 # Look at the whole function body, and check for the WRONG call rather than
 # only for the right one: a six-line window still matched the early-return
 # branch's call and let a reverted uninstall path pass.
-UNINSTALL_BODY=$(rg -A24 'func deactivateForUninstall' "$SYSEXT_MANAGER")
+UNINSTALL_BODY=$(awk '/func deactivateForUninstall/,/^    }$/' "$SYSEXT_MANAGER")
 if ! rg -q 'removeFilterConfiguration' <<<"$UNINSTALL_BODY"; then
   fail "uninstall no longer removes the filter configuration before deactivating the extension"
 fi
 if rg -q 'disableFilter\(' <<<"$UNINSTALL_BODY"; then
   fail "uninstall only disables the filter configuration, so macOS keeps the extension record until a reboot"
+fi
+# The deactivation must be submitted only after the configuration removal
+# answered, inside its completion, never next to it.
+if ! printf '%s\n' "$UNINSTALL_BODY" | awk '/removeFilterConfiguration \{ \[weak self\] removed in/ { inside = 1 } inside && /guard removed else/ { gated = 1 } gated && /deactivationRequest/ { found = 1 } END { exit !found }'; then
+  fail "uninstall submits the extension deactivation without waiting for the filter configuration removal, or after it failed"
+fi
+# The uninstall removes the helper and the app only after macOS answered the
+# deactivation with the extension stopped (#391): removing them while the
+# extension still runs strands it.
+UNINSTALL_ANSWER=$(awk '/private func extensionAnswered/,/^    }$/' "$UNINSTALL_VIEW")
+if ! printf '%s\n' "$UNINSTALL_ANSWER" | rg -q 'case \.failed' \
+   || printf '%s\n' "$UNINSTALL_ANSWER" | awk '/case \.failed/,/case \.notInstalled/' | rg -q 'finish\(\)'; then
+  fail "the uninstall removes the helper and the app although macOS kept the network extension"
+fi
+# A filter configuration removal that failed must stop the uninstall: the
+# filter would keep running with the user's rules and no app left (#391).
+if ! awk '/private func removeFilterConfiguration/,/^    }$/' "$SYSEXT_MANAGER" | rg -q 'completion\(removeError == nil\)'; then
+  fail "the filter configuration removal reports success whether or not it worked"
+fi
+# The helper is unregistered only after the privileged step flushed the pf
+# anchor: if that step is cancelled, the helper is what can still clear pf.
+if ! awk '/^    func finish\(\)/,/^    }$/' "$UNINSTALL_VIEW" \
+     | awk '/case \.success:/ { ok = 1 } /unregisterDaemonForUninstall/ { found = ok; exit } END { exit !found }'; then
+  fail "the uninstall unregisters the helper before the pf anchor is flushed"
+fi
+# The finished uninstall ends the process outright: NSApp.terminate from a
+# bundle already in the Trash hung 1.1.0 until it was force quit (#391).
+if ! awk '/^    func quit\(\)/,/^    }$/' "$UNINSTALL_VIEW" | rg -q '^\s*exit\(0\)'; then
+  fail "the uninstall's quit no longer exits the process outright"
+fi
+# The uninstall screen talks to people, not developers (#391).
+if rg -v '^[[:space:]]*//' "$UNINSTALL_VIEW" | rg -q 'Text\(.*(systemextensionsctl|System Integrity|sudo |io\.isaaclins|bundleId)'; then
+  fail "the uninstall screen shows a terminal command, a bundle id or SIP talk"
 fi
 # Turning enforcement off is NOT an uninstall: that path must keep the
 # configuration installed so it can be switched back on without re-approval.
@@ -1231,14 +1562,14 @@ require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
 # stay in, so an address feed never blocks what the user allowed.
 anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
-# Every anchor line is quick, so the lines must follow the matcher's order
+# A quick line stops pf at the first match, so the lines must follow the matcher's order
 # (PreparedRuleSet: enabled rules, priority first) or a lower-priority deny
 # overrides a higher-priority allow (issue #181).
 printf '%s\n' "$anchor_body" | grep -Fq 'let liveRules = PreparedRuleSet(rules: rules).ordered.filter { !PFManager.hasExpired($0, at: now) }' \
   || fail "the pf anchor no longer renders the matcher's order of enabled, unexpired rules, so pf and the extension can disagree"
 printf '%s\n' "$anchor_body" | grep -Fq 'let renderedRules = liveRules.filter { PFManager.reachesPF($0) }' \
   || fail "the pf anchor no longer filters the rules it renders through reachesPF"
-[[ "$(printf '%s\n' "$anchor_body" | grep -c 'pfLine(')" -eq 1 ]] \
+[[ "$(printf '%s\n' "$anchor_body" | grep -c 'pfLines(')" -eq 1 ]] \
   || fail "the pf anchor renders rules in more than one pass, which ignores rule priority"
 reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
 printf '%s\n' "$reaches_body" | grep -Fq 'case .deny: return !namesAnApp(rule)' \
