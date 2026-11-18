@@ -307,16 +307,19 @@ operation, not an uninstall of FreeSnitch, and it never removes the helper.
 
 The CLI has no uninstall command, and that is deliberate: under System Integrity
 Protection only the app can deactivate the system extension, because
-`systemextensionsctl uninstall` refuses to run at all. Start in the app under
-Settings > Uninstall, then finish with the script:
+`systemextensionsctl uninstall` refuses to run at all. Settings > Uninstall in
+the app removes everything by itself, and `brew uninstall --cask freesnitch`
+asks the app to remove the extension. From a source checkout, after removing
+the extension in the app, the script does the rest:
 
 ```sh
 sudo bash Scripts/uninstall_freesnitch.sh --yes
 sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
 ```
 
-The script refuses to remove the app while macOS still holds a record for
-`io.isaaclins.freesnitch.netext`, or while the privileged helper is still
+The script refuses to remove the app while `io.isaaclins.freesnitch.netext` is
+still active (a record macOS keeps as "terminated waiting to uninstall on
+reboot" no longer counts), or while the privileged helper is still
 running from that bundle. `--remove-database` additionally deletes
 `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds every
 rule, profile and blocklist and can exceed 300 MB; without it that file is kept.

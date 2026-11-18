@@ -1163,7 +1163,7 @@ if rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL" | rg -q "rm -rf '/Application
   fail "the privileged uninstall deletes the app bundle, which strands the system extension"
 fi
 require_text "$PRIVILEGED_UNINSTALL" "NSWorkspace.shared.recycle" \
-  "the uninstall does not hand the app bundle to Finder, so macOS will not remove the system extension"
+  "the uninstall deletes the app bundle instead of moving it to the Trash"
 require_text "$UNINSTALL_VIEW" "trashApplicationBundle" \
   "the uninstall screen never moves the app to the Trash"
 # Uninstall must REMOVE the content filter configuration, not merely disable
@@ -1176,12 +1176,34 @@ require_text "$SYSEXT_MANAGER" "removeFromPreferences" \
 # Look at the whole function body, and check for the WRONG call rather than
 # only for the right one: a six-line window still matched the early-return
 # branch's call and let a reverted uninstall path pass.
-UNINSTALL_BODY=$(rg -A24 'func deactivateForUninstall' "$SYSEXT_MANAGER")
+UNINSTALL_BODY=$(awk '/func deactivateForUninstall/,/^    }$/' "$SYSEXT_MANAGER")
 if ! rg -q 'removeFilterConfiguration' <<<"$UNINSTALL_BODY"; then
   fail "uninstall no longer removes the filter configuration before deactivating the extension"
 fi
 if rg -q 'disableFilter\(' <<<"$UNINSTALL_BODY"; then
   fail "uninstall only disables the filter configuration, so macOS keeps the extension record until a reboot"
+fi
+# The deactivation must be submitted only after the configuration removal
+# answered, inside its completion, never next to it.
+if ! printf '%s\n' "$UNINSTALL_BODY" | awk '/removeFilterConfiguration \{ \[weak self\] in/ { inside = 1 } inside && /deactivationRequest/ { found = 1 } END { exit !found }'; then
+  fail "uninstall submits the extension deactivation without waiting for the filter configuration removal"
+fi
+# The uninstall removes the helper and the app only after macOS answered the
+# deactivation with the extension stopped (#391): removing them while the
+# extension still runs strands it.
+UNINSTALL_ANSWER=$(awk '/private func extensionAnswered/,/^    }$/' "$UNINSTALL_VIEW")
+if ! printf '%s\n' "$UNINSTALL_ANSWER" | rg -q 'case \.failed' \
+   || printf '%s\n' "$UNINSTALL_ANSWER" | awk '/case \.failed/,/case \.notInstalled/' | rg -q 'removeHelperAndData'; then
+  fail "the uninstall removes the helper and the app although macOS kept the network extension"
+fi
+# The finished uninstall ends the process outright: NSApp.terminate from a
+# bundle already in the Trash hung 1.1.0 until it was force quit (#391).
+if ! awk '/^    func quit\(\)/,/^    }$/' "$UNINSTALL_VIEW" | rg -q '^\s*exit\(0\)'; then
+  fail "the uninstall's quit no longer exits the process outright"
+fi
+# The uninstall screen talks to people, not developers (#391).
+if rg -v '^[[:space:]]*//' "$UNINSTALL_VIEW" | rg -q 'Text\(.*(systemextensionsctl|System Integrity|sudo |io\.isaaclins|bundleId)'; then
+  fail "the uninstall screen shows a terminal command, a bundle id or SIP talk"
 fi
 # Turning enforcement off is NOT an uninstall: that path must keep the
 # configuration installed so it can be switched back on without re-approval.

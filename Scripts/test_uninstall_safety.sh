@@ -71,6 +71,10 @@ case "${1:-}" in
     if [[ "${FAKE_EXT_PRESENT:-0}" == "1" ]]; then
       printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\t[activated enabled]\n'
     fi
+    if [[ "${FAKE_EXT_STOPPED:-0}" == "1" ]]; then
+      printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\t[terminated waiting to uninstall on reboot]\n'
+    fi
+    [[ "${FAKE_LIST_FAILS:-0}" == "1" ]] && exit 1
     exit 0
     ;;
   uninstall)
@@ -143,6 +147,8 @@ run_uninstall() {
     STUB_LOG="$STUB_LOG" \
     FAKE_SIP="${FAKE_SIP:-enabled}" \
     FAKE_EXT_PRESENT="${FAKE_EXT_PRESENT:-0}" \
+    FAKE_EXT_STOPPED="${FAKE_EXT_STOPPED:-0}" \
+    FAKE_LIST_FAILS="${FAKE_LIST_FAILS:-0}" \
     FAKE_HELPER_RUNNING="${FAKE_HELPER_RUNNING:-0}" \
     FAKE_SYSEXT_REFUSAL="${FAKE_SYSEXT_REFUSAL:-0}" \
     bash "$UNINSTALL" "$@" >"$out_file" 2>&1
@@ -252,6 +258,25 @@ test_sip_refusal_is_honest() {
   [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed after a refused deactivation"
 }
 
+# An extension FreeSnitch already removed stays listed as "terminated waiting
+# to uninstall on reboot" until the next restart. It no longer runs, so it must
+# not hold the uninstall up; a listing that fails still must (#391).
+test_stopped_extension_record() {
+  local root; root="$(make_fake_root stopped-record)"
+  export FAKE_SIP=enabled FAKE_EXT_STOPPED=1 FAKE_HELPER_RUNNING=0
+  run_uninstall stopped-record --yes
+  unset FAKE_EXT_STOPPED
+  (( RUN_STATUS == 0 )) || fail "a stopped extension record held the uninstall up: $RUN_OUTPUT"
+  [[ -d "$root/Applications/FreeSnitch.app" ]] && fail "the app was kept although the extension no longer runs"
+
+  root="$(make_fake_root list-fails)"
+  export FAKE_LIST_FAILS=1
+  run_uninstall list-fails --yes
+  unset FAKE_LIST_FAILS FAKE_SIP FAKE_HELPER_RUNNING
+  (( RUN_STATUS != 0 )) || fail "the uninstall went on although the extension list could not be read"
+  [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed although the extension list could not be read"
+}
+
 # pf.conf loads the anchor file at boot, so after an uninstall it must hold no
 # rules: only comments or blank lines (issue #192).
 expect_anchor_file_empty() {
@@ -337,6 +362,7 @@ test_never_touched_the_real_system() {
 test_refuses_unexpected_path
 test_refuses_while_helper_runs
 test_sip_refusal_is_honest
+test_stopped_extension_record
 test_flushes_only_named_anchor
 test_refuses_symlinked_anchor
 test_never_touched_the_real_system

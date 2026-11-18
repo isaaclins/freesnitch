@@ -69,6 +69,10 @@ targets:
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         SUAllowsAutomaticUpdates: false
+        # Tells the Homebrew cask that `--remove-network-extension` exists, so
+        # `brew uninstall` can ask this app to remove its network extension
+        # (#391). Older builds do not have it and must not be started for that.
+        FreeSnitchRemovesNetworkExtensionOnRequest: true
     entitlements:
       path: Sources/GUI/FreeSnitch.entitlements
       properties:

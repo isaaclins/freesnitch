@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 @main
 struct FreeSnitchApp: App {
@@ -105,7 +106,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    /// Started by `brew uninstall --cask freesnitch` (`open -n -W FreeSnitch.app
+    /// --args --remove-network-extension`): only this app may deactivate its
+    /// own network extension, so Homebrew asks it to. This run shows no
+    /// window, starts nothing else, removes the filter and the extension, and
+    /// exits 0 once macOS confirmed the extension is stopped, 1 otherwise.
+    /// Homebrew removes the helper, the pf anchor and the app itself (#391).
+    static let removeNetworkExtensionArgument = "--remove-network-extension"
+    private var removalAnswer: AnyCancellable?
+
+    private func removeNetworkExtensionAndExit() {
+        NSApp.setActivationPolicy(.accessory)
+        removalAnswer = systemExtension.$uninstallState
+            .receive(on: DispatchQueue.main)
+            .sink { answer in
+                switch answer {
+                case .idle, .deactivating:
+                    return
+                case .failed(let reason):
+                    FileHandle.standardError.write(Data("FreeSnitch could not remove its network extension: \(reason)\n".utf8))
+                    exit(1)
+                case .notInstalled, .pendingReboot, .removed:
+                    exit(0)
+                }
+            }
+        systemExtension.deactivateForUninstall()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains(Self.removeNetworkExtensionArgument) {
+            removeNetworkExtensionAndExit()
+            return
+        }
         state.applyDockIconPolicy()
         windowManager = WindowManager(state: state, systemExtension: systemExtension)
         menubar = MenubarController(state: state, systemExtension: systemExtension, windows: windowManager)
@@ -154,6 +186,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "insights": self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
+                case "uninstall":
+                    self.windowManager.showSettings()
+                    self.windowManager.uninstallModel.present()
+                    // Walks through the steps by itself, so each screen can
+                    // be captured without clicking through the dialog.
+                    if ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL"] != nil {
+                        self.windowManager.uninstallModel.start()
+                    }
                 case "popover": self.menubar.showPopover()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
