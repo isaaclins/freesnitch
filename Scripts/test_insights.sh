@@ -496,17 +496,22 @@ struct InsightsHarness {
             observation(app: "Beeper", bundle: "com.beeper.app", path: "/Applications/Beeper.app",
                         host: "", ip: sharedResolverIP, at: Date().addingTimeInterval(-30)),
             observation(app: "Lookup Probe", bundle: "com.example.lookupprobe", path: "/Applications/Lookup Probe.app",
-                        host: "lookup.example.net", ip: sharedResolverIP, at: Date().addingTimeInterval(-20), port: 53)
+                        host: "lookup.example.net", ip: sharedResolverIP, at: Date().addingTimeInterval(-20), port: 53),
+            // A lookup recorded without its name (one the resolver path could
+            // not read) has the address as its host, and No Name counts it.
+            observation(app: "Nameless Query", bundle: "com.example.namelessquery", path: "/Applications/Nameless Query.app",
+                        host: sharedResolverIP, ip: sharedResolverIP, at: Date().addingTimeInterval(-10), port: 53)
         ])
         let resolverRow = try! store.report(for: InsightsQuery(kind: .unresolved, since: Date().addingTimeInterval(-day), limit: 50))
             .unresolved.first { $0.remoteIP == sharedResolverIP }
         let resolverApps = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: sharedResolverIP, excludesLookups: true,
                                                                since: Date().addingTimeInterval(-day), limit: 50)).apps
-        equal(resolverApps.map(\.appIdentity), ["com.beeper.app"], "from No Name, a lookup to a resolver is not listed as reaching it")
+        equal(Set(resolverApps.map(\.appIdentity)), ["com.beeper.app", "com.example.namelessquery"],
+              "from No Name, a lookup that carried a name is left out and one without a name is listed, like the row counts them")
         equal(resolverApps.count, resolverRow?.appCount ?? -1, "the narrowed list agrees with the No Name row's app count")
         let withLookups = try! store.report(for: InsightsQuery(kind: .apps, destinationKey: sharedResolverIP,
                                                               since: Date().addingTimeInterval(-day), limit: 50)).apps
-        equal(Set(withLookups.map(\.appIdentity)), ["com.beeper.app", "com.example.lookupprobe"],
+        equal(Set(withLookups.map(\.appIdentity)), ["com.beeper.app", "com.example.lookupprobe", "com.example.namelessquery"],
               "from the Apps tab, an app that only looked a name up there is listed, as its destinations count it")
         let probeDestinations = try! store.report(for: InsightsQuery(kind: .destinations, appIdentity: "com.example.lookupprobe",
                                                                     since: Date().addingTimeInterval(-day), limit: 50)).destinations

@@ -952,6 +952,7 @@ final class InsightsViewModel: ObservableObject {
             unresolved = []
             // The Apps tab's sheet shares this list; don't show its apps under
             // the No Name address while that list reloads.
+            reachingGeneration += 1
             reachingKey = nil
             reachingApps = []
             loadUnresolved(offset: 0)
@@ -1024,9 +1025,14 @@ final class InsightsViewModel: ObservableObject {
     }
 
     private var reachingExcludesLookups = false
+    /// Bumped by every new list, so a reply for an earlier one (same address
+    /// opened from the other screen, or a page of a list since reloaded) is
+    /// dropped exactly.
+    private var reachingGeneration = 0
 
     private func loadReachingApps(key: String, excludesLookups: Bool, offset: Int) {
         if offset == 0 {
+            reachingGeneration += 1
             reachingKey = key
             reachingExcludesLookups = excludesLookups
             reachingApps = []
@@ -1041,11 +1047,12 @@ final class InsightsViewModel: ObservableObject {
               let request = query(.apps, offset: offset, destinationKey: key,
                                   excludesLookups: excludesLookups) else { return }
         isLoading = true
+        let generation = reachingGeneration
         helper.insightsReport(request) { [weak self] report, error in
             guard let self else { return }
-            // A reply for an address the reader has already left must not end
-            // the loading state of the one they are looking at now.
-            guard self.reachingKey == key else { return }
+            // A reply for a list the reader has already left must not end the
+            // loading state of the one they are looking at now.
+            guard self.reachingGeneration == generation else { return }
             self.isLoading = false
             guard let report else { self.reachingError = error ?? "The helper didn't answer."; return }
             // A helper from before the destination filter ignores it, sends

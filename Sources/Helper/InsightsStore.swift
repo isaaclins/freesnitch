@@ -583,9 +583,10 @@ extension InsightsStore {
         var rows: [InsightsAppSummary] = []
         // With a destination, the same list narrowed to the apps that reached
         // it, so a shared address names every app behind it in any range
-        // (#435). Bound, never spliced into the SQL. From No Name, lookups
-        // (port 53) are left out the way that list and the rollups leave them
-        // out; from the Apps tab they stay, matching its own counts (#167).
+        // (#435). Bound, never spliced into the SQL. From No Name, the same
+        // test as that row's own count: flows that carried a name (lookups
+        // to a resolver among them) are left out. From the Apps tab they
+        // stay, matching its own counts (#167).
         let destination = query.destinationKey
         switch source {
         case .rawEvents:
@@ -597,7 +598,7 @@ extension InsightsStore {
                 FROM flow_observations
                 WHERE observed_at >= ? AND observed_at <= ?
                   \(destination == nil ? "" : "AND \(Self.destinationSQL) = ?")
-                  \(destination != nil && query.excludesLookups == true ? "AND remote_port <> 53" : "")
+                  \(destination != nil && query.excludesLookups == true ? "AND (remote_host = '' OR remote_host = remote_ip)" : "")
                 GROUP BY app
                 ORDER BY COUNT(*) DESC, app ASC
                 LIMIT ? OFFSET ?;
