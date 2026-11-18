@@ -163,6 +163,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // "approve the helper" banner does not cover the screen under review.
             state.helperInstallState = .enabled
             state.helperConnected = true
+            // FREESNITCH_DEMO_APPEARANCE=dark|light pins the look for
+            // screenshots, whatever the reviewing Mac's own setting is.
+            switch ProcessInfo.processInfo.environment["FREESNITCH_DEMO_APPEARANCE"] {
+            case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+            case "light": NSApp.appearance = NSAppearance(named: .aqua)
+            default: break
+            }
+            if DemoMode.showsVPN {
+                // The DNS pane only reaches its VPN answer with the proxy up.
+                state.showDemoEnforcement()
+                state.dnsProxyEnabled = true
+            }
         } else {
             state.helper.registerDaemon()
             // bootstrap() (rule load + monitoring) is driven by HelperClient once

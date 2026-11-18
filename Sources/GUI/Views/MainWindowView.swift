@@ -117,7 +117,7 @@ final class MainWindowModel: ObservableObject {
     /// Bumped by Find. Whichever search field is on screen takes the caret.
     @Published var searchFocusToken = 0
     /// The Settings page's pane, here so a menu command can choose it.
-    @Published var settingsPane: SettingsView.Pane = .general
+    @Published var settingsPane: SettingsView.Pane = DemoMode.settingsPane.flatMap(SettingsView.Pane.init(rawValue:)) ?? .general
 
     init(page: MainPage) {
         self.page = page
