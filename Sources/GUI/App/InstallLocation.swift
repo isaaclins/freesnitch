@@ -274,6 +274,22 @@ enum InstallLocation {
         }
     }
 
+    /// After a successful move, only a downloaded original is moved to the
+    /// Trash (Downloads clutter that would land here again). A disk image
+    /// can't be changed, and a contributor's build output stays where it is.
+    static func shouldTrashOriginal(_ original: URL, home: String = NSHomeDirectory()) -> Bool {
+        !isOnReadOnlyVolume(original) && cameFromDownload(original, home: home)
+    }
+
+    /// With a FreeSnitch already installed, "Open It" only makes sense for a
+    /// downloaded copy of the same or an older build. An older install, or a
+    /// build from a folder (a rebuilt build keeps its build number, so it can
+    /// be newer code than the installed one), gets "replace it in Finder"
+    /// instead of quietly opening the installed copy.
+    static func offersOpenInstalled(isOlder: Bool, sourceFromDownload: Bool) -> Bool {
+        !isOlder && sourceFromDownload
+    }
+
     /// The disk image case: there is no original to tidy up there.
     static func isOnReadOnlyVolume(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true
@@ -398,8 +414,8 @@ extension InstallLocation {
         switch chosen {
         case .existing(let installed, let isOlder):
             let alert = NSAlert()
-            if isOlder {
-                alert.messageText = "An older FreeSnitch is already in Applications"
+            if !offersOpenInstalled(isOlder: isOlder, sourceFromDownload: cameFromDownload(original)) {
+                alert.messageText = isOlder ? "An older FreeSnitch is already in Applications" : "FreeSnitch is already in Applications"
                 alert.informativeText = "FreeSnitch won't replace it for you, because that copy may be running the network filter. Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace."
                 alert.addButton(withTitle: "Show in Finder")
                 alert.addButton(withTitle: "Cancel")
@@ -429,10 +445,7 @@ extension InstallLocation {
                 }
                 return false
             case .success:
-                // A copy left in Downloads (or wherever it was) is clutter, and
-                // opening it later lands here again. A disk image can't be
-                // changed and is left.
-                if !isOnReadOnlyVolume(original) {
+                if shouldTrashOriginal(original) {
                     // Synchronous: the process quits right after this.
                     try? FileManager.default.trashItem(at: original, resultingItemURL: nil)
                 }

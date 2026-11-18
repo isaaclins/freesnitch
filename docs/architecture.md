@@ -80,8 +80,15 @@ The anchor file is rewritten by the helper from `Rule[]` whenever rules change:
 set block-policy drop
 set skip on lo0
 block out quick proto { tcp udp } to 198.51.100.0/24
+block in quick proto tcp from 198.51.100.0/24 flags S/SA
+block in quick proto udp from 198.51.100.0/24
+block out quick proto { tcp udp } to any port 8443
 pass out quick proto { tcp udp } to 1.1.1.1 port 443
+pass in quick proto { tcp udp } from 203.0.113.9 port 51413
+pass in proto { tcp udp } from 203.0.113.20
 ```
+
+A rule names the remote side, so a deny's incoming half is written `from` it. That half blocks only new TCP connections (`flags S/SA`), and incoming UDP only for a deny in both directions, since a block keeps no state and must not drop replies to the Mac's own connections. A rule with only a port is written `to any port N`: pf refuses a bare `port`, and one refused line makes it refuse the whole anchor. An allow is written per direction too, as `pass out ... to` the peer and `pass in ... from` it, or both lines for a rule in both directions. It never goes in without a direction, since an undirected pass would also match the other direction, where `to` and `from` name the Mac's own side, and skip later blocks in `/etc/pf.conf`. An incoming allow with only a port stays with the Network Extension. An app's allow is written without `quick` in both directions: pf would apply it to every app, so a block after the anchor in `/etc/pf.conf` still wins. The incoming half (the last line above) keeps state that lets the Mac's replies to that peer past an address feed. The outgoing half is written `pass out proto { tcp udp } to X port N tag freesnitch_app_allow`, and the feed's block is `block out quick ... to <freesnitch_ipblock> ! tagged freesnitch_app_allow`: pf keeps a tag on the packet even when a later rule decides, so the allowed packets get past the feed and a later block in `/etc/pf.conf` still wins.
 
 `pfctl -E` enables pf, `pfctl -a puresnitch -f <file>` reloads our anchor.
 
@@ -97,7 +104,7 @@ pass out quick proto { tcp udp } to 1.1.1.1 port 443
 
 Host glob: `*.example.com`, `.example.com` both match.
 IP CIDR: `10.0.0.0/8` matches anywhere in that block.
-Process: bundle ID match wins; otherwise path prefix.
+Process: bundle ID match wins; otherwise the rule's path covers the process at exactly that path and anything inside it as a folder (`/usr/local/bin/node` does not match `/usr/local/bin/nodemon`, `/Applications/X.app` covers its helpers).
 
 ## NetExt - per-process firewall (Network System Extension)
 

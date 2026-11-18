@@ -95,6 +95,9 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     public let observedAt: Date
     public let pid: Int32
     public let processBundleId: String?
+    /// The team that signed `processBundleId` (#364). The helper records it on
+    /// rules for that id that do not know their team yet (`RuleSigningTeam`).
+    public let processTeamId: String?
     public let processPath: String
     public let processName: String
     /// Marketing version plus build from the containing app's Info.plist.
@@ -114,6 +117,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         self.observedAt = observedAt
         self.pid = connection.pid
         self.processBundleId = connection.processBundleId
+        self.processTeamId = connection.processTeamId
         self.processPath = connection.processPath
         self.processName = connection.processName
         self.processVersion = AppVersionIdentity(processVersion)?.value
@@ -127,7 +131,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, observedAt, pid, processBundleId, processPath, processName,
+        case schemaVersion, id, observedAt, pid, processBundleId, processTeamId, processPath, processName,
              processVersion, remoteHost, remoteIP, remotePort, direction, protocolName, bytesIn, bytesOut
     }
 
@@ -138,6 +142,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         observedAt = try c.decode(Date.self, forKey: .observedAt)
         pid = try c.decode(Int32.self, forKey: .pid)
         processBundleId = try c.decodeIfPresent(String.self, forKey: .processBundleId)
+        processTeamId = try c.decodeIfPresent(String.self, forKey: .processTeamId)
         processPath = try c.decode(String.self, forKey: .processPath)
         processName = try c.decode(String.self, forKey: .processName)
         processVersion = try c.decodeIfPresent(String.self, forKey: .processVersion)
@@ -157,6 +162,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         try c.encode(observedAt, forKey: .observedAt)
         try c.encode(pid, forKey: .pid)
         try c.encodeIfPresent(processBundleId, forKey: .processBundleId)
+        try c.encodeIfPresent(processTeamId, forKey: .processTeamId)
         try c.encode(processPath, forKey: .processPath)
         try c.encode(processName, forKey: .processName)
         try c.encodeIfPresent(processVersion, forKey: .processVersion)
@@ -180,6 +186,7 @@ public struct FlowObservation: Codable, Hashable, Sendable {
         }
         guard pid >= 0 else { throw InsightsValidationError.invalidField("pid") }
         try validateLength(processBundleId, InsightsLimits.maxBundleIDLength, "processBundleId")
+        try validateLength(processTeamId, RuleTransportBoundary.maximumTeamIdLength, "processTeamId")
         try validateLength(processVersion, InsightsLimits.maxVersionLength, "processVersion")
         try validateLength(processPath, InsightsLimits.maxPathLength, "processPath")
         try validateLength(processName, InsightsLimits.maxNameLength, "processName")
@@ -723,6 +730,46 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
             if otherAppCount != 1 { text += "s" }
         }
         return text + "."
+    }
+
+    /// True when an enabled rule already covers this destination for this app,
+    /// so Insights should not offer it again. An address is compared the way
+    /// the matcher compares it: one IPv6 address in any spelling, a range that
+    /// contains it, and an address or range typed into the hostname field.
+    /// A rule only covers the proposal when it would match every outgoing
+    /// connection the proposal stands for: no port restriction, a direction of
+    /// outgoing or any, and not expired at `now` (#331).
+    public func isCovered(by rules: [Rule], now: Date = Date()) -> Bool {
+        let matcher = RuleMatcher()
+        return rules.contains { rule in
+            guard rule.enabled else { return false }
+            // The matcher skips a rule once its expiry has passed.
+            if let expiresAt = rule.expiresAt, expiresAt < now { return false }
+            guard rule.direction != .incoming else { return false }
+            // Port 0 means any port, as in the matcher.
+            if let port = rule.remotePort, port != 0 { return false }
+            let destinationMatches: Bool
+            if let domain {
+                destinationMatches = rule.remoteHost?.lowercased() == domain.lowercased()
+            } else if let remoteIP, !remoteIP.isEmpty {
+                let ruleAddress = (rule.remoteIP ?? "").isEmpty ? rule.addressInHostField : rule.remoteIP
+                if let ruleAddress {
+                    destinationMatches = matcher.ipMatches(pattern: ruleAddress, ip: remoteIP)
+                } else {
+                    destinationMatches = false
+                }
+            } else {
+                return false
+            }
+            guard destinationMatches else { return false }
+
+            // A selector-free rule is wider and therefore covers this app too.
+            let hasAppSelector = rule.processBundleId != nil || rule.processPath != nil || rule.processName != nil
+            guard hasAppSelector else { return true }
+            if let bundle = processBundleId, rule.processBundleId == bundle { return true }
+            if let path = processPath, rule.processPath == path { return true }
+            return rule.processName == appDisplayName
+        }
     }
 
     /// App-specific and domain-scoped whenever a name is known (D7).

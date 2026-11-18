@@ -207,6 +207,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let diagnosticsLock = NSLock()
     private var mode: AppMode = .alert
     private var policyGeneration: UInt64 = 0
+    /// Bundle ids some stored rule has not learned the signing team for yet
+    /// (#364). Nil means not computed since the last rule change. Guarded by
+    /// `policyQueue`.
+    private var teamlessBundleIds: Set<String>?
+    /// Sightings that taught no rule anything since the last rule change (a
+    /// rule for that id names another path), so they are not tried again on
+    /// every observation batch. Guarded by `policyQueue`.
+    private var fruitlessSightings = Set<RuleSigningTeam.Sighting>()
 
     init(listener: NSXPCListener) throws {
         let dbDir = "/Library/Application Support/FreeSnitch"
@@ -371,6 +379,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func republishActivePolicy() {
         policyQueue.sync {
             let state = store.activePolicyState()
+            teamlessBundleIds = nil
+            fruitlessSightings.removeAll()
             adoptLocked(state)
             dns.applyPolicy(mode: state.mode, rules: state.rules)
         }
@@ -685,6 +695,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func mutatePolicy(_ change: (inout RuleStore.PolicyDraft) throws -> Void) throws -> SharedRuleBridge.Snapshot {
         try policyQueue.sync {
             let state = try store.mutateActivePolicy(change)
+            teamlessBundleIds = nil
+            fruitlessSightings.removeAll()
             adoptLocked(state)
             // Mode and rules belong to the same committed generation, so they
             // are published together. Assigning them one after the other left a
@@ -767,7 +779,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func mergedRules(_ incoming: [Rule], into existing: inout [Rule]) {
         for rule in incoming {
             if let index = existing.firstIndex(where: { $0.id == rule.id }) {
-                existing[index] = rule
+                // A backup from before #364 must not wipe a learned team.
+                existing[index] = RuleSigningTeam.keepingLearnedTeam(rule, over: existing[index])
             } else {
                 existing.append(rule)
             }
@@ -871,7 +884,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             _ = try mutatePolicy { draft in
                 var updated = draft.rules
                 if let index = updated.firstIndex(where: { $0.id == rule.id }) {
-                    updated[index] = rule
+                    updated[index] = RuleSigningTeam.keepingLearnedTeam(rule, over: updated[index])
                 } else {
                     updated.append(rule)
                 }
@@ -1114,10 +1127,67 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             let batch = try FreeSnitchWireCodec.decode(FlowObservationBatch.self, from: observationBatch)
             try batch.validate(payloadBytes: observationBatch.count)
             recentNames.note(batch.observations)
+            learnSigningTeams(from: batch.observations)
             enqueueObservations(batch.observations, reply: reply)
         } catch {
             PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
             reply(false, error.localizedDescription)
+        }
+    }
+
+    private struct NothingLearned: Error {}
+
+    /// Records the team that signed an app on the rules for its bundle id that
+    /// do not know it yet (#364), the first time the extension sees that app
+    /// signed. From then on an allow or ask rule only matches that team's
+    /// code. Cheap when there is nothing to learn: one set lookup per signed
+    /// observation, no database read.
+    private func learnSigningTeams(from observations: [FlowObservation]) {
+        var sightings: [RuleSigningTeam.Sighting] = []
+        var seen = Set<RuleSigningTeam.Sighting>()
+        for observation in observations {
+            if let sighting = RuleSigningTeam.Sighting(observation), seen.insert(sighting).inserted {
+                sightings.append(sighting)
+            }
+        }
+        guard !sightings.isEmpty else { return }
+        sightings = policyQueue.sync {
+            if teamlessBundleIds == nil {
+                teamlessBundleIds = RuleSigningTeam.teamlessBundleIds(store.allRules())
+            }
+            return sightings.filter {
+                teamlessBundleIds?.contains($0.bundleId) == true && !fruitlessSightings.contains($0)
+            }
+        }
+        guard !sightings.isEmpty else { return }
+        var taught: [RuleSigningTeam.Sighting] = []
+        do {
+            _ = try mutatePolicy { draft in
+                guard let learned = RuleSigningTeam.learn(rules: draft.rules, from: sightings) else {
+                    // Recorded here, while `policyQueue` is still held and
+                    // against these very rules: a rule change that lands later
+                    // clears it, so a stale "nothing to learn" can never hide
+                    // a newly added rule.
+                    if fruitlessSightings.count >= 4096 { fruitlessSightings.removeAll() }
+                    fruitlessSightings.formUnion(sightings)
+                    throw NothingLearned()
+                }
+                draft.rules = learned.rules
+                taught = learned.taught
+            }
+        } catch is NothingLearned {
+            return
+        } catch {
+            PSLog.error(PSLog.helper, "the signing team of an app could not be saved on its rules: \(error.localizedDescription)")
+            return
+        }
+        for sighting in taught {
+            PSLog.info(PSLog.helper, "Allow and ask rules for \(sighting.bundleId) now only apply when it is signed by \(RuleSigningTeam.label(sighting.team)), the signer seen at \(sighting.processPath).")
+        }
+        // pf never sees a process, so it has nothing to reload: the extension
+        // is the only one that matches by team.
+        _ = broadcast { client in
+            client.notifyLog(level: "info", message: AppConstants.ruleSigningTeamsLearnedLogMessage)
         }
     }
 

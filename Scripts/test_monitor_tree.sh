@@ -477,6 +477,27 @@ let helperRule = MonitorRuleDraft.rule(for: MonitorRuleTarget.app(helperApp)!, p
                                        action: .deny, profile: "default", existing: nil)!
 equal(helperRule.processPath, heliumHelper, "a decision on the row is still a rule for the helper process")
 
+// #364: a rule made from an app row records the team that signed the app,
+// unless the row mixes signers or unsigned connections.
+func signedConnection(team: String?) -> Connection {
+    var c = connection(app: "Chrome", bundle: "com.google.Chrome", host: "example.com", ip: "203.0.113.30")
+    c.processPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    c.processTeamId = team
+    return c
+}
+let oneTeam = MonitorTreeBuilder.build(connections: [signedConnection(team: "EQHXZ8M8AV"), signedConnection(team: "EQHXZ8M8AV")],
+                                       order: MonitorRowOrder()).snapshot.apps.first!
+equal(oneTeam.teamID, "EQHXZ8M8AV", "an app row knows the team that signed all its connections")
+let teamRule = MonitorRuleDraft.rule(for: MonitorRuleTarget.app(oneTeam)!, processName: oneTeam.name, teamID: oneTeam.teamID,
+                                     action: .allow, profile: "default", existing: nil)!
+equal(teamRule.processTeamId, "EQHXZ8M8AV", "a rule made from the monitor records the app's team")
+let mixed = MonitorTreeBuilder.build(connections: [signedConnection(team: "EQHXZ8M8AV"), signedConnection(team: "ATTACKER01")],
+                                     order: MonitorRowOrder()).snapshot.apps.first!
+check(mixed.teamID == nil, "a row that mixes two signers records no team")
+let partlyUnsigned = MonitorTreeBuilder.build(connections: [signedConnection(team: "EQHXZ8M8AV"), signedConnection(team: nil)],
+                                              order: MonitorRowOrder()).snapshot.apps.first!
+check(partlyUnsigned.teamID == nil, "a row with an unsigned connection records no team")
+
 if failures > 0 {
     FileHandle.standardError.write(Data("monitor tree harness: \(failures) failure(s)\n".utf8))
     exit(1)

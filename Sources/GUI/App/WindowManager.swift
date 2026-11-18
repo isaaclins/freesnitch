@@ -25,7 +25,7 @@ final class WindowManager {
     private let mainModel: MainWindowModel
     /// The uninstall outlives every view that shows it. Held here so a step
     /// that is already under way survives the sheet being closed (#133).
-    private let uninstallModel: UninstallFlowModel
+    let uninstallModel: UninstallFlowModel
     private var alertWindow: NSWindow?
     /// The alert is centred once, after its first real measurement.
     private var alertHasBeenCentered = false

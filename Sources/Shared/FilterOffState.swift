@@ -52,6 +52,16 @@ public struct FilterOffState: Equatable, Sendable {
         !fromSettings || (configured && enabled)
     }
 
+    /// The helper gave no rules for a pending turn-on, so it was given up. A
+    /// turn-on that followed System Settings counts as failed only while the
+    /// filter is still on there: turned off or removed there again meanwhile,
+    /// it is off as the user set it (#382). A turn-on asked for by activation,
+    /// or a read of the preferences that failed, is reported as failed.
+    public static func abandonedTurnOnFailed(fromSettings: Bool, readFailed: Bool,
+                                             configured: Bool, enabled: Bool) -> Bool {
+        !fromSettings || readFailed || (configured && enabled)
+    }
+
     /// The filter preferences were read. `fromOutside` is true when the read
     /// follows a change notification rather than the app's own save cycle,
     /// which is already saving the current rules.
