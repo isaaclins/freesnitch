@@ -191,7 +191,7 @@ final class HelperClient: NSObject, ObservableObject {
         case .alreadyEnabled:
             installState = .enabled
             if InstallLocation.takeReregisterRequest() {
-                reregisterAfterMove(service)
+                reregisterAfterCopy(service)
             }
         case .register:
             guard Self.hasBundledHelper else {
@@ -215,18 +215,17 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
-    /// This copy was just moved out of ~/Applications, and launchd may still
-    /// have the helper at the old path. Registering again from here points it
-    /// at this copy; launchd also follows the moved bundle by itself at the
-    /// next login. It never unregisters (#24), so a refusal (for example
-    /// "already registered") leaves the working registration as it was (#418).
-    private func reregisterAfterMove(_ service: SMAppService) {
+    /// This copy was just made from one in ~/Applications whose registration
+    /// launchd may still run the helper from. Registering again from here
+    /// points it at this copy. It never unregisters (#24): if it fails, the
+    /// old registration and the old copy are both still there (#418).
+    private func reregisterAfterCopy(_ service: SMAppService) {
         let path = Bundle.main.bundleURL.path
         do {
             try service.register()
-            state?.appendLog(level: "info", message: "Asked macOS to run the helper from \(path) after moving FreeSnitch out of ~/Applications.")
+            state?.appendLog(level: "info", message: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications.")
         } catch {
-            state?.appendLog(level: "info", message: "macOS kept the existing helper registration after the move to \(path); launchd picks up the moved app at the next login: \(HelperRecovery.registrationErrorDetails(error))")
+            state?.appendLog(level: "error", message: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))")
         }
         refreshInstallState()
     }
