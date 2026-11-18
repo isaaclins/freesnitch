@@ -891,7 +891,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             if let current,
                authority == .sameSession,
                received.generation == current.generation,
-               (received.mode != current.mode || received.rules != current.rules),
+               !SharedRuleBridge.PolicyContent.same(received, current),
                !legacyBootGeneration {
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
                     "Network extension rejected an invalid split-brain snapshot: generation \(received.generation) has different policy content. \(SharedRuleBridge.snapshotRejectionRemediation)",
