@@ -103,6 +103,22 @@ struct Verify {
         check("and the domain sentence is still there to add to it",
               VPNStatus.dnsSummary(work, routesThroughProxy: false)?.hasPrefix("Lookups for corp.example") == true)
 
+        // 5b. A split-DNS VPN that pushes the resolver the user set anyway
+        //     doesn't take every lookup, and two split VPNs are both named.
+        var sameResolver = split
+        sameResolver["State:/Network/Service/\(wg)/DNS"] = ["ServerAddresses": ["1.1.1.1"], "SupplementalMatchDomains": ["corp.example"]]
+        sameResolver[VPNStatus.globalDNSKey] = ["ServerAddresses": ["1.1.1.1"], "__CONFIGURATION_ID__": "Default: 0"]
+        check("a split-DNS VPN with the user's own resolver does not own DNS",
+              VPNStatus.dnsOwner(VPNStatus.connectedVPNs(in: sameResolver)) == nil)
+        var twoSplit = split
+        let wg2 = "A1B2C3D4-0000-4000-8000-00000000CCCC"
+        twoSplit["State:/Network/Service/\(wg2)/VPN"] = ["Status": 1]
+        twoSplit["State:/Network/Service/\(wg2)/IPv4"] = ["InterfaceName": "utun8"]
+        twoSplit["State:/Network/Service/\(wg2)/DNS"] = ["ServerAddresses": ["10.9.0.1"], "SupplementalMatchDomains": ["lab.example"]]
+        twoSplit["Setup:/Network/Service/\(wg2)"] = ["UserDefinedName": "Lab"]
+        let twoLine = VPNStatus.dnsSummary(VPNStatus.connectedVPNs(in: twoSplit), routesThroughProxy: true) ?? ""
+        check("two split-DNS VPNs are both named", twoLine.contains("go to Work") && twoLine.contains("lab.example go to Lab"))
+
         // 6. A full-tunnel VPN app with no name set and its own resolver,
         //    while the user had set the Mac's DNS to FreeSnitch: the VPN wins.
         var full = base()

@@ -80,7 +80,10 @@ public enum VPNStatus {
                 .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")) }
                 .filter { !$0.isEmpty }
             let fromThisService = !globalSource.isEmpty && globalSource.contains(serviceID)
-            let sameServers = !servers.isEmpty && !globalServers.isEmpty && globalServers.isSubset(of: Set(servers))
+            // Same servers only counts for a VPN that claims no domains: a
+            // split-DNS VPN may push the very resolver the user set anyway.
+            let sameServers = match.isEmpty && !servers.isEmpty && !globalServers.isEmpty
+                && globalServers.isSubset(of: Set(servers))
             result.append(ActiveVPN(name: setup?["UserDefinedName"] as? String,
                                     interface: interface,
                                     dnsServers: servers,
@@ -136,10 +139,12 @@ public enum VPNStatus {
             return text
         }
         let split = vpns.filter { !$0.handlesAllLookups && $0.handlesSomeLookups }
-        guard let vpn = split.first else { return nil }
-        let domains = vpn.matchDomains.prefix(3).joined(separator: ", ")
-        let more = vpn.matchDomains.count > 3 ? " and \(vpn.matchDomains.count - 3) more" : ""
-        return "Lookups for \(domains)\(more) go to \(vpn.displayName), so FreeSnitch's DNS blocking doesn't apply to those names."
+        guard !split.isEmpty else { return nil }
+        return split.map { vpn in
+            let domains = vpn.matchDomains.prefix(3).joined(separator: ", ")
+            let more = vpn.matchDomains.count > 3 ? " and \(vpn.matchDomains.count - 3) more" : ""
+            return "Lookups for \(domains)\(more) go to \(vpn.displayName), so FreeSnitch's DNS blocking doesn't apply to those names."
+        }.joined(separator: " ")
     }
 
     /// Tailscale names its service "Tailscale" and serves MagicDNS from

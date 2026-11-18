@@ -304,9 +304,10 @@ struct SettingsView: View {
                 + (vpnDNS.map { " " + $0 } ?? ""))
     }
 
-    /// "Tailscale (utun4)", one per connected VPN.
+    /// "Tailscale", one name per connected VPN. The tunnel interface is
+    /// left out: it means nothing to most people.
     private var vpnList: String {
-        network.vpns.map { "\($0.displayName) (\($0.interface))" }.joined(separator: ", ")
+        network.vpns.map(\.displayName).joined(separator: ", ")
     }
 
     private var helperSummary: String {
