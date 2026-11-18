@@ -7,8 +7,11 @@
 # about the resolver's first lookup and paused it until someone answered, so
 # DNS stopped for the whole Mac. In Silent deny it dropped them outright.
 #
-# Compiled from the real shared sources and run through the prepared verdict
-# path the extension uses.
+# Compiled from the real shared sources and the extension's signature check,
+# and run through the prepared verdict path the extension uses. The default
+# allow needs both the system path and Apple's signature; every other process
+# keeps the default mode on port 53 too, so DNS stays a channel FreeSnitch
+# can ask about and block for apps (#30).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,8 +41,20 @@ struct Verify {
                    remoteHost: host, remoteIP: ip, remotePort: port, direction: direction)
     }
 
-    static func verdict(_ c: Connection, _ rules: [Rule], _ mode: AppMode) -> RuleAction {
-        matcher.decision(for: c, prepared: PreparedRuleSet(rules: rules), defaultMode: mode)
+    /// The extension vouches for the signature only after its check passed;
+    /// `signed` stands for that check's answer.
+    static func verdict(_ c: Connection, _ rules: [Rule], _ mode: AppMode, signed: Bool = true) -> RuleAction {
+        matcher.explainedDecision(for: c, prepared: PreparedRuleSet(rules: rules), defaultMode: mode,
+                                  systemResolverSigned: signed).action
+    }
+
+    static func staticCodePasses(_ path: String, _ requirementText: String) -> Bool {
+        var code: SecStaticCode?
+        var requirement: SecRequirement?
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess, let code,
+              SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,
+              let requirement else { return false }
+        return SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
     }
 
     static func main() {
@@ -78,6 +93,39 @@ struct Verify {
         check(verdict(flow(path: resolver, direction: .incoming), [], .alert) == .ask,
               "incoming connections to the resolver keep the normal default")
 
+        // Path AND signature (#30): neither alone gets the default allow.
+        check(verdict(lookup, [], .alert, signed: false) == .ask,
+              "the resolver's path without a passed signature check is asked about like any app")
+        check(verdict(lookup, [], .silentDeny, signed: false) == .deny,
+              "the resolver's path without a passed signature check is blocked in Silent deny like any app")
+        check(verdict(flow(path: "/tmp/x/mDNSResponder"), [], .alert, signed: true) == .ask,
+              "Apple's signed resolver copied anywhere else is asked about like any app")
+        check(verdict(flow(path: "/usr/bin/dig"), [], .silentDeny, signed: true) == .deny,
+              "another process gets nothing from the signature flag")
+
+        // Every other process's port-53 flow is matched exactly as before (#30).
+        let dig = flow(path: "/usr/bin/dig", ip: "8.8.8.8")
+        let denyDig = Rule(processPath: "/usr/bin/dig", direction: .outgoing, action: .deny, scope: .process)
+        let allowDig = Rule(processPath: "/usr/bin/dig", direction: .outgoing, action: .allow, scope: .process)
+        let denyPort53 = Rule(remotePort: 53, action: .deny)
+        check(verdict(dig, [denyDig], .silentAllow) == .deny, "a deny rule for an app still blocks its own DNS on port 53")
+        check(verdict(dig, [allowDig], .silentDeny) == .allow, "an allow rule for an app still lets its own DNS through")
+        check(verdict(dig, [denyPort53], .silentAllow) == .deny, "a rule for port 53 still blocks an app's direct DNS")
+        check(verdict(dig, [], .silentAllow) == .allow, "an app's direct DNS keeps Silent allow's default")
+
+        // The requirement the extension checks running code against matches
+        // Apple's resolver and nothing else on this Mac.
+        let requirement = RuleMatcher.systemResolverRequirement
+        check(staticCodePasses("/usr/sbin/mDNSResponder", requirement),
+              "Apple's mDNSResponder on this Mac passes the resolver requirement")
+        check(!staticCodePasses("/usr/bin/dig", requirement), "Apple's dig does not pass the resolver requirement")
+        check(!staticCodePasses("/usr/sbin/mDNSResponderHelper", requirement),
+              "Apple's mDNSResponderHelper does not pass the resolver requirement")
+        check(!SystemResolverIdentity().isSigned(auditToken: nil),
+              "a flow without an audit token is never vouched for")
+        check(!SystemResolverIdentity().isSigned(auditToken: Data(repeating: 0, count: 32)),
+              "an audit token that names no running process is never vouched for")
+
         if failures == 0 {
             print("system resolver harness: PASS (all checks)")
         } else {
@@ -89,5 +137,5 @@ struct Verify {
 SWIFT
 
 xcrun swiftc -O -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos13.0 -parse-as-library \
-  -o "$TMP/run" "$ROOT"/Sources/Shared/*.swift "$TMP/verify.swift"
+  -o "$TMP/run" "$ROOT"/Sources/Shared/*.swift "$ROOT/Sources/NetExt/SystemResolverIdentity.swift" "$TMP/verify.swift"
 "$TMP/run"

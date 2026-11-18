@@ -169,10 +169,18 @@ verdict_body="$(swift_function_body "$RULE_MATCHER" 'func explainedDecision(for 
 # Every app's name lookups leave through the system resolver. With no rule
 # for it, the default mode must not ask about it or drop it, or DNS stops for
 # the whole Mac until someone answers (#422).
-grep -Fq 'if Self.isSystemResolver(c) { return (askFloor ? .ask : .allow, skipped) }' <<<"$verdict_body" \
-  || fail "the default mode can ask about or drop the system resolver, which stops DNS for the whole Mac"
+# Only Apple's resolver at its system path gets that default, never any other
+# port-53 flow (#30): the path and the signature check must both hold.
+grep -Fq 'if systemResolverSigned, Self.isSystemResolver(c) { return (askFloor ? .ask : .allow, skipped) }' <<<"$verdict_body" \
+  || fail "the system resolver's default allow is missing or no longer needs both its path and its signature"
 require_text "$RULE_MATCHER" 'public static let systemResolverPath = "/usr/sbin/mDNSResponder"' \
   "the system resolver is no longer identified by its protected system path"
+require_text "$RULE_MATCHER" 'public static let systemResolverRequirement = "anchor apple and identifier \"com.apple.mDNSResponder\""' \
+  "the system resolver's signature requirement is no longer Apple's mDNSResponder"
+require_text "$FILTER" '&& systemResolverIdentity.isSigned(auditToken: socketFlow.sourceAppAuditToken)' \
+  "the extension no longer checks the system resolver's signature before vouching for it"
+require_text "$ROOT/Sources/NetExt/SystemResolverIdentity.swift" 'SecCodeCheckValidity(code, [], requirement) == errSecSuccess' \
+  "the system resolver's signature is no longer checked against the running code"
 for forbidden in '.sorted' '.filter' '.map('; do
   if grep -Fq -- "$forbidden" <<<"$verdict_body"; then
     fail "the per-flow verdict path uses $forbidden, which reorders or allocates on every flow"

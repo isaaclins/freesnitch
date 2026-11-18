@@ -362,13 +362,15 @@ public struct RuleMatcher: Sendable {
 
     /// Orders the rule set on every call. A verdict path should hold a
     /// `PreparedRuleSet` and use the overload below instead.
-    /// macOS's system DNS resolver. It sits under the system volume, which
-    /// System Integrity Protection keeps read-only, so the executable path
-    /// the kernel reports cannot belong to a look-alike copy.
+    /// macOS's system DNS resolver, by path and by signature. Both must hold:
+    /// the path keeps a copy elsewhere out, and the caller checks the running
+    /// code against `systemResolverRequirement` before vouching for it.
     public static let systemResolverPath = "/usr/sbin/mDNSResponder"
+    public static let systemResolverRequirement = "anchor apple and identifier \"com.apple.mDNSResponder\""
 
-    /// An outgoing flow from the system resolver: a name lookup made for
-    /// some app (plain DNS, or encrypted DNS when a profile turns that on).
+    /// An outgoing flow from the system resolver's path: a name lookup made
+    /// for some app (plain DNS, or encrypted DNS when a profile turns that
+    /// on). Says nothing about the signature.
     public static func isSystemResolver(_ c: Connection) -> Bool {
         c.direction == .outgoing && c.processPath == systemResolverPath
     }
@@ -385,7 +387,11 @@ public struct RuleMatcher: Sendable {
     /// the connection's bundle id been signed rather than only claimed by its
     /// Info.plist (#351), or signed by the rule's team (#364), so the caller
     /// can say why the user was asked.
-    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode) -> (action: RuleAction, skippedUnverified: Rule?) {
+    ///
+    /// `systemResolverSigned` is the caller's word that the flow's process
+    /// passed Apple's signature check as the system resolver. Only then does
+    /// the system resolver get its default allow; the path alone is not enough.
+    public func explainedDecision(for c: Connection, prepared: PreparedRuleSet, defaultMode: AppMode, systemResolverSigned: Bool = false) -> (action: RuleAction, skippedUnverified: Rule?) {
         // Expiry is the one predicate that cannot be precomputed, because it
         // depends on when the flow arrives rather than on the snapshot. It
         // stays a test inside the scan, which allocates nothing.
@@ -423,8 +429,9 @@ public struct RuleMatcher: Sendable {
         // among many: every app's name lookups leave through it, so asking
         // about it or denying it by default stops DNS for the whole Mac
         // until someone answers (#422). The default for it is allow; a rule
-        // the user wrote for it was already honoured above.
-        if Self.isSystemResolver(c) { return (askFloor ? .ask : .allow, skipped) }
+        // the user wrote for it was already honoured above. Every other
+        // process, port 53 or not, keeps the default mode (#30).
+        if systemResolverSigned, Self.isSystemResolver(c) { return (askFloor ? .ask : .allow, skipped) }
         switch defaultMode {
         case .alert: return (.ask, skipped)
         case .silentAllow: return (askFloor ? .ask : .allow, skipped)
