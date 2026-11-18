@@ -77,7 +77,7 @@ shell_of() {
 }
 install_cmd="$(shell_of installScript)"
 remove_cmd="$(shell_of removeScript)"
-[[ "$install_cmd" == "/bin/mkdir -p /usr/local/bin && /bin/ln -s /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch" ]] \
+[[ "$install_cmd" == "/bin/mkdir -p /usr/local/bin && /bin/ln -sh /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch" ]] \
   || fail "could not read the install command: $install_cmd"
 [[ "$remove_cmd" == *"/bin/rm -f /usr/local/bin/freesnitch"* ]] || fail "could not read the remove command: $remove_cmd"
 [[ "$install_cmd$remove_cmd" == *'\('* ]] \
@@ -112,6 +112,14 @@ rm -f "$link"
 ln -s /somewhere/else "$link"
 sh -c "$(moved "$remove_cmd")" || true
 [[ "$(readlink "$link")" == /somewhere/else ]] && pass "remove leaves a link elsewhere alone" || fail "remove deleted a link it did not make"
+
+# A link to a folder planted at the path (a user-writable /usr/local/bin, as
+# with Homebrew on Intel): install must fail, not create a link inside it.
+rm -f "$link"
+mkdir -p "$TMP/planted"
+ln -s "$TMP/planted" "$link"
+if sh -c "$(moved "$install_cmd")" 2>/dev/null; then fail "install succeeded over a link to a folder"; fi
+[[ -z "$(ls -A "$TMP/planted")" ]] && pass "install never links inside a folder planted at the path" || fail "install wrote into the planted folder"
 
 # The uninstall's copy of the removal is the same guarded command.
 uninstall_src="$ROOT/Sources/GUI/App/PrivilegedUninstall.swift"

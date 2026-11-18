@@ -1234,7 +1234,7 @@ fi
 # make, and the removal only deletes a link that points into the app.
 COMMAND_LINE_TOOL="$ROOT/Sources/GUI/App/CommandLineTool.swift"
 [[ -f "$COMMAND_LINE_TOOL" ]] || fail "missing $COMMAND_LINE_TOOL"
-require_text "$COMMAND_LINE_TOOL" '/bin/ln -s /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges' \
+require_text "$COMMAND_LINE_TOOL" '/bin/ln -sh /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges' \
   "the command link install is no longer one fixed ln -s into the installed app"
 require_text "$COMMAND_LINE_TOOL" 'if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi' \
   "the command link removal no longer checks that the link is FreeSnitch's"

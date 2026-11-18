@@ -86,9 +86,10 @@ enum CommandLineTool {
     }
 
     /// `ln` without `-f`: if anything appeared at the path since the state was
-    /// read, the command fails instead of replacing it.
+    /// read, the command fails instead of replacing it. `-h` keeps it from
+    /// following a link to a folder planted there and linking inside that.
     private static let installScript =
-        "do shell script \"/bin/mkdir -p /usr/local/bin && /bin/ln -s /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges"
+        "do shell script \"/bin/mkdir -p /usr/local/bin && /bin/ln -sh /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges"
 
     /// Removes the link only while it still points at the installed tool.
     private static let removeScript =

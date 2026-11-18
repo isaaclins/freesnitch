@@ -80,11 +80,11 @@ struct CommandLineSettingsView: View {
     private var actionRow: some View {
         switch state {
         case .installed(let path) where path == CommandLineTool.linkPath:
-            LabeledContent("Command") {
+            LabeledContent("In Terminal") {
                 Button("Remove Command…", action: remove).disabled(working)
             }
         case .notInstalled where canInstall:
-            LabeledContent("Command") {
+            LabeledContent("In Terminal") {
                 Button("Install Command…", action: install).disabled(working)
             }
         default:
@@ -105,7 +105,7 @@ struct CommandLineSettingsView: View {
         case .installed(let path) where path == CommandLineTool.linkPath:
             return "Type `freesnitch` in any Terminal window. `\(path)` is a link to the tool inside FreeSnitch.app, so it updates with the app. Uninstalling FreeSnitch removes it too."
         case .installed:
-            return "Type `freesnitch` in any Terminal window. Homebrew manages this link."
+            return "Type `freesnitch` in any Terminal window. FreeSnitch did not make this link, so it leaves it as it is."
         case .notInstalled where canInstall:
             return "Install Command adds `\(CommandLineTool.linkPath)`, a link to the tool inside FreeSnitch.app. macOS asks for your password once. You can remove it here at any time, and uninstalling FreeSnitch removes it too."
         case .notInstalled:
