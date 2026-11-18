@@ -546,6 +546,17 @@ public final class RuleStore: @unchecked Sendable {
         return policyStateLocked()
     }
 
+    /// Advances the policy generation inside the caller's transaction. A
+    /// profile switch, a change to the active profile, or deleting it changes
+    /// the enforced policy without going through `mutatePolicy`. Republishing
+    /// that under the old generation made the extension refuse it as a
+    /// split-brain snapshot and stop filtering until the next rule edit (#438).
+    private func advancePolicyGenerationLocked() throws {
+        let current = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
+        guard current < UInt64.max else { throw PolicyStoreError.generationExhausted }
+        try setSettingLocked(Self.policyGenerationSettingKey, String(current + 1))
+    }
+
     private func policyStateLocked() -> PolicyState {
         // Missing means a genuinely fresh database. Existing installs retain
         // their stored choice, while a new user starts honestly in Silent
@@ -559,11 +570,75 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     private func replaceRulesLocked(_ rules: [Rule]) throws {
+        // Callers hand in their own copy of each rule, and that copy's usage
+        // counters can be older than the ones the helper has stored since
+        // (#434). Keep whichever is further along.
+        let stored = usageCountersLocked()
         try execLocked("DELETE FROM rules;")
-        for rule in rules { try upsertRuleLocked(rule) }
+        for rule in rules { try upsertRuleLocked(rule, keeping: stored[rule.id]) }
     }
 
-    private func upsertRuleLocked(_ r: Rule) throws {
+    public struct UsageCounters: Equatable, Sendable {
+        public let hitCount: Int
+        public let lastUsedAt: Date?
+    }
+
+    /// Adds matches counted by the network extension to the rules they name
+    /// (#434). One transaction; rules that no longer exist are skipped. The
+    /// count saturates instead of overflowing the stored 32-bit value, and
+    /// the last-used time only moves forward.
+    public func recordRuleHits(_ hits: [RuleHit]) throws {
+        guard !hits.isEmpty else { return }
+        try queue.sync {
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                for hit in hits {
+                    try executeLocked("""
+                    UPDATE rules SET
+                        hit_count = MIN(COALESCE(hit_count, 0) + ?, 2147483647),
+                        last_used_at = MAX(COALESCE(last_used_at, 0), ?)
+                    WHERE id = ?;
+                    """) { stmt in
+                        sqlite3_bind_int64(stmt, 1, Int64(max(0, min(hit.count, RuleHit.maxCountPerReport))))
+                        sqlite3_bind_double(stmt, 2, hit.lastMatchedAt.timeIntervalSince1970)
+                        sqlite3_bind_text(stmt, 3, hit.ruleID.uuidString, -1, SQLITE_TRANSIENT)
+                    }
+                }
+                try execLocked("COMMIT;")
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    private func usageCountersLocked(id: UUID? = nil) -> [UUID: UsageCounters] {
+        var result: [UUID: UsageCounters] = [:]
+        var stmt: OpaquePointer?
+        let sql = id == nil
+            ? "SELECT id, hit_count, last_used_at FROM rules;"
+            : "SELECT id, hit_count, last_used_at FROM rules WHERE id = ?;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return result }
+        defer { sqlite3_finalize(stmt) }
+        if let id { sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let raw = sqlite3_column_text(stmt, 0), let ruleID = UUID(uuidString: String(cString: raw)) else { continue }
+            let hits = Int(sqlite3_column_int(stmt, 1))
+            let last: Date? = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+            result[ruleID] = UsageCounters(hitCount: hits, lastUsedAt: last)
+        }
+        return result
+    }
+
+    private func upsertRuleLocked(_ incoming: Rule, keeping stored: UsageCounters? = nil) throws {
+        var r = incoming
+        if let stored {
+            r.hitCount = max(r.hitCount, stored.hitCount)
+            if let storedLast = stored.lastUsedAt, storedLast > (r.lastUsedAt ?? .distantPast) {
+                r.lastUsedAt = storedLast
+            }
+        }
         let sql = """
         INSERT OR REPLACE INTO rules(
             id, process_bundle_id, process_path, process_name, remote_host, remote_ip,
@@ -591,7 +666,7 @@ public final class RuleStore: @unchecked Sendable {
             sqlite3_bind_double(stmt, 17, r.createdAt.timeIntervalSince1970)
             if let e = r.expiresAt { sqlite3_bind_double(stmt, 18, e.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 18) }
             if let l = r.lastUsedAt { sqlite3_bind_double(stmt, 19, l.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 19) }
-            sqlite3_bind_int(stmt, 20, Int32(r.hitCount))
+            sqlite3_bind_int(stmt, 20, Int32(clamping: max(0, r.hitCount)))
             bindOpt(stmt, 21, r.processTeamId)
         }
     }
@@ -715,6 +790,7 @@ public final class RuleStore: @unchecked Sendable {
                 }
                 try replaceProfileBlocklistsLocked(profileName: normalizedName, blocklistIDs: profile.blocklistIDs)
                 try syncGlobalBlocklistEnabledLocked()
+                try advancePolicyGenerationLocked()
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")
@@ -763,6 +839,7 @@ public final class RuleStore: @unchecked Sendable {
                     }
                 }
                 try syncGlobalBlocklistEnabledLocked()
+                try advancePolicyGenerationLocked()
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")
@@ -786,6 +863,7 @@ public final class RuleStore: @unchecked Sendable {
                     sqlite3_bind_text(stmt, 1, profile.id.uuidString, -1, SQLITE_TRANSIENT)
                 }
                 try syncGlobalBlocklistEnabledLocked()
+                try advancePolicyGenerationLocked()
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")

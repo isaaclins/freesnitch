@@ -452,10 +452,15 @@ public struct InsightsBehaviourFinding: Codable, Sendable, Hashable, Identifiabl
 public struct FlowObservationBatch: Codable, Sendable {
     public let schemaVersion: Int
     public let observations: [FlowObservation]
+    /// Rule matches counted since the last batch (#434). Optional so a batch
+    /// from an extension without hit counting still decodes, and a helper
+    /// without it ignores the field.
+    public let ruleHits: [RuleHit]?
 
-    public init(observations: [FlowObservation]) {
+    public init(observations: [FlowObservation], ruleHits: [RuleHit]? = nil) {
         self.schemaVersion = InsightsLimits.schemaVersion
         self.observations = observations
+        self.ruleHits = ruleHits.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     public func validate(payloadBytes: Int, now: Date = Date()) throws {
@@ -469,6 +474,21 @@ public struct FlowObservationBatch: Codable, Sendable {
             throw InsightsValidationError.tooManyObservations(observations.count)
         }
         for observation in observations { try observation.validate(now: now) }
+        // Too many hits is a malformed batch. A single bad hit (a clock that
+        // moved back, say) only costs that hit: see `validRuleHits`.
+        guard (ruleHits?.count ?? 0) <= InsightsLimits.maxBatchCount else {
+            throw InsightsValidationError.invalidField("ruleHits")
+        }
+    }
+
+    /// The hits worth recording: valid ones, each rule at most once. Invalid
+    /// hits are dropped without costing the batch its observations (#434).
+    public func validRuleHits(now: Date = Date()) -> [RuleHit] {
+        guard let ruleHits, ruleHits.count <= InsightsLimits.maxBatchCount else { return [] }
+        var seen = Set<UUID>()
+        return ruleHits.filter { hit in
+            (try? hit.validate(now: now)) != nil && seen.insert(hit.ruleID).inserted
+        }
     }
 }
 

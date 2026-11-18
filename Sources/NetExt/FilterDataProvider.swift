@@ -198,6 +198,9 @@ final class FilterDataProvider: NEFilterDataProvider {
         .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
         .appendingPathComponent(SharedRuleBridge.LivePolicyWatermark.fileName)
     private let observationQueue = FlowObservationQueue(capacity: 1024)
+    /// Which rules decided flows since the last observation batch (#434).
+    /// Trylock-only on the verdict path, like the observation queue.
+    private let ruleHitTally = RuleHitTally()
     private let observationDrainQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.observations", qos: .utility)
     private let observationSignalLock: UnsafeMutablePointer<os_unfair_lock_s>
     private var observationDrainScheduled = false
@@ -364,6 +367,12 @@ final class FilterDataProvider: NEFilterDataProvider {
         // not allowed anyway (by a path rule, say), since then nothing is asked.
         if let skipped = decision.skippedUnverified, signatureChecked, decision.action != .allow {
             noteUnverifiedBundleId(conn, skipped: skipped)
+        }
+        // Counted, never waited on: a contended tally skips this match, and
+        // the counts travel with the next observation batch.
+        if let ruleID = decision.matchedRuleID {
+            ruleHitTally.record(ruleID)
+            signalObservationDrain()
         }
         switch decision.action {
         case .allow:
@@ -535,21 +544,33 @@ final class FilterDataProvider: NEFilterDataProvider {
 
             let observations = observationQueue.drain(maximum: InsightsLimits.maxBatchCount)
             logObservationDropsIfNeeded()
-            guard !observations.isEmpty else {
+            // Rule hits ride along with the observations of the flows they
+            // decided (#434), or alone when those were already sent. A batch
+            // that cannot be sent puts them back.
+            let hits = ruleHitTally.drain(maximum: InsightsLimits.maxBatchCount)
+            guard !observations.isEmpty || !hits.isEmpty else {
                 finishObservationDrainIfIdle()
                 return
             }
-
             var candidate = observations
             var payload: Data?
             repeat {
-                payload = try? FreeSnitchWireCodec.encode(FlowObservationBatch(observations: candidate))
+                payload = try? FreeSnitchWireCodec.encode(FlowObservationBatch(observations: candidate, ruleHits: hits))
                 if let payload, payload.count <= InsightsLimits.maxBatchBytes { break }
+                guard !candidate.isEmpty else { break }
                 candidate.removeLast()
-            } while !candidate.isEmpty
+            } while true
 
+            var sent = false
             if let payload, payload.count <= InsightsLimits.maxBatchBytes {
-                _ = IPCConnection.shared.sendObservationBatch(payload)
+                sent = IPCConnection.shared.sendObservationBatch(payload)
+            }
+            if !sent && !hits.isEmpty {
+                // Kept for the next flow's drain. Looping here would take
+                // the same hits straight back out while the app is away.
+                ruleHitTally.restore(hits)
+                finishObservationDrainIfIdle()
+                return
             }
         }
     }
