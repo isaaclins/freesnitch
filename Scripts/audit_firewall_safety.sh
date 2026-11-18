@@ -645,6 +645,10 @@ demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func removeUserData
   "delete the real install's data"
 demo_guard Sources/GUI/App/PrivilegedUninstall.swift 'static func trashApplicationBundle(' 'guard !DemoMode.isOn else' \
   "move the real app to the Trash"
+demo_guard Sources/GUI/App/CommandLineTool.swift 'static func install()' 'guard !DemoMode.isOn else' \
+  "write the freesnitch command link into the real /usr/local/bin"
+demo_guard Sources/GUI/App/CommandLineTool.swift 'static func remove()' 'guard !DemoMode.isOn else' \
+  "remove the real freesnitch command link"
 demo_guard Sources/GUI/Views/UninstallView.swift 'func begin()' 'guard !DemoMode.isOn else' \
   "turn enforcement off from the uninstall screen"
 demo_guard Sources/GUI/Views/UninstallView.swift 'func finish()' 'guard !DemoMode.isOn else' \
@@ -1224,6 +1228,18 @@ fi
 # because the now-dead function definition still contained the name.
 if ! rg -A6 'case \.manualKickstart:' "$GUI_HELPER" | read_all_then rg -q 'performPrivilegedKickstart\(\)'; then
   fail "the stale-helper path no longer attempts the repair itself, so it would only print a sudo command"
+fi
+# The `freesnitch` command link (#423) runs as root, so like the repair it
+# stays two fixed commands: ln without -f never replaces a file it did not
+# make, and the removal only deletes a link that points into the app.
+COMMAND_LINE_TOOL="$ROOT/Sources/GUI/App/CommandLineTool.swift"
+[[ -f "$COMMAND_LINE_TOOL" ]] || fail "missing $COMMAND_LINE_TOOL"
+require_text "$COMMAND_LINE_TOOL" '/bin/ln -s /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges' \
+  "the command link install is no longer one fixed ln -s into the installed app"
+require_text "$COMMAND_LINE_TOOL" 'if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qx /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi' \
+  "the command link removal no longer checks that the link is FreeSnitch's"
+if rg 'do shell script' "$COMMAND_LINE_TOOL" | read_all_then rg -q '\\\(|ln -sf|ln -fs|rm -rf'; then
+  fail "a command link script interpolates a value, forces a link over an existing file, or removes recursively"
 fi
 # The uninstaller must be able to uninstall. It previously told users to run
 # `sudo bash Scripts/uninstall_freesnitch.sh`, a file that exists only in a

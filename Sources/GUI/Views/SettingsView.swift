@@ -14,17 +14,20 @@ struct SettingsView: View {
     @State private var dohError: String?
     @State private var systemResolvers: [String] = []
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var pane: Pane = .general
+    /// Owned by the window model, so Help > Command-Line Tool can open
+    /// Settings on that pane (#423).
+    @Binding var pane: Pane
 
     /// The parts of Settings. A page, not a window, so these are chosen in the
     /// content rather than by a `TabView` (#100).
     enum Pane: String, CaseIterable, Identifiable {
-        case general, dns, uninstall, about
+        case general, dns, commandLine, uninstall, about
         var id: String { rawValue }
         var title: String {
             switch self {
             case .general: return "General"
             case .dns: return "DNS"
+            case .commandLine: return "Command Line"
             case .uninstall: return "Uninstall"
             case .about: return "About"
             }
@@ -47,7 +50,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 440)
+            .frame(maxWidth: 520)
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 10)
@@ -74,6 +77,7 @@ struct SettingsView: View {
         switch pane {
         case .general: generalTab
         case .dns: dnsTab
+        case .commandLine: CommandLineSettingsView()
         case .uninstall: uninstallTab
         case .about: aboutTab
         }

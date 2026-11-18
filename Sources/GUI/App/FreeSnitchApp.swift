@@ -50,6 +50,13 @@ struct FreeSnitchApp: App {
                 Button("Find") { delegate.windowManager?.focusSearch() }
                     .keyboardShortcut("f", modifiers: .command)
             }
+            // The CLI was only findable by reading the repository (#423).
+            // Help is where a Mac app keeps the way in to what it can do
+            // beyond its windows.
+            CommandGroup(replacing: .help) {
+                Button("Command-Line Tool…") { delegate.windowManager?.showCommandLineSettings() }
+                Link("Command-Line Guide", destination: CommandLineTool.guideURL)
+            }
         }
     }
 }
@@ -191,6 +198,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" {
+            // Light and dark screenshots without switching the whole Mac.
+            switch ProcessInfo.processInfo.environment["FREESNITCH_DEMO_APPEARANCE"] {
+            case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+            case "light": NSApp.appearance = NSAppearance(named: .aqua)
+            default: break
+            }
             seedDemoState()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
                 switch ProcessInfo.processInfo.environment["FREESNITCH_DEMO_WINDOW"] {
@@ -199,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "insights": self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
+                case "cli": self.windowManager.showCommandLineSettings()
                 case "uninstall":
                     self.windowManager.showSettings()
                     self.windowManager.uninstallModel.present()
