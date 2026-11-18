@@ -892,8 +892,11 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                     self.uninstallState = .deactivating
                     self.checkExtensionPresence()
                 } else {
+                    // Check this answer too: only a record macOS marks as
+                    // being uninstalled lets the uninstall go on.
                     self.state?.appendLog(level: "info", message: "Network extension deactivation finishes after reboot.")
-                    self.uninstallState = .pendingReboot
+                    self.uninstallState = .deactivating
+                    self.checkExtensionPresence()
                 }
                 return
             }
@@ -955,6 +958,8 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
         Task { @MainActor in
             guard self.requestKind != .deactivation else {
                 self.uninstallNeedsApproval = true
+                // Waiting on the person, not on macOS: no time limit then.
+                self.deactivationAttempt &+= 1
                 // Removal can need approval too. Do not repaint the firewall
                 // status as "waiting to be switched on" while the user is
                 // switching it off.

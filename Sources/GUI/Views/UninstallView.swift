@@ -302,7 +302,7 @@ struct UninstallFlowSheet: View {
             steps
         case .doneUntilRestart:
             headline("FreeSnitch is uninstalled", icon: "checkmark.circle.fill", tint: Color(nsColor: .systemGreen))
-            Text("FreeSnitch isn’t filtering anything now. macOS finishes removing its network filter the next time you restart. You don’t need to restart for this.")
+            Text("FreeSnitch isn’t filtering anything now, and macOS finishes removing it the next time you restart.")
                 .fixedSize(horizontal: false, vertical: true)
         case .failed(let failure):
             failureText(failure)
