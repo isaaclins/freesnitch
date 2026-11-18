@@ -107,8 +107,6 @@ final class MenubarController {
         // Settings keeps Command-comma as well: that one is a system-wide
         // convention and people press it wherever Settings happens to sit.
         menu.addItem(makeItem("Settings", #selector(openSettings), keyEq: ",", modifiers: [.command]))
-        // The CLI was only findable by reading the repository (#423).
-        menu.addItem(makeItem("Command-Line Tool…", #selector(openCommandLine), keyEq: ""))
         menu.addItem(.separator())
         let modeMenu = NSMenu(title: "Mode")
         modeMenu.addItem(makeItem("Alert", #selector(modeAlert), keyEq: "", state: state.mode == .alert ? .on : .off))
@@ -143,7 +141,6 @@ final class MenubarController {
     @objc private func openInsights() { windows.showInsights() }
     @objc private func openProfiles() { windows.showProfiles() }
     @objc private func openSettings() { windows.showSettings() }
-    @objc private func openCommandLine() { windows.showCommandLineSettings() }
     @objc private func modeAlert() { state.setMode(.alert) }
     @objc private func modeAllow() { state.setMode(.silentAllow) }
     @objc private func modeDeny() { state.setMode(.silentDeny) }

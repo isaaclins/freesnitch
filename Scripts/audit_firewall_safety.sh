@@ -1236,7 +1236,7 @@ COMMAND_LINE_TOOL="$ROOT/Sources/GUI/App/CommandLineTool.swift"
 [[ -f "$COMMAND_LINE_TOOL" ]] || fail "missing $COMMAND_LINE_TOOL"
 require_text "$COMMAND_LINE_TOOL" '/bin/ln -s /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges' \
   "the command link install is no longer one fixed ln -s into the installed app"
-require_text "$COMMAND_LINE_TOOL" 'if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qx /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi' \
+require_text "$COMMAND_LINE_TOOL" 'if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi' \
   "the command link removal no longer checks that the link is FreeSnitch's"
 if rg 'do shell script' "$COMMAND_LINE_TOOL" | read_all_then rg -q '\\\(|ln -sf|ln -fs|rm -rf'; then
   fail "a command link script interpolates a value, forces a link over an existing file, or removes recursively"

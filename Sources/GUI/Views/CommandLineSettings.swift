@@ -27,7 +27,7 @@ struct CommandLineSettingsView: View {
     var body: some View {
         Form {
             Section("Command-line tool") {
-                Text("Everything FreeSnitch does can also be done from Terminal with the `freesnitch` command: check its status, change the mode, manage rules and blocklists, and answer alerts. Scripts can use it too, since every command can answer in JSON.")
+                Text("Most of what FreeSnitch does can also be done from Terminal with the `freesnitch` command: check its status, change the mode, manage rules and blocklists, and answer alerts. Scripts can use it too, since every command can answer in JSON.")
                     .fixedSize(horizontal: false, vertical: true)
                 LabeledContent("Status") {
                     Text(statusText)

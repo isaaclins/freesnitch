@@ -170,7 +170,7 @@ Switching profiles affects new connections only. Verdicts are made in `handleNew
 Live up and down throughput when enabled, a five-minute traffic graph, a top-process list, a denied-count badge, and a one-click mode picker.
 
 ### Command line
-Everything the app does also works from Terminal with the `freesnitch` command, and every command can answer in JSON for scripts. To set it up, open **FreeSnitch > Settings > Command Line** (or **Help > Command-Line Tool…**) and press **Install Command…**. That adds `/usr/local/bin/freesnitch`, a link to the tool inside the app, after one password prompt. Then try:
+Most of what the app does also works from Terminal with the `freesnitch` command (status, mode, rules, blocklists, alerts, DNS settings), and every command can answer in JSON for scripts. To set it up, open **FreeSnitch > Settings > Command Line** (or **Help > Command-Line Tool…**) and press **Install Command…**. That adds `/usr/local/bin/freesnitch`, a link to the tool inside the app, after one password prompt. Then try:
 
 ```bash
 freesnitch status

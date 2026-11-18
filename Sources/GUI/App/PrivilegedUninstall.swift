@@ -41,7 +41,7 @@ enum PrivilegedUninstall {
     do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
     /sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
-    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qx /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
+    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'" with administrator privileges
     """
 
@@ -51,7 +51,7 @@ enum PrivilegedUninstall {
     do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
     /sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
-    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qx /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
+    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'; \
     /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite'" with administrator privileges
     """

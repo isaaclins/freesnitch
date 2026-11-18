@@ -92,7 +92,7 @@ enum CommandLineTool {
 
     /// Removes the link only while it still points at the installed tool.
     private static let removeScript =
-        "do shell script \"if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qx /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi\" with administrator privileges"
+        "do shell script \"if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi\" with administrator privileges"
 
     /// Blocks on the password prompt; call it off the main thread.
     static func install() -> Result<Void, Failure> {

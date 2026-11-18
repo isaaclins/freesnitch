@@ -115,7 +115,7 @@ sh -c "$(moved "$remove_cmd")" || true
 
 # The uninstall's copy of the removal is the same guarded command.
 uninstall_src="$ROOT/Sources/GUI/App/PrivilegedUninstall.swift"
-[[ "$(grep -c -F "if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qx /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi;" "$uninstall_src")" == 2 ]] \
+[[ "$(grep -c -F "if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi;" "$uninstall_src")" == 2 ]] \
   && pass "both uninstall forms remove only FreeSnitch's link" || fail "an uninstall form does not remove the link, or removes it unguarded"
 
 if (( failures > 0 )); then echo "command line tool verification: FAIL ($failures)"; exit 1; fi
