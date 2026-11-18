@@ -161,6 +161,26 @@ enum InstallLocation {
         translocatedOriginal(of: Bundle.main.bundleURL) ?? Bundle.main.bundleURL
     }
 
+    /// Set by a copy out of ~/Applications to the path of the new copy (#418).
+    static let reregisterKey = "PSReregisterHelperAfterMoveTo"
+
+    /// Whether this launch is the new copy a ~/Applications copy just made,
+    /// which must register the helper again even though macOS reports it
+    /// enabled: launchd may still run it from the old copy. Registering again
+    /// never unregisters (#24); if it fails, the old registration stays.
+    static func shouldReregister(requestedPath: String?, running: URL) -> Bool {
+        guard let requestedPath else { return false }
+        return requestedPath == running.resolvingSymlinksInPath().path
+    }
+
+    /// Reads and clears the request, so it is acted on at most once.
+    static func takeReregisterRequest(running: URL = Bundle.main.bundleURL) -> Bool {
+        let requested = UserDefaults.standard.string(forKey: reregisterKey)
+        guard requested != nil else { return false }
+        UserDefaults.standard.removeObject(forKey: reregisterKey)
+        return shouldReregister(requestedPath: requested, running: running)
+    }
+
     /// Whether the bundle carries the network filter (the firewall build).
     /// The monitor-only build doesn't.
     static func embedsSystemExtension(_ bundle: URL) -> Bool {
@@ -343,6 +363,13 @@ extension InstallLocation {
                 }
                 return false
             case .success:
+                // The home-folder copy stays, and its helper registration may
+                // still point into it. The new copy registers the helper again
+                // once at launch, so launchd runs it from /Applications (#418).
+                if isInUserApplications(original) {
+                    UserDefaults.standard.set(destination.resolvingSymlinksInPath().path, forKey: reregisterKey)
+                    UserDefaults.standard.synchronize()
+                }
                 if shouldTrashOriginal(original) {
                     // Synchronous: the process quits right after this.
                     try? FileManager.default.trashItem(at: original, resultingItemURL: nil)

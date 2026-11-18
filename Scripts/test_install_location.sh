@@ -162,6 +162,23 @@ check(!InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, user
       "a firewall copy in ~/Applications isn't counted as installed for a monitor download either")
 check(InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userCopy: oldMonitor),
       "a monitor download stops at the monitor copy in ~/Applications, as before")
+// #418: the new /Applications copy registers the helper again, once, so
+// launchd stops running it from the ~/Applications copy.
+let newCopy = URL(fileURLWithPath: "/Applications/FreeSnitch.app")
+check(InstallLocation.shouldReregister(requestedPath: "/Applications/FreeSnitch.app", running: newCopy),
+      "the copy the move made registers the helper again")
+check(!InstallLocation.shouldReregister(requestedPath: "/Applications/FreeSnitch.app", running: firewallCopy),
+      "the old ~/Applications copy never acts on the request")
+check(!InstallLocation.shouldReregister(requestedPath: nil, running: newCopy),
+      "without a move, nothing is registered again")
+let defaultsKey = InstallLocation.reregisterKey
+UserDefaults.standard.set(newCopy.path, forKey: defaultsKey)
+let first = InstallLocation.takeReregisterRequest(running: newCopy)
+let second = InstallLocation.takeReregisterRequest(running: newCopy)
+check(first && !second, "the request is used once and then cleared")
+UserDefaults.standard.set(newCopy.path, forKey: defaultsKey)
+_ = InstallLocation.takeReregisterRequest(running: firewallCopy)
+check(UserDefaults.standard.string(forKey: defaultsKey) == nil, "a request read by another copy is cleared too, so it can't fire later")
 check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path)),
       "a ~/Applications copy of an installed build offers to open the /Applications one")
 
@@ -268,6 +285,12 @@ echo "install location: PASS: the move never deletes the installed copy"
 grep -q 'versionState, installState != .wrongLocation' "$ROOT/Sources/GUI/Views/HelperBanner.swift" \
   || { echo "install location: FAIL: a helper mismatch can hide the Move banner of a copy outside Applications" >&2; exit 1; }
 echo "install location: PASS: a copy outside Applications shows Move before Repair Helper"
+helper_swift="$ROOT/Sources/GUI/App/HelperClient.swift"
+awk '/func reregisterAfterCopy/ { inside = 1 } inside && /unregister/ { bad = 1 } inside && /^    }$/ { inside = 0 } END { exit bad ? 1 : 0 }' "$helper_swift" \
+  && grep -q 'if isInUserApplications(original) {' "$ROOT/Sources/GUI/App/InstallLocation.swift" \
+  && grep -A2 'case .alreadyEnabled:' "$helper_swift" | grep -q 'takeReregisterRequest' \
+  || { echo "install location: FAIL: the copy out of ~/Applications doesn't hand the helper over, or the handover can unregister" >&2; exit 1; }
+echo "install location: PASS: a copy out of ~/Applications registers the helper again from /Applications, without unregistering"
 app_swift="$ROOT/Sources/GUI/App/FreeSnitchApp.swift"
 [ "$(grep -c 'systemExtension.activate()' "$app_swift")" = 1 ] \
   && awk '/LegacyPureSnitch.offerRemovalAtLaunch \{/ { inside = 1 } inside && /systemExtension.activate\(\)/ { found = 1 } inside && /^        }$/ { inside = 0 } END { exit found ? 0 : 1 }' "$app_swift" \

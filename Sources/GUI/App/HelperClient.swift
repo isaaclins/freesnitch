@@ -190,6 +190,9 @@ final class HelperClient: NSObject, ObservableObject {
         switch HelperLifecyclePolicy.action(for: Self.lifecycleStatus(for: service.status)) {
         case .alreadyEnabled:
             installState = .enabled
+            if InstallLocation.takeReregisterRequest() {
+                reregisterAfterCopy(service)
+            }
         case .register:
             guard Self.hasBundledHelper else {
                 installState = .notFound
@@ -210,6 +213,21 @@ final class HelperClient: NSObject, ObservableObject {
         case .manualKickstart, .noRegistration:
             installState = .unknown
         }
+    }
+
+    /// This copy was just made from one in ~/Applications whose registration
+    /// launchd may still run the helper from. Registering again from here
+    /// points it at this copy. It never unregisters (#24): if it fails, the
+    /// old registration and the old copy are both still there (#418).
+    private func reregisterAfterCopy(_ service: SMAppService) {
+        let path = Bundle.main.bundleURL.path
+        do {
+            try service.register()
+            state?.appendLog(level: "info", message: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications.")
+        } catch {
+            state?.appendLog(level: "error", message: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))")
+        }
+        refreshInstallState()
     }
 
     /// Re-reads the launchd registration so the UI can drop the banner as soon
