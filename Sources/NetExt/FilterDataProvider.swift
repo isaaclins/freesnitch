@@ -349,9 +349,13 @@ final class FilterDataProvider: NEFilterDataProvider {
         // a lookup the resolver makes on an app's behalf is attributed to
         // that app (#422). Remembered per process, so this costs a path read
         // per flow and a signature check per process.
+        // A process that sent its own flow from elsewhere is settled by the
+        // path read above, without another one.
+        let senderToken = socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken
+        let sentByOtherProcess = senderToken != socketFlow.sourceAppAuditToken
         let sentByResolver = conn.direction == .outgoing
-            && systemResolverIdentity.isSystemResolver(
-                processAuditToken: socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken)
+            && (sentByOtherProcess || conn.processPath == RuleMatcher.systemResolverPath)
+            && systemResolverIdentity.isSystemResolver(processAuditToken: senderToken)
         let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode,
                                                  sentBySystemResolver: sentByResolver)
         // Only once the flow's own code was checked: before that, a missing

@@ -179,8 +179,10 @@ require_text "$RULE_MATCHER" 'public static let systemResolverRequirement = "anc
   "the system resolver's signature requirement is no longer Apple's mDNSResponder"
 require_text "$RULE_MATCHER" 'passesRequirement && senderPath == systemResolverPath' \
   "the system resolver no longer needs both its path and its signature"
-require_text "$FILTER" 'processAuditToken: socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken)' \
+require_text "$FILTER" 'let senderToken = socketFlow.sourceProcessAuditToken ?? socketFlow.sourceAppAuditToken' \
   "the extension no longer identifies the resolver by the process that sent the flow"
+require_text "$FILTER" 'systemResolverIdentity.isSystemResolver(processAuditToken: senderToken)' \
+  "the extension no longer checks the process that sent the flow against the resolver identity"
 RESOLVER_IDENTITY="$ROOT/Sources/NetExt/SystemResolverIdentity.swift"
 require_text "$RESOLVER_IDENTITY" 'guard path == RuleMatcher.systemResolverPath else { return false }' \
   "the extension no longer checks the sending process's path before vouching for the resolver"
