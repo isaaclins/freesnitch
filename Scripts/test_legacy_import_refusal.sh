@@ -22,9 +22,9 @@ pass() { printf 'legacy import refusal: PASS: %s\n' "$*"; }
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
 body="$(awk '/func legacyReplaceRules\(rulesJSON/,/^    }$/' "$HELPER")"
 [ -n "$body" ] || fail "the helper does not answer the old import request"
-printf '%s\n' "$body" | grep -Fq 'reply(false, HelperBridge.legacyImportRefusal)' \
+grep -Fq 'reply(false, HelperBridge.legacyImportRefusal)' <<<"$body" \
   || fail "the helper does not refuse the old import request with the update message"
-if printf '%s\n' "$body" | grep -Eq 'mutatePolicy|applyRules|reply\(true'; then
+if grep -Eq 'mutatePolicy|applyRules|reply\(true' <<<"$body"; then
   fail "the helper's answer to the old import request can write rules"
 fi
 pass "the helper only refuses the old import request and writes nothing"

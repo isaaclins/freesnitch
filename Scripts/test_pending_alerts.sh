@@ -520,8 +520,8 @@ harness_value() {
 # actually hold the flow. Read both of those out of the real files rather than
 # trusting a constant that could drift.
 MAX_LIFETIME="$(harness_value maxLifetime)"
-EXTENSION_TIMEOUT="$(rg -o 'private let askTimeout: TimeInterval = ([0-9]+)' -r '$1' "$ROOT/Sources/NetExt/FilterDataProvider.swift" | head -1)"
-HELPER_TIMEOUT="$(rg -o 'static let askTimeout: TimeInterval = ([0-9]+)' -r '$1' "$ROOT/Sources/Helper/HelperService.swift" | head -1)"
+EXTENSION_TIMEOUT="$(rg -o 'private let askTimeout: TimeInterval = ([0-9]+)' -r '$1' "$ROOT/Sources/NetExt/FilterDataProvider.swift" | sed -n 1p)"
+HELPER_TIMEOUT="$(rg -o 'static let askTimeout: TimeInterval = ([0-9]+)' -r '$1' "$ROOT/Sources/Helper/HelperService.swift" | sed -n 1p)"
 
 [[ -n "$MAX_LIFETIME" && -n "$EXTENSION_TIMEOUT" && -n "$HELPER_TIMEOUT" ]] \
   || fail "could not read the alert lifetime and both ask timeouts from the real sources"
