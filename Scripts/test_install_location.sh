@@ -165,6 +165,34 @@ check(InstallLocation.userCopyCountsAsInstalled(source: downloadedMonitor, userC
 check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: InstallLocation.asksAtLaunch(firewallCopy, home: homeDir.path)),
       "a ~/Applications copy of an installed build offers to open the /Applications one")
 
+// #417: the firewall and monitor-only builds share build numbers, so Open It
+// is only offered when the installed copy is the same flavour.
+let installedApps = work.appendingPathComponent("flavour/Applications", isDirectory: true)
+let installedMonitor = installedApps.appendingPathComponent("FreeSnitch.app", isDirectory: true)
+makeBundle(at: installedMonitor, build: "35")
+let downloadedFirewall = homeDir.appendingPathComponent("Downloads/Firewall/FreeSnitch.app", isDirectory: true)
+makeBundle(at: downloadedFirewall, build: "35")
+try! fm.createDirectory(at: downloadedFirewall.appendingPathComponent("Contents/Library/SystemExtensions/io.isaaclins.freesnitch.netext.systemextension"),
+                        withIntermediateDirectories: true)
+check(InstallLocation.plan(source: downloadedFirewall, applications: installedApps) == .existing(installedMonitor, isOlder: false),
+      "a firewall download over a monitor install of the same build finds the install")
+let firewallOverMonitor = InstallLocation.embedsSystemExtension(downloadedFirewall) == InstallLocation.embedsSystemExtension(installedMonitor)
+check(!InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: true, sameFlavour: firewallOverMonitor),
+      "a firewall download never offers to open a monitor-only install")
+check(!InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: true, sameFlavour: false),
+      "a monitor-only download never offers to open a firewall install")
+check(InstallLocation.offersOpenInstalled(isOlder: false, sourceFromDownload: true, sameFlavour: true),
+      "the same flavour still offers Open It")
+let toFirewall = InstallLocation.replaceMessage(isOlder: false, sourceIsFirewall: true, installedIsFirewall: false)
+check(toFirewall.title.contains("monitor-only") && toFirewall.text.contains("drag this copy onto it"),
+      "a firewall download says the monitor-only build is installed and how to replace it")
+let toMonitor = InstallLocation.replaceMessage(isOlder: false, sourceIsFirewall: false, installedIsFirewall: true)
+check(toMonitor.title.contains("firewall build") && toMonitor.text.contains("drag this copy onto it")
+      && toMonitor.text.contains("turns per-app filtering off"),
+      "a monitor-only download says the firewall build is installed, how to replace it, and what that turns off")
+check(InstallLocation.replaceMessage(isOlder: true, sourceIsFirewall: true, installedIsFirewall: true).title.contains("older"),
+      "the same flavour keeps the older-install wording")
+
 // PureSnitch detection looks at its two fixed paths only.
 var asked: [String] = []
 let none = LegacyPureSnitch.detect(listing: { nil }) { asked.append($0); return false }
