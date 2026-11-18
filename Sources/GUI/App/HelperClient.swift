@@ -201,7 +201,8 @@ final class HelperClient: NSObject, ObservableObject {
                 refreshInstallState()
             } catch {
                 let details = HelperRecovery.registrationErrorDetails(error)
-                installState = .failed(details)
+                installState = .failed(HelperRegistrationFailure.message(
+                    for: error, inApplications: Self.isInApplicationsFolder))
                 state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
             }
         case .guideApproval:
@@ -343,7 +344,8 @@ final class HelperClient: NSObject, ObservableObject {
         } catch {
             let details = HelperRecovery.registrationErrorDetails(error)
             state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
-            finishRepairFailure("SMAppService could not register the absent helper: \(details). Open System Settings under General > Login Items & Extensions if approval is required, then try again.")
+            finishRepairFailure("FreeSnitch could not register the missing helper. " + HelperRegistrationFailure.message(
+                for: error, inApplications: Self.isInApplicationsFolder))
         }
     }
 
@@ -1164,6 +1166,11 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
             if message == AppConstants.profilePolicyChangedLogMessage {
                 self.state?.syncSharedRules()
                 ProfileClient.shared.refresh()
+            }
+            // Rules learned their app's signing team (#364): the extension
+            // needs the policy that carries it.
+            if message == AppConstants.ruleSigningTeamsLearnedLogMessage {
+                self.state?.syncSharedRules()
             }
         }
     }

@@ -127,9 +127,9 @@ private struct BannerInfo {
             icon = "arrow.down.app.fill"
             tint = Color.red
             title = "Move FreeSnitch to your Applications folder"
-            detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. Drag FreeSnitch.app into Applications, then open it from there."
-            action = BannerAction(title: "Reveal in Finder") { _, _ in
-                NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+            detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there."
+            action = BannerAction(title: "Move to Applications") { _, _ in
+                InstallLocation.moveToApplications()
             }
         case .notFound:
             icon = "exclamationmark.triangle.fill"
@@ -146,7 +146,9 @@ private struct BannerInfo {
             icon = "xmark.octagon.fill"
             tint = Color.red
             title = "Helper installation failed"
-            detail = "\(message) Move FreeSnitch into /Applications and try again."
+            // The message already says what macOS reported and what to do,
+            // including the move advice only when it applies (#409).
+            detail = message
             action = BannerAction(title: "Retry") { state, _ in state.helper.registerDaemon() }
         }
     }

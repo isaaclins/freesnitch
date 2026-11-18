@@ -437,7 +437,8 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     /// Once per process: an allow rule named the bundle id this app's
     /// Info.plist claims, but the process's code signature does not vouch for
-    /// that id, so the rule did not apply (#351). Says why the user got an
+    /// that id (#351), or another team signed it than the rule's (#364), so
+    /// the rule did not apply. Says why the user got an
     /// alert for an app they allowed. Trylock-only: a contended verdict skips
     /// the note instead of waiting.
     private func noteUnverifiedBundleId(_ conn: Connection, skipped: Rule) {
@@ -446,9 +447,15 @@ final class FilterDataProvider: NEFilterDataProvider {
         let first = unverifiedBundleLoggedPIDs.insert(conn.pid).inserted
         os_unfair_lock_unlock(unverifiedBundleLogLock)
         guard first else { return }
+        let reason: String
+        if conn.processBundleId == skipped.processBundleId {
+            reason = "it is signed with that bundle id by team \(conn.processTeamId ?? "none"), but the rule was made for the app signed by team \(skipped.processTeamId ?? "none")"
+        } else {
+            reason = "its Info.plist claims that bundle id, but its code signature does not vouch for it (signed id: \(conn.processBundleId ?? "none"))"
+        }
         PSLog.info(
             PSLog.netext,
-            "The \(skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(conn.pid)): its Info.plist claims that bundle id, but its code signature does not vouch for it (signed id: \(conn.processBundleId ?? "none")), so only deny and ask rules for that id apply."
+            "The \(skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(conn.pid)): \(reason), so only deny and ask rules for that id apply."
         )
     }
 
@@ -669,6 +676,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             processName: name,
             processPath: path,
             processBundleId: metadata?.bundleIdentifier,
+            processTeamId: metadata?.bundleIdentifier == nil ? nil : metadata?.team,
             claimedBundleId: metadata?.claimedBundleIdentifier,
             remoteHost: remoteHost,
             remoteIP: remoteIP,
@@ -1001,6 +1009,9 @@ struct AppBundleMetadata: Sendable {
     /// What the unsigned Info.plist claims, when it differs from the signed
     /// identifier. Only ever matched by deny rules.
     var claimedBundleIdentifier: String? = nil
+    /// The team that signed `bundleIdentifier` in an answer from the cache
+    /// (#364), or `CodeSigningIdentity.appleTeam`. Nil with no signed id.
+    var team: String? = nil
     /// Whether the code this flow's process runs has been checked yet. Until
     /// it has, a missing `bundleIdentifier` means "not known yet", not "the
     /// signature does not vouch for it".
@@ -1044,7 +1055,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
         var plistFailures = 0
         /// Code hashes checked at this path: the signed identifier, or nil
         /// when the code's signature is not one rules may trust.
-        var signed: [CDHash: String?] = [:]
+        var signed: [CDHash: CodeSigningIdentity.SignedBundle?] = [:]
         var signedOrder: [CDHash] = []
         /// The code whose signature could not be read at all, when it may be
         /// checked again, and how many such checks failed in a row. Kept per
@@ -1142,7 +1153,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
         let now = clock()
         os_unfair_lock_lock(lock)
         let entry = entries[path]
-        let known: String?? = hash.flatMap { entry?.signed[$0] }
+        let known: CodeSigningIdentity.SignedBundle?? = hash.flatMap { entry?.signed[$0] }
         let plistDue = entry.map { now >= $0.plistRefreshAfterNanos } ?? true
         let retryDue = entry.map { hash != $0.unreadableHash || now >= $0.signatureRetryAfterNanos } ?? true
         let checkDue = hash != nil && known == nil && retryDue
@@ -1217,7 +1228,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
                 let shift = UInt64(min(entry.signatureFailures - 1, 20))
                 entry.signatureRetryAfterNanos = now &+ min(failureRetryNanos << shift, lifetimeNanos)
             case .noBundle, .resolved:
-                if entry.signed.updateValue(identity.bundleIdentifier, forKey: hash) == nil {
+                if entry.signed.updateValue(identity.signed, forKey: hash) == nil {
                     entry.signedOrder.append(hash)
                     if entry.signedOrder.count > signedPerPath {
                         entry.signed.removeValue(forKey: entry.signedOrder.removeFirst())
@@ -1252,11 +1263,12 @@ final class BundleIdentifierCache: @unchecked Sendable {
         }
     }
 
-    private static func metadata(_ bundleIdentifier: String?, _ plist: AppBundleMetadata?) -> AppBundleMetadata? {
+    private static func metadata(_ signed: CodeSigningIdentity.SignedBundle?, _ plist: AppBundleMetadata?) -> AppBundleMetadata? {
+        let bundleIdentifier = signed?.identifier
         let claimed = plist?.bundleIdentifier.flatMap { $0.isEmpty || $0 == bundleIdentifier ? nil : $0 }
         guard bundleIdentifier != nil || plist?.version != nil || claimed != nil else { return nil }
         return AppBundleMetadata(bundleIdentifier: bundleIdentifier, version: plist?.version,
-                                 claimedBundleIdentifier: claimed)
+                                 claimedBundleIdentifier: claimed, team: signed?.team)
     }
 
     /// Caller must hold the lock.

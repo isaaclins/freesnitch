@@ -36,7 +36,9 @@ struct FreeSnitchApp: App {
                 // you see and reordering the sidebar cannot make a shortcut lie.
                 ForEach(Array(MainPage.allCases.enumerated()), id: \.element.id) { index, page in
                     Button(page.title) {
-                        delegate.windowManager.showPage(page)
+                        // Optional: the window manager doesn't exist yet while
+                        // the launch-time move question is open (#403).
+                        delegate.windowManager?.showPage(page)
                     }
                     .keyboardShortcut(pageShortcut(index), modifiers: .command)
                 }
@@ -45,7 +47,7 @@ struct FreeSnitchApp: App {
             // field the current page shows rather than opening a find bar of
             // its own (#96).
             CommandGroup(after: .textEditing) {
-                Button("Find") { delegate.windowManager.focusSearch() }
+                Button("Find") { delegate.windowManager?.focusSearch() }
                     .keyboardShortcut("f", modifiers: .command)
             }
         }
@@ -141,6 +143,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         state.applyDockIconPolicy()
+        // Opened from the disk image or Downloads: offer to move into
+        // Applications first, because nothing else can work from there (#370).
+        if InstallLocation.offerMoveAtLaunch() { return }
         windowManager = WindowManager(state: state, systemExtension: systemExtension)
         menubar = MenubarController(state: state, systemExtension: systemExtension, windows: windowManager)
         menubar.install()
@@ -161,11 +166,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // current mode and rules as soon as its XPC listener is available.
         state.syncSharedRules()
 
+        // An old PureSnitch install must not keep filtering next to this one,
+        // so this app's own filter starts only once that question is settled:
+        // at once for Not Now, after the removal when the user chose Remove.
+        //
         // Per-process firewall (Network System Extension). `activate()` is a
         // no-op unless this build embeds one. The monitor-only build does
         // not, so no extension approval prompt appears.
-        if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
-            systemExtension.activate()
+        LegacyPureSnitch.offerRemovalAtLaunch { [systemExtension] in
+            if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] != "1" {
+                systemExtension.activate()
+            }
         }
 
         // A menu-bar-only app that shows nothing on first launch reads as
@@ -197,6 +208,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.windowManager.uninstallModel.begin()
                     }
                 case "popover": self.menubar.showPopover()
+                // The banner a copy outside Applications shows, for review.
+                case "move-banner":
+                    self.state.helperInstallState = .wrongLocation
+                    self.windowManager.showNetworkMonitor()
                 // The connection alert is the app's most consequential screen
                 // and the only one that cannot be reached from the sidebar, so
                 // without this it is the one screen nobody can review before it
@@ -334,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Synthetic rules so the demo showcases the populated Rules manager
         state.rules = [
-            Rule(processBundleId: "com.apple.Music", processPath: "/System/Applications/Music.app", processName: "Music", remoteHost: "*.itunes.apple.com", direction: .outgoing, action: .allow, scope: .domain, priority: 100, profile: "default", notes: "Allow audio streaming", lastUsedAt: now.addingTimeInterval(-120), hitCount: 482),
+            Rule(processBundleId: "com.apple.Music", processTeamId: CodeSigningIdentity.appleTeam, processPath: "/System/Applications/Music.app", processName: "Music", remoteHost: "*.itunes.apple.com", direction: .outgoing, action: .allow, scope: .domain, priority: 100, profile: "default", notes: "Allow audio streaming", lastUsedAt: now.addingTimeInterval(-120), hitCount: 482),
             Rule(processBundleId: "com.apple.dt.Xcode", processPath: "/Applications/Xcode.app", processName: "Xcode", remoteHost: "*.apple.com", direction: .outgoing, action: .allow, scope: .domain, priority: 90, profile: "default", lastUsedAt: now.addingTimeInterval(-3600), hitCount: 31),
             Rule(processBundleId: "company.thebrowser.Browser", processPath: "/Applications/Arc.app", processName: "Arc", remoteHost: "*.youtube.com", direction: .outgoing, action: .allow, scope: .domain, priority: 80, profile: "default", hitCount: 1290),
             Rule(processBundleId: "com.hnc.Discord", processPath: "/Applications/Discord.app", processName: "Discord", remoteHost: "*.discord.gg", direction: .outgoing, action: .allow, scope: .domain, priority: 70, profile: "default", hitCount: 96),
@@ -343,9 +358,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Rule(remoteHost: "*.facebook.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 845),
             Rule(processBundleId: "com.anthropic.claudefordesktop", processPath: "/Applications/Claude.app", processName: "Claude", remoteHost: "api.anthropic.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", lastUsedAt: now.addingTimeInterval(-40), hitCount: 1204),
             Rule(processBundleId: "dev.zed.Zed", processPath: "/Applications/Zed.app", processName: "Zed", remoteHost: "*.zed.dev", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", temporary: true, expiresAt: now.addingTimeInterval(3600), hitCount: 12),
-            Rule(processBundleId: "com.apple.Safari", processPath: "/Applications/Safari.app", processName: "Safari", remoteHost: "github.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", lastUsedAt: now.addingTimeInterval(-300), hitCount: 640),
-            Rule(processBundleId: "com.apple.mail", processPath: "/System/Applications/Mail.app", processName: "Mail", remoteHost: "*.mail.me.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 2210),
-            Rule(processBundleId: "com.apple.mail", processPath: "/System/Applications/Mail.app", processName: "Mail", remoteHost: "outlook.office365.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 388),
+            Rule(processBundleId: "com.apple.Safari", processTeamId: CodeSigningIdentity.appleTeam, processPath: "/Applications/Safari.app", processName: "Safari", remoteHost: "github.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", lastUsedAt: now.addingTimeInterval(-300), hitCount: 640),
+            Rule(processBundleId: "com.apple.mail", processTeamId: CodeSigningIdentity.appleTeam, processPath: "/System/Applications/Mail.app", processName: "Mail", remoteHost: "*.mail.me.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 2210),
+            Rule(processBundleId: "com.apple.mail", processTeamId: CodeSigningIdentity.appleTeam, processPath: "/System/Applications/Mail.app", processName: "Mail", remoteHost: "outlook.office365.com", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 388),
             Rule(processBundleId: "company.thebrowser.Browser", processPath: "/Applications/Arc.app", processName: "Arc", remoteHost: "*.google-analytics.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 1532),
             Rule(remoteHost: "*.scorecardresearch.com", direction: .outgoing, action: .deny, scope: .domain, priority: 60, profile: "default", notes: "Tracker", hitCount: 97),
             Rule(processBundleId: "net.whatsapp.WhatsApp", processPath: "/Applications/WhatsApp.app", processName: "WhatsApp", remoteHost: "*.whatsapp.net", direction: .outgoing, action: .allow, scope: .domain, priority: 50, profile: "default", hitCount: 902),
@@ -425,7 +440,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        windowManager.showMainWindow()
+        // Not set yet while the launch-time move question is on screen.
+        windowManager?.showMainWindow()
         return true
     }
 }

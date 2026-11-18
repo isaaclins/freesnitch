@@ -863,6 +863,20 @@ commit_and_publish() {
   cp "$NOTES_INPUT" "$notes_destination"
   cp "$BUILD_ROOT/appcast.xml" "$ROOT/docs/appcast.xml"
 
+  # Checksums come from the files being uploaded, so nobody copies a hash by
+  # hand into the README or the site again (#370). Check a download with
+  # `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` in the folder
+  # it was saved to. Built before anything is committed, tagged or pushed, so
+  # a failure here stops the release with nothing published (#376).
+  local sums="$BUILD_ROOT/SHA256SUMS.txt" sum_file
+  : >"$sums"
+  local sum_line
+  for sum_file in "$DMG_PATH" "$ZIP_PATH"; do
+    sum_line="$(shasum -a 256 "$sum_file")" || die "could not checksum $sum_file"
+    [[ "$sum_line" =~ ^[0-9a-f]{64}\  ]] || die "unexpected checksum output for $sum_file"
+    printf '%s  %s\n' "${sum_line%% *}" "$(basename "$sum_file")" >>"$sums"
+  done
+
   local staged_files unexpected
   git add -- "${VERSIONED_TRACKED_PATHS[@]}" "$ROOT/docs/appcast.xml" "$notes_destination"
   git diff --cached --check
@@ -886,6 +900,8 @@ commit_and_publish() {
     [[ -f "$delta" ]] || continue
     assets+=("$delta")
   done
+
+  assets+=("$sums")
 
   # Every enclosure the new appcast item advertises must be in the upload set.
   # A feed that points at a file we never attached is indistinguishable from a

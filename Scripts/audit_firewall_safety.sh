@@ -1580,17 +1580,22 @@ require_text "$HELPER" 'processName: Connection.dnsLookupProcessName' \
 # stay in, so an address feed never blocks what the user allowed.
 anchor_body="$(sed -n '/func renderAnchor(/,/^    }$/p' "$PF_MANAGER")"
 [[ -n "$anchor_body" ]] || fail "PFManager has no renderAnchor function to audit"
-grep -Fq 'let liveRules = rules.filter { $0.enabled && !PFManager.hasExpired($0, at: now) }' <<<"$anchor_body" \
-  || fail "the pf anchor renders disabled or expired rules, so a temporary deny keeps blocking after it ran out"
-grep -Fq 'let denyRules = liveRules.filter { $0.action == .deny && PFManager.reachesPF($0) }' <<<"$anchor_body" \
-  || fail "the pf anchor no longer filters deny rules through reachesPF"
-grep -Fq 'let allowRules = liveRules.filter { $0.action == .allow && PFManager.reachesPF($0) }' <<<"$anchor_body" \
-  || fail "the pf anchor no longer filters allow rules through reachesPF"
+# A quick line stops pf at the first match, so the lines must follow the matcher's order
+# (PreparedRuleSet: enabled rules, priority first) or a lower-priority deny
+# overrides a higher-priority allow (issue #181).
+grep -Fq 'let liveRules = PreparedRuleSet(rules: rules).ordered.filter { !PFManager.hasExpired($0, at: now) }' <<<"$anchor_body" \
+  || fail "the pf anchor no longer renders the matcher's order of enabled, unexpired rules, so pf and the extension can disagree"
+grep -Fq 'let renderedRules = liveRules.filter { PFManager.reachesPF($0) }' <<<"$anchor_body" \
+  || fail "the pf anchor no longer filters the rules it renders through reachesPF"
+[[ "$(printf '%s\n' "$anchor_body" | grep -c 'pfLines(')" -eq 1 ]] \
+  || fail "the pf anchor renders rules in more than one pass, which ignores rule priority"
 reaches_body="$(swift_function_body "$PF_MANAGER" 'static func reachesPF(')"
 grep -Fq 'case .deny: return !namesAnApp(rule)' <<<"$reaches_body" \
   || fail "the pf anchor no longer drops deny rules that name an app, so one app's deny would block every app"
 grep -Fq 'case .allow: return true' <<<"$reaches_body" \
   || fail "the pf anchor no longer renders every live allow rule, so an address feed could block what the user allowed"
+grep -Fq 'case .ask: return false' <<<"$reaches_body" \
+  || fail "the pf anchor renders ask rules as passes, which turns the address feeds off for their whole address or port"
 if grep -Eq 'for [a-z]+ in rules\b' <<<"$anchor_body"; then
   fail "the pf anchor renders the unfiltered rule set somewhere"
 fi
@@ -1665,4 +1670,4 @@ grep -Fq -- '"-F", "all"' <<<"$unload_body" \
 grep -Eq 'removeItem|"-d"' <<<"$unload_body" \
   && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
