@@ -110,6 +110,16 @@ check(!ok(roResult), "a copy that keeps the download flag is reported as a failu
 check((try? fm.contentsOfDirectory(atPath: roApps.path))?.isEmpty == true, "nothing is left in Applications after that failure")
 
 check(InstallLocation.translocatedOriginal(of: source) == nil, "a bundle that isn't translocated has no other original")
+
+// #400: only a downloaded copy is asked at launch. A build folder isn't.
+let homeDir = work.appendingPathComponent("home", isDirectory: true)
+let dlCopy = homeDir.appendingPathComponent("Downloads/FreeSnitch.app", isDirectory: true)
+makeBundle(at: dlCopy, build: "35")
+let devBuild = work.appendingPathComponent("DerivedData/Build/Products/Debug/FreeSnitch.app", isDirectory: true)
+makeBundle(at: devBuild, build: "35")
+check(InstallLocation.cameFromDownload(dlCopy, home: homeDir.path), "a copy in Downloads is asked about at launch")
+check(InstallLocation.cameFromDownload(source, home: homeDir.path), "a copy with the download flag is asked about at launch")
+check(!InstallLocation.cameFromDownload(devBuild, home: homeDir.path), "a contributor's build folder isn't asked about at launch")
 check(InstallLocation.isInApplications(URL(fileURLWithPath: "/Applications/FreeSnitch.app"), home: "/Users/x")
       && InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Applications/FreeSnitch.app"), home: "/Users/x")
       && !InstallLocation.isInApplications(URL(fileURLWithPath: "/Users/x/Downloads/FreeSnitch.app"), home: "/Users/x"),
