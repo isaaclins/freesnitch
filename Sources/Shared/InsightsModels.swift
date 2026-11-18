@@ -474,17 +474,20 @@ public struct FlowObservationBatch: Codable, Sendable {
             throw InsightsValidationError.tooManyObservations(observations.count)
         }
         for observation in observations { try observation.validate(now: now) }
-        if let ruleHits {
-            guard ruleHits.count <= InsightsLimits.maxBatchCount else {
-                throw InsightsValidationError.invalidField("ruleHits")
-            }
-            var seen = Set<UUID>()
-            for hit in ruleHits {
-                guard seen.insert(hit.ruleID).inserted else {
-                    throw InsightsValidationError.invalidField("ruleHits.ruleID")
-                }
-                try hit.validate(now: now)
-            }
+        // Too many hits is a malformed batch. A single bad hit (a clock that
+        // moved back, say) only costs that hit: see `validRuleHits`.
+        guard (ruleHits?.count ?? 0) <= InsightsLimits.maxBatchCount else {
+            throw InsightsValidationError.invalidField("ruleHits")
+        }
+    }
+
+    /// The hits worth recording: valid ones, each rule at most once. Invalid
+    /// hits are dropped without costing the batch its observations (#434).
+    public func validRuleHits(now: Date = Date()) -> [RuleHit] {
+        guard let ruleHits, ruleHits.count <= InsightsLimits.maxBatchCount else { return [] }
+        var seen = Set<UUID>()
+        return ruleHits.filter { hit in
+            (try? hit.validate(now: now)) != nil && seen.insert(hit.ruleID).inserted
         }
     }
 }

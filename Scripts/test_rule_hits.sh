@@ -93,13 +93,17 @@ struct Verify {
         check(older.ruleHits == nil, "a batch from an extension without hit counting still decodes")
         func rejects(_ hits: [RuleHit], _ label: String) {
             let candidate = FlowObservationBatch(observations: [], ruleHits: hits)
-            check((try? candidate.validate(payloadBytes: 100)) == nil, label)
+            check((try? candidate.validate(payloadBytes: 100)) != nil, "\(label): the batch itself is still accepted")
+            check(candidate.validRuleHits().count == 1, label)
         }
-        rejects([RuleHit(ruleID: deny.id, count: 0, lastMatchedAt: Date())], "a hit with no matches is rejected")
-        rejects([RuleHit(ruleID: deny.id, count: 1, lastMatchedAt: Date().addingTimeInterval(3600))],
-                "a hit from the future is rejected")
-        rejects([RuleHit(ruleID: deny.id, count: 1, lastMatchedAt: Date()), RuleHit(ruleID: deny.id, count: 2, lastMatchedAt: Date())],
-                "the same rule twice in one batch is rejected")
+        let good = RuleHit(ruleID: allow.id, count: 1, lastMatchedAt: Date())
+        rejects([good, RuleHit(ruleID: deny.id, count: 0, lastMatchedAt: Date())], "a hit with no matches is dropped")
+        rejects([good, RuleHit(ruleID: deny.id, count: 1, lastMatchedAt: Date().addingTimeInterval(3600))],
+                "a hit from the future is dropped")
+        rejects([good, RuleHit(ruleID: allow.id, count: 2, lastMatchedAt: Date())],
+                "the same rule twice in one batch is counted once")
+        let flood = FlowObservationBatch(observations: [], ruleHits: (0...InsightsLimits.maxBatchCount).map { _ in good })
+        check((try? flood.validate(payloadBytes: 100)) == nil, "a batch with more hits than the limit is rejected")
 
         // 4. The rules database adds the hits, and a save with an older copy keeps them.
         let store = try RuleStore(path: CommandLine.arguments[1])

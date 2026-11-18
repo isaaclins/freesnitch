@@ -1536,7 +1536,7 @@ require_text "$GUI_HELPER" "payload.count <= InsightsLimits.maxReportBytes" \
   "the GUI decodes Insights data before bounding the response"
 require_text "$HELPER" "insightsQueryQueue.async" \
   "the helper runs Insights queries on its XPC connection queue"
-require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny rules still block" \
+require_text "$INSIGHTS_VIEW" "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply" \
   "Insights does not say plainly that Silent Allow only blocks what deny rules name (#434)"
 require_text "$RULE_STORE" "?? .silentAllow" \
   "a fresh rules database does not default honestly to Silent Allow"

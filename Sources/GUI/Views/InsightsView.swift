@@ -161,7 +161,7 @@ struct InsightsView: View {
         }
         switch state.mode {
         case .silentAllow:
-            return "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny rules still block. Insights still records, and nothing on this screen is in force."
+            return "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply. Insights still records, and nothing on this screen is in force."
         case .alert, .silentDeny:
             return nil
         }
