@@ -173,10 +173,22 @@ check(InstallLocation.reinstallSteps(homebrew: true).contains("brew reinstall --
       "a Homebrew install is told to reinstall with brew, not to use a disk image")
 check(InstallLocation.reinstallSteps(homebrew: false).contains("disk image"),
       "a disk image install keeps the drag-in-again advice")
-check(InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: true)
-      && !InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: false)
-      && !InstallLocation.homebrewRouteApplies(homebrew: false, flagCleared: true),
+check(InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: true, canRunBrew: true)
+      && !InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: false, canRunBrew: true)
+      && !InstallLocation.homebrewRouteApplies(homebrew: false, flagCleared: true, canRunBrew: true),
       "the brew advice is only given for a Homebrew copy whose flag this user could clear; another account's copy gets the disk image advice")
+check(!InstallLocation.homebrewRouteApplies(homebrew: true, flagCleared: true, canRunBrew: false),
+      "a flag-free copy installed by another account's Homebrew, which this user can't write to, gets the disk image advice")
+// A Caskroom folder this user can't write to (another account's Homebrew).
+let otherCaskroom = work.appendingPathComponent("OtherCaskroom", isDirectory: true)
+try! fm.createDirectory(at: otherCaskroom, withIntermediateDirectories: true)
+try! fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: otherCaskroom.path)
+let otherWritable = access(otherCaskroom.path, W_OK) == 0  // root can still write
+check(otherWritable || !InstallLocation.canRunBrewReinstall(caskrooms: [otherCaskroom.path]),
+      "a Caskroom folder this user can't write to means brew can't be run for them")
+try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: otherCaskroom.path)
+check(InstallLocation.canRunBrewReinstall(caskrooms: [otherCaskroom.path]),
+      "this user's own Caskroom folder lets them run brew")
 check(InstallLocation.reinstallSteps(homebrew: true).contains(InstallLocation.brewReinstallCommand),
       "the Homebrew advice names the same command its Copy Command button copies")
 

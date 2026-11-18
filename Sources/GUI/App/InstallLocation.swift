@@ -171,7 +171,7 @@ enum InstallLocation {
         let downloads = (home as NSString).appendingPathComponent("Downloads") + "/"
         return isOnReadOnlyVolume(url)
             || path.hasPrefix(downloads)
-            || getxattr(url.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+            || hasQuarantine(url)
     }
 
     /// Where Homebrew keeps the casks it installed, on Apple silicon and Intel.
@@ -213,8 +213,17 @@ enum InstallLocation {
     /// user could clear the flag, i.e. owns the copy. A copy whose flag stays
     /// belongs to another account, whose Homebrew this user can't run
     /// either, so it gets the Finder and disk image advice.
-    static func homebrewRouteApplies(homebrew: Bool, flagCleared: Bool) -> Bool {
-        homebrew && flagCleared
+    /// `canRunBrew`: this user can write to FreeSnitch's Caskroom folder, so
+    /// the brew command will work for them; a missing flag alone doesn't
+    /// prove the copy is theirs.
+    static func homebrewRouteApplies(homebrew: Bool, flagCleared: Bool, canRunBrew: Bool) -> Bool {
+        homebrew && flagCleared && canRunBrew
+    }
+
+    /// Whether this user can write to an existing FreeSnitch Caskroom folder.
+    static func canRunBrewReinstall(caskrooms: [String] = homebrewCaskrooms,
+                                    writable: (String) -> Bool = { access($0, W_OK) == 0 }) -> Bool {
+        caskrooms.contains(where: writable)
     }
 
     static func hasQuarantine(_ url: URL) -> Bool {
@@ -227,7 +236,8 @@ enum InstallLocation {
     static var usesHomebrewRoute: Bool {
         if ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" { return isHomebrewInstall }
         guard let installed = stuckInstalledCopy else { return false }
-        return homebrewRouteApplies(homebrew: isHomebrewInstall, flagCleared: !hasQuarantine(installed))
+        return homebrewRouteApplies(homebrew: isHomebrewInstall, flagCleared: !hasQuarantine(installed),
+                                    canRunBrew: canRunBrewReinstall())
     }
 
     @MainActor
@@ -255,7 +265,7 @@ enum InstallLocation {
             if confirm {
                 let alert = NSAlert()
                 alert.messageText = "Command copied"
-                alert.informativeText = "Paste it into Terminal and press Return. FreeSnitch reopens from Applications when you open it again."
+                alert.informativeText = "Paste it into Terminal and press Return, then open FreeSnitch again."
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
             }
