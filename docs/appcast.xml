@@ -3,6 +3,31 @@
     <channel>
         <title>FreeSnitch</title>
         <item>
+            <title>1.3.0</title>
+            <pubDate>Thu, 19 Nov 2026 10:03:10 +0100</pubDate>
+            <link>https://github.com/isaaclins/freesnitch/releases/latest</link>
+            <sparkle:informationalUpdate>
+                <sparkle:belowVersion>34</sparkle:belowVersion>
+            </sparkle:informationalUpdate>
+            <sparkle:version>36</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[FreeSnitch 1.3 makes Insights something you can act on: you see what the firewall actually did with each connection, and you can turn any destination into a rule right there. If you use FreeSnitch 1.1.0 or newer, it updates itself. Coming from 1.0.0 or older, download the disk image once and replace the old copy; your rules and settings stay.
+
+## New
+
+- **New Rule… from Insights (#446).** Select a destination on the Apps tab and choose New Rule… (in the footer or the right-click menu). It opens the same Add Rule sheet as the Rules page, already filled in with the app and the host name, or the address when no name was seen. On the No Name tab you can make a rule for one app or for any app. Nothing is added until you press Add.
+- **Allowed or Blocked in Insights (#447).** Every destination now says what happened to its connections: Allowed, Blocked, "120 of 340 blocked", Not filtered (let through without a rule decision, like local traffic or an unanswered alert) or Not blocked. Hover the label for the exact split. Apps that had anything blocked show "N blocked" in the list. Connections recorded before this update aren't counted, so older rows may show no label. A connection that waits on an alert now appears in Insights once you answer it.
+
+## Fixes
+
+- **Insights and the menu bar show the mode that's really enforced (#452).** If the app couldn't fetch the full rule set from the helper, it fell back to showing Silent Allow, even while Alert or Silent Deny was active. It now shows the mode the helper reports and keeps fetching until it has the current rules. Changing the mode with `freesnitch mode` also updates the Profiles page right away.
+
+Requires macOS 13 or later. One universal build for Apple Silicon and Intel, signed with a Developer ID and notarized by Apple.
+]]></description>
+            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.3.0/FreeSnitch-1.3.0.zip" length="12596779" type="application/octet-stream" sparkle:edSignature="AVzJo4+mBOvyRBqsnbD5lHeVH4e5K2sJ7celIJnhJmynLuNlY2FZUD45aqUGa2YWQnz8KM0te2hzU0U6FFb6DA=="/>
+        </item>
+        <item>
             <title>1.2.0</title>
             <pubDate>Wed, 18 Nov 2026 21:57:47 +0100</pubDate>
             <link>https://github.com/isaaclins/freesnitch/releases/latest</link>
@@ -81,76 +106,6 @@ Earlier versions let you create a rule with only a process name, from the Add Ru
 Requires macOS 13 or later. One universal build for Apple Silicon and Intel, signed with a Developer ID and notarized by Apple.
 ]]></description>
             <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.1.0/FreeSnitch-1.1.0.zip" length="11102799" type="application/octet-stream" sparkle:edSignature="ZttTqJQAa5OtxKBx5IZ8ERfdpT+DLe17hpZbLblcZ9UzOisAyAyS3ZzfU7uMF0NtNacCRZV6m/qDvkc/y1AkCQ=="/>
-        </item>
-        <item>
-            <title>1.0.0</title>
-            <pubDate>Sat, 15 Aug 2026 13:48:29 +0200</pubDate>
-            <sparkle:version>33</sparkle:version>
-            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="plain-text"><![CDATA[FreeSnitch 1.0 is the release where the app stops looking like a firewall console and starts looking like a Mac app. The filtering engine, the helper and the network extension are the ones you have been running since 0.4.5. What changed is every screen in front of them, and the twenty issues that said those screens were hiding, mislabelling or quietly losing what they were supposed to tell you.
-
-## The whole app is native now (#68)
-
-Settings used to be the only page built from system controls, so it was the only page that inherited Mac behaviour: correct control sizing, focus rings, keyboard traversal, accessibility, contrast. Every other page was hand-drawn on a fixed dark palette.
-
-- Rules is a real `Table` with sortable columns, selection, and a selection-aware context menu.
-- Insights and the Network Monitor are real `List`s, with system selection and arrow key traversal.
-- The window has a real `NSToolbar`, a real sidebar material, and one translucent band instead of a staircase of them.
-- The connection alert is a macOS permission dialog rather than a drawing of one.
-- The app's own colour palette is gone. Surfaces are system backgrounds and materials, text is semantic label colours, and emphasis follows the accent colour you picked in System Settings. Light mode, Increase Contrast and the text size setting work without a per-colour audit. What survives is two named colours, sent and received, because in versus out is the one distinction the app makes with colour and it must not move when your accent does.
-
-## Rules
-
-- **The table says which rules are in force (#134).** There is an "Applies to" column, drawn in secondary when that profile is not active, and a Profiles section in the sidebar that filters to Always or to one profile. A rule waiting for a place you are not in no longer reads exactly like one enforcing right now.
-- **The rule editor offers every profile (#134).** It used to offer Always or the active profile and nothing else, so a rule for a third profile could be neither created nor moved. A row's context menu can move an existing rule between profiles.
-- **Rule groups are real (#134).** The four group rows were hardcoded names nothing ever wrote, so all four were permanently empty while the group rules actually carry, Insights, had no row. The section is built from the rules and is left out when there are none.
-- **The inspector says when (#134).** Created, last used, and, for a temporary rule, when it expires.
-- **The Information pane is resizable and remembers its width**, and so is the sidebar (#123). The window minimum came down to 900 by 560, which fits the smallest display Apple ships.
-
-## Blocklists
-
-- **One checkbox, one meaning, one source of truth (#135).** The checkbox in the Rules sidebar meant "enabled globally" and the identical-looking one under Profiles meant "belongs to this profile", and they read from two snapshots that could disagree on screen. Both now mean the profile-scoped thing the helper actually enforces, from one snapshot.
-- **Refreshing says what it is doing (#135).** Downloading hundreds of thousands of entries used to be silent. There is a spinner while it runs and a sentence afterwards saying how many lists and names arrived, or what went wrong.
-- **Adding a list waits for the answer (#135).** The editor used to dismiss before the helper replied and put the failure on a page you were not looking at. It stays up until the helper answers and shows the refusal in place.
-- **A new list says "Not downloaded yet"** instead of a bare 0, and the header and footer counts agree while you are searching (#135).
-- You can search a blocklist, edit any of them, and see what is on one.
-
-## Network Monitor and the map
-
-- **The denied badge lands on the denied list (#138).** "Recently denied" in the menu bar panel used to open a Monitor that never showed whether a connection was allowed, denied or pending. It opens a filtered view now.
-- **The map is legible and follows the appearance (#121).** Labels were white text on fixed black at hardcoded sizes, down to 8 points. They use text styles and materials now, so they respond to the appearance, Increase Contrast and the text size setting.
-- **A place on the map answers questions (#138).** Nodes carry the apps that reached them, and a Locations menu opens a card naming those apps with the connection count and traffic. Each place also says its own name exactly once, which it previously did twice.
-- **Location Services is a Settings row (#138)**, with the standard explanation, instead of a privacy decision buried in an unlabelled glyph floating on the map. It is off by default and the map estimates from your time zone.
-
-## Insights, profiles and the menu bar
-
-- Insights reads like a report rather than a console, its actions actually run, and rules it proposes carry their group.
-- Profiles can be told apart at a glance, the profile chip picks a profile, and Profiles is a list with a detail pane.
-- The menu bar panel is 320 points wide, the width it always declared and never got.
-
-## Uninstall
-
-**The uninstall says what it does, keeps its place, and quits (#133).** The plan now lists the steps in the order they happen, including the one place FreeSnitch unregisters its own privileged service, which only ever happens in an uninstall you confirmed. It runs in its own sheet, so switching pages halfway through cannot tear it down, and it can be resumed if you close it between the deactivation and the removal. When it finishes it offers to quit, and quitting takes the menu bar icon with it.
-
-## Also fixed
-
-Destructive actions ask first, and they all ask the same way. Failures say what went wrong in the words you read, not in the words the code throws. Disabled controls mean disabled. The alert panel is as tall as its card. The Spaces switch decides where alerts appear. Values in the Information pane really do copy. The keyboard drives the lists.
-
-## Known limits
-
-Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or to names resolved by an app's own encrypted DNS, such as Chrome and Firefox with DoH enabled.
-
-Map locations are estimates from IP geolocation, not measurements.
-]]></description>
-            <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch-1.0.0.zip" length="11484720" type="application/octet-stream" sparkle:edSignature="WHU+lNIckGAQuVw6QE2qAXlv+QOKv/WlKUaMzeK3teaHR5wrYoNsjgOOVBA+6sa883WgsqI7TR6pOQIxKT0kDw=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-32.delta" sparkle:deltaFrom="32" length="3709882" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="EMhmvmcwX4QRXUtr3YZ7SjcQsZOtZlq5pvT+LsHwVIFb4PD+vXqFvoHCWi2OiKjkTWRk0iZ4owsr6VxR3LlUCw=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-31.delta" sparkle:deltaFrom="31" length="3888434" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="jzuRDR/dNXe2iTkeUJnJbcEPgf6DIp5C80yurffdAuXM/+dI3gYJKUQSAoVODl1QDaNmwLWlMZ9whmcfL1dWCQ=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-30.delta" sparkle:deltaFrom="30" length="3888802" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="W5PpOj92jJLymgaHwdQnRT8UrnXz9A5azhiFL+9Rcdx7nMYd6A5gKqoNGpjdj4Sk6cbQqI53n02VGWtvEyTwDA=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-29.delta" sparkle:deltaFrom="29" length="3891182" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="jlDYxU3hw2QWXlSh+hRu2CaGOuzGv250S7XiUHeS62SLLN3yr0184AJL8Bx1byz+y4gvWET74vANv3ek37uEAQ=="/>
-                <enclosure url="https://github.com/isaaclins/freesnitch/releases/download/v1.0.0/FreeSnitch33-28.delta" sparkle:deltaFrom="28" length="3902986" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="862496" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,en" sparkle:edSignature="3m3R2QJsy/2OSOFnZYds60yMsbGS97/C1XNye79uSOwsRAFyPrI1OEq6Msq4y5Aa6HISxiTiegPqm/Beu97DAg=="/>
-            </sparkle:deltas>
         </item>
     </channel>
 </rss>
