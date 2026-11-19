@@ -164,8 +164,8 @@ final class MenubarController {
         if state.showSpeedsInMenuBar {
             statusItem.length = NSStatusItem.variableLength
             button.imagePosition = .imageLeft
-            button.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-            button.title = " ↓\(compactSpeed(state.currentIn))  ↑\(compactSpeed(state.currentOut))"
+            button.font = MenuBarSpeed.font
+            button.title = MenuBarSpeed.title(bytesIn: state.currentIn, bytesOut: state.currentOut)
         } else {
             statusItem.length = NSStatusItem.squareLength
             button.imagePosition = .imageOnly
@@ -211,14 +211,6 @@ final class MenubarController {
             return "Firewall filtering is active. Traffic monitor helper is not connected"
         }
         return "↓ \(PSFormat.bytesPerSec(state.currentIn))  ↑ \(PSFormat.bytesPerSec(state.currentOut))"
-    }
-
-    private func compactSpeed(_ n: Int64) -> String {
-        let b = Double(n)
-        if b < 1024 { return "\(Int(b)) B/s" }
-        if b < 1024 * 1024 { return String(format: "%.0f K/s", b/1024) }
-        if b < 1024 * 1024 * 1024 { return String(format: "%.1f M/s", b/1024/1024) }
-        return String(format: "%.1f G/s", b/1024/1024/1024)
     }
 }
 
