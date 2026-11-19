@@ -1,5 +1,11 @@
 import Foundation
 
+// The helper runs from inside the app bundle, so its text lookups would find
+// the app's translations and follow the Mac's system language. Its messages go
+// into logs and back to the app mixed with English, so it speaks English only.
+// This must run before anything looks up localized text.
+UserDefaults.standard.setVolatileDomain(["AppleLanguages": ["en"]], forName: UserDefaults.argumentDomain)
+
 // Freeze the identity of the bundle this process is launching from, before any
 // update can replace it on disk. Everything the helper reports as its running
 // version comes from this capture.

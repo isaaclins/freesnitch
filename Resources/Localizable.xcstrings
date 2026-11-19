@@ -2446,7 +2446,7 @@
       }
     },
     "Any" : {
-      "comment" : "Destination of a rule that matches every destination\nHost field of a rule that matches every host\nRule direction: both ways\nRule scope: anything",
+      "comment" : "Destination of a rule that matches every destination\nHost field of a rule that matches every host\nRule scope: anything",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -11894,6 +11894,16 @@
         }
       }
     },
+    "Your Mac" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш Mac"
+          }
+        }
+      }
+    },
     "Your additions and removals for this list are forgotten. The list goes back to exactly what its source says." : {
       "localizations" : {
         "ru" : {
@@ -12508,6 +12518,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "снимок правил"
+          }
+        }
+      }
+    },
+    "rule-direction.any" : {
+      "comment" : "Rule direction: both ways",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В обе стороны"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Any"
           }
         }
       }

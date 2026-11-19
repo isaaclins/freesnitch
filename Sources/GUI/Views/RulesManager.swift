@@ -2176,7 +2176,7 @@ fileprivate extension RuleDirection {
         switch self {
         case .outgoing: return String(localized: "Outgoing", comment: "Rule direction")
         case .incoming: return String(localized: "Incoming", comment: "Rule direction")
-        case .any: return String(localized: "Any", comment: "Rule direction: both ways")
+        case .any: return String(localized: "rule-direction.any", defaultValue: "Any", comment: "Rule direction: both ways")
         }
     }
 }

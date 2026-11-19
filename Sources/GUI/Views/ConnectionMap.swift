@@ -63,7 +63,7 @@ struct ConnectionMapPane: View {
                                                lineJoin: .round))
             }
 
-            Annotation("Your Mac", coordinate: home.point.coordinate) {
+            Annotation(String(localized: "Your Mac"), coordinate: home.point.coordinate) {
                 HomePin(isEstimate: home.isEstimate)
             }
             .annotationTitles(.hidden)
