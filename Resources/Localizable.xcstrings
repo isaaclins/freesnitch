@@ -1153,7 +1153,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%#@a@, список ограничен %lld."
+            "value" : "%#@a@, список ограничен %2$lld."
           },
           "substitutions" : {
             "a" : {
@@ -1193,7 +1193,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%#@a@, the list is bounded at %lld."
+            "value" : "%#@a@, the list is bounded at %2$lld."
           },
           "substitutions" : {
             "a" : {
@@ -1744,7 +1744,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%#@a@, %#@p@ (профиль «%@»)"
+            "value" : "%#@a@, %#@p@ (профиль «%3$@»)"
           },
           "substitutions" : {
             "a" : {
@@ -1826,7 +1826,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld to %lld of %#@e@"
+            "value" : "%1$lld to %2$lld of %#@e@"
           },
           "substitutions" : {
             "e" : {
@@ -1864,7 +1864,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld to %lld of %#@e@"
+            "value" : "%1$lld to %2$lld of %#@e@"
           },
           "substitutions" : {
             "e" : {
@@ -7715,7 +7715,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%#@apps@, %#@conns@, %@"
+            "value" : "%#@apps@, %#@conns@, %3$@"
           },
           "substitutions" : {
             "apps" : {
@@ -7787,7 +7787,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reached by %#@apps@, %#@conns@, %@"
+            "value" : "Reached by %#@apps@, %#@conns@, %3$@"
           },
           "substitutions" : {
             "apps" : {
@@ -7839,7 +7839,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%#@apps@, %#@conns@, %@, последний раз %@"
+            "value" : "%#@apps@, %#@conns@, %3$@, последний раз %4$@"
           },
           "substitutions" : {
             "apps" : {
@@ -7911,7 +7911,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reached by %#@apps@, %#@conns@, %@, last seen %@"
+            "value" : "Reached by %#@apps@, %#@conns@, %3$@, last seen %4$@"
           },
           "substitutions" : {
             "apps" : {
