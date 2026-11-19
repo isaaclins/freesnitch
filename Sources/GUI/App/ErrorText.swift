@@ -7,7 +7,7 @@ extension Error {
     /// description with exactly one trailing full stop.
     var sentence: String {
         let text = localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return "An unknown error occurred." }
+        guard !text.isEmpty else { return String(localized: "An unknown error occurred.") }
         if text.hasSuffix(".") || text.hasSuffix("!") || text.hasSuffix("?") { return text }
         return text + "."
     }

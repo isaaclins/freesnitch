@@ -26,18 +26,23 @@ enum HelperRegistrationFailure {
                         inApplications: Bool) -> String {
         // NSError's fallback text already names the domain and code.
         let text = sentence(description)
-        let said = text.contains("\(domain) error \(code)")
-            ? "macOS said: \(text)\(text.hasSuffix(")") ? "" : ".")"
-            : "macOS said: \(text) (\(domain) \(code))."
+        let said: String
+        if text.contains("\(domain) error \(code)") {
+            said = text.hasSuffix(")")
+                ? String(localized: "macOS said: \(text)")
+                : String(localized: "macOS said: \(text).")
+        } else {
+            said = String(localized: "macOS said: \(text) (\(domain) \(code)).")
+        }
         guard inApplications else {
-            return "\(said) macOS only installs background helpers for apps in Applications. Move FreeSnitch into /Applications, open it from there and try again."
+            return String(localized: "\(said) macOS only installs background helpers for apps in Applications. Move FreeSnitch into /Applications, open it from there and try again.")
         }
         return "\(said) \(advice(domain: domain, code: code, description: description))"
     }
 
-    private static let loginItems = "FreeSnitch is switched off in the background items. Open System Settings under General > Login Items & Extensions, switch FreeSnitch on under \"Allow in the Background\", then retry."
-    private static let reinstall = "The helper's declaration inside this copy of FreeSnitch is missing or unreadable. Download the signed release again and replace this copy."
-    private static let generic = "Retry. If it keeps failing, restart the Mac and try again."
+    private static let loginItems = String(localized: "FreeSnitch is switched off in the background items. Open System Settings under General > Login Items & Extensions, switch FreeSnitch on under \"Allow in the Background\", then retry.")
+    private static let reinstall = String(localized: "The helper's declaration inside this copy of FreeSnitch is missing or unreadable. Download the signed release again and replace this copy.")
+    private static let generic = String(localized: "Retry. If it keeps failing, restart the Mac and try again.")
 
     private static func advice(domain: String, code: Int, description: String) -> String {
         if domain == appServiceDomain {
@@ -50,11 +55,11 @@ enum HelperRegistrationFailure {
         case 9, 11: // kSMErrorJobMustBeEnabled, kSMErrorLaunchDeniedByUser
             return loginItems
         case 3: // kSMErrorInvalidSignature
-            return "This copy of FreeSnitch isn't signed the way macOS requires for a helper. Download the signed release again and replace this copy."
+            return String(localized: "This copy of FreeSnitch isn't signed the way macOS requires for a helper. Download the signed release again and replace this copy.")
         case 8, 10: // kSMErrorJobPlistNotFound, kSMErrorInvalidPlist
             return reinstall
         case 4: // kSMErrorAuthorizationFailure
-            return "macOS didn't get the authorization it needed. Retry and approve the prompt if one appears."
+            return String(localized: "macOS didn't get the authorization it needed. Retry and approve the prompt if one appears.")
         default:
             return generic
         }
@@ -63,6 +68,6 @@ enum HelperRegistrationFailure {
     private static func sentence(_ text: String) -> String {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         while let last = trimmed.last, last == "." { trimmed.removeLast() }
-        return trimmed.isEmpty ? "registration failed" : trimmed
+        return trimmed.isEmpty ? String(localized: "registration failed", comment: "Stands in for an empty macOS error after \"macOS said:\"") : trimmed
     }
 }

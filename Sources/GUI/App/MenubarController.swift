@@ -100,23 +100,23 @@ final class MenubarController {
         // the binding instead of contradicting it. All five pages are listed:
         // leaving two of them out was how Profiles ended up unreachable from
         // the keyboard.
-        menu.addItem(makeItem("Network Monitor", #selector(openMonitor), keyEq: "1", modifiers: [.command]))
-        menu.addItem(makeItem("Rules", #selector(openRules), keyEq: "2", modifiers: [.command]))
-        menu.addItem(makeItem("Insights", #selector(openInsights), keyEq: "3", modifiers: [.command]))
-        menu.addItem(makeItem("Profiles", #selector(openProfiles), keyEq: "4", modifiers: [.command]))
+        menu.addItem(makeItem(String(localized: "Network Monitor"), #selector(openMonitor), keyEq: "1", modifiers: [.command]))
+        menu.addItem(makeItem(String(localized: "Rules"), #selector(openRules), keyEq: "2", modifiers: [.command]))
+        menu.addItem(makeItem(String(localized: "Insights"), #selector(openInsights), keyEq: "3", modifiers: [.command]))
+        menu.addItem(makeItem(String(localized: "Profiles"), #selector(openProfiles), keyEq: "4", modifiers: [.command]))
         // Settings keeps Command-comma as well: that one is a system-wide
         // convention and people press it wherever Settings happens to sit.
-        menu.addItem(makeItem("Settings", #selector(openSettings), keyEq: ",", modifiers: [.command]))
+        menu.addItem(makeItem(String(localized: "Settings"), #selector(openSettings), keyEq: ",", modifiers: [.command]))
         menu.addItem(.separator())
-        let modeMenu = NSMenu(title: "Mode")
-        modeMenu.addItem(makeItem("Alert", #selector(modeAlert), keyEq: "", state: state.mode == .alert ? .on : .off))
-        modeMenu.addItem(makeItem("Silent Allow", #selector(modeAllow), keyEq: "", state: state.mode == .silentAllow ? .on : .off))
-        modeMenu.addItem(makeItem("Silent Deny", #selector(modeDeny), keyEq: "", state: state.mode == .silentDeny ? .on : .off))
-        let modeItem = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
+        let modeMenu = NSMenu(title: String(localized: "Mode"))
+        modeMenu.addItem(makeItem(String(localized: "Alert", comment: "Menu item: switches to Alert mode"), #selector(modeAlert), keyEq: "", state: state.mode == .alert ? .on : .off))
+        modeMenu.addItem(makeItem(String(localized: "Silent Allow"), #selector(modeAllow), keyEq: "", state: state.mode == .silentAllow ? .on : .off))
+        modeMenu.addItem(makeItem(String(localized: "Silent Deny"), #selector(modeDeny), keyEq: "", state: state.mode == .silentDeny ? .on : .off))
+        let modeItem = NSMenuItem(title: String(localized: "Mode"), action: nil, keyEquivalent: "")
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
         menu.addItem(.separator())
-        menu.addItem(makeItem("Quit FreeSnitch", #selector(quit), keyEq: "q"))
+        menu.addItem(makeItem(String(localized: "Quit FreeSnitch"), #selector(quit), keyEq: "q"))
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
@@ -184,31 +184,31 @@ final class MenubarController {
         guard isFilterReady else {
             switch systemExtension.status {
             case .needsApproval:
-                return "Firewall not filtering. Approve FreeSnitch under General > Login Items & Extensions > Network Extensions"
+                return String(localized: "Firewall not filtering. Approve FreeSnitch under General > Login Items & Extensions > Network Extensions")
             case .failed(let message):
-                return "Firewall not filtering: \(message)"
+                return String(localized: "Firewall not filtering: \(message)")
             case .unsupported:
-                return "Firewall not filtering. Network Extension unavailable in this build"
+                return String(localized: "Firewall not filtering. Network Extension unavailable in this build")
             case .activating:
-                return "Firewall not filtering yet. Network Extension is starting"
+                return String(localized: "Firewall not filtering yet. Network Extension is starting")
             case .active:
                 switch state.filterSnapshotStatus.state {
                 case .unavailable:
-                    return "Firewall not filtering. Rule snapshot unavailable"
+                    return String(localized: "Firewall not filtering. Rule snapshot unavailable")
                 case .invalid:
-                    return "Firewall not filtering. Rule snapshot invalid"
+                    return String(localized: "Firewall not filtering. Rule snapshot invalid")
                 case .ready:
                     break
                 }
             case .idle:
                 // Also the state after the filter was turned off or removed
                 // (#335), where "yet" would promise it comes back.
-                return "Firewall not filtering"
+                return String(localized: "Firewall not filtering")
             }
-            return "Firewall not filtering"
+            return String(localized: "Firewall not filtering")
         }
         if !state.helperConnected {
-            return "Firewall filtering is active. Traffic monitor helper is not connected"
+            return String(localized: "Firewall filtering is active. Traffic monitor helper is not connected")
         }
         return "↓ \(PSFormat.bytesPerSec(state.currentIn))  ↑ \(PSFormat.bytesPerSec(state.currentOut))"
     }

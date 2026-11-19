@@ -28,13 +28,27 @@ enum RowActions {
 }
 
 /// A copy item that is only present when there is something to copy.
+///
+/// A literal title is a localized key, the way `Button("...")` takes one; a
+/// String is shown as it is, so a caller can still pass `String(localized:)`.
 struct CopyMenuItem: View {
-    let title: String
+    let title: Text
     let value: String?
+
+    init(title: LocalizedStringKey, value: String?) {
+        self.title = Text(title)
+        self.value = value
+    }
+
+    @_disfavoredOverload
+    init(title: String, value: String?) {
+        self.title = Text(verbatim: title)
+        self.value = value
+    }
 
     var body: some View {
         if let value, !value.isEmpty {
-            Button(title) { RowActions.copy(value) }
+            Button { RowActions.copy(value) } label: { title }
         }
     }
 }

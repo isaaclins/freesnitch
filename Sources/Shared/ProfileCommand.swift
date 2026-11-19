@@ -81,9 +81,9 @@ public enum ProfileTransportBoundary {
         public var errorDescription: String? {
             switch self {
             case .requestTooLarge(let bytes, let maximum):
-                return "The profile request is \(bytes) bytes, above the \(maximum)-byte limit."
+                return String(localized: "The profile request is \(bytes) bytes, above the \(maximum)-byte limit.")
             case .responseTooLarge(let bytes, let maximum):
-                return "The profile response is \(bytes) bytes, above the \(maximum)-byte limit."
+                return String(localized: "The profile response is \(bytes) bytes, above the \(maximum)-byte limit.")
             }
         }
     }

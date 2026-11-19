@@ -14,7 +14,7 @@ struct NetworkMonitorView: View {
     /// StateObject, so expansion survives every refresh of the live data.
     @StateObject private var tree = MonitorTreeController()
     /// What the map says about itself, shown in its header (#103).
-    @State private var mapSummary = "Locations are estimates"
+    @State private var mapSummary = String(localized: "Locations are estimates")
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,7 +46,7 @@ struct NetworkMonitorView: View {
                                     set: { if !$0 { tree.errorMessage = nil } })) {
             Button("OK", role: .cancel) { tree.errorMessage = nil }
         } message: {
-            Text(tree.errorMessage ?? "The helper did not say why. Try again in a moment.")
+            Text(tree.errorMessage ?? String(localized: "The helper did not say why. Try again in a moment."))
         }
     }
 
@@ -59,16 +59,29 @@ struct NetworkMonitorView: View {
                 // them, so there has to be a list of them to show (#138).
                 Picker("Show", selection: $model.monitorDeniedOnly) {
                     Text("All").tag(false)
-                    Text("Denied").tag(true)
+                    // Its own key: the header is narrow, and a language may
+                    // need a shorter word here than for a denied connection.
+                    Text("monitor-filter.denied", comment: "Monitor list filter: only apps with denied connections").tag(true)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
                 .help("Show every app, or only the ones with denied connections.")
-                Button("Collapse all") { tree.collapseAll() }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
-                    .help("Collapse every app in the list.")
+                // Longer languages don't fit the words next to the title and
+                // the filter in this fixed-width pane, so the button falls
+                // back to its icon there rather than cutting the title short.
+                ViewThatFits(in: .horizontal) {
+                    Button("Collapse all") { tree.collapseAll() }
+                        .lineLimit(1)
+                        .fixedSize()
+                    Button { tree.collapseAll() } label: {
+                        Image(systemName: "arrow.up.and.line.horizontal.and.arrow.down")
+                    }
+                    .accessibilityLabel("Collapse all")
+                }
+                .buttonStyle(.borderless)
+                .font(.callout)
+                .help("Collapse every app in the list.")
             }
         } content: {
             sidebarContent
@@ -106,7 +119,7 @@ struct NetworkMonitorView: View {
         .padding(.leading, 4)
     }
 
-    private func legendItem(_ label: String, color: Color) -> some View {
+    private func legendItem(_ label: LocalizedStringKey, color: Color) -> some View {
         HStack(spacing: 4) {
             Capsule().fill(color).frame(width: 12, height: 3)
             Text(label).font(.caption).foregroundStyle(.secondary)
@@ -142,8 +155,8 @@ struct NetworkMonitorView: View {
                     .overlay(alignment: .top) {
                         if connectionsForMap().isEmpty {
                             Text(state.helperConnected
-                                 ? "No located connections yet"
-                                 : "Waiting for the FreeSnitch helper")
+                                 ? String(localized: "No located connections yet")
+                                 : String(localized: "Waiting for the FreeSnitch helper"))
                                 .font(.callout)
                                 .padding(.horizontal, 10).padding(.vertical, 5)
                                 .background(.regularMaterial, in: Capsule())
@@ -197,7 +210,7 @@ struct NetworkMonitorView: View {
     private var summaryPane: some View {
         VStack(spacing: 0) {
             PaneHeader("Summary") {
-                Text("\(InsightsView.plural(state.topProcesses.count, "process")), \(InsightsView.plural(state.topDomains.count, "domain"))")
+                Text(String(localized: "\(state.topProcesses.count) processes, \(state.topDomains.count) domains"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

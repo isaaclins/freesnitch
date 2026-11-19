@@ -82,7 +82,7 @@ final class AppState: ObservableObject {
     @Published private(set) var geoStatus: IPGeoCache.Status = IPGeoCache.shared.status
     @Published var searchQuery: String = ""
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
-        "Network extension IPC is not connected."
+        String(localized: "Network extension IPC is not connected.")
     )
     @Published var authoritativeSnapshotGeneration: UInt64?
     /// The helper session the last authoritative snapshot came from. Shown
@@ -399,7 +399,7 @@ final class AppState: ObservableObject {
             guard let self, request == self.snapshotRequestSequence else { return }
             self.snapshotFetchInFlight = false
             guard let snapshot else {
-                let message = error ?? "The helper did not return an authoritative rule snapshot."
+                let message = error ?? String(localized: "The helper did not return an authoritative rule snapshot.")
                 self.publishFilterSnapshotStatus(.unavailable(message))
                 if message != self.lastSnapshotFailure {
                     self.lastSnapshotFailure = message
@@ -417,7 +417,7 @@ final class AppState: ObservableObject {
             self.filterSnapshotPersistenceHandler?(snapshot)
 
             guard let data = try? RuleTransportBoundary.encodeSnapshot(snapshot) else {
-                let status = SharedRuleBridge.SnapshotStatus.invalid("Could not encode the helper authoritative rule snapshot within the transport limits.",
+                let status = SharedRuleBridge.SnapshotStatus.invalid(String(localized: "Could not encode the helper authoritative rule snapshot within the transport limits."),
                                                                      generation: snapshot.generation,
                                                                      epoch: snapshot.epoch)
                 self.publishFilterSnapshotStatus(status)
@@ -478,7 +478,7 @@ final class AppState: ObservableObject {
             guard let self else { return }
             guard ok else {
                 self.appendLog(level: "error", message: "The helper rejected the mode change: \(message ?? "unknown error")")
-                self.modeChangeFailure = message ?? "The helper rejected the mode change."
+                self.modeChangeFailure = message ?? String(localized: "The helper rejected the mode change.")
                 return
             }
             self.modeChangeFailure = nil
@@ -491,7 +491,7 @@ final class AppState: ObservableObject {
     var modeOwnerDescription: String? {
         let name = activeProfile
         guard name != Profile.defaultName else { return nil }
-        return "Changing the mode here changes it for the \(name) profile, which is active."
+        return String(localized: "Changing the mode here changes it for the \(name) profile, which is active.")
     }
 
     /// Takes the mode from the helper's status, which is the active profile's
@@ -728,7 +728,7 @@ final class AppState: ObservableObject {
     func firstContactContext(for connection: Connection) -> String? {
         guard contactClassifier.isAvailable else { return nil }
         let count = contactClassifier.knownDestinationCount(for: connection) ?? 0
-        return "First time this app has contacted this destination. You have allowed it to reach \(count) other place\(count == 1 ? "" : "s") in retained history."
+        return String(localized: "First time this app has contacted this destination. You have allowed it to reach \(count) other places in retained history.")
     }
 
     /// How much of the connection a remembered answer should cover. The dialog
@@ -742,9 +742,9 @@ final class AppState: ObservableObject {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .anywhere: return "Anywhere"
-            case .thisHost: return "This host"
-            case .thisAddressAndPort: return "This address and port"
+            case .anywhere: return String(localized: "Anywhere")
+            case .thisHost: return String(localized: "This host")
+            case .thisAddressAndPort: return String(localized: "This address and port")
             }
         }
     }
@@ -759,9 +759,9 @@ final class AppState: ObservableObject {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .forever: return "Forever"
-            case .oneDay: return "24 hours"
-            case .oneHour: return "1 hour"
+            case .forever: return String(localized: "Forever")
+            case .oneDay: return String(localized: "24 hours")
+            case .oneHour: return String(localized: "1 hour")
             }
         }
         var interval: TimeInterval? {

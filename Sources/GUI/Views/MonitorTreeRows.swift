@@ -95,7 +95,7 @@ struct MonitorTreeList: View {
         // The keyboard reaches the same two actions the pointer does (#116).
         .onDeleteCommand { clearSelectedRow(in: visible) }
         .onCopyCommand { copySelectedRow(in: visible) }
-        .confirmationDialog("Remove the rule for \(pendingClear?.subject ?? "this row")?",
+        .confirmationDialog("Remove the rule for \(pendingClear?.subject ?? String(localized: "this row", comment: "Object of \"Remove the rule for …?\""))?",
                             isPresented: Binding(get: { pendingClear != nil },
                                                  set: { if !$0 { pendingClear = nil } }),
                             titleVisibility: .visible) {
@@ -146,8 +146,8 @@ struct MonitorTreeList: View {
 
     private var emptyRow: some View {
         Text(state.helperConnected
-             ? (searchText.isEmpty ? "No connections yet." : "Nothing matches this search.")
-             : "Waiting for the FreeSnitch helper.")
+             ? (searchText.isEmpty ? String(localized: "No connections yet.") : String(localized: "Nothing matches this search."))
+             : String(localized: "Waiting for the FreeSnitch helper."))
             .font(.callout)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -231,12 +231,12 @@ struct MonitorTreeList: View {
 
     private func clear(app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.app(app) else { return }
-        pendingClear = PendingClear(subject: "every connection from \(app.name)", target: target)
+        pendingClear = PendingClear(subject: String(localized: "every connection from \(app.name)", comment: "What a rule decision covers, completes \"Allow …\", \"Deny …\" and \"Remove the rule for …\""), target: target)
     }
 
     private func clear(destination: MonitorDestinationNode, app: MonitorAppNode) {
         guard let target = MonitorRuleTarget.destination(destination, in: app) else { return }
-        pendingClear = PendingClear(subject: "\(app.name) to \(destination.decisionSubject)", target: target)
+        pendingClear = PendingClear(subject: String(localized: "\(app.name) to \(destination.decisionSubject)", comment: "App and destination a rule decision covers, completes \"Remove the rule for …\""), target: target)
     }
 }
 
@@ -272,7 +272,7 @@ struct MonitorAppRow: View {
                 Text(app.displayName ?? app.name)
                     .font(.body)
                     .lineLimit(1)
-                    .modifier(OptionalHelp(text: app.displayName == nil ? nil : "Connections made by \(app.name)"))
+                    .modifier(OptionalHelp(text: app.displayName == nil ? nil : String(localized: "Connections made by \(app.name)")))
                 Text(appSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -292,7 +292,7 @@ struct MonitorAppRow: View {
             MonitorDecisionControls(decision: decision,
                                     pending: pending,
                                     addressable: MonitorRuleTarget.app(app)?.isAddressable ?? false,
-                                    subject: "every connection from \(app.name)",
+                                    subject: String(localized: "every connection from \(app.name)", comment: "What a rule decision covers, completes \"Allow …\", \"Deny …\" and \"Remove the rule for …\""),
                                     onSelection: selected,
                                     onDecide: onDecide,
                                     onClear: onClear)
@@ -303,7 +303,7 @@ struct MonitorAppRow: View {
     /// The process's own name leads when the row is titled after its app,
     /// because the rule a decision writes is for that process.
     private var appSubtitle: String {
-        let summary = "\(app.destinationCount) destination\(app.destinationCount == 1 ? "" : "s") · \(PSFormat.bytes(app.traffic.total))"
+        let summary = String(localized: "\(app.destinationCount) destinations · \(PSFormat.bytes(app.traffic.total))")
         guard app.displayName != nil else { return summary }
         return "\(app.name) · \(summary)"
     }
@@ -358,9 +358,9 @@ struct MonitorDestinationRow: View {
     }
 
     private var subtitle: String {
-        var parts = ["\(destination.connectionCount) connection\(destination.connectionCount == 1 ? "" : "s")"]
+        var parts = [String(localized: "\(destination.connectionCount) connections")]
         if destination.labelIsSeenName, let ip = destination.remoteIP { parts.insert(ip, at: 0) }
-        if destination.deniedCount > 0 { parts.append("\(destination.deniedCount) denied") }
+        if destination.deniedCount > 0 { parts.append(String(localized: "\(destination.deniedCount) denied")) }
         parts.append(PSFormat.bytes(destination.traffic.total))
         if let code = destination.countryCode, !code.isEmpty { parts.append(code) }
         return parts.joined(separator: " · ")
@@ -455,11 +455,11 @@ struct MonitorDecisionControls: View {
             button(action: .allow,
                    symbol: "checkmark.circle.fill",
                    color: .green,
-                   help: "Allow \(subject). Writes a rule you can see and change in Rules.")
+                   help: String(localized: "Allow \(subject). Writes a rule you can see and change in Rules."))
             button(action: .deny,
                    symbol: "xmark.circle.fill",
                    color: .red,
-                   help: "Deny \(subject). Writes a rule you can see and change in Rules.")
+                   help: String(localized: "Deny \(subject). Writes a rule you can see and change in Rules."))
             if decision != nil {
                 Button(action: onClear) {
                     Image(systemName: "arrow.uturn.backward.circle.fill")
@@ -468,7 +468,7 @@ struct MonitorDecisionControls: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(onSelection ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                 .disabled(pending || !canDecide)
-                .help(unavailableReason ?? "Remove the rule this row created and go back to no decision.")
+                .help(unavailableReason ?? String(localized: "Remove the rule this row created and go back to no decision."))
             }
         }
         .imageScale(.large)
@@ -483,8 +483,8 @@ struct MonitorDecisionControls: View {
     }
 
     private var unavailableReason: String? {
-        if !addressable { return "This row has no destination a rule can name." }
-        if !canDecide { return "Approve the FreeSnitch helper before deciding anything here." }
+        if !addressable { return String(localized: "This row has no destination a rule can name.") }
+        if !canDecide { return String(localized: "Approve the FreeSnitch helper before deciding anything here.") }
         return nil
     }
 
@@ -507,10 +507,10 @@ struct MonitorDecisionControls: View {
                 .foregroundStyle(glyphColor(color, isActive: isActive), discColor(color, isActive: isActive))
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel(action == .allow ? "Allow \(subject)" : "Deny \(subject)")
+        .accessibilityLabel(action == .allow ? String(localized: "Allow \(subject)") : String(localized: "Deny \(subject)"))
         .disabled(pending || !canDecide)
         .help(unavailableReason
-              ?? (isDisabledRule ? "\(help) A disabled rule for this row exists; pressing this enables it." : help))
+              ?? (isDisabledRule ? String(localized: "\(help) A disabled rule for this row exists; pressing this enables it.") : help))
     }
 
     /// At rest the disc was 85% of the in-force colour, so a row looked the
@@ -551,15 +551,13 @@ struct MonitorDecisionBadge: View {
 
     private var helpText: String {
         if !decision.enabled {
-            return "A rule exists for this row but is turned off in Rules, so it decides nothing."
+            return String(localized: "A rule exists for this row but is turned off in Rules, so it decides nothing.")
         }
-        let verb: String
         switch decision.action {
-        case .deny: verb = "are blocked"
-        case .allow: verb = "are allowed"
-        case .ask: verb = "ask first"
+        case .deny: return String(localized: "New connections here are blocked by your rule. Connections that are already open are not affected.")
+        case .allow: return String(localized: "New connections here are allowed by your rule. Connections that are already open are not affected.")
+        case .ask: return String(localized: "New connections here ask first by your rule. Connections that are already open are not affected.")
         }
-        return "New connections here \(verb) by your rule. Connections that are already open are not affected."
     }
 }
 

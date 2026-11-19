@@ -42,10 +42,10 @@ public enum RuleTransportBoundary {
 
         fileprivate var label: String {
             switch self {
-            case .snapshot: return "rule snapshot"
-            case .bootSnapshot: return "boot rule snapshot"
-            case .ruleBatch: return "rule batch"
-            case .singleRule: return "single rule"
+            case .snapshot: return String(localized: "rule snapshot", comment: "Starts the message \"… payload is oversized\"")
+            case .bootSnapshot: return String(localized: "boot rule snapshot", comment: "Starts the message \"… payload is oversized\"")
+            case .ruleBatch: return String(localized: "rule batch", comment: "Starts the message \"… payload is oversized\"")
+            case .singleRule: return String(localized: "single rule", comment: "Starts the message \"… payload is oversized\"")
             }
         }
     }
@@ -59,13 +59,13 @@ public enum RuleTransportBoundary {
         public var errorDescription: String? {
             switch self {
             case .oversized(let kind, let actualBytes, let maximumBytes):
-                return "\(kind.label) payload is oversized: \(actualBytes) bytes (maximum \(maximumBytes))."
+                return String(localized: "\(kind.label) payload is oversized: \(actualBytes) bytes (maximum \(maximumBytes)).")
             case .tooManyRules(let actualCount, let maximumCount):
-                return "rule payload contains too many rules: \(actualCount) (maximum \(maximumCount))."
+                return String(localized: "rule payload contains too many rules: \(actualCount) (maximum \(maximumCount)).")
             case .fieldTooLong(let field, let actualBytes, let maximumBytes):
-                return "rule field \(field) is too long: \(actualBytes) UTF-8 bytes (maximum \(maximumBytes))."
+                return String(localized: "rule field \(field) is too long: \(actualBytes) UTF-8 bytes (maximum \(maximumBytes)).")
             case .invalidField(let field, let reason):
-                return "invalid rule field \(field): \(reason)."
+                return String(localized: "invalid rule field \(field): \(reason).")
             }
         }
     }

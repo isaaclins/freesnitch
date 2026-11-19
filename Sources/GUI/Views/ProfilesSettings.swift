@@ -100,8 +100,7 @@ struct ProfilesSettingsView: View {
         if !profileClient.isAvailable {
             // Says why every control on this page is disabled, in the same
             // words the controls themselves carry (#98).
-            noticeText(profileClient.unavailableReason
-                       + " The list fills in on its own once it connects.",
+            noticeText(String(localized: "\(profileClient.unavailableReason) The list fills in on its own once it connects."),
                        tint: .secondary)
         }
     }
@@ -310,10 +309,16 @@ struct ProfilesSettingsView: View {
     private func summary(_ profile: Profile) -> String {
         let always = profileClient.snapshot?.alwaysRuleCount ?? 0
         let own = state.rules.filter { $0.profile == profile.name && $0.enabled }.count
-        let ownPart = own == 0
-            ? "no rules of its own yet"
-            : "\(own) rule\(own == 1 ? "" : "s") of its own"
-        return "Applies the \(always) Always rule\(always == 1 ? "" : "s") and \(ownPart)."
+        // Whole sentences, so a translation never has to agree with a
+        // fragment it cannot see.
+        switch (always == 1, own) {
+        case (true, 0): return String(localized: "Applies the \(always) Always rule and no rules of its own yet.")
+        case (true, 1): return String(localized: "Applies the \(always) Always rule and \(own) rule of its own.")
+        case (true, _): return String(localized: "Applies the \(always) Always rule and \(own) rules of its own.")
+        case (false, 0): return String(localized: "Applies the \(always) Always rules and no rules of its own yet.")
+        case (false, 1): return String(localized: "Applies the \(always) Always rules and \(own) rule of its own.")
+        case (false, _): return String(localized: "Applies the \(always) Always rules and \(own) rules of its own.")
+        }
     }
 
     private func blocklistSection(_ profile: Profile) -> some View {
@@ -340,7 +345,7 @@ struct ProfilesSettingsView: View {
                         .disabled(!profileClient.isAvailable)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(blocklist.name).lineLimit(1)
-                            Text(blocklist.url.isEmpty ? "Typed by you" : blocklist.url)
+                            Text(blocklist.url.isEmpty ? String(localized: "Typed by you") : blocklist.url)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -441,7 +446,7 @@ struct ProfilesSettingsView: View {
         }
     }
 
-    private func sectionHeader<Trailing: View>(_ title: String,
+    private func sectionHeader<Trailing: View>(_ title: LocalizedStringKey,
                                                @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack(spacing: 8) {
             Text(title).font(.subheadline.weight(.semibold))
@@ -453,7 +458,7 @@ struct ProfilesSettingsView: View {
         .padding(.bottom, 4)
     }
 
-    private func captionText(_ text: String, tint: Color) -> some View {
+    private func captionText(_ text: LocalizedStringKey, tint: Color) -> some View {
         Text(text)
             .font(.caption)
             .foregroundStyle(tint)
@@ -567,9 +572,9 @@ struct ProfilesSettingsView: View {
 
     private var gatewayLabel: String {
         guard let mac = profileClient.snapshot?.currentGatewayMAC else {
-            return "No gateway MAC visible on this network"
+            return String(localized: "No gateway MAC visible on this network")
         }
-        return "Current gateway \(mac)"
+        return String(localized: "Current gateway \(mac)")
     }
 }
 
@@ -645,12 +650,12 @@ struct RuleAppliesToPicker: View {
 
     private var caption: String {
         if profileName == Profile.alwaysName {
-            return "Applies in every profile. Almost every rule belongs here."
+            return String(localized: "Applies in every profile. Almost every rule belongs here.")
         }
         if profileName == activeProfileName {
-            return "Applies only while \(profileName) is the active profile, which it is now."
+            return String(localized: "Applies only while \(profileName) is the active profile, which it is now.")
         }
-        return "Applies only while \(profileName) is the active profile. \(activeProfileName) is active, so this rule stays dormant for now."
+        return String(localized: "Applies only while \(profileName) is the active profile. \(activeProfileName) is active, so this rule stays dormant for now.")
     }
 }
 
@@ -695,7 +700,7 @@ struct BlocklistRefreshStatus: View {
 extension BlocklistInfo {
     var countLabel: String {
         if entryCount > 0 { return "\(entryCount)" }
-        return lastUpdated == nil && !url.isEmpty ? "Not downloaded yet" : "0"
+        return lastUpdated == nil && !url.isEmpty ? String(localized: "Not downloaded yet") : "0"
     }
 }
 
@@ -713,16 +718,16 @@ enum ProfileIcons {
 
     static func title(_ symbol: String) -> String {
         switch symbol {
-        case "house": return "Home"
-        case "building.2": return "Work"
-        case "airplane": return "Travel"
-        case "cup.and.saucer": return "Cafe"
-        case "wifi": return "Public network"
-        case "lock.shield": return "Locked down"
-        case "person.2": return "Shared"
-        case "gamecontroller": return "Play"
-        case "briefcase": return "Client site"
-        default: return "Place"
+        case "house": return String(localized: "Home", comment: "Profile symbol name")
+        case "building.2": return String(localized: "Work", comment: "Profile symbol name")
+        case "airplane": return String(localized: "Travel", comment: "Profile symbol name")
+        case "cup.and.saucer": return String(localized: "Cafe", comment: "Profile symbol name")
+        case "wifi": return String(localized: "Public network", comment: "Profile symbol name")
+        case "lock.shield": return String(localized: "Locked down", comment: "Profile symbol name")
+        case "person.2": return String(localized: "Shared", comment: "Profile symbol name")
+        case "gamecontroller": return String(localized: "Play", comment: "Profile symbol name")
+        case "briefcase": return String(localized: "Client site", comment: "Profile symbol name")
+        default: return String(localized: "Place", comment: "Profile symbol name")
         }
     }
 }

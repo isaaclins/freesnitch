@@ -55,8 +55,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     static let deactivationAnswerTimeout: TimeInterval = 120
     /// Once macOS asks the person to allow the removal, they get this long.
     static let approvalTimeout: TimeInterval = 600
-    static let noAnswer = "macOS did not answer in time."
-    static let filterSettingsKept = "macOS did not let FreeSnitch remove its network filter settings."
+    static let noAnswer = String(localized: "macOS did not answer in time.")
+    static let filterSettingsKept = String(localized: "macOS did not let FreeSnitch remove its network filter settings.")
 
     private enum RequestKind {
         case activation
@@ -70,7 +70,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// answers, so the uninstall can say where.
     @Published private(set) var uninstallNeedsApproval = false
     @Published var snapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
-        "Network extension IPC is not connected."
+        String(localized: "Network extension IPC is not connected.")
     )
 
     private weak var state: AppState?
@@ -750,16 +750,13 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     static func unsavableReason(_ problem: SharedRuleBridge.BootSnapshotProblem, error: Error) -> String {
         switch problem {
         case .tooManyRules(let count, let maximum):
-            return "There are \(count) rules and at most \(maximum) can be kept for the next start. "
-                + "Remove some rules to keep them across restarts."
+            return String(localized: "There are \(count) rules and at most \(maximum) can be kept for the next start. Remove some rules to keep them across restarts.")
         case .tooLarge(_, let maximumBytes):
-            return "The rules take up more than the \(maximumBytes / 1024) KB that can be kept for the next start. "
-                + "Remove some rules or shorten long notes to keep them across restarts."
+            return String(localized: "The rules take up more than the \(maximumBytes / 1024) KB that can be kept for the next start. Remove some rules or shorten long notes to keep them across restarts.")
         case .datedInFuture:
-            return "They are dated later than the Mac's clock, which happens when the clock is set back. "
-                + "This fixes itself the next time the rules are saved, for example with the next rule change."
+            return String(localized: "They are dated later than the Mac's clock, which happens when the clock is set back. This fixes itself the next time the rules are saved, for example with the next rule change.")
         case .other:
-            return "They could not be saved for the next start: \(error.sentence)"
+            return String(localized: "They could not be saved for the next start: \(error.sentence)")
         }
     }
 
@@ -879,8 +876,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             state?.recordFilterRecovery(SharedRuleBridge.snapshotRecoveryExhaustedRemediation)
         case .restartFilter:
             state?.recordFilterRecovery(
-                "The network extension refused the current rules. Restarting the extension's filter to recover; "
-                + "restarting the Mac is not required."
+                String(localized: "The network extension refused the current rules. Restarting the extension's filter to recover; restarting the Mac is not required.")
             )
             restartFilterProvider()
         }
@@ -968,7 +964,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {
-            let message = "filter snapshot unavailable: \(snapshotStatus.message ?? "the helper returned no authoritative policy")"
+            let reason = snapshotStatus.message ?? String(localized: "the helper returned no authoritative policy")
+            let message = String(localized: "filter snapshot unavailable: \(reason)", comment: "Shown after \"The network extension failed:\"")
             if turnOnFromSettings {
                 reportAbandonedSettingsTurnOn(message)
             } else {
@@ -981,8 +978,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             status = .active
             return
         }
-        let detail = snapshotStatus.message ?? "no snapshot has been received"
-        status = .failed("filter snapshot unavailable: \(detail)")
+        let detail = snapshotStatus.message ?? String(localized: "no snapshot has been received")
+        status = .failed(String(localized: "filter snapshot unavailable: \(detail)", comment: "Shown after \"The network extension failed:\""))
     }
 
     /// The helper gave no rules for a turn-on that followed the filter being
@@ -1076,9 +1073,9 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
             case .activation:
                 if (error as? OSSystemExtensionError)?.code == .unsupportedParentBundleLocation {
                     // Said plainly: macOS's own text doesn't say which folder (#412).
-                    self.fail("macOS only turns on the network filter when FreeSnitch runs from the main Applications folder (/Applications). Put FreeSnitch there and open it from there.")
+                    self.fail(String(localized: "macOS only turns on the network filter when FreeSnitch runs from the main Applications folder (/Applications). Put FreeSnitch there and open it from there."))
                 } else {
-                    self.fail("Extension activation failed: \(error.localizedDescription)")
+                    self.fail(String(localized: "Extension activation failed: \(error.localizedDescription)"))
                 }
             case .deactivation:
                 if missing {
@@ -1095,7 +1092,7 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                 // the helper and the app on a guess.
                 self.uninstallState = missing
                     ? .removed
-                    : .failed("macOS could not say whether the network extension stopped: \(error.localizedDescription)")
+                    : .failed(String(localized: "macOS could not say whether the network extension stopped: \(error.localizedDescription)"))
             }
         }
     }
@@ -1115,7 +1112,7 @@ extension SystemExtensionManager: OSSystemExtensionRequestDelegate {
                 // settings are already removed by now, so nothing filters.
                 self.uninstallState = .pendingReboot
             } else {
-                self.uninstallState = .failed("macOS still lists the network extension as installed.")
+                self.uninstallState = .failed(String(localized: "macOS still lists the network extension as installed."))
             }
         }
     }

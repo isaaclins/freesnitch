@@ -44,11 +44,11 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
 
     private static func decodeStatus(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
         (try? SharedRuleBridge.decodeStatus(data))
-            ?? .unavailable("Network extension returned an unreadable snapshot status.")
+            ?? .unavailable(String(localized: "Network extension returned an unreadable snapshot status."))
     }
 
     private static func unavailableStatus(_ detail: String) -> SharedRuleBridge.SnapshotStatus {
-        .unavailable("\(detail) No rule snapshot was delivered; filtering remains fail-open.")
+        .unavailable(String(localized: "\(detail) No rule snapshot was delivered; filtering remains fail-open."))
     }
 
     // MARK: - Extension side
@@ -113,17 +113,17 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         do {
             try RuleTransportBoundary.validateSnapshotBytes(snapshotJSON)
         } catch {
-            finish(.invalid("Network extension rejected the oversized or invalid rule snapshot: \(error.localizedDescription)"))
+            finish(.invalid(String(localized: "Network extension rejected the oversized or invalid rule snapshot: \(error.localizedDescription)")))
             return
         }
         guard let connection = connectionSnapshot() else {
-            finish(Self.unavailableStatus("Network extension IPC is not connected."))
+            finish(Self.unavailableStatus(String(localized: "Network extension IPC is not connected.")))
             return
         }
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-            finish(Self.unavailableStatus("Network extension IPC failed: \(error.localizedDescription)."))
+            finish(Self.unavailableStatus(String(localized: "Network extension IPC failed: \(error.localizedDescription).")))
         }) as? ProviderCommunication else {
-            finish(Self.unavailableStatus("Network extension IPC proxy is unavailable."))
+            finish(Self.unavailableStatus(String(localized: "Network extension IPC proxy is unavailable.")))
             return
         }
         proxy.updateSnapshot(snapshotJSON: snapshotJSON) { statusJSON in
@@ -166,7 +166,7 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
         newConnection.invalidationHandler = { [weak self, weak newConnection] in
             self?.clearCurrentConnection(newConnection)
-            finish(false, Self.unavailableStatus("Network extension rejected or invalidated the GUI XPC peer."))
+            finish(false, Self.unavailableStatus(String(localized: "Network extension rejected or invalidated the GUI XPC peer.")))
         }
         newConnection.interruptionHandler = { [weak self, weak newConnection] in
             self?.clearCurrentConnection(newConnection)
@@ -175,9 +175,9 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         newConnection.resume()
 
         guard let proxy = newConnection.remoteObjectProxyWithErrorHandler({ error in
-            finish(false, Self.unavailableStatus("Network extension IPC rejected the GUI peer or failed: \(error.localizedDescription)."))
+            finish(false, Self.unavailableStatus(String(localized: "Network extension IPC rejected the GUI peer or failed: \(error.localizedDescription).")))
         }) as? ProviderCommunication else {
-            finish(false, Self.unavailableStatus("Network extension IPC proxy is unavailable."))
+            finish(false, Self.unavailableStatus(String(localized: "Network extension IPC proxy is unavailable.")))
             return
         }
         proxy.register { ok, statusJSON in
@@ -238,7 +238,7 @@ extension IPCConnection: NSXPCListenerDelegate {
 extension IPCConnection: ProviderCommunication {
     public func register(_ completionHandler: @escaping (Bool, Data) -> Void) {
         let status = snapshotStatus?()
-            ?? .unavailable("Network extension has not received a rule snapshot from the GUI.")
+            ?? .unavailable(String(localized: "Network extension has not received a rule snapshot from the GUI."))
         completionHandler(true, Self.encodeStatus(status))
     }
 
@@ -247,7 +247,7 @@ extension IPCConnection: ProviderCommunication {
         completionHandler: @escaping (Data) -> Void
     ) {
         let status = onSnapshot?(snapshotJSON)
-            ?? .unavailable("Network extension is not ready to receive rule snapshots.")
+            ?? .unavailable(String(localized: "Network extension is not ready to receive rule snapshots."))
         completionHandler(Self.encodeStatus(status))
     }
 }

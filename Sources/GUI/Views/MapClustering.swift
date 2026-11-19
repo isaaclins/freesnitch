@@ -249,7 +249,7 @@ enum MapClusterEngine {
             hasher.combine(Int((latitude * 1000).rounded()))
             hasher.combine(Int((longitude * 1000).rounded()))
             locations.insert(hasher.finalize())
-            let app = connection.processName.isEmpty ? "Unknown app" : connection.processName
+            let app = connection.processName.isEmpty ? String(localized: "Unknown app") : connection.processName
             apps[app, default: 0] &+= traffic
 
             // The node sits on a real endpoint estimate, not on a moving
@@ -284,16 +284,16 @@ enum MapClusterEngine {
         }
 
         private var title: String {
-            guard let representative else { return "Unknown" }
+            guard let representative else { return String(localized: "Unknown", comment: "Map location whose place is not known") }
             if let city = representative.city, !city.isEmpty { return city }
             if let country = representative.country, !country.isEmpty { return country }
             if !representative.remoteHost.isEmpty { return representative.remoteHost }
             if !representative.remoteIP.isEmpty { return representative.remoteIP }
-            return "Unknown"
+            return String(localized: "Unknown", comment: "Map location whose place is not known")
         }
 
         private var detail: String? {
-            if locations.count > 1 { return "\(locations.count) locations" }
+            if locations.count > 1 { return String(localized: "\(locations.count) locations") }
             guard let representative,
                   let city = representative.city, !city.isEmpty,
                   let country = representative.country, !country.isEmpty else { return nil }

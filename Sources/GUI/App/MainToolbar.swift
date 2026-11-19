@@ -137,10 +137,10 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
         switch itemIdentifier {
         case Self.sidebarItemID:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Sidebar"
-            item.paletteLabel = "Sidebar"
-            item.toolTip = "Hide or show the sidebar"
-            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Sidebar")
+            item.label = String(localized: "Sidebar")
+            item.paletteLabel = String(localized: "Sidebar")
+            item.toolTip = String(localized: "Hide or show the sidebar")
+            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: String(localized: "Sidebar"))
             item.target = self
             item.action = #selector(toggleSidebar)
             item.isNavigational = true
@@ -148,7 +148,7 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
         case Self.titleItemID:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.label = ""
-            item.paletteLabel = "Title"
+            item.paletteLabel = String(localized: "Title")
             item.view = titleView
             item.visibilityPriority = .high
             // macOS 26 puts every toolbar item on a piece of glass, grouped by

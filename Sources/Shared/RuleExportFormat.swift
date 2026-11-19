@@ -67,23 +67,23 @@ public enum RuleExportError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .empty:
-            return "The rule file is empty."
+            return String(localized: "The rule file is empty.")
         case .oversized(let bytes, let limit):
-            return "The rule file is \(bytes) bytes, above the \(limit)-byte import limit."
+            return String(localized: "The rule file is \(bytes) bytes, above the \(limit)-byte import limit.")
         case .tooManyRules(let count, let limit):
-            return "The rule file declares \(count) rules, above the \(limit)-rule import limit."
+            return String(localized: "The rule file declares \(count) rules, above the \(limit)-rule import limit.")
         case .notRuleJSON:
-            return "The file is not a FreeSnitch rule export: it is neither a \(RuleExportDocument.formatIdentifier) document nor a JSON array of rules."
+            return String(localized: "The file is not a FreeSnitch rule export: it is neither a \(RuleExportDocument.formatIdentifier) document nor a JSON array of rules.")
         case .unsupportedFormat(let format):
-            return "Unsupported rule export format `\(format)`. This build reads `\(RuleExportDocument.formatIdentifier)`."
+            return String(localized: "Unsupported rule export format `\(format)`. This build reads `\(RuleExportDocument.formatIdentifier)`.")
         case .unsupportedVersion(let version):
-            return "Unsupported rule export version \(version). This build reads versions \(RuleExportDocument.supportedVersions.lowerBound) through \(RuleExportDocument.supportedVersions.upperBound)."
+            return String(localized: "Unsupported rule export version \(version). This build reads versions \(RuleExportDocument.supportedVersions.lowerBound) through \(RuleExportDocument.supportedVersions.upperBound).")
         case .malformed(let detail):
-            return "The rule file could not be decoded: \(detail)."
+            return String(localized: "The rule file could not be decoded: \(detail).")
         case .invalidRule(let id, let reason):
-            return "Rule \(id) is invalid: \(reason)."
+            return String(localized: "Rule \(id) is invalid: \(reason).")
         case .duplicateRuleID(let id):
-            return "Rule \(id) appears more than once in the file."
+            return String(localized: "Rule \(id) appears more than once in the file.")
         }
     }
 
@@ -92,13 +92,13 @@ public enum RuleExportError: Error, LocalizedError, Equatable {
     public var remediation: String {
         switch self {
         case .empty, .notRuleJSON, .malformed:
-            return "Create the file with `freesnitch rules export` or the GUI export button."
+            return String(localized: "Create the file with `freesnitch rules export` or the GUI export button.")
         case .oversized, .tooManyRules:
-            return "Split the backup into smaller files and import them one after another."
+            return String(localized: "Split the backup into smaller files and import them one after another.")
         case .unsupportedFormat, .unsupportedVersion:
-            return "Export the file again with this version of FreeSnitch, or update FreeSnitch to a build that knows this format."
+            return String(localized: "Export the file again with this version of FreeSnitch, or update FreeSnitch to a build that knows this format.")
         case .invalidRule, .duplicateRuleID:
-            return "Fix the named rule in the file and import it again. Nothing was imported."
+            return String(localized: "Fix the named rule in the file and import it again. Nothing was imported.")
         }
     }
 }
@@ -427,6 +427,6 @@ public struct RuleImportConflict: Error, LocalizedError, Equatable {
     public init() {}
 
     public var errorDescription: String? {
-        "The rules changed while the import was waiting for confirmation, so it would no longer delete or move exactly the rules you confirmed. Nothing was imported. Import the file again to review the current changes."
+        String(localized: "The rules changed while the import was waiting for confirmation, so it would no longer delete or move exactly the rules you confirmed. Nothing was imported. Import the file again to review the current changes.")
     }
 }

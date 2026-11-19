@@ -70,16 +70,16 @@ public final class RuleStore: @unchecked Sendable {
 
         public var errorDescription: String? {
             switch self {
-            case .profileNotFound(let name): return "Profile `\(name)` was not found."
-            case .profileAlreadyExists(let name): return "Profile `\(name)` already exists."
-            case .cannotDeleteDefaultProfile: return "The default profile cannot be deleted."
-            case .cannotDeleteLastProfile: return "At least one profile must remain."
-            case .blocklistNotFound(let id): return "Blocklist `\(id.uuidString)` was not found."
-            case .blocklistAlreadyExists(let name): return "Blocklist `\(name)` already exists."
-            case .invalidBlocklistName: return "The blocklist name cannot be empty."
-            case .invalidBlocklistURL(let reason): return "Invalid blocklist URL: \(reason)."
-            case .noValidBlocklistEntries: return "None of those lines is a domain name."
-            case .tooManyBlocklistEntries(let limit): return "A hand-edited list holds at most \(limit) entries."
+            case .profileNotFound(let name): return String(localized: "Profile `\(name)` was not found.")
+            case .profileAlreadyExists(let name): return String(localized: "Profile `\(name)` already exists.")
+            case .cannotDeleteDefaultProfile: return String(localized: "The default profile cannot be deleted.")
+            case .cannotDeleteLastProfile: return String(localized: "At least one profile must remain.")
+            case .blocklistNotFound(let id): return String(localized: "Blocklist `\(id.uuidString)` was not found.")
+            case .blocklistAlreadyExists(let name): return String(localized: "Blocklist `\(name)` already exists.")
+            case .invalidBlocklistName: return String(localized: "The blocklist name cannot be empty.")
+            case .invalidBlocklistURL(let reason): return String(localized: "Invalid blocklist URL: \(reason).")
+            case .noValidBlocklistEntries: return String(localized: "None of those lines is a domain name.")
+            case .tooManyBlocklistEntries(let limit): return String(localized: "A hand-edited list holds at most \(limit) entries.")
             }
         }
     }

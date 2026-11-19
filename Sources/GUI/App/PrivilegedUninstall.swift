@@ -82,7 +82,7 @@ enum PrivilegedUninstall {
         guard !DemoMode.isOn else { return .success(()) }
         let source = removingDatabase ? removeDatabase : keepDatabase
         guard let appleScript = NSAppleScript(source: source) else {
-            return .failure(.failed("The uninstall could not be prepared."))
+            return .failure(.failed(String(localized: "The uninstall could not be prepared.")))
         }
         var errorInfo: NSDictionary?
         appleScript.executeAndReturnError(&errorInfo)
@@ -91,7 +91,7 @@ enum PrivilegedUninstall {
         let code = (errorInfo[NSAppleScript.errorNumber] as? Int) ?? 0
         if code == -128 { return .failure(.cancelled) }
         let message = (errorInfo[NSAppleScript.errorMessage] as? String)
-            ?? "The privileged uninstall did not complete."
+            ?? String(localized: "The privileged uninstall did not complete.")
         return .failure(.failed(message))
     }
 

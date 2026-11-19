@@ -25,9 +25,9 @@ enum CommandLineTool {
 
     /// Commands worth trying first, each with what it answers.
     static let examples: [(title: String, command: String)] = [
-        ("Show what FreeSnitch is doing", "freesnitch status"),
-        ("List your rules", "freesnitch rules list"),
-        ("All commands", "freesnitch --help")
+        (String(localized: "Show what FreeSnitch is doing"), "freesnitch status"),
+        (String(localized: "List your rules"), "freesnitch rules list"),
+        (String(localized: "All commands"), "freesnitch --help")
     ]
 
     enum LinkState: Equatable {
@@ -58,9 +58,9 @@ enum CommandLineTool {
             return .notInstalled
         }
         if let destination = try? fileManager.destinationOfSymbolicLink(atPath: linkPath) {
-            return .occupied(detail: "\(linkPath) already links to \(destination).")
+            return .occupied(detail: String(localized: "\(linkPath) already links to \(destination)."))
         }
-        return .occupied(detail: "\(linkPath) already exists and is not FreeSnitch's.")
+        return .occupied(detail: String(localized: "\(linkPath) already exists and is not FreeSnitch's."))
     }
 
     /// The link can only point at `/Applications/FreeSnitch.app`, so it is
@@ -99,14 +99,14 @@ enum CommandLineTool {
     static func install() -> Result<Void, Failure> {
         // A demo never writes to the real /usr/local/bin.
         guard !DemoMode.isOn else { return .success(()) }
-        return run(installScript, fallback: "The command could not be installed.")
+        return run(installScript, fallback: String(localized: "The command could not be installed."))
     }
 
     /// Blocks on the password prompt; call it off the main thread.
     static func remove() -> Result<Void, Failure> {
         // A demo never writes to the real /usr/local/bin.
         guard !DemoMode.isOn else { return .success(()) }
-        return run(removeScript, fallback: "The command could not be removed.")
+        return run(removeScript, fallback: String(localized: "The command could not be removed."))
     }
 
     private static func run(_ source: String, fallback: String) -> Result<Void, Failure> {

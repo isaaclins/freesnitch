@@ -677,22 +677,22 @@ public struct IPBlocklistStatus: Codable, Sendable, Equatable {
 
     public var summary: String {
         guard enabledFeedCount > 0 else {
-            return "No IP or CIDR feeds are enabled. Nothing is blocked by address."
+            return String(localized: "No IP or CIDR feeds are enabled. Nothing is blocked by address.")
         }
         guard enforcementEnabled else {
-            return "Enforcement is off, so these \(loadedEntryCount) address entries are blocking nothing."
+            return String(localized: "Enforcement is off, so these \(loadedEntryCount) address entries are blocking nothing.")
         }
         if loadedEntryCount == 0 {
             return failedFeedCount > 0
-                ? "No IP or CIDR entries are loaded, because \(failedFeedCount) enabled feed(s) could not be fetched. Nothing is blocked by address."
-                : "No IP or CIDR entries are loaded. Nothing is blocked by address."
+                ? String(localized: "No IP or CIDR entries are loaded, because \(failedFeedCount) enabled feed(s) could not be fetched. Nothing is blocked by address.")
+                : String(localized: "No IP or CIDR entries are loaded. Nothing is blocked by address.")
         }
-        var text = "Blocking \(loadedEntryCount) address entries (\(loadedRangeCount) ranges)."
+        var text = String(localized: "Blocking \(loadedEntryCount) address entries (\(loadedRangeCount) ranges).")
         if failedFeedCount > 0 {
-            text += " \(failedFeedCount) enabled feed(s) could not be fetched and are not being enforced."
+            text += " " + String(localized: "\(failedFeedCount) enabled feed(s) could not be fetched and are not being enforced.")
         }
         if truncated {
-            text += " The set hit its size limit and was truncated."
+            text += " " + String(localized: "The set hit its size limit and was truncated.")
         }
         return text
     }

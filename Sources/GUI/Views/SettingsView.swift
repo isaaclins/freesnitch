@@ -26,11 +26,11 @@ struct SettingsView: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .general: return "General"
-            case .dns: return "DNS"
-            case .commandLine: return "Command Line"
-            case .uninstall: return "Uninstall"
-            case .about: return "About"
+            case .general: return String(localized: "General")
+            case .dns: return String(localized: "DNS")
+            case .commandLine: return String(localized: "Command Line")
+            case .uninstall: return String(localized: "Uninstall")
+            case .about: return String(localized: "About")
             }
         }
     }
@@ -190,7 +190,7 @@ struct SettingsView: View {
                         .disabled(!state.helperConnected || state.enforcementChangePending)
                         .help(state.helperConnected
                               ? EnforcementControl.help
-                              : "Approve the FreeSnitch helper to change this.")
+                              : String(localized: "Approve the FreeSnitch helper to change this."))
                     if state.enforcementChangePending {
                         Label("Applying…", systemImage: "clock")
                             .font(.caption).foregroundStyle(.secondary)
@@ -233,9 +233,9 @@ struct SettingsView: View {
     /// "Not running" was printed whether the helper was unreachable, the
     /// switch was off, or the proxy had genuinely failed (#131).
     private var dnsProxyStatus: String {
-        guard state.helperConnected else { return "Unavailable while the helper is not connected" }
-        if state.dnsProxyEnabled { return "Running on port \(state.dnsProxyPort)" }
-        return state.enforcementEnabled ? "Not running" : "Off, because enforcement is off"
+        guard state.helperConnected else { return String(localized: "Unavailable while the helper is not connected") }
+        if state.dnsProxyEnabled { return String(localized: "Running on port \(state.dnsProxyPort)") }
+        return state.enforcementEnabled ? String(localized: "Not running") : String(localized: "Off, because enforcement is off")
     }
 
     /// A running proxy is not the same as a proxy in use. FreeSnitch does not
@@ -271,40 +271,40 @@ struct SettingsView: View {
 
     private var dnsUsage: (status: String, detail: String) {
         guard state.helperConnected else {
-            return ("Unknown", "The helper is not connected.")
+            return (String(localized: "Unknown", comment: "Whether this Mac uses the DNS proxy"), String(localized: "The helper is not connected."))
         }
         // Pointed at this Mac with nothing listening, every lookup fails. That
         // is the one state here that breaks the network, so it comes first.
         if !state.dnsProxyEnabled, routesThroughProxy {
-            return ("No",
-                    "This Mac's DNS server is set to this Mac, but the FreeSnitch DNS proxy is not running. Unless another DNS app answers there, names cannot be looked up. Turn enforcement on, or set the DNS server back in System Settings > Network.")
+            return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
+                    String(localized: "This Mac's DNS server is set to this Mac, but the FreeSnitch DNS proxy is not running. Unless another DNS app answers there, names cannot be looked up. Turn enforcement on, or set the DNS server back in System Settings > Network."))
         }
         guard state.enforcementEnabled else {
-            return ("No",
-                    "The upstream applies only while enforcement is on. Turn it on in General.")
+            return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
+                    String(localized: "The upstream applies only while enforcement is on. Turn it on in General."))
         }
         guard state.dnsProxyEnabled else {
-            return ("No", "Enforcement is on, but the DNS proxy is not running.")
+            return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"), String(localized: "Enforcement is on, but the DNS proxy is not running."))
         }
         // A VPN that brings its own DNS outranks the network's DNS server,
         // so the general advice below would send the user to a setting that
         // changes nothing while it is connected (#424).
         let vpnDNS = VPNStatus.dnsSummary(network.vpns, routesThroughProxy: routesThroughProxy)
         if routesThroughProxy {
-            return ("Yes", "This Mac's DNS server is FreeSnitch, which filters lookups and forwards the rest over HTTPS. "
-                    + (vpnDNS ?? "A DNS profile, VPN or DNS app can still take some or all lookups elsewhere."))
+            return (String(localized: "Yes", comment: "Whether this Mac uses the DNS proxy"),
+                    String(localized: "This Mac's DNS server is FreeSnitch, which filters lookups and forwards the rest over HTTPS. \(vpnDNS ?? String(localized: "A DNS profile, VPN or DNS app can still take some or all lookups elsewhere."))"))
         }
         // Only a VPN that takes every lookup replaces the advice below. A
         // split-DNS one takes just its domains, so the rest still bypass
         // FreeSnitch the ordinary way and the advice stands.
         if let vpnDNS, VPNStatus.dnsOwner(network.vpns) != nil {
-            return ("No", vpnDNS)
+            return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"), vpnDNS)
         }
         let servers = systemResolvers.isEmpty
-            ? "the resolver your network or a DNS app provides"
+            ? String(localized: "the resolver your network or a DNS app provides")
             : systemResolvers.joined(separator: ", ")
-        return ("No",
-                "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that. Set it back before you turn enforcement off or remove FreeSnitch, or this Mac cannot look up names."
+        return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
+                String(localized: "This Mac sends its lookups to \(servers) directly. FreeSnitch does not change your network settings. To send them through FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS. A DNS profile, VPN or DNS app takes priority over that. Set it back before you turn enforcement off or remove FreeSnitch, or this Mac cannot look up names.")
                 + (vpnDNS.map { " " + $0 } ?? ""))
     }
 
@@ -316,18 +316,18 @@ struct SettingsView: View {
 
     private var helperSummary: String {
         if case .mismatch(let helperVersion, let appVersion) = state.helperVersionState {
-            return "Running version \(helperVersion), while this app is version \(appVersion)"
+            return String(localized: "Running version \(helperVersion), while this app is version \(appVersion)")
         }
         switch state.helperInstallState {
-        case .enabled: return state.helperConnected ? "Connected" : "Approved, connecting…"
-        case .requiresApproval: return "Waiting for your approval"
-        case .notRegistered, .unknown: return "Not installed"
+        case .enabled: return state.helperConnected ? String(localized: "Connected") : String(localized: "Approved, connecting…")
+        case .requiresApproval: return String(localized: "Waiting for your approval")
+        case .notRegistered, .unknown: return String(localized: "Not installed")
         case .wrongLocation:
-            if InstallLocation.stuckInstalledCopy != nil { return "macOS runs a temporary copy, so reinstall FreeSnitch" }
+            if InstallLocation.stuckInstalledCopy != nil { return String(localized: "macOS runs a temporary copy, so reinstall FreeSnitch") }
             return InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
-                ? "Copy FreeSnitch to /Applications" : "Move FreeSnitch to /Applications"
-        case .notFound: return "Registration record missing"
-        case .failed(let m): return "Failed: \(m)"
+                ? String(localized: "Copy FreeSnitch to /Applications") : String(localized: "Move FreeSnitch to /Applications")
+        case .notFound: return String(localized: "Registration record missing")
+        case .failed(let m): return String(localized: "Failed: \(m)")
         }
     }
 
@@ -356,7 +356,7 @@ struct SettingsView: View {
                     // as "Unknown" into editable state, where pressing Return
                     // would try to save the sentinel as a resolver URL.
                     doh = ""
-                    dohError = error ?? "The effective DoH upstream is unavailable."
+                    dohError = error ?? String(localized: "The effective DoH upstream is unavailable.")
                 }
             }
         }
@@ -370,7 +370,7 @@ struct SettingsView: View {
                     savedDoH = value
                     dohError = nil
                 } else {
-                    dohError = message ?? "The helper refused the DoH upstream."
+                    dohError = message ?? String(localized: "The helper refused the DoH upstream.")
                 }
             }
         }

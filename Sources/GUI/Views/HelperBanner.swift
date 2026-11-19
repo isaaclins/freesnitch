@@ -85,9 +85,9 @@ private struct BannerInfo {
         guard let other = helperOtherCopy else { return nil }
         icon = "square.on.square"
         tint = Color.orange
-        title = "The helper runs from another copy of FreeSnitch"
+        title = String(localized: "The helper runs from another copy of FreeSnitch")
         detail = HelperOtherCopyMessage.detail(other: other, this: thisCopy)
-        action = BannerAction(title: "Show in Finder") { _, _ in
+        action = BannerAction(title: String(localized: "Show in Finder")) { _, _ in
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: other)])
         }
     }
@@ -103,16 +103,16 @@ private struct BannerInfo {
         if case .mismatch(let helperVersion, let appVersion) = versionState, installState != .wrongLocation {
             icon = "wrench.and.screwdriver.fill"
             tint = Color.orange
-            title = "The running helper is not the installed build"
+            title = String(localized: "The running helper is not the installed build")
             switch repairState {
             case .inProgress:
-                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Waiting for you to authorize the restart. FreeSnitch only restarts the existing service; it never unregisters it."
+                detail = String(localized: "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Waiting for you to authorize the restart. FreeSnitch only restarts the existing service; it never unregisters it.")
             case .manualRequired(let reason):
-                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. \(reason) The current pf anchor is left in place."
+                detail = String(localized: "The helper process is running v\(helperVersion), but the installed app is v\(appVersion). Helper-side fixes are not active. \(reason) The current pf anchor is left in place.")
             case .idle:
-                detail = "The helper process is running v\(helperVersion), but the installed app is v\(appVersion), so helper-side fixes are not active and traffic may not be filtered. Repair Helper restarts it for you; macOS will ask you to authorize it."
+                detail = String(localized: "The helper process is running v\(helperVersion), but the installed app is v\(appVersion), so helper-side fixes are not active and traffic may not be filtered. Repair Helper restarts it for you; macOS will ask you to authorize it.")
             }
-            action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
+            action = BannerAction(title: String(localized: "Repair Helper")) { state, _ in state.helper.repairHelper() }
             return
         }
 
@@ -122,40 +122,40 @@ private struct BannerInfo {
         case .enabled where needsRepair:
             icon = "wrench.and.screwdriver.fill"
             tint = Color.orange
-            title = "The helper needs repairing"
-            detail = "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact."
-            action = BannerAction(title: "Repair Helper") { state, _ in state.helper.repairHelper() }
+            title = String(localized: "The helper needs repairing")
+            detail = String(localized: "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact.")
+            action = BannerAction(title: String(localized: "Repair Helper")) { state, _ in state.helper.repairHelper() }
         case .enabled:
             icon = "hourglass"
             tint = Color.orange
-            title = "Connecting to the FreeSnitch helper…"
-            detail = "The helper is approved but hasn't answered yet. This usually clears within a few seconds."
+            title = String(localized: "Connecting to the FreeSnitch helper…")
+            detail = String(localized: "The helper is approved but hasn't answered yet. This usually clears within a few seconds.")
             action = nil
         case .requiresApproval:
             icon = "exclamationmark.triangle.fill"
             tint = Color.orange
-            title = "FreeSnitch needs your approval to monitor traffic"
-            detail = "Open System Settings under General > Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown."
-            action = BannerAction(title: "Open Login Items") { state, _ in state.helper.openLoginItemsSettings() }
+            title = String(localized: "FreeSnitch needs your approval to monitor traffic")
+            detail = String(localized: "Open System Settings under General > Login Items & Extensions and switch FreeSnitch on under \"Allow in the Background\". Until then no connections, rules or traffic can be shown.")
+            action = BannerAction(title: String(localized: "Open Login Items")) { state, _ in state.helper.openLoginItemsSettings() }
         case .notRegistered:
             icon = "bolt.horizontal.circle.fill"
             tint = Color.orange
-            title = "The FreeSnitch helper isn't registered yet"
-            detail = "The helper runs the traffic monitor and the firewall rules. Register it from this signed app, then approve it in System Settings if macOS asks."
-            action = BannerAction(title: "Register Helper") { state, _ in state.helper.registerDaemon() }
+            title = String(localized: "The FreeSnitch helper isn't registered yet")
+            detail = String(localized: "The helper runs the traffic monitor and the firewall rules. Register it from this signed app, then approve it in System Settings if macOS asks.")
+            action = BannerAction(title: String(localized: "Register Helper")) { state, _ in state.helper.registerDaemon() }
         case .unknown:
             icon = "questionmark.circle.fill"
             tint = Color.orange
-            title = "The FreeSnitch helper state is unknown"
-            detail = "Refresh the helper state or run the CLI diagnostics. No registration change was attempted."
-            action = BannerAction(title: "Check Again") { state, _ in state.helper.refreshInstallState(); state.helper.ping() }
+            title = String(localized: "The FreeSnitch helper state is unknown")
+            detail = String(localized: "Refresh the helper state or run the CLI diagnostics. No registration change was attempted.")
+            action = BannerAction(title: String(localized: "Check Again")) { state, _ in state.helper.refreshInstallState(); state.helper.ping() }
         case .wrongLocation where InstallLocation.stuckInstalledCopy != nil:
             // Already in Applications, but macOS runs it from a temporary
             // copy; a move would only reopen this same copy (#375).
             icon = "arrow.down.app.fill"
             tint = Color.red
             title = InstallLocation.stuckCopyTitle
-            detail = "macOS runs the copy in Applications from a temporary location, so it won't install the helper. \(InstallLocation.reinstallAdvice)"
+            detail = String(localized: "macOS runs the copy in Applications from a temporary location, so it won't install the helper. \(InstallLocation.reinstallAdvice)")
             action = BannerAction(title: InstallLocation.stuckCopyButton) { _, _ in
                 if let installed = InstallLocation.stuckInstalledCopy {
                     InstallLocation.stuckCopyAction(installed, confirm: true)
@@ -166,34 +166,34 @@ private struct BannerInfo {
             tint = Color.red
             let fromHome = InstallLocation.isInUserApplications(InstallLocation.runningOriginal)
             if fromHome {
-                title = "Copy FreeSnitch to the main Applications folder"
-                detail = InstallLocation.userApplicationsReason + " FreeSnitch can copy itself there and reopen."
+                title = String(localized: "Copy FreeSnitch to the main Applications folder")
+                detail = String(localized: "\(InstallLocation.userApplicationsReason) FreeSnitch can copy itself there and reopen.")
             } else {
-                title = "Move FreeSnitch to your Applications folder"
-                detail = "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there."
+                title = String(localized: "Move FreeSnitch to your Applications folder")
+                detail = String(localized: "macOS refuses to install background helpers for apps launched from a disk image or the Downloads folder. FreeSnitch can move itself into Applications and reopen from there.")
             }
-            action = BannerAction(title: fromHome ? "Copy to Applications" : "Move to Applications") { _, _ in
+            action = BannerAction(title: fromHome ? String(localized: "Copy to Applications") : String(localized: "Move to Applications")) { _, _ in
                 InstallLocation.moveToApplications()
             }
         case .notFound:
             icon = "exclamationmark.triangle.fill"
             tint = Color.orange
-            title = "macOS cannot find the FreeSnitch helper registration"
+            title = String(localized: "macOS cannot find the FreeSnitch helper registration")
             if HelperClient.hasBundledHelper {
-                detail = "This signed app still contains the helper declaration and executable, but SMAppService lost or cannot find its registration record. Background App Activity may still show FreeSnitch as on while launchd has no service. Register it again; toggling that switch alone is not sufficient."
-                action = BannerAction(title: "Register Helper") { state, _ in state.helper.registerDaemon() }
+                detail = String(localized: "This signed app still contains the helper declaration and executable, but SMAppService lost or cannot find its registration record. Background App Activity may still show FreeSnitch as on while launchd has no service. Register it again; toggling that switch alone is not sufficient.")
+                action = BannerAction(title: String(localized: "Register Helper")) { state, _ in state.helper.registerDaemon() }
             } else {
-                detail = "This app copy does not contain both the helper declaration and executable, so registration cannot be attempted. Install the signed FreeSnitch release again."
+                detail = String(localized: "This app copy does not contain both the helper declaration and executable, so registration cannot be attempted. Install the signed FreeSnitch release again.")
                 action = nil
             }
         case .failed(let message):
             icon = "xmark.octagon.fill"
             tint = Color.red
-            title = "Helper installation failed"
+            title = String(localized: "Helper installation failed")
             // The message already says what macOS reported and what to do,
             // including the move advice only when it applies (#409).
             detail = message
-            action = BannerAction(title: "Retry") { state, _ in state.helper.registerDaemon() }
+            action = BannerAction(title: String(localized: "Retry")) { state, _ in state.helper.registerDaemon() }
         }
     }
 
@@ -212,14 +212,14 @@ private struct BannerInfo {
         icon = "externaldrive.badge.exclamationmark"
         tint = Color.orange
         if persistenceDegraded, let unsavableReason {
-            title = "The current rules won't survive a restart"
+            title = String(localized: "The current rules won't survive a restart")
             // Only claim the rules are in use when the extension holds them
             // (the filter may be off while rules still sync).
             detail = [unsavableReason,
-                      liveRulesReady ? "The filter is using them now." : nil,
+                      liveRulesReady ? String(localized: "The filter is using them now.") : nil,
                       // The reason carries its own advice: removing rules
                       // only helps when the count or size is the cause (#341).
-                      "After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again.",
+                      String(localized: "After the Mac or the filter restarts, the per-process filter lets every connection through until FreeSnitch is open and sends them again.", comment: "\"them\" is the current firewall rules"),
                       recoveryMessage]
                 .compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: " ")
@@ -227,21 +227,21 @@ private struct BannerInfo {
             // way out of a filter recovery shown alongside.
             action = recoveryMessage == nil
                 ? nil
-                : BannerAction(title: "Send Rules Again") { state, _ in state.syncSharedRules() }
+                : BannerAction(title: String(localized: "Send Rules Again")) { state, _ in state.syncSharedRules() }
             return
         }
         title = persistenceDegraded
-            ? "FreeSnitch could not save the current rules"
-            : "The network filter needs attention"
+            ? String(localized: "FreeSnitch could not save the current rules")
+            : String(localized: "The network filter needs attention")
         let base = persistenceDegraded
             ? (liveRulesReady
-                ? "The filter is using them now, but after a restart it may not have them until FreeSnitch sends them again."
-                : "After a restart the filter may use older saved rules until FreeSnitch sends them again.")
+                ? String(localized: "The filter is using them now, but after a restart it may not have them until FreeSnitch sends them again.")
+                : String(localized: "After a restart the filter may use older saved rules until FreeSnitch sends them again."))
             : ""
         detail = [base, recoveryMessage]
             .compactMap { $0?.isEmpty == false ? $0 : nil }
             .joined(separator: " ")
-        action = BannerAction(title: "Send Rules Again") { state, _ in state.syncSharedRules() }
+        action = BannerAction(title: String(localized: "Send Rules Again")) { state, _ in state.syncSharedRules() }
     }
 
     init?(extensionStatus: SystemExtensionManager.Status,
@@ -252,28 +252,28 @@ private struct BannerInfo {
         case .activating:
             icon = "hourglass"
             tint = Color.orange
-            title = "Starting the FreeSnitch firewall"
-            detail = "The network extension is starting. Filtering is not active until the extension is approved and receives the current rule snapshot."
+            title = String(localized: "Starting the FreeSnitch firewall")
+            detail = String(localized: "The network extension is starting. Filtering is not active until the extension is approved and receives the current rule snapshot.")
             action = nil
         case .needsApproval:
             icon = "exclamationmark.triangle.fill"
             tint = Color.orange
-            title = "FreeSnitch needs approval to filter traffic"
-            detail = "The network extension is staged but not approved. Until you approve it under General > Login Items & Extensions > Network Extensions, FreeSnitch can monitor traffic but cannot filter connections or show alerts."
-            action = BannerAction(title: "Open Network Extensions") { _, manager in
+            title = String(localized: "FreeSnitch needs approval to filter traffic")
+            detail = String(localized: "The network extension is staged but not approved. Until you approve it under General > Login Items & Extensions > Network Extensions, FreeSnitch can monitor traffic but cannot filter connections or show alerts.")
+            action = BannerAction(title: String(localized: "Open Network Extensions")) { _, manager in
                 manager.openNetworkExtensionsSettings()
             }
         case .unsupported:
             icon = "xmark.octagon.fill"
             tint = Color.red
-            title = "Network filtering is unavailable in this build"
-            detail = "This copy of FreeSnitch does not include a supported Network Extension. Traffic monitoring can continue, but the firewall is not filtering connections."
+            title = String(localized: "Network filtering is unavailable in this build")
+            detail = String(localized: "This copy of FreeSnitch does not include a supported Network Extension. Traffic monitoring can continue, but the firewall is not filtering connections.")
             action = nil
         case .failed(let message):
             icon = "xmark.octagon.fill"
             tint = Color.red
-            title = "FreeSnitch is not filtering traffic"
-            detail = "The network extension failed: \(message)"
+            title = String(localized: "FreeSnitch is not filtering traffic")
+            detail = String(localized: "The network extension failed: \(message)")
             action = nil
         case .active:
             switch snapshotStatus.state {
@@ -282,15 +282,15 @@ private struct BannerInfo {
             case .unavailable:
                 icon = "exclamationmark.shield.fill"
                 tint = Color.orange
-                title = "FreeSnitch is not filtering traffic"
-                detail = "The network extension is active, but it has not received a rule snapshot. FreeSnitch is monitoring traffic only until the rules are delivered."
+                title = String(localized: "FreeSnitch is not filtering traffic")
+                detail = String(localized: "The network extension is active, but it has not received a rule snapshot. FreeSnitch is monitoring traffic only until the rules are delivered.")
                 action = nil
             case .invalid:
                 icon = "xmark.octagon.fill"
                 tint = Color.red
-                title = "FreeSnitch could not deliver its rules"
-                let reason = snapshotStatus.message ?? "the rule snapshot was rejected"
-                detail = "The network extension is active, but its rule snapshot is invalid: \(reason). FreeSnitch is not filtering traffic."
+                title = String(localized: "FreeSnitch could not deliver its rules")
+                let reason = snapshotStatus.message ?? String(localized: "the rule snapshot was rejected")
+                detail = String(localized: "The network extension is active, but its rule snapshot is invalid: \(reason). FreeSnitch is not filtering traffic.")
                 action = nil
             }
         }

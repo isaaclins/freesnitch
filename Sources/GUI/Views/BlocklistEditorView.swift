@@ -38,8 +38,8 @@ struct BlocklistEditorView: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .url: return "Download from a URL"
-            case .typed: return "Type the entries"
+            case .url: return String(localized: "Download from a URL")
+            case .typed: return String(localized: "Type the entries")
             }
         }
     }
@@ -48,7 +48,7 @@ struct BlocklistEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(isCreating ? "Add Blocklist" : "Edit \(blocklist?.name ?? "Blocklist")")
+            Text(isCreating ? "Add Blocklist" : "Edit \(blocklist?.name ?? String(localized: "Blocklist"))")
                 .font(.headline)
             Form {
                 Section {
@@ -77,7 +77,7 @@ struct BlocklistEditorView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            LabeledContent("Source", value: "Typed by you")
+                            LabeledContent("Source", value: String(localized: "Typed by you"))
                         }
                     }
                     Section("Add entries") {
@@ -128,7 +128,7 @@ struct BlocklistEditorView: View {
         .padding(20)
         .frame(width: 460)
         .onAppear { load() }
-        .confirmationDialog("Reset \(blocklist?.name ?? "this list")?",
+        .confirmationDialog("Reset \(blocklist?.name ?? String(localized: "this list"))?",
                             isPresented: $showingResetConfirmation,
                             titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
@@ -148,7 +148,7 @@ struct BlocklistEditorView: View {
         !(blocklist?.url ?? "").trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    private func entriesEditor(text: Binding<String>, caption: String) -> some View {
+    private func entriesEditor(text: Binding<String>, caption: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             TextEditor(text: text)
                 .font(.body.monospaced())
@@ -200,7 +200,7 @@ struct BlocklistEditorView: View {
         case .typed:
             let domains = BlocklistDomain.normaliseText(entryText)
             guard !domains.isEmpty else {
-                errorMessage = "None of those lines is a domain name."
+                errorMessage = String(localized: "None of those lines is a domain name.")
                 return
             }
             isSaving = true
@@ -228,7 +228,7 @@ struct BlocklistEditorView: View {
         if !newEntries.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let domains = BlocklistDomain.normaliseText(newEntries)
             guard !domains.isEmpty else {
-                errorMessage = "None of those lines is a domain name."
+                errorMessage = String(localized: "None of those lines is a domain name.")
                 return
             }
             steps.append { done in profileClient.addBlocklistEntries(blocklist.id, domains: domains, completion: done) }
@@ -259,7 +259,7 @@ struct BlocklistEditorView: View {
     private func finish(_ ok: Bool, _ message: String?) {
         isSaving = false
         guard ok else {
-            errorMessage = message ?? "The helper refused the change and did not say why."
+            errorMessage = message ?? String(localized: "The helper refused the change and did not say why.")
             return
         }
         dismiss()

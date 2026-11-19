@@ -176,11 +176,11 @@ struct InsightsView: View {
 
     private var notBlockingMessage: String? {
         if !state.enforcementEnabled {
-            return "FreeSnitch is not blocking anything: enforcement is off. Insights still records, and nothing on this screen is in force."
+            return String(localized: "FreeSnitch is not blocking anything: enforcement is off. Insights still records, and nothing on this screen is in force.")
         }
         switch state.mode {
         case .silentAllow:
-            return "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply. Insights still records, and nothing on this screen is in force."
+            return String(localized: "FreeSnitch is in Silent Allow: every connection no rule covers is permitted, and your deny and ask rules still apply. Insights still records, and nothing on this screen is in force.")
         case .alert, .silentDeny:
             return nil
         }
@@ -202,10 +202,10 @@ struct InsightsView: View {
     private var appsSection: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                sectionTitle("Apps", subtitle: "\(model.apps.count) recorded",
-                             note: "Every app that went online in this range. Select one to see where it connected.")
+                sectionTitle(String(localized: "Apps"), subtitle: String(localized: "\(model.apps.count) recorded"),
+                             note: String(localized: "Every app that went online in this range. Select one to see where it connected."))
                 if model.apps.isEmpty && !model.isLoading {
-                    emptyState("Nothing recorded in this range yet.")
+                    emptyState(String(localized: "Nothing recorded in this range yet."))
                 } else {
                     // A real List: system selection highlight and arrow keys.
                     // Styled as content, not as a sidebar: the only translucent
@@ -227,7 +227,7 @@ struct InsightsView: View {
                         }
                     }
                     listFooter(hasMore: model.hasMoreApps,
-                               title: "Load more apps",
+                               title: String(localized: "Load more apps"),
                                action: { model.loadMoreApps() })
                 }
             }
@@ -238,9 +238,9 @@ struct InsightsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let app = model.selectedApp {
                     sectionTitle(app.displayName,
-                                 subtitle: "\(Self.plural(app.destinationCount, "destination")), \(Self.plural(app.connectionCount, "connection"))")
+                                 subtitle: String(localized: "\(app.destinationCount) destinations, \(app.connectionCount) connections"))
                     if model.destinations.isEmpty && !model.isLoading {
-                        emptyState("No destinations recorded for this app in this range.")
+                        emptyState(String(localized: "No destinations recorded for this app in this range."))
                     } else {
                         List(selection: $selectedDestinationID) {
                             ForEach(model.destinations) { destination in
@@ -258,7 +258,7 @@ struct InsightsView: View {
                         destinationFooter(app: app)
                     }
                 } else {
-                    emptyState("Select an app to see what it talked to.")
+                    emptyState(String(localized: "Select an app to see what it talked to."))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -271,9 +271,9 @@ struct InsightsView: View {
     /// "Also contacted by 2 other apps" said how many and never which (#435).
     private func sharedDestinationSheet(_ destination: InsightsDestinationSummary) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("Apps that reached \(destination.displayName)",
-                         subtitle: "\(Self.plural(destination.otherAppCount + 1, "app")) in this range",
-                         note: "Apps that talk to the same server aren't necessarily related.")
+            sectionTitle(String(localized: "Apps that reached \(destination.displayName)"),
+                         subtitle: String(localized: "\(destination.otherAppCount + 1) apps in this range"),
+                         note: String(localized: "Apps that talk to the same server aren't necessarily related."))
             reachingAppsList(proposingFor: nil)
             Divider()
             HStack {
@@ -309,14 +309,14 @@ struct InsightsView: View {
                 // Short enough to survive the list's width. The long form
                 // truncated inside a word ("4.8k connecti..."), which reads as
                 // a layout bug rather than as an abbreviation (#102).
-                Text("\(Self.plural(app.destinationCount, "destination")), \(PSFormat.compactCount(app.connectionCount)) connections")
+                Text("\(app.destinationCount) destinations, \(PSFormat.compactCount(app.connectionCount)) connections")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .help("\(Self.plural(app.destinationCount, "destination")), \(Self.plural(app.connectionCount, "connection"))")
+                    .help("\(app.destinationCount) destinations, \(app.connectionCount) connections")
                 if app.blockedCount > 0 {
                     Label("\(PSFormat.compactCount(app.blockedCount)) blocked", systemImage: "xmark.octagon.fill")
                         .labelStyle(.titleAndIcon)
                         .font(.caption).foregroundStyle(.red).lineLimit(1)
-                        .help("FreeSnitch blocked \(Self.plural(app.blockedCount, "connection")) from this app in this range.")
+                        .help("FreeSnitch blocked \(app.blockedCount) connections from this app in this range.")
                 }
             }
             Spacer()
@@ -333,7 +333,7 @@ struct InsightsView: View {
             HStack(spacing: 8) {
                 Text(destination.displayName).font(.body)
                 if !destination.isNameKnown {
-                    PSChip("No DNS name seen", color: .orange, icon: "questionmark.circle")
+                    PSChip(String(localized: "No DNS name seen"), color: .orange, icon: "questionmark.circle")
                 }
                 Spacer()
                 decisionChip(destination)
@@ -364,16 +364,16 @@ struct InsightsView: View {
             Group {
                 switch counts.status(total: destination.connectionCount) {
                 case .allowed:
-                    PSChip("Allowed", color: .green, icon: "checkmark.circle.fill")
+                    PSChip(String(localized: "Allowed"), color: .green, icon: "checkmark.circle.fill")
                 case .blocked:
-                    PSChip("Blocked", color: .red, icon: "xmark.octagon.fill")
+                    PSChip(String(localized: "Blocked"), color: .red, icon: "xmark.octagon.fill")
                 case .mixed(let blocked, let total):
-                    PSChip("\(PSFormat.compactCount(blocked)) of \(PSFormat.compactCount(total)) blocked",
+                    PSChip(String(localized: "\(PSFormat.compactCount(blocked)) of \(PSFormat.compactCount(total)) blocked"),
                            color: .orange, icon: "xmark.octagon")
                 case .notBlocked:
-                    PSChip("Not blocked", color: .green, icon: "checkmark.circle")
+                    PSChip(String(localized: "Not blocked"), color: .green, icon: "checkmark.circle")
                 case .unfiltered:
-                    PSChip("Not filtered", color: .secondary, icon: "minus.circle")
+                    PSChip(String(localized: "Not filtered"), color: .secondary, icon: "minus.circle")
                 case .unknown:
                     EmptyView()
                 }
@@ -386,15 +386,14 @@ struct InsightsView: View {
     /// before decisions were kept.
     static func decisionHelp(_ counts: InsightsDecisionCounts, total: Int) -> String {
         var parts: [String] = []
-        if counts.allowed > 0 { parts.append("\(Self.plural(counts.allowed, "connection")) allowed") }
-        if counts.blocked > 0 { parts.append("\(Self.plural(counts.blocked, "connection")) blocked") }
+        if counts.allowed > 0 { parts.append(String(localized: "\(counts.allowed) connections allowed")) }
+        if counts.blocked > 0 { parts.append(String(localized: "\(counts.blocked) connections blocked")) }
         if counts.unfiltered > 0 {
-            parts.append("\(Self.plural(counts.unfiltered, "connection")) let through without a filtering decision "
-                         + "(name lookups, local traffic, an alert nobody answered, or no rules loaded yet)")
+            parts.append(String(localized: "\(counts.unfiltered) connections let through without a filtering decision (name lookups, local traffic, an alert nobody answered, or no rules loaded yet)"))
         }
         let unknown = total - counts.allowed - counts.blocked - counts.unfiltered
         if unknown > 0 {
-            parts.append("\(Self.plural(unknown, "connection")) recorded before FreeSnitch kept decisions")
+            parts.append(String(localized: "\(unknown) connections recorded before FreeSnitch kept decisions"))
         }
         return parts.joined(separator: "\n")
     }
@@ -503,7 +502,7 @@ struct InsightsView: View {
     /// recorded. Nothing is added until the person presses Add (#446).
     private func newRule(app: InsightsAppSummary?, domain: String?, ip: String?) {
         guard state.helperConnected else {
-            model.errorMessage = "Approve the FreeSnitch helper before adding rules."
+            model.errorMessage = String(localized: "Approve the FreeSnitch helper before adding rules.")
             return
         }
         model.ruleAddedMessage = nil
@@ -528,11 +527,11 @@ struct InsightsView: View {
     private var unresolvedSection: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                sectionTitle("Addresses reached without a name lookup",
-                             subtitle: "\(model.unresolved.count) in this range",
+                sectionTitle(String(localized: "Addresses reached without a name lookup"),
+                             subtitle: String(localized: "\(model.unresolved.count) in this range"),
                              note: InsightsUnresolvedDestination.signalWording)
                 if model.unresolved.isEmpty && !model.isLoading {
-                    emptyState("Every recorded address had a DNS answer in this range.")
+                    emptyState(String(localized: "Every recorded address had a DNS answer in this range."))
                 } else {
                     // Selectable, copyable and actionable, like the Apps list. It
                     // used to be plain text: the one thing a reader could want to
@@ -565,7 +564,7 @@ struct InsightsView: View {
                         return [NSItemProvider(object: id as NSString)]
                     }
                     listFooter(hasMore: model.hasMoreUnresolved,
-                               title: "Load more addresses",
+                               title: String(localized: "Load more addresses"),
                                action: { model.loadMoreUnresolved() })
                 }
             }
@@ -579,7 +578,7 @@ struct InsightsView: View {
                                  subtitle: Self.unresolvedSummary(entry))
                     reachingAppsList(proposingFor: entry)
                 } else {
-                    emptyState("Select an address to see which apps reached it.")
+                    emptyState(String(localized: "Select an address to see which apps reached it."))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -596,13 +595,11 @@ struct InsightsView: View {
     }
 
     private static func unresolvedSummary(_ entry: InsightsUnresolvedDestination) -> String {
-        var parts = ["Reached by \(plural(entry.appCount, "app"))",
-                     plural(entry.connectionCount, "connection"),
-                     PSFormat.bytes(entry.bytesIn + entry.bytesOut)]
-        if let lastSeen = entry.lastSeen {
-            parts.append("last seen \(lastSeen.formatted(.relative(presentation: .named)))")
+        let bytes = PSFormat.bytes(entry.bytesIn + entry.bytesOut)
+        guard let lastSeen = entry.lastSeen else {
+            return String(localized: "Reached by \(entry.appCount) apps, \(entry.connectionCount) connections, \(bytes)")
         }
-        return parts.joined(separator: ", ")
+        return String(localized: "Reached by \(entry.appCount) apps, \(entry.connectionCount) connections, \(bytes), last seen \(lastSeen.formatted(.relative(presentation: .named)))")
     }
 
     /// Every app behind one destination, each with its own count and the
@@ -614,7 +611,7 @@ struct InsightsView: View {
         if let error = model.reachingError {
             emptyState(error)
         } else if model.reachingApps.isEmpty && !model.isLoading {
-            emptyState("No app recorded for this destination in this range.")
+            emptyState(String(localized: "No app recorded for this destination in this range."))
         } else {
             List(selection: $selectedReachingAppID) {
                 ForEach(model.reachingApps) { app in
@@ -702,12 +699,12 @@ struct InsightsView: View {
     /// Telegram" and the fourth said "3 apps" (#124).
     private static func reachedBy(_ entry: InsightsUnresolvedDestination) -> String {
         guard !entry.appNames.isEmpty else {
-            return "Reached by \(plural(entry.appCount, "app"))"
+            return String(localized: "Reached by \(entry.appCount) apps")
         }
         let named = entry.appNames.joined(separator: ", ")
         let remaining = entry.appCount - entry.appNames.count
-        guard remaining > 0 else { return "Reached by \(named)" }
-        return "Reached by \(named) and \(remaining) more"
+        guard remaining > 0 else { return String(localized: "Reached by \(named)") }
+        return String(localized: "Reached by \(named) and \(remaining) more")
     }
 
     @ViewBuilder
@@ -730,11 +727,11 @@ struct InsightsView: View {
 
     private var findingsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("New since an app update",
-                         subtitle: "a change, not proof of anything",
-                         note: "Places an app started connecting to after it was updated. New versions often add new servers, so this is a pointer, not an alarm. When FreeSnitch can't tell an app's version, it says so instead of guessing.")
+            sectionTitle(String(localized: "New since an app update"),
+                         subtitle: String(localized: "a change, not proof of anything"),
+                         note: String(localized: "Places an app started connecting to after it was updated. New versions often add new servers, so this is a pointer, not an alarm. When FreeSnitch can't tell an app's version, it says so instead of guessing."))
             if model.findings.isEmpty && !model.isLoading {
-                emptyState("No changed destinations in this range.")
+                emptyState(String(localized: "No changed destinations in this range."))
             } else {
                 // A scroll view of cards, not a table: each finding carries its
                 // own action, and a button inside a `List` row never receives
@@ -757,7 +754,7 @@ struct InsightsView: View {
                             HStack(spacing: 8) {
                                 Text(finding.destination).font(.body)
                                 PSChip(finding.wording, color: .orange, icon: "exclamationmark.magnifyingglass")
-                                Text(Self.plural(finding.connectionCount, "connection"))
+                                Text("\(finding.connectionCount) connections")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                             }
@@ -782,9 +779,9 @@ struct InsightsView: View {
 
     private var proposalsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionTitle("Suggested rules",
-                         subtitle: "none are active",
-                         note: "Rules FreeSnitch suggests from what it recorded, each for one app and one destination. Nothing changes until you accept a suggestion, one at a time.")
+            sectionTitle(String(localized: "Suggested rules"),
+                         subtitle: String(localized: "none are active"),
+                         note: String(localized: "Rules FreeSnitch suggests from what it recorded, each for one app and one destination. Nothing changes until you accept a suggestion, one at a time."))
             if let message = model.acceptMessage {
                 Label(message, systemImage: "checkmark.circle")
                     .font(.callout)
@@ -792,7 +789,7 @@ struct InsightsView: View {
                     .padding(.horizontal, 12).padding(.bottom, 6)
             }
             if model.proposals.isEmpty && !model.isLoading {
-                emptyState("No suggestions in this range.")
+                emptyState(String(localized: "No suggestions in this range."))
             } else {
                 // Each proposal is a card with its own decision to make, and a
                 // decision has to be clickable: inside a `List` row it was not
@@ -808,7 +805,7 @@ struct InsightsView: View {
                     }
                 }
                 listFooter(hasMore: model.hasMoreProposals,
-                           title: "Load more suggestions",
+                           title: String(localized: "Load more suggestions"),
                            action: { model.loadMoreProposals() })
             }
         }
@@ -820,12 +817,12 @@ struct InsightsView: View {
             HStack(spacing: 8) {
                 Text("\(proposal.appDisplayName) may not reach \(proposal.destinationLabel)").font(.body)
                 if proposal.isDomainScoped {
-                    PSChip("Domain rule", color: .green, icon: "globe")
+                    PSChip(String(localized: "Domain rule"), color: .green, icon: "globe")
                 } else {
-                    PSChip("Pinned to an address", color: .orange, icon: "number")
+                    PSChip(String(localized: "Pinned to an address"), color: .orange, icon: "number")
                 }
                 if proposal.otherAppCount > 0 {
-                    PSChip("also contacted by \(proposal.otherAppCount) other app\(proposal.otherAppCount == 1 ? "" : "s")",
+                    PSChip(String(localized: "also contacted by \(proposal.otherAppCount) other apps"),
                            color: .accentColor, icon: "person.2")
                 }
                 Spacer()
@@ -926,11 +923,11 @@ enum InsightsRange: String, CaseIterable, Identifiable, Hashable {
 
     var label: String {
         switch self {
-        case .day: return "Last 24 hours"
-        case .week: return "Last 7 days"
-        case .twoWeeks: return "Last 14 days"
-        case .quarter: return "Last 90 days"
-        case .year: return "Last 365 days"
+        case .day: return String(localized: "Last 24 hours")
+        case .week: return String(localized: "Last 7 days")
+        case .twoWeeks: return String(localized: "Last 14 days")
+        case .quarter: return String(localized: "Last 90 days")
+        case .year: return String(localized: "Last 365 days")
         }
     }
 
@@ -955,10 +952,10 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
 
     var label: String {
         switch self {
-        case .apps: return "Apps"
-        case .unresolved: return "Addresses reached without a name lookup"
-        case .proposals: return "Suggested rules"
-        case .findings: return "New since an app update"
+        case .apps: return String(localized: "Apps")
+        case .unresolved: return String(localized: "Addresses reached without a name lookup")
+        case .proposals: return String(localized: "Suggested rules")
+        case .findings: return String(localized: "New since an app update")
         }
     }
 
@@ -967,10 +964,10 @@ enum InsightsSection: String, CaseIterable, Identifiable, Hashable {
     /// still spells it out.
     var shortLabel: String {
         switch self {
-        case .apps: return "Apps"
-        case .unresolved: return "No Name"
-        case .proposals: return "Suggestions"
-        case .findings: return "New Since Update"
+        case .apps: return String(localized: "Apps")
+        case .unresolved: return String(localized: "No Name")
+        case .proposals: return String(localized: "Suggestions")
+        case .findings: return String(localized: "New Since Update")
         }
     }
 }
@@ -1036,12 +1033,14 @@ final class InsightsViewModel: ObservableObject {
     }
 
     var sourceNote: String {
-        source.explanation + " Recording is \(recordingEnabled ? "on" : "off") and runs in every mode."
+        recordingEnabled
+            ? String(localized: "\(source.explanation) Recording is on and runs in every mode.")
+            : String(localized: "\(source.explanation) Recording is off and runs in every mode.")
     }
 
     var namingNote: String {
         overview?.namingNote
-            ?? "Names come from DNS answers seen on this Mac. Apps that resolve names themselves are shown as raw addresses."
+            ?? String(localized: "Names come from DNS answers seen on this Mac. Apps that resolve names themselves are shown as raw addresses.")
     }
 
     // MARK: Loading
@@ -1171,12 +1170,12 @@ final class InsightsViewModel: ObservableObject {
             // loading state of the one they are looking at now.
             guard self.reachingGeneration == generation else { return }
             self.isLoading = false
-            guard let report else { self.reachingError = error ?? "The helper didn't answer."; return }
+            guard let report else { self.reachingError = error ?? String(localized: "The helper didn't answer."); return }
             // A helper from before the destination filter ignores it, sends
             // every app and never echoes the key; listing those under this
             // address would be wrong.
             guard report.destinationKey == key else {
-                self.reachingError = "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address."
+                self.reachingError = String(localized: "FreeSnitch's background helper hasn't been updated yet. Quit and reopen FreeSnitch to see which apps reached this address.")
                 return
             }
             self.source = report.source
@@ -1324,7 +1323,7 @@ final class InsightsViewModel: ObservableObject {
             guard let self else { return }
             guard ok else {
                 self.recordingEnabled = !enabled
-                self.errorMessage = message ?? "The helper refused the recording change."
+                self.errorMessage = message ?? String(localized: "The helper refused the recording change.")
                 return
             }
             self.reload()
@@ -1335,7 +1334,7 @@ final class InsightsViewModel: ObservableObject {
         state?.helper.purgeInsights { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.errorMessage = message ?? "The helper refused the purge."
+                self.errorMessage = message ?? String(localized: "The helper refused the purge.")
                 return
             }
             self.accepted = []
@@ -1358,7 +1357,7 @@ final class InsightsViewModel: ObservableObject {
                                             otherAppCount: destination.otherAppCount,
                                             lastSeen: destination.lastSeen)
         guard !isCoveredByExistingRule(proposal) else {
-            acceptMessage = "A rule already covers \(proposal.destinationLabel) for \(proposal.appDisplayName)."
+            acceptMessage = String(localized: "A rule already covers \(proposal.destinationLabel) for \(proposal.appDisplayName).")
             return
         }
         if !proposals.contains(where: { $0.id == proposal.id }) {
@@ -1385,7 +1384,7 @@ final class InsightsViewModel: ObservableObject {
 
     func proposeRule(for proposal: InsightsProposedRule) {
         guard !isCoveredByExistingRule(proposal) else {
-            acceptMessage = "A rule already covers \(proposal.destinationLabel) for \(proposal.appDisplayName)."
+            acceptMessage = String(localized: "A rule already covers \(proposal.destinationLabel) for \(proposal.appDisplayName).")
             return
         }
         if !proposals.contains(where: { $0.id == proposal.id }) { proposals.insert(proposal, at: 0) }
@@ -1404,18 +1403,25 @@ final class InsightsViewModel: ObservableObject {
         state.helper.addRule(rule) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.errorMessage = message ?? "The helper rejected the rule and did not say why."
+                self.errorMessage = message ?? String(localized: "The helper rejected the rule and did not say why.")
                 return
             }
             self.errorMessage = nil
-            let who = rule.processName ?? rule.processBundleId ?? "every app"
-            let verb: String
-            switch rule.action {
-            case .allow: verb = "allow"
-            case .deny: verb = "block"
-            case .ask: verb = "ask before connecting to"
+            let destination = rule.displayDestination
+            // Whole sentences, so a translation can reorder the verb and the app.
+            if let who = rule.processName ?? rule.processBundleId {
+                switch rule.action {
+                case .allow: self.ruleAddedMessage = String(localized: "Added a rule to allow \(destination) for \(who).")
+                case .deny: self.ruleAddedMessage = String(localized: "Added a rule to block \(destination) for \(who).")
+                case .ask: self.ruleAddedMessage = String(localized: "Added a rule to ask before connecting to \(destination) for \(who).")
+                }
+            } else {
+                switch rule.action {
+                case .allow: self.ruleAddedMessage = String(localized: "Added a rule to allow \(destination) for every app.")
+                case .deny: self.ruleAddedMessage = String(localized: "Added a rule to block \(destination) for every app.")
+                case .ask: self.ruleAddedMessage = String(localized: "Added a rule to ask before connecting to \(destination) for every app.")
+                }
             }
-            self.ruleAddedMessage = "Added a rule to \(verb) \(rule.displayDestination) for \(who)."
             state.refreshRules()
         }
     }
@@ -1428,19 +1434,19 @@ final class InsightsViewModel: ObservableObject {
             ? proposal.widenedRule(profile: state.activeProfile)
             : proposal.rule(profile: state.activeProfile)
         guard let rule else {
-            errorMessage = "That suggestion cannot be widened, because no DNS name is known for the destination."
+            errorMessage = String(localized: "That suggestion cannot be widened, because no DNS name is known for the destination.")
             return
         }
         state.helper.addRule(rule) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.errorMessage = message ?? "The helper rejected the suggested rule."
+                self.errorMessage = message ?? String(localized: "The helper rejected the suggested rule.")
                 return
             }
             self.accepted.insert(proposal.id)
             self.acceptMessage = widened
-                ? "Added a rule blocking \(proposal.destinationLabel) for every app."
-                : "Added a rule blocking \(proposal.destinationLabel) for \(proposal.appDisplayName)."
+                ? String(localized: "Added a rule blocking \(proposal.destinationLabel) for every app.")
+                : String(localized: "Added a rule blocking \(proposal.destinationLabel) for \(proposal.appDisplayName).")
             state.refreshRules()
         }
     }

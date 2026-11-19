@@ -13,21 +13,21 @@ public enum ProfileValidationError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .emptyName:
-            return "The profile name cannot be empty."
+            return String(localized: "The profile name cannot be empty.")
         case .nameTooLong(let maximumBytes):
-            return "The profile name is longer than \(maximumBytes) UTF-8 bytes."
+            return String(localized: "The profile name is longer than \(maximumBytes) UTF-8 bytes.")
         case .nameContainsControlCharacter:
-            return "The profile name contains a control character."
+            return String(localized: "The profile name contains a control character.")
         case .reservedName(let name):
-            return "The profile name `\(name)` is reserved."
+            return String(localized: "The profile name `\(name)` is reserved.")
         case .duplicateName(let name):
-            return "A profile named `\(name)` already exists."
+            return String(localized: "A profile named `\(name)` already exists.")
         case .missingProfile(let name):
-            return "The profile `\(name)` does not exist."
+            return String(localized: "The profile `\(name)` does not exist.")
         case .missingBlocklist(let id):
-            return "The blocklist `\(id.uuidString)` does not exist."
+            return String(localized: "The blocklist `\(id.uuidString)` does not exist.")
         case .invalidGatewayMAC(let detail):
-            return "Invalid gateway MAC address: \(detail)."
+            return String(localized: "Invalid gateway MAC address: \(detail).")
         }
     }
 }
@@ -63,15 +63,15 @@ public enum GatewayMACError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .empty:
-            return "the value is empty"
+            return String(localized: "the value is empty")
         case .tooLong(let maximumBytes):
-            return "the value is longer than \(maximumBytes) bytes"
+            return String(localized: "the value is longer than \(maximumBytes) bytes")
         case .wrongShape:
-            return "use six octets separated by colons or hyphens, three dotted groups, or twelve hex digits"
+            return String(localized: "use six octets separated by colons or hyphens, three dotted groups, or twelve hex digits")
         case .nonHex:
-            return "the address contains a non-hexadecimal character"
+            return String(localized: "the address contains a non-hexadecimal character")
         case .invalidGatewayAddress:
-            return "the address is all zeroes, broadcast, or multicast"
+            return String(localized: "the address is all zeroes, broadcast, or multicast")
         }
     }
 }
@@ -156,19 +156,19 @@ public enum BlocklistURLValidationError: Error, LocalizedError, Equatable, Senda
     public var errorDescription: String? {
         switch self {
         case .empty:
-            return "The blocklist URL cannot be empty."
+            return String(localized: "The blocklist URL cannot be empty.")
         case .tooLong(let maximumBytes):
-            return "The blocklist URL is longer than \(maximumBytes) UTF-8 bytes."
+            return String(localized: "The blocklist URL is longer than \(maximumBytes) UTF-8 bytes.")
         case .malformed:
-            return "The blocklist URL is malformed."
+            return String(localized: "The blocklist URL is malformed.")
         case .httpsRequired:
-            return "Blocklist URLs must use HTTPS."
+            return String(localized: "Blocklist URLs must use HTTPS.")
         case .localhostFixtureRequiresInjection:
-            return "HTTP is permitted only for an explicitly injected localhost test fixture."
+            return String(localized: "HTTP is permitted only for an explicitly injected localhost test fixture.")
         case .credentialsNotAllowed:
-            return "Blocklist URLs cannot contain user credentials."
+            return String(localized: "Blocklist URLs cannot contain user credentials.")
         case .fragmentNotAllowed:
-            return "Blocklist URLs cannot contain a fragment."
+            return String(localized: "Blocklist URLs cannot contain a fragment.")
         }
     }
 }

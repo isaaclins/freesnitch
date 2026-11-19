@@ -26,7 +26,7 @@ struct CopyableValue: View {
             Text(value)
         } else {
             Button(action: copy) {
-                Text(copied ? "Copied" : value)
+                Text(copied ? String(localized: "Copied") : value)
                     .foregroundStyle(copied ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
                     .multilineTextAlignment(.trailing)
                     .padding(.horizontal, 4)
@@ -39,7 +39,7 @@ struct CopyableValue: View {
             }
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
-            .help(copied ? "Copied" : "Copy \(value)")
+            .help(copied ? String(localized: "Copied") : String(localized: "Copy \(value)"))
             .accessibilityLabel(value)
             .accessibilityHint("Copies this value")
         }

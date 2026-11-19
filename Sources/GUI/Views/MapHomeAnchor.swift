@@ -24,9 +24,9 @@ final class MapHomeAnchor: ObservableObject {
 
         var summary: String {
             switch self {
-            case .timeZone: return "Estimated from your time zone"
-            case .manual: return "Set by you"
-            case .locationServices: return "From Location Services"
+            case .timeZone: return String(localized: "Estimated from your time zone")
+            case .manual: return String(localized: "Set by you")
+            case .locationServices: return String(localized: "From Location Services")
             }
         }
     }
