@@ -7805,6 +7805,26 @@
         }
       }
     },
+    "Persisted boot policy %@ failed: %@ Live filtering remains unchanged. FreeSnitch removes the saved policy, so after a restart the filter allows everything until this app sends the current rules." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранённая политика запуска: операция «%@» не удалась: %@ Текущая фильтрация не меняется. FreeSnitch удаляет сохранённую политику, поэтому после перезапуска фильтр разрешает всё, пока приложение не отправит текущие правила."
+          }
+        }
+      }
+    },
+    "Persisted boot policy %@ failed: %@ Live filtering remains unchanged. If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранённая политика запуска: операция «%@» не удалась: %@ Текущая фильтрация не меняется. Если фильтр перезапустится до успешного сохранения, он обычно пропускает сохранённые правила старше тех, что применял последними, и разрешает всё, пока приложение не отправит текущие."
+          }
+        }
+      }
+    },
     "Pinned to an address" : {
       "localizations" : {
         "ru" : {

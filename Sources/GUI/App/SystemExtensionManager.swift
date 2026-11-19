@@ -782,7 +782,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
             return
         }
         recordFilterDiagnostic(state: "degraded", detail: detail)
-        state?.recordFilterPersistenceFailure(detail, unsavable: unsavable, writeLog: writeLog)
+        // The diagnostic and the system log keep the English; Recent activity
+        // shows it in the app's language.
+        let shown = unsavable == nil
+            ? String(localized: "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. If the filter restarts before a save succeeds, it normally skips saved rules older than the ones it last enforced and allows everything until this app sends the current ones.")
+            : String(localized: "Persisted boot policy \(operation) failed: \(error.sentence) Live filtering remains unchanged. FreeSnitch removes the saved policy, so after a restart the filter allows everything until this app sends the current rules.")
+        state?.recordFilterPersistenceFailure(shown, unsavable: unsavable, writeLog: writeLog)
         if writeLog { os_log("%{public}@", log: log, type: .error, detail) }
     }
 
