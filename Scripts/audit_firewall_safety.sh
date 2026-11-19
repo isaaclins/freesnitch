@@ -1051,7 +1051,7 @@ fi
 
 require_text "$SYSTEM_EXTENSION_MANAGER" "@Published var status: Status = .idle" \
   "system extension status is not published"
-require_text "$SYSTEM_EXTENSION_MANAGER" "self.fail(\"filter save: \\(saveError.localizedDescription)\")" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.fail(String(localized: \"filter save: \\(saveError.localizedDescription)\"))" \
   "filter-save failures are not recorded in the published status"
 require_text "$SYSTEM_EXTENSION_MANAGER" "guard self.requestKind == .activation else" \
   "system extension request completion is not tied to activation"

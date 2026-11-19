@@ -339,7 +339,7 @@ struct SettingsView: View {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
         } catch {
-            state.appendLog(level: "error", message: "Login item change failed: \(error.localizedDescription)")
+            state.appendLog(level: "error", message: String(localized: "Login item change failed: \(error.localizedDescription)"))
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
     }

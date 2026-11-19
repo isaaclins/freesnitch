@@ -154,15 +154,18 @@ struct MonitorTreeList: View {
     }
 
     private func boundsNote(for app: MonitorAppNode) -> String? {
-        var parts: [String] = []
-        if app.hiddenDestinationCount > 0 {
-            parts.append("\(app.hiddenDestinationCount) more destinations")
+        let hidden = app.hiddenDestinationCount
+        let ungrouped = app.ungroupedConnectionCount
+        switch (hidden > 0, ungrouped > 0) {
+        case (true, true):
+            return String(localized: "\(hidden) more destinations, \(ungrouped) connections past the grouping bound, counted in the totals above.")
+        case (true, false):
+            return String(localized: "\(hidden) more destinations.")
+        case (false, true):
+            return String(localized: "\(ungrouped) connections past the grouping bound, counted in the totals above.")
+        case (false, false):
+            return nil
         }
-        if app.ungroupedConnectionCount > 0 {
-            parts.append("\(app.ungroupedConnectionCount) connections past the grouping bound, counted in the totals above")
-        }
-        guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: ", ") + "."
     }
 
     /// Allow, Deny and Remove for one row, driving exactly the closures the

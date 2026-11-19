@@ -90,6 +90,36 @@ if failures.isEmpty {
 }
 SWIFT
 
+# The helper and the command line tool run from inside the app bundle, next to
+# these tables. Both pin English before anything looks up text, so their logs,
+# replies and parsed output stay English on a Mac set to Russian.
+PIN='UserDefaults.standard.setVolatileDomain(["AppleLanguages": ["en"]], forName: UserDefaults.argumentDomain)'
+first_statement="$(grep -v '^[[:space:]]*\(//.*\)\{0,1\}$' "$ROOT/Sources/Helper/main.swift" | grep -v '^import ' | head -1 | sed 's/^[[:space:]]*//')"
+[ "$first_statement" = "$PIN" ] || { echo "FAIL the helper does not pin English first: $first_statement"; exit 1; }
+cli_first="$(awk '/static func main\(\)/ {getline; while ($0 ~ /^[[:space:]]*\/\//) getline; sub(/^[[:space:]]*/, ""); print; exit}' "$ROOT/Sources/CLI/CLIEntry.swift")"
+[ "$cli_first" = "$PIN" ] || { echo "FAIL the command line tool does not pin English first: $cli_first"; exit 1; }
+# And the pin wins over a Russian language preference for a tool inside a
+# bundle that carries a Russian table.
+mkdir -p "$WORK/Probe.app/Contents/MacOS" "$WORK/Probe.app/Contents/Resources"
+cp -R "$WORK/compiled/"*.lproj "$WORK/Probe.app/Contents/Resources/"
+cat > "$WORK/Probe.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>io.isaaclins.freesnitch.localization-probe</string>
+<key>CFBundleExecutable</key><string>Probe</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
+</dict></plist>
+PLIST
+printf '%s\n' 'import Foundation' "if CommandLine.arguments.contains(\"--pin\") { $PIN }" 'print(String(localized: "Settings"))' > "$WORK/probe.swift"
+xcrun swiftc "$WORK/probe.swift" -o "$WORK/Probe.app/Contents/MacOS/Probe"
+unpinned="$("$WORK/Probe.app/Contents/MacOS/Probe" -AppleLanguages '(ru)')"
+pinned="$("$WORK/Probe.app/Contents/MacOS/Probe" --pin -AppleLanguages '(ru)')"
+[ "$unpinned" != "Settings" ] || { echo "FAIL the probe did not pick up the Russian table, so it proves nothing"; exit 1; }
+[ "$pinned" = "Settings" ] || { echo "FAIL pinning English did not override Russian: $pinned"; exit 1; }
+echo "localization formats: helper and command line tool stay English (probe: $unpinned -> $pinned)"
+
 xcrun swiftc -O "$WORK/check.swift" -o "$WORK/check" 2>&1 | grep -v "^$" >&2 || true
 if ! "$WORK/check" "$CATALOG" "$WORK/compiled" 2>"$WORK/progress.log"; then
   echo "localization formats: FAIL; last string formatted before stopping:" >&2

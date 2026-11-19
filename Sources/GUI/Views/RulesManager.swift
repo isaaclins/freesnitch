@@ -1425,7 +1425,7 @@ struct RulesManagerView: View {
         state.helper.replaceRules(rules, expectedRemovedIDs: plan?.confirmedIDs ?? []) { ok, message in
             guard ok else {
                 let detail = message ?? String(localized: "The helper rejected the import and did not say why.")
-                state.appendLog(level: "error", message: "rule import failed: \(detail)")
+                state.appendLog(level: "error", message: String(localized: "rule import failed: \(detail)"))
                 // "rules saved but the firewall refused" means the import was
                 // committed, deletions included, so log what it changed.
                 if detail.hasPrefix("rules saved"), let plan {

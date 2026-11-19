@@ -208,7 +208,7 @@ final class HelperClient: NSObject, ObservableObject {
                 let details = HelperRecovery.registrationErrorDetails(error)
                 installState = .failed(HelperRegistrationFailure.message(
                     for: error, inApplications: Self.isInApplicationsFolder))
-                state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
+                state?.appendLog(level: "error", message: String(localized: "Helper registration failed: \(details)"))
             }
         case .guideApproval:
             installState = .requiresApproval
@@ -227,9 +227,9 @@ final class HelperClient: NSObject, ObservableObject {
         let path = Bundle.main.bundleURL.path
         do {
             try service.register()
-            state?.appendLog(level: "info", message: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications.")
+            state?.appendLog(level: "info", message: String(localized: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications."))
         } catch {
-            state?.appendLog(level: "error", message: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))")
+            state?.appendLog(level: "error", message: String(localized: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))"))
         }
         refreshInstallState()
     }
@@ -270,13 +270,13 @@ final class HelperClient: NSObject, ObservableObject {
             return
         }
         repairState = .manualRequired(HelperRecovery.restartingMessage(helper: helper, app: installed))
-        state?.appendLog(level: "info", message: "Helper is running v\(helper) but v\(installed) is installed; asking it to restart with launchctl kickstart -k.")
+        state?.appendLog(level: "info", message: String(localized: "Helper is running v\(helper) but v\(installed) is installed; asking it to restart with launchctl kickstart -k."))
         proxy.restartForUpdate? { [weak self] ok, message in
             Task { @MainActor in
                 guard let self else { return }
                 guard ok else {
                     self.repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: helper, app: installed))
-                    self.state?.appendLog(level: "error", message: "The helper refused the update restart: \(message ?? "no reason given").")
+                    self.state?.appendLog(level: "error", message: String(localized: "The helper refused the update restart: \(message ?? String(localized: "no reason given"))."))
                     return
                 }
                 // Give launchd time to bring the installed binary back, then
@@ -363,7 +363,7 @@ final class HelperClient: NSObject, ObservableObject {
             reconnectAndPing(force: true)
         } catch {
             let details = HelperRecovery.registrationErrorDetails(error)
-            state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
+            state?.appendLog(level: "error", message: String(localized: "Helper registration failed: \(details)"))
             let reason = HelperRegistrationFailure.message(
                 for: error, inApplications: Self.isInApplicationsFolder)
             finishRepairFailure(String(localized: "FreeSnitch could not register the missing helper. \(reason)"))
@@ -747,24 +747,24 @@ final class HelperClient: NSObject, ObservableObject {
     @discardableResult
     func ingestObservationBatch(_ data: Data) -> Bool {
         guard data.count <= InsightsLimits.maxBatchBytes else {
-            state?.appendLog(level: "error", message: "Insights batch exceeded the transport limit and was dropped by the GUI.")
+            state?.appendLog(level: "error", message: String(localized: "Insights batch exceeded the transport limit and was dropped by the GUI."))
             return false
         }
         let proxy = connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
             Task { @MainActor in
                 self?.state?.appendLog(level: "error",
-                                       message: "Insights batch transport failed: \(error.sentence)")
+                                       message: String(localized: "Insights batch transport failed: \(error.sentence)"))
             }
         } as? HelperProtocol
         guard let proxy else {
-            state?.appendLog(level: "error", message: "Insights batch dropped because the privileged helper is unavailable.")
+            state?.appendLog(level: "error", message: String(localized: "Insights batch dropped because the privileged helper is unavailable."))
             return false
         }
         proxy.ingestObservationBatch(observationBatch: data) { [weak self] ok, message in
             guard !ok else { return }
             Task { @MainActor in
                 self?.state?.appendLog(level: "error",
-                                       message: "The helper rejected an insights batch: \(message ?? "unknown error").")
+                                       message: String(localized: "The helper rejected an insights batch: \(message ?? String(localized: "unknown error"))."))
             }
         }
         return true
@@ -1145,7 +1145,7 @@ final class HelperClient: NSObject, ObservableObject {
     private func failEnforcement(request: UUID, enabled: Bool, message: String) {
         guard enforcementRequestID == request else { return }
         enforcementRequestID = UUID()
-        state?.appendLog(level: "error", message: "Enforcement change failed: \(message)")
+        state?.appendLog(level: "error", message: String(localized: "Enforcement change failed: \(message)"))
         state?.enforcementChangeFailed(revertingTo: !enabled, message: message)
     }
 

@@ -105,7 +105,7 @@ final class UninstallFlowModel: ObservableObject {
         if state.enforcementEnabled {
             state.enforcementEnabled = false
         }
-        state.appendLog(level: "info", message: "Uninstall: turning off and removing the network filter.")
+        state.appendLog(level: "info", message: String(localized: "Uninstall: turning off and removing the network filter."))
         if systemExtension.uninstallState.extensionIsGone {
             finish()
             return
@@ -128,7 +128,7 @@ final class UninstallFlowModel: ObservableObject {
         case .idle, .deactivating:
             return
         case .failed(let reason):
-            state.appendLog(level: "error", message: "Uninstall: macOS kept the network extension: \(reason)")
+            state.appendLog(level: "error", message: String(localized: "Uninstall: macOS kept the network extension: \(reason)"))
             phase = .failed(.filterKept(reason))
         case .notInstalled, .pendingReboot, .removed:
             finish()
@@ -166,14 +166,14 @@ final class UninstallFlowModel: ObservableObject {
                         // goes next, and the launchd record for a missing
                         // bundle is inert. Recorded so it is not silent.
                         self.state.appendLog(level: "error",
-                                             message: "Uninstall could not unregister the helper: \(problem)")
+                                             message: String(localized: "Uninstall could not unregister the helper: \(problem)"))
                     }
                     PrivilegedUninstall.removeUserData()
                     self.moveToTrash()
                 case .failure(.cancelled):
                     self.phase = .failed(.passwordCancelled)
                 case .failure(.failed(let reason)):
-                    self.state.appendLog(level: "error", message: "Uninstall could not remove the helper and data: \(reason)")
+                    self.state.appendLog(level: "error", message: String(localized: "Uninstall could not remove the helper and data: \(reason)"))
                     self.phase = .failed(.helperKept(reason))
                 }
             }

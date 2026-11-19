@@ -477,7 +477,7 @@ final class AppState: ObservableObject {
         helper.setMode(m) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.appendLog(level: "error", message: "The helper rejected the mode change: \(message ?? "unknown error")")
+                self.appendLog(level: "error", message: String(localized: "The helper rejected the mode change: \(message ?? String(localized: "unknown error"))"))
                 self.modeChangeFailure = message ?? String(localized: "The helper rejected the mode change.")
                 return
             }
@@ -566,14 +566,23 @@ final class AppState: ObservableObject {
 
     /// Every connection Alert mode lets through without asking leaves a line
     /// the user can read afterwards.
-    private func recordSilentAllow(_ c: Connection, because reason: String) {
-        let name = c.processName.isEmpty ? "An app" : c.processName
+    private enum SilentAllowReason {
+        case knownContact
+        case queueFull(Int)
+    }
+
+    private func recordSilentAllow(_ c: Connection, because reason: SilentAllowReason) {
+        let name = c.processName.isEmpty ? String(localized: "An app") : c.processName
         let host = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
-        let destination = host.isEmpty ? "a destination" : host
-        appendLog(
-            level: "warning",
-            message: "Allowed \(name) to reach \(destination) without asking, because \(reason)."
-        )
+        let destination = host.isEmpty ? String(localized: "a destination") : host
+        let message: String
+        switch reason {
+        case .knownContact:
+            message = String(localized: "Allowed \(name) to reach \(destination) without asking, because this app already reaches it.")
+        case .queueFull(let waiting):
+            message = String(localized: "Allowed \(name) to reach \(destination) without asking, because \(waiting) questions were already waiting.")
+        }
+        appendLog(level: "warning", message: message)
     }
 
     /// Alerts answered "allow" here without anyone deciding (#447).
@@ -606,7 +615,7 @@ final class AppState: ObservableObject {
            !askAboutKnownContacts,
            contactClassifier.decision(for: c) == .knownContact {
             knownContactsAllowedToday += 1
-            recordSilentAllow(c, because: "this app already reaches it")
+            recordSilentAllow(c, because: .knownContact)
             reply(true, false)
             return
         }
@@ -628,7 +637,7 @@ final class AppState: ObservableObject {
         }
         if pendingAlerts.count >= Self.maxPendingAlerts {
             overflowAllowedToday += 1
-            recordSilentAllow(c, because: "\(Self.maxPendingAlerts) questions were already waiting")
+            recordSilentAllow(c, because: .queueFull(Self.maxPendingAlerts))
             unansweredAlerts.note(c.id)
             reply(true, false)
             return
@@ -650,7 +659,7 @@ final class AppState: ObservableObject {
         guard let proxy = helper.remote else { return }
         guard proxy.registerPendingAlert != nil else {
             appendLog(level: "info",
-                      message: "The running helper is too old to index pending alerts, so `freesnitch alerts` cannot see this one.")
+                      message: String(localized: "The running helper is too old to index pending alerts, so `freesnitch alerts` cannot see this one."))
             return
         }
         let now = Date()
@@ -660,7 +669,7 @@ final class AppState: ObservableObject {
                                                 expiresAt: now.addingTimeInterval(PendingAlertLimits.maxLifetime))
         guard let data = try? FreeSnitchWireCodec.encode(descriptor),
               data.count <= PendingAlertLimits.maxDescriptorBytes else {
-            appendLog(level: "error", message: "A pending alert could not be encoded for the helper registry.")
+            appendLog(level: "error", message: String(localized: "A pending alert could not be encoded for the helper registry."))
             return
         }
         proxy.registerPendingAlert?(descriptor: data) { [weak self] payload, message in
@@ -674,11 +683,11 @@ final class AppState: ObservableObject {
     /// the command line, and the registry's own overflow, change anything here.
     private func applyPendingAlertResolution(id: UUID, payload: Data, message: String?) {
         if let message, !message.isEmpty {
-            appendLog(level: "error", message: "The helper refused to index a connection alert: \(message)")
+            appendLog(level: "error", message: String(localized: "The helper refused to index a connection alert: \(message)"))
             return
         }
         guard let resolution = try? FreeSnitchWireCodec.decode(PendingAlertResolution.self, from: payload) else {
-            appendLog(level: "error", message: "The helper returned an unreadable pending alert resolution.")
+            appendLog(level: "error", message: String(localized: "The helper returned an unreadable pending alert resolution."))
             return
         }
         switch resolution.kind {
@@ -688,7 +697,9 @@ final class AppState: ObservableObject {
             let allow = resolution.flowVerdict ?? PendingAlertRegistry.defaultDecision
             guard finishAlert(id: id, allow: allow, remember: false) else { return }
             appendLog(level: "info",
-                      message: "A connection alert was answered from the command line: \(allow ? "allow" : "deny").")
+                      message: allow
+                          ? String(localized: "A connection alert was answered from the command line: allow.")
+                          : String(localized: "A connection alert was answered from the command line: deny."))
         case .overflow:
             // The registry is full. Do not queue a question nobody can answer:
             // resume with the same fail-open default this view model already
@@ -709,7 +720,7 @@ final class AppState: ObservableObject {
         proxy.withdrawPendingAlert?(idString: id.uuidString) { [weak self] ok, message in
             guard !ok, let message, !message.isEmpty else { return }
             Task { @MainActor in
-                self?.appendLog(level: "info", message: "The pending alert registry did not accept this answer: \(message)")
+                self?.appendLog(level: "info", message: String(localized: "The pending alert registry did not accept this answer: \(message)"))
             }
         }
     }
@@ -850,7 +861,7 @@ final class AppState: ObservableObject {
             helper.addRule(rule) { [weak self] ok, message in
                 guard let self else { return }
                 guard ok else {
-                    self.appendLog(level: "error", message: "The helper rejected the remembered rule: \(message ?? "unknown error")")
+                    self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(message ?? String(localized: "unknown error"))"))
                     return
                 }
                 self.refreshRules()

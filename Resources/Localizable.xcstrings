@@ -640,6 +640,58 @@
         }
       }
     },
+    "%lld connections past the grouping bound, counted in the totals above." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld соединение сверх предела группировки учтено в итогах выше."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld соединения сверх предела группировки учтены в итогах выше."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld соединений сверх предела группировки учтено в итогах выше."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld соединения сверх предела группировки учтено в итогах выше."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld connection past the grouping bound, counted in the totals above."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld connections past the grouping bound, counted in the totals above."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld connections recorded before FreeSnitch kept decisions" : {
       "localizations" : {
         "ru" : {
@@ -1213,6 +1265,182 @@
                       "value" : "%arg more apps are not shown"
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld more destinations, %lld connections past the grouping bound, counted in the totals above." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё %#@d@; %#@c@ в итогах выше."
+          },
+          "substitutions" : {
+            "d" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg адрес назначения"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg адреса назначения"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg адресов назначения"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg адреса назначения"
+                    }
+                  }
+                }
+              }
+            },
+            "c" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg соединение сверх предела группировки учтено"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg соединения сверх предела группировки учтены"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg соединений сверх предела группировки учтено"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg соединения сверх предела группировки учтено"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@d@, %#@c@ past the grouping bound, counted in the totals above."
+          },
+          "substitutions" : {
+            "d" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg more destination"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg more destinations"
+                    }
+                  }
+                }
+              }
+            },
+            "c" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg connection"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg connections"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld more destinations." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld адрес назначения."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld адреса назначения."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld адресов назначения."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld адреса назначения."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more destination."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more destinations."
                 }
               }
             }
@@ -1951,6 +2179,26 @@
         }
       }
     },
+    "A connection alert was answered from the command line: allow." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На запрос на соединение ответили из командной строки: разрешить."
+          }
+        }
+      }
+    },
+    "A connection alert was answered from the command line: deny." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На запрос на соединение ответили из командной строки: запретить."
+          }
+        }
+      }
+    },
     "A hand-edited list holds at most %lld entries." : {
       "localizations" : {
         "ru" : {
@@ -1967,6 +2215,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Новый профиль никогда не бывает пустым: он сразу наследует все правила «Всегда», не копируя их."
+          }
+        }
+      }
+    },
+    "A pending alert could not be encoded for the helper registry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подготовить ожидающий запрос для реестра службы."
           }
         }
       }
@@ -2404,6 +2662,50 @@
         }
       }
     },
+    "Allowed %@ to reach %@ without asking, because %lld questions were already waiting." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ разрешён без запроса, так как уже ожидал %lld вопрос."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ разрешён без запроса, так как уже ожидали %lld вопроса."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ разрешён без запроса, так как уже ожидали %lld вопросов."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ разрешён без запроса, так как уже ожидали %lld вопроса."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Allowed %@ to reach %@ without asking, because this app already reaches it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: доступ к %@ разрешён без запроса, так как это приложение уже обращается к нему."
+          }
+        }
+      }
+    },
     "Also delete my rules and profiles" : {
       "localizations" : {
         "ru" : {
@@ -2421,6 +2723,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Всегда"
+          }
+        }
+      }
+    },
+    "An app" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложение"
           }
         }
       }
@@ -2984,6 +3296,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Одобрите FreeSnitch в разделе «Объекты входа и расширения», и данные появятся автоматически."
+          }
+        }
+      }
+    },
+    "Approve FreeSnitch in System Settings > General > Login Items & Extensions > Network Extensions, then it will start filtering." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одобрите FreeSnitch в Системных настройках > Основные > Объекты входа и расширения > Сетевые расширения, и он начнёт фильтровать."
           }
         }
       }
@@ -3715,6 +4037,16 @@
         }
       }
     },
+    "Connected to network extension." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено к сетевому расширению."
+          }
+        }
+      }
+    },
     "Connecting to the FreeSnitch helper…" : {
       "localizations" : {
         "ru" : {
@@ -4111,6 +4443,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось прочитать правила: %@ %@"
+          }
+        }
+      }
+    },
+    "Could not register the helper again from %@; it keeps running from the copy in ~/Applications: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось снова зарегистрировать службу из %@; она продолжает работать из копии в ~/Applications: %@"
           }
         }
       }
@@ -4741,6 +5083,16 @@
         }
       }
     },
+    "Enforcement change failed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось изменить применение правил: %@"
+          }
+        }
+      }
+    },
     "Enforcement is off, so enabled blocklists are currently blocking nothing." : {
       "localizations" : {
         "ru" : {
@@ -4943,6 +5295,16 @@
         }
       }
     },
+    "Extension IPC unavailable." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Связь с расширением недоступна."
+          }
+        }
+      }
+    },
     "Extension activation failed: %@" : {
       "localizations" : {
         "ru" : {
@@ -5049,6 +5411,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Брандмауэр не фильтрует: %@"
+          }
+        }
+      }
+    },
+    "Firewall not filtering: the helper sent no rules to turn it on with, and the filter was turned off or removed in System Settings meanwhile." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Брандмауэр не фильтрует: служба не прислала правил для его включения, а фильтр тем временем выключили или удалили в Системных настройках."
           }
         }
       }
@@ -5527,6 +5899,16 @@
         }
       }
     },
+    "Helper is running v%@ but v%@ is installed; asking it to restart with launchctl kickstart -k." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает служба v%@, но установлена v%@; запрашиваю перезапуск через launchctl kickstart -k."
+          }
+        }
+      }
+    },
     "Helper not running" : {
       "localizations" : {
         "ru" : {
@@ -5820,6 +6202,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Аналитика"
+          }
+        }
+      }
+    },
+    "Insights batch dropped because the privileged helper is unavailable." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пакет данных Аналитики отброшен, так как привилегированная служба недоступна."
+          }
+        }
+      }
+    },
+    "Insights batch exceeded the transport limit and was dropped by the GUI." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пакет данных Аналитики превысил предел передачи и был отброшен приложением."
+          }
+        }
+      }
+    },
+    "Insights batch transport failed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось передать пакет данных Аналитики: %@"
           }
         }
       }
@@ -6135,6 +6547,16 @@
         }
       }
     },
+    "Login item change failed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось изменить объект входа: %@"
+          }
+        }
+      }
+    },
     "Lookups for %@ and %lld more go to %@, so FreeSnitch's DNS blocking doesn't apply to those names." : {
       "localizations" : {
         "ru" : {
@@ -6425,6 +6847,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "IPC сетевого расширения отклонил GUI или завершился с ошибкой: %@."
+          }
+        }
+      }
+    },
+    "Network extension activation finishes after reboot." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включение сетевого расширения завершится после перезагрузки."
+          }
+        }
+      }
+    },
+    "Network extension approved and active; installing filter configuration." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сетевое расширение одобрено и активно; устанавливаю конфигурацию фильтра."
+          }
+        }
+      }
+    },
+    "Network extension deactivation finishes after reboot." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключение сетевого расширения завершится после перезагрузки."
+          }
+        }
+      }
+    },
+    "Network extension deactivation returned: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключение сетевого расширения вернуло: %@"
           }
         }
       }
@@ -7313,12 +7775,32 @@
         }
       }
     },
+    "Per-process firewall active." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Брандмауэр для процессов активен."
+          }
+        }
+      }
+    },
     "Permit everything no rule covers, and record it." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Разрешать все, что не покрыто правилами, и записывать это."
+          }
+        }
+      }
+    },
+    "Persisted boot policy %@ failed while the filter is off: %@ Turning the filter on saves the current rules again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранённая политика запуска: операция «%@» не удалась, пока фильтр выключен: %@ При включении фильтра текущие правила будут сохранены снова."
           }
         }
       }
@@ -8118,6 +8600,16 @@
         }
       }
     },
+    "Registered the helper again from %@ after copying FreeSnitch out of ~/Applications." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба снова зарегистрирована из %@ после копирования FreeSnitch из ~/Applications."
+          }
+        }
+      }
+    },
     "Registration record missing" : {
       "localizations" : {
         "ru" : {
@@ -8324,6 +8816,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Удалить правило, созданное этой строкой, и вернуться к состоянию без решения."
+          }
+        }
+      }
+    },
+    "Removed the saved rules for the next start. %@ After a restart the per-process filter lets every connection through until FreeSnitch sends the current rules." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранённые правила для следующего запуска удалены. %@ После перезапуска фильтр процессов пропускает все соединения, пока FreeSnitch не отправит текущие правила."
           }
         }
       }
@@ -9442,6 +9944,68 @@
         }
       }
     },
+    "The current rules are still not saved for the next start after %lld retries. FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Текущие правила всё ещё не сохранены для следующего запуска после %lld попытки. FreeSnitch сохранит их снова при следующем изменении правил, по кнопке «Отправить правила снова» или при перезапуске приложения."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Текущие правила всё ещё не сохранены для следующего запуска после %lld попыток. FreeSnitch сохранит их снова при следующем изменении правил, по кнопке «Отправить правила снова» или при перезапуске приложения."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Текущие правила всё ещё не сохранены для следующего запуска после %lld попыток. FreeSnitch сохранит их снова при следующем изменении правил, по кнопке «Отправить правила снова» или при перезапуске приложения."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Текущие правила всё ещё не сохранены для следующего запуска после %lld попытки. FreeSnitch сохранит их снова при следующем изменении правил, по кнопке «Отправить правила снова» или при перезапуске приложения."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The current rules are still not saved for the next start after %lld retry. FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The current rules are still not saved for the next start after %lld retries. FreeSnitch saves them again with the next rule change, with Send Rules Again, or when the app restarts."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "The current rules could not be saved for the next start." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить текущие правила для следующего запуска."
+          }
+        }
+      }
+    },
     "The current rules won't survive a restart" : {
       "localizations" : {
         "ru" : {
@@ -9580,6 +10144,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Фильтр уже использует их."
+          }
+        }
+      }
+    },
+    "The filter was turned off while it was being turned on; it stays off." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фильтр выключили во время включения; он остаётся выключенным."
           }
         }
       }
@@ -9926,6 +10500,16 @@
         }
       }
     },
+    "The helper refused the update restart: %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба отказалась перезапуститься после обновления: %@."
+          }
+        }
+      }
+    },
     "The helper refused this rule: %@. Nothing was changed." : {
       "localizations" : {
         "ru" : {
@@ -9936,12 +10520,32 @@
         }
       }
     },
+    "The helper refused to index a connection alert: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба отказалась учесть запрос на соединение: %@"
+          }
+        }
+      }
+    },
     "The helper refused to remove this rule: %@. Nothing was changed." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Служба отказалась удалить это правило: %@. Ничего не изменено."
+          }
+        }
+      }
+    },
+    "The helper rejected an insights batch: %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба отклонила пакет данных Аналитики: %@."
           }
         }
       }
@@ -9982,6 +10586,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Служба отклонила смену режима."
+          }
+        }
+      }
+    },
+    "The helper rejected the mode change: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба отклонила смену режима: %@"
+          }
+        }
+      }
+    },
+    "The helper rejected the remembered rule: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба отклонила запомненное правило: %@"
           }
         }
       }
@@ -10108,6 +10732,16 @@
         }
       }
     },
+    "The helper returned an unreadable pending alert resolution." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба вернула нечитаемое решение по ожидающему запросу."
+          }
+        }
+      }
+    },
     "The helper returned no rules although FreeSnitch has some, so nothing was exported. Run `%@`, then retry." : {
       "localizations" : {
         "ru" : {
@@ -10218,6 +10852,16 @@
         }
       }
     },
+    "The network extension filter could not be restarted (%@). %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось перезапустить фильтр сетевого расширения (%@). %@"
+          }
+        }
+      }
+    },
     "The network extension is active, but it has not received a rule snapshot. FreeSnitch is monitoring traffic only until the rules are delivered." : {
       "localizations" : {
         "ru" : {
@@ -10288,12 +10932,74 @@
         }
       }
     },
+    "The older saved rules could still not be removed after %lld retries. FreeSnitch tries again with the next rule change or when the app restarts." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Старые сохранённые правила всё ещё не удалось удалить после %lld попытки. FreeSnitch попробует снова при следующем изменении правил или перезапуске приложения."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Старые сохранённые правила всё ещё не удалось удалить после %lld попыток. FreeSnitch попробует снова при следующем изменении правил или перезапуске приложения."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Старые сохранённые правила всё ещё не удалось удалить после %lld попыток. FreeSnitch попробует снова при следующем изменении правил или перезапуске приложения."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Старые сохранённые правила всё ещё не удалось удалить после %lld попытки. FreeSnitch попробует снова при следующем изменении правил или перезапуске приложения."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The older saved rules could still not be removed after %lld retry. FreeSnitch tries again with the next rule change or when the app restarts."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The older saved rules could still not be removed after %lld retries. FreeSnitch tries again with the next rule change or when the app restarts."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "The password prompt was cancelled" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запрос пароля отменён"
+          }
+        }
+      }
+    },
+    "The pending alert registry did not accept this answer: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Реестр ожидающих запросов не принял этот ответ: %@"
           }
         }
       }
@@ -10636,6 +11342,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запущенная служба слишком старая для запросов Аналитики. Выполните `%@` и повторите попытку."
+          }
+        }
+      }
+    },
+    "The running helper is too old to index pending alerts, so `freesnitch alerts` cannot see this one." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запущенная служба слишком старая, чтобы учитывать ожидающие запросы, поэтому `freesnitch alerts` не увидит этот запрос."
           }
         }
       }
@@ -11561,6 +12277,46 @@
         }
       }
     },
+    "Uninstall could not remove the helper and data: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При удалении не удалось удалить службу и данные: %@"
+          }
+        }
+      }
+    },
+    "Uninstall could not unregister the helper: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При удалении не удалось отменить регистрацию службы: %@"
+          }
+        }
+      }
+    },
+    "Uninstall: macOS kept the network extension: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление: macOS сохранила сетевое расширение: %@"
+          }
+        }
+      }
+    },
+    "Uninstall: turning off and removing the network filter." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление: выключение и удаление сетевого фильтра."
+          }
+        }
+      }
+    },
     "Uninstalling FreeSnitch" : {
       "localizations" : {
         "ru" : {
@@ -11924,6 +12680,16 @@
         }
       }
     },
+    "a destination" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "адрес назначения"
+          }
+        }
+      }
+    },
     "also contacted by %lld other apps" : {
       "localizations" : {
         "ru" : {
@@ -12034,6 +12800,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "все соединения от %@"
+          }
+        }
+      }
+    },
+    "filter load: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить настройки фильтра: %@"
+          }
+        }
+      }
+    },
+    "filter save: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить настройки фильтра: %@"
           }
         }
       }
@@ -12248,6 +13034,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "macOS просит разрешить это в Системных настройках."
+          }
+        }
+      }
+    },
+    "macOS is asking you to approve removing the FreeSnitch network extension. Approve it in System Settings > General > Login Items & Extensions > Network Extensions." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS просит одобрить удаление сетевого расширения FreeSnitch. Одобрите его в Системных настройках > Основные > Объекты входа и расширения > Сетевые расширения."
           }
         }
       }
@@ -12501,6 +13297,16 @@
         }
       }
     },
+    "rule import failed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не удалось импортировать правила: %@"
+          }
+        }
+      }
+    },
     "rule payload contains too many rules: %lld (maximum %lld)." : {
       "localizations" : {
         "ru" : {
@@ -12704,6 +13510,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "слишком много наблюдений Аналитики: %lld"
+          }
+        }
+      }
+    },
+    "unknown error" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "неизвестная ошибка"
           }
         }
       }

@@ -31,6 +31,9 @@ public enum SharedRuleBridge {
     /// with a firewall that is off and no next step.
     public static let snapshotRecoveryExhaustedRemediation =
         String(localized: "FreeSnitch restarted the network extension filter and the extension still rejected the helper policy. Turn the per-process firewall off and on again in FreeSnitch settings; restarting the Mac is not required.")
+    /// The same, for diagnostics the command line tool reads back.
+    public static let snapshotRecoveryExhaustedRemediationEnglish =
+        "FreeSnitch restarted the network extension filter and the extension still rejected the helper policy. Turn the per-process firewall off and on again in FreeSnitch settings; restarting the Mac is not required."
 
     /// Pure state for the asynchronous provider-preference writer. A caller
     /// may take only the newest pending payload after a load completes; any

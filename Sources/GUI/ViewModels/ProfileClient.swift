@@ -106,7 +106,7 @@ final class ProfileClient: ObservableObject {
             if snapshot.activeProfile == previousName { snapshot.activeProfile = profile.name }
         case .deleteProfile(let name):
             guard name != Profile.defaultName else {
-                return "The default profile cannot be deleted."
+                return String(localized: "The default profile cannot be deleted.")
             }
             snapshot.profiles.removeAll { $0.name == name }
             if snapshot.activeProfile == name { snapshot.activeProfile = Profile.defaultName }
