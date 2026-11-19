@@ -59,13 +59,19 @@ for language in languages {
         guard !types.isEmpty else { continue }
         for count in [0, 1, 2, 5, 21, 105] {
             var texts: [String] = []
+            var numbers: [Int] = []
+            // Every number gets its own value (the same plural form, below
+            // where a locale groups digits), so a translation that reads the
+            // wrong one loses a value and fails.
             let arguments: [CVarArg] = types.enumerated().map { index, type in
                 if type == "@" {
                     let text = "‹text\(index + 1)›"
                     texts.append(text)
                     return text as NSString
                 }
-                return count
+                let number = count + 100 * numbers.count
+                numbers.append(number)
+                return number
             }
             // Printed first, so a crash names the string that caused it.
             FileHandle.standardError.write(Data("\(language) \(count) \(key.debugDescription)\n".utf8))
@@ -74,14 +80,30 @@ for language in languages {
             for text in texts where !output.contains(text) {
                 failures.append("\(language): \(key.debugDescription) with \(count) lost \(text): \(output.debugDescription)")
             }
-            if types.contains(where: { $0 != "@" }) && !output.contains(String(count)) {
-                failures.append("\(language): \(key.debugDescription) with \(count) lost the number: \(output.debugDescription)")
+            for number in numbers where !output.contains(String(number)) {
+                failures.append("\(language): \(key.debugDescription) lost the number \(number): \(output.debugDescription)")
             }
         }
     }
 }
 
 if !languages.contains("ru") { failures.append("the catalog compiled no Russian table") }
+
+// Text added in code after the catalog was last synced in Xcode would show in
+// English for everyone. Plain String(localized: "...") literals are checked
+// here; SwiftUI literals and interpolated ones are left to Xcode's sync.
+let sources = URL(fileURLWithPath: CommandLine.arguments[3])
+let literal = try! NSRegularExpression(pattern: #"String\(localized: "((?:[^"\\]|\\[^(])*)""#)
+for case let file as URL in FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)! where file.pathExtension == "swift" {
+    let text = try! String(contentsOf: file, encoding: .utf8)
+    for match in literal.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+        let raw = String(text[Range(match.range(at: 1), in: text)!])
+        let key = raw.replacingOccurrences(of: #"\""#, with: "\"").replacingOccurrences(of: #"\n"#, with: "\n").replacingOccurrences(of: #"\\"#, with: "\\")
+        if strings[key] == nil {
+            failures.append("\(file.lastPathComponent): \(key.debugDescription) is not in the catalog (open the project in Xcode and build to sync it)")
+        }
+    }
+}
 if failures.isEmpty {
     print("localization formats: PASS (\(languages.joined(separator: ", ")), \(formatted) formatted strings)")
 } else {
@@ -121,7 +143,7 @@ pinned="$("$WORK/Probe.app/Contents/MacOS/Probe" --pin -AppleLanguages '(ru)')"
 echo "localization formats: helper and command line tool stay English (probe: $unpinned -> $pinned)"
 
 xcrun swiftc -O "$WORK/check.swift" -o "$WORK/check" 2>&1 | grep -v "^$" >&2 || true
-if ! "$WORK/check" "$CATALOG" "$WORK/compiled" 2>"$WORK/progress.log"; then
+if ! "$WORK/check" "$CATALOG" "$WORK/compiled" "$ROOT/Sources" 2>"$WORK/progress.log"; then
   echo "localization formats: FAIL; last string formatted before stopping:" >&2
   tail -1 "$WORK/progress.log" >&2
   exit 1
