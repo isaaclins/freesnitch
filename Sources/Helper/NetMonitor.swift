@@ -100,7 +100,10 @@ final class NetMonitor: @unchecked Sendable {
             case "n":
                 if var c = parseN(line: rest, pid: pid, name: pname),
                    seen.insert("\(pid) \(c.localPort) \(c.remoteIP) \(c.remotePort)").inserted {
-                    if let bytes = socketBytes[SocketKey(pid: pid, localPort: c.localPort, remotePort: c.remotePort)] {
+                    let key = SocketKey(pid: pid, localPort: c.localPort,
+                                        remoteAddress: NetMonitor.normalizedAddress(c.remoteIP),
+                                        remotePort: c.remotePort)
+                    if let bytes = socketBytes[key] {
                         c.bytesIn = bytes.bytesIn
                         c.bytesOut = bytes.bytesOut
                     }
@@ -248,15 +251,39 @@ final class NetMonitor: @unchecked Sendable {
         onProcessUsage?(parsed.usages)
     }
 
-    /// One open socket, as both nettop and lsof can name it. The remote
-    /// address is left out on purpose: the two tools write link-local IPv6
-    /// addresses differently (`fe80::1%en1` against `fe80:f::1`), and a
-    /// process never has two connected sockets on the same local port to the
-    /// same remote port at once.
+    /// One open socket, as both nettop and lsof can name it. Two accepted
+    /// connections of one process can share both ports, so the remote address
+    /// is part of it, in the form `normalizedAddress` gives.
     struct SocketKey: Hashable {
         let pid: Int32
         let localPort: Int
+        let remoteAddress: String
         let remotePort: Int
+    }
+
+    /// One spelling per address. lsof and nettop write the same link-local
+    /// IPv6 address differently (`fe80:f::1` with the scope inside it against
+    /// `fe80::1%en1`) and IPv4 behind IPv6 as `::ffff:1.2.3.4`; all of these
+    /// come out as the plain address.
+    static func normalizedAddress(_ raw: String) -> String {
+        var text = Substring(raw)
+        if text.hasPrefix("["), text.hasSuffix("]") { text = text.dropFirst().dropLast() }
+        if let percent = text.firstIndex(of: "%") { text = text[..<percent] }
+        let plain = String(text)
+        var v4 = in_addr()
+        if inet_pton(AF_INET, plain, &v4) == 1 { return plain }
+        var v6 = in6_addr()
+        guard inet_pton(AF_INET6, plain, &v6) == 1 else { return plain.lowercased() }
+        var bytes = withUnsafeBytes(of: &v6) { Array($0) }
+        if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+            return bytes[12...].map(String.init).joined(separator: ".")
+        }
+        // The kernel keeps a link-local address's scope in its second group.
+        if bytes[0] == 0xfe, bytes[1] & 0xc0 == 0x80 { bytes[2] = 0; bytes[3] = 0 }
+        withUnsafeMutableBytes(of: &v6) { $0.copyBytes(from: bytes) }
+        var out = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        guard inet_ntop(AF_INET6, &v6, &out, socklen_t(out.count)) != nil else { return plain.lowercased() }
+        return String(cString: out)
     }
 
     struct SocketBytes: Equatable {
@@ -282,10 +309,11 @@ final class NetMonitor: @unchecked Sendable {
             if let arrow = identifier.range(of: "<->") {
                 guard let pid = currentPID, let bin, let bout,
                       let space = identifier[..<arrow.lowerBound].firstIndex(of: " "),
-                      let localPort = port(of: identifier[identifier.index(after: space)..<arrow.lowerBound]),
-                      let remotePort = port(of: identifier[arrow.upperBound...]),
-                      localPort > 0, remotePort > 0 else { continue }
-                let key = SocketKey(pid: pid, localPort: localPort, remotePort: remotePort)
+                      let local = endpoint(identifier[identifier.index(after: space)..<arrow.lowerBound]),
+                      let remote = endpoint(identifier[arrow.upperBound...]),
+                      local.port > 0, remote.port > 0 else { continue }
+                let key = SocketKey(pid: pid, localPort: local.port,
+                                    remoteAddress: normalizedAddress(remote.host), remotePort: remote.port)
                 var total = sockets[key] ?? SocketBytes(bytesIn: 0, bytesOut: 0)
                 total.bytesIn &+= bin
                 total.bytesOut &+= bout
@@ -311,13 +339,14 @@ final class NetMonitor: @unchecked Sendable {
         return (usages, sockets)
     }
 
-    /// The port at the end of a nettop endpoint: `1.2.3.4:443` for IPv4,
+    /// Address and port of a nettop endpoint: `1.2.3.4:443` for IPv4,
     /// `fe80::1%en1.443` for IPv6. `*` (no port) gives nil.
-    private static func port(of endpoint: Substring) -> Int? {
-        let colon = endpoint.lastIndex(of: ":")
-        let dot = endpoint.lastIndex(of: ".")
-        guard let cut = [colon, dot].compactMap({ $0 }).max() else { return nil }
-        return Int(endpoint[endpoint.index(after: cut)...])
+    private static func endpoint(_ text: Substring) -> (host: String, port: Int)? {
+        let colon = text.lastIndex(of: ":")
+        let dot = text.lastIndex(of: ".")
+        guard let cut = [colon, dot].compactMap({ $0 }).max(),
+              let port = Int(text[text.index(after: cut)...]) else { return nil }
+        return (String(text[..<cut]), port)
     }
 
     /// The live speed comes from the interface counters, once a second.
