@@ -47,6 +47,12 @@ targets:
       - path: Sources/GUI
       - path: Sources/Shared
       - path: Resources/Assets.xcassets
+      # macOS 26 and later draw the app icon from this Icon Composer
+      # document (light, dark, clear and tinted). Older macOS versions keep
+      # using AppIcon.appiconset from Assets.xcassets above.
+      - path: Resources/AppIcon.icon
+        type: file
+        buildPhase: resources
       # UI text in every language. Xcode fills it from the Text("...")
       # literals and String(localized:) calls in Sources when the app is
       # built in Xcode; translations live next to the English source text.
