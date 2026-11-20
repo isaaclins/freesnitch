@@ -89,6 +89,13 @@ for language in languages {
 
 if !languages.contains("ru") { failures.append("the catalog compiled no Russian table") }
 
+// A number interpolated into localized text is formatted for the locale, so
+// port 8080 would read "8,080". Ports are identifiers: pass them as text.
+let portAsNumber = try! NSRegularExpression(pattern: "[Pp]ort %(?:[0-9]+\\$)?(?:lld|ld|d)")
+for key in strings.keys where portAsNumber.firstMatch(in: key, range: NSRange(key.startIndex..., in: key)) != nil {
+    failures.append("\(key.debugDescription) formats a port as a number; interpolate String(port)")
+}
+
 // Text added in code after the catalog was last synced in Xcode would show in
 // English for everyone. Plain String(localized: "...") literals are checked
 // here; SwiftUI literals and interpolated ones are left to Xcode's sync.

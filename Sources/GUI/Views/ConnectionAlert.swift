@@ -66,7 +66,7 @@ struct ConnectionAlertView: View {
         case .thisAddressAndPort:
             let address = alert.connection.remoteIP.isEmpty ? host : alert.connection.remoteIP
             let port = alert.connection.remotePort
-            return String(localized: "Creates a rule for \(name) reaching \(address) on port \(port), \(howLong).")
+            return String(localized: "Creates a rule for \(name) reaching \(address) on port \(String(port)), \(howLong).")
         }
     }
 

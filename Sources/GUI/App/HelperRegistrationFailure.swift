@@ -33,7 +33,7 @@ enum HelperRegistrationFailure {
                 ? String(localized: "macOS said: \(text)")
                 : String(localized: "macOS said: \(text).")
         } else {
-            said = String(localized: "macOS said: \(text) (\(domain) \(code)).")
+            said = String(localized: "macOS said: \(text) (\(domain) \(String(code))).")
         }
         guard inApplications else {
             return String(localized: "\(said) macOS only installs background helpers for apps in Applications. Move FreeSnitch into /Applications, open it from there and try again.")

@@ -4537,12 +4537,12 @@
         }
       }
     },
-    "Creates a rule for %@ reaching %@ on port %lld, %@." : {
+    "Creates a rule for %@ reaching %@ on port %@, %@." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Создаёт правило для %@ при подключении к %@ на порт %lld, %@."
+            "value" : "Создаёт правило для %@ при подключении к %@ на порт %@, %@."
           }
         }
       }
@@ -7888,12 +7888,13 @@
         }
       }
     },
-    "Port %lld" : {
+    "Port %@" : {
+      "comment" : "A port number, shown as typed",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Порт %lld"
+            "value" : "Порт %@"
           }
         }
       }
@@ -9140,12 +9141,12 @@
         }
       }
     },
-    "Running on port %lld" : {
+    "Running on port %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Работает на порту %lld"
+            "value" : "Работает на порту %@"
           }
         }
       }
@@ -13188,12 +13189,12 @@
         }
       }
     },
-    "macOS said: %@ (%@ %lld)." : {
+    "macOS said: %@ (%@ %@)." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ответ macOS: %1$@ (%2$@ %3$lld)."
+            "value" : "Ответ macOS: %1$@ (%2$@ %3$@)."
           }
         }
       }

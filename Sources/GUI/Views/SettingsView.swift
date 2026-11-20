@@ -234,7 +234,7 @@ struct SettingsView: View {
     /// switch was off, or the proxy had genuinely failed (#131).
     private var dnsProxyStatus: String {
         guard state.helperConnected else { return String(localized: "Unavailable while the helper is not connected") }
-        if state.dnsProxyEnabled { return String(localized: "Running on port \(state.dnsProxyPort)") }
+        if state.dnsProxyEnabled { return String(localized: "Running on port \(String(state.dnsProxyPort))") }
         return state.enforcementEnabled ? String(localized: "Not running") : String(localized: "Off, because enforcement is off")
     }
 

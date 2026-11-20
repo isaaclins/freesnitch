@@ -2101,7 +2101,7 @@ extension Rule {
     var displayDestination: String {
         if let host = remoteHost, !host.isEmpty { return host }
         if let ip = remoteIP, !ip.isEmpty { return ip }
-        if let port = remotePort, port > 0 { return String(localized: "Port \(port)") }
+        if let port = remotePort, port > 0 { return String(localized: "Port \(String(port))", comment: "A port number, shown as typed") }
         if let notes, !notes.isEmpty { return notes }
         return String(localized: "Any", comment: "Destination of a rule that matches every destination")
     }
