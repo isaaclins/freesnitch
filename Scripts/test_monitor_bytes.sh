@@ -110,9 +110,11 @@ struct Verify {
         let (usages, sockets) = NetMonitor.parseFrame(frame)
         typealias K = NetMonitor.SocketKey
         typealias B = NetMonitor.SocketBytes
-        func key(_ pid: Int32, _ local: Int, _ remote: String, _ port: Int) -> K {
-            K(pid: pid, localPort: local, remoteAddress: NetMonitor.normalizedAddress(remote), remotePort: port)
+        func key(_ pid: Int32, _ localAddress: String, _ local: Int, _ remote: String, _ port: Int) -> K {
+            K(pid: pid, localAddress: NetMonitor.normalizedAddress(localAddress), localPort: local,
+              remoteAddress: NetMonitor.normalizedAddress(remote), remotePort: port)
         }
+        let me4 = "192.168.1.144"
 
         check("every process line is still a process total",
               usages.map(\.processName) == ["launchd", "apsd", "Radioplayer", "rapportd", "Vivaldi Helper", "python3.12"])
@@ -120,17 +122,17 @@ struct Verify {
               usages.first { $0.pid == 1905 }.map { $0.bytesIn == 113_246_208 && $0.bytesOut == 55_296 } == true)
         check("socket lines are not read as processes", !usages.contains { $0.processName.contains("<->") })
         check("an IPv4 connection gets its bytes under its own process",
-              sockets[key(1905, 50123, "178.248.48.9", 443)] == B(bytesIn: 113_000_000, bytesOut: 50_000))
+              sockets[key(1905, me4, 50123, "178.248.48.9", 443)] == B(bytesIn: 113_000_000, bytesOut: 50_000))
         check("a QUIC connection gets its bytes",
-              sockets[key(1905, 57686, "52.85.185.61", 443)] == B(bytesIn: 246_208, bytesOut: 5_296))
+              sockets[key(1905, me4, 57686, "52.85.185.61", 443)] == B(bytesIn: 246_208, bytesOut: 5_296))
         // lsof writes this socket's remote end with en1's interface number
         // inside the address, as in [fe80:f::18e0:1490:7045:7b9f].
         let en1 = String(if_nametoindex("en1"), radix: 16)
         check("an IPv6 link-local connection is found under lsof's spelling of the address",
               if_nametoindex("en1") == 0
-                || sockets[key(636, 49181, "[fe80:\(en1)::18e0:1490:7045:7b9f]", 53786)] == B(bytesIn: 5_313, bytesOut: 22_100))
+                || sockets[key(636, "[fe80:\(en1)::866:bf75:855c:abc9]", 49181, "[fe80:\(en1)::18e0:1490:7045:7b9f]", 53786)] == B(bytesIn: 5_313, bytesOut: 22_100))
         check("a socket is never credited to the process before it",
-              sockets[key(147, 50123, "178.248.48.9", 443)] == nil)
+              sockets[key(147, me4, 50123, "178.248.48.9", 443)] == nil)
         check("listening sockets and sockets without counts are skipped", sockets.count == 4)
 
         // Two accepted connections can share both ports; they stay apart.
@@ -140,8 +142,16 @@ struct Verify {
             "tcp4 10.0.0.2:22<->10.0.0.9:50000,200,20,",
         ]).sockets
         check("connections that share both ports keep their own bytes",
-              shared[key(50, 22, "10.0.0.7", 50000)] == B(bytesIn: 100, bytesOut: 10)
-                && shared[key(50, 22, "10.0.0.9", 50000)] == B(bytesIn: 200, bytesOut: 20))
+              shared[key(50, "10.0.0.2", 22, "10.0.0.7", 50000)] == B(bytesIn: 100, bytesOut: 10)
+                && shared[key(50, "10.0.0.2", 22, "10.0.0.9", 50000)] == B(bytesIn: 200, bytesOut: 20))
+        let twoLocal = NetMonitor.parseFrame([
+            "nginx.60,300,30,",
+            "tcp4 10.0.0.2:443<->10.0.0.7:50000,100,10,",
+            "tcp4 10.0.1.2:443<->10.0.0.7:50000,200,20,",
+        ]).sockets
+        check("connections that differ only in their local address keep their own bytes",
+              twoLocal[key(60, "10.0.0.2", 443, "10.0.0.7", 50000)] == B(bytesIn: 100, bytesOut: 10)
+                && twoLocal[key(60, "10.0.1.2", 443, "10.0.0.7", 50000)] == B(bytesIn: 200, bytesOut: 20))
         check("IPv4 behind IPv6 is the same address",
               NetMonitor.normalizedAddress("[::ffff:178.248.48.9]") == "178.248.48.9")
         // lo0 is interface 1 on every Mac.
@@ -156,8 +166,8 @@ struct Verify {
             "tcp6 fe80::1%2.49181<->fe80::7%2.53786,200,20,",
         ]).sockets
         check("link-local connections on two interfaces keep their own bytes",
-              twoInterfaces[key(636, 49181, "[fe80:1::7]", 53786)] == B(bytesIn: 100, bytesOut: 10)
-                && twoInterfaces[key(636, 49181, "[fe80:2::7]", 53786)] == B(bytesIn: 200, bytesOut: 20))
+              twoInterfaces[key(636, "[fe80:1::1]", 49181, "[fe80:1::7]", 53786)] == B(bytesIn: 100, bytesOut: 10)
+                && twoInterfaces[key(636, "[fe80:2::1]", 49181, "[fe80:2::7]", 53786)] == B(bytesIn: 200, bytesOut: 20))
 
         // Pipe reads split lines anywhere. A burst of eleven frames of 3,000
         // socket lines, fed in odd-sized pieces, must give back ten whole

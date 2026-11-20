@@ -86,7 +86,7 @@ final class NetMonitor: @unchecked Sendable {
         var conns: [Connection] = []
         // A socket shared by two descriptors is listed once per descriptor;
         // counting it twice would double its bytes in every sum.
-        var seen = Set<String>()
+        var seen = Set<SocketKey>()
         var pid: Int32 = 0
         var pname = ""
         for line in txt.split(separator: "\n") {
@@ -98,11 +98,13 @@ final class NetMonitor: @unchecked Sendable {
             case "c":
                 pname = rest
             case "n":
-                if var c = parseN(line: rest, pid: pid, name: pname),
-                   seen.insert("\(pid) \(c.localPort) \(c.remoteIP) \(c.remotePort)").inserted {
-                    let key = SocketKey(pid: pid, localPort: c.localPort,
+                if let (parsed, localIP) = parseN(line: rest, pid: pid, name: pname) {
+                    var c = parsed
+                    let key = SocketKey(pid: pid,
+                                        localAddress: NetMonitor.normalizedAddress(localIP), localPort: c.localPort,
                                         remoteAddress: NetMonitor.normalizedAddress(c.remoteIP),
                                         remotePort: c.remotePort)
+                    guard seen.insert(key).inserted else { continue }
                     if let bytes = socketBytes[key] {
                         c.bytesIn = bytes.bytesIn
                         c.bytesOut = bytes.bytesOut
@@ -115,7 +117,7 @@ final class NetMonitor: @unchecked Sendable {
         onConnections?(conns)
     }
 
-    private func parseN(line: String, pid: Int32, name: String) -> Connection? {
+    private func parseN(line: String, pid: Int32, name: String) -> (Connection, localIP: String)? {
         guard line.contains("->") else { return nil }
         let parts = line.split(separator: " ").map(String.init)
         let addrPart = parts.first ?? line
@@ -125,10 +127,9 @@ final class NetMonitor: @unchecked Sendable {
         let remoteRaw = halves[1].hasPrefix(">") ? String(halves[1].dropFirst()) : halves[1]
         guard let (lip, lport) = splitHostPort(local) else { return nil }
         guard let (rip, rport) = splitHostPort(remoteRaw) else { return nil }
-        _ = lip
         let path = pidPath(pid)
         let bundle = bundleID(forPath: path, pid: pid)
-        return Connection(
+        return (Connection(
             pid: pid,
             processName: name,
             processPath: path,
@@ -141,7 +142,7 @@ final class NetMonitor: @unchecked Sendable {
             direction: .outgoing,
             status: .established,
             protocolName: "tcp"
-        )
+        ), lip)
     }
 
     private func splitHostPort(_ s: String) -> (String, Int)? {
@@ -259,11 +260,12 @@ final class NetMonitor: @unchecked Sendable {
         onProcessUsage?(parsed.usages)
     }
 
-    /// One open socket, as both nettop and lsof can name it. Two accepted
-    /// connections of one process can share both ports, so the remote address
-    /// is part of it, in the form `normalizedAddress` gives.
+    /// One open socket, as both nettop and lsof can name it, with both
+    /// addresses in the form `normalizedAddress` gives: two connections of
+    /// one process can share both ports.
     struct SocketKey: Hashable {
         let pid: Int32
+        let localAddress: String
         let localPort: Int
         let remoteAddress: String
         let remotePort: Int
@@ -330,7 +332,7 @@ final class NetMonitor: @unchecked Sendable {
                       let local = endpoint(identifier[identifier.index(after: space)..<arrow.lowerBound]),
                       let remote = endpoint(identifier[arrow.upperBound...]),
                       local.port > 0, remote.port > 0 else { continue }
-                let key = SocketKey(pid: pid, localPort: local.port,
+                let key = SocketKey(pid: pid, localAddress: normalizedAddress(local.host), localPort: local.port,
                                     remoteAddress: normalizedAddress(remote.host), remotePort: remote.port)
                 var total = sockets[key] ?? SocketBytes(bytesIn: 0, bytesOut: 0)
                 total.bytesIn &+= bin
