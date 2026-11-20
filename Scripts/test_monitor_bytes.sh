@@ -159,6 +159,35 @@ struct Verify {
               twoInterfaces[key(636, 49181, "[fe80:1::7]", 53786)] == B(bytesIn: 100, bytesOut: 10)
                 && twoInterfaces[key(636, 49181, "[fe80:2::7]", 53786)] == B(bytesIn: 200, bytesOut: 20))
 
+        // Pipe reads split lines anywhere. A burst of eleven frames of 3,000
+        // socket lines, fed in odd-sized pieces, must give back ten whole
+        // frames (the eleventh waits for the next header) and stay fast.
+        do {
+            let monitor = NetMonitor()
+            var frames: [[ProcessUsage]] = []
+            monitor.onProcessUsage = { frames.append($0) }
+            var burst = ""
+            for _ in 0..<11 {
+                burst += ",bytes_in,bytes_out,\n"
+                for p in 0..<300 {
+                    burst += "app.\(1000 + p),\(p * 10),\(p),\n"
+                    for s in 0..<9 { burst += "tcp4 10.0.0.2:\(40000 + s)<->1.1.1.\(s):443,\(p),\(s),\n" }
+                }
+            }
+            let bytes = Array(burst.utf8)
+            let started = Date()
+            var at = 0
+            while at < bytes.count {
+                let end = min(at + 4093, bytes.count)
+                monitor.ingestNettop(String(decoding: bytes[at..<end], as: UTF8.self))
+                at = end
+            }
+            let seconds = Date().timeIntervalSince(started)
+            print("monitor bytes harness: a burst of \(bytes.count) bytes took \(String(format: "%.3f", seconds)) s")
+            check("a burst split at random points gives whole frames",
+                  frames.count == 10 && frames.allSatisfy { $0.count == 300 } && frames[0][299].bytesIn == 2_990)
+        }
+
         // Saved history holds the same socket once per poll with its running
         // total; a summary takes only the latest row of each.
         let early = Date(timeIntervalSince1970: 1_000), late = Date(timeIntervalSince1970: 1_002)

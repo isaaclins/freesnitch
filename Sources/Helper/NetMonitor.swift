@@ -227,15 +227,22 @@ final class NetMonitor: @unchecked Sendable {
     }
 
     /// nettop writes one *frame* per interval: a `,bytes_in,bytes_out,` header
-    /// followed by one cumulative line per process. A pipe read is not a frame -
+    /// followed by one cumulative line per process and per socket. A pipe read is not a frame -
     /// it can split mid-line or carry half a frame - so reading whatever arrived
     /// as a frame produced nonsense (multi-GB/s spikes). Buffer, cut on the
     /// header, and only report whole frames.
-    private func ingestNettop(_ chunk: String) {
+    ///
+    /// Cut in one pass: per-socket output is several times longer than the
+    /// per-process output was, and copying the rest of the buffer after
+    /// every line made each burst cost the square of its size (#466).
+    /// Runs on `queue`; internal so a test can feed it chunks.
+    func ingestNettop(_ chunk: String) {
         pending += chunk
-        while let nl = pending.firstIndex(of: "\n") {
-            let line = String(pending[pending.startIndex..<nl])
-            pending = String(pending[pending.index(after: nl)...])
+        guard let lastNewline = pending.lastIndex(of: "\n") else { return }
+        let complete = pending[..<lastNewline]
+        let rest = String(pending[pending.index(after: lastNewline)...])
+        for sub in complete.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(sub)
             if line.hasPrefix(",bytes_in") {
                 if !frame.isEmpty { completeFrame(frame) }
                 frame = []
@@ -243,6 +250,7 @@ final class NetMonitor: @unchecked Sendable {
                 frame.append(line)
             }
         }
+        pending = rest
     }
 
     private func completeFrame(_ lines: [String]) {
