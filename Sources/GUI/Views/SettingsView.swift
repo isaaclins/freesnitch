@@ -364,6 +364,12 @@ struct SettingsView: View {
 
     private func saveDoHUpstream() {
         let value = doh
+        // Checked here first with the helper's own rule, so a refusal reads
+        // in the app's language; the helper still checks and logs in English.
+        if let rejection = DoHUpstreamValidator.rejection(for: value) {
+            dohError = Self.message(for: rejection)
+            return
+        }
         state.helper.remote?.setDoHUpstream(url: value) { ok, message in
             Task { @MainActor in
                 if ok {
@@ -374,6 +380,25 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// One whole sentence per refusal (#464): splicing the helper's English
+    /// reason into a translated sentence left English inside it.
+    static func message(for rejection: DoHUpstreamValidator.Rejection) -> String {
+        let reason: String
+        switch rejection {
+        case .empty:
+            reason = String(localized: "The upstream URL is empty.")
+        case .surroundingWhitespace:
+            reason = String(localized: "The upstream URL starts or ends with a space.")
+        case .notAURL:
+            reason = String(localized: "The upstream is not a URL.")
+        case .notHTTPS:
+            reason = String(localized: "The upstream URL must start with https://.")
+        case .missingHost:
+            reason = String(localized: "The upstream URL has no host.")
+        }
+        return reason + " " + String(localized: "Use an HTTPS URL with a host, such as https://cloudflare-dns.com/dns-query.")
     }
 
     /// Grouped, like General: a plain form put the label outside the content

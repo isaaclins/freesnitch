@@ -11427,12 +11427,62 @@
         }
       }
     },
+    "The upstream URL has no host." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В URL сервера не указан хост."
+          }
+        }
+      }
+    },
+    "The upstream URL is empty." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "URL сервера не указан."
+          }
+        }
+      }
+    },
+    "The upstream URL must start with https://." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "URL сервера должен начинаться с https://."
+          }
+        }
+      }
+    },
+    "The upstream URL starts or ends with a space." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "URL сервера начинается или заканчивается пробелом."
+          }
+        }
+      }
+    },
     "The upstream applies only while enforcement is on. Turn it on in General." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вышестоящий сервер используется, только когда применение правил включено. Включите его в разделе «Основные»."
+          }
+        }
+      }
+    },
+    "The upstream is not a URL." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Указанное значение не является URL."
           }
         }
       }
