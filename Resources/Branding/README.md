@@ -24,6 +24,22 @@ That script writes:
 - every size in `Resources/Assets.xcassets/AppIcon.appiconset/`
 - `Resources/Branding/freesnitch-mark-1024.png`, the master render
 - `docs/favicon.png` and `docs/icon-512.png`
+- the layer images in `Resources/AppIcon.icon/Assets/`
+
+## Light, dark, clear and tinted
+
+On macOS 26 and later the app icon comes from `Resources/AppIcon.icon`, an
+Icon Composer document. The system draws its shape and switches between the
+light and dark versions with the system appearance, and builds the clear and
+tinted looks from the same layers. The colours for each appearance are in
+`icon.json`: a light plate with blue rings and a dark core, or a dark plate with
+brighter rings and a light core. In the clear and tinted looks the core stays
+white so it doesn't disappear.
+
+Xcode also renders a flat copy of the light version from that document for
+macOS 13 to 15. `AppIcon.appiconset` stays for builds with an Xcode older than
+26, which can't read Icon Composer documents. Open `AppIcon.icon` in Icon
+Composer (it ships inside Xcode) to preview every look.
 
 ## Why the shapes are hand-drawn
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Regenerates the FreeSnitch app icon, favicon, and social preview from
+# Regenerates the FreeSnitch app icon (both the flat icon set and the layers
+# of the Icon Composer document), favicon, and social preview from
 # Scripts/render_icon.swift, which draws the mark procedurally. There is no
 # external design tool or vector dependency: swift is the only requirement.
 set -euo pipefail
@@ -33,6 +34,13 @@ do
   sips -Z "$px" "$ICONSET/$name.png" >/dev/null
 done
 echo "Wrote $(ls "$ICONSET"/*.png | wc -l | tr -d ' ') icon files."
+
+# Layers for the Icon Composer document (macOS 26 and later: light, dark,
+# clear and tinted). Colours, opacity and appearances live in
+# Resources/AppIcon.icon/icon.json; the layers are white shapes.
+echo "Rendering Icon Composer layers..."
+swift "$ROOT/Scripts/render_icon_layers.swift" "$ROOT/Resources/AppIcon.icon/Assets" >/dev/null
+echo "Wrote $(ls "$ROOT/Resources/AppIcon.icon/Assets"/*.png | wc -l | tr -d ' ') layer files."
 
 # Website assets derived from the same master.
 cp -f "$MASTER" "$DOCS/favicon.png"
