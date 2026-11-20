@@ -208,6 +208,40 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+extension Connection {
+    /// One row per socket: the latest. The helper saves every open connection
+    /// again on each poll, under a new id and with the bytes that socket had
+    /// moved by then, so summing saved rows counted one socket once per poll
+    /// (#466). Order follows the first row seen for each socket.
+    public static func latestPerSocket(_ connections: [Connection]) -> [Connection] {
+        struct Key: Hashable {
+            let pid: Int32
+            let localPort: Int
+            let remoteIP: String
+            let remotePort: Int
+            let protocolName: String
+            let direction: RuleDirection
+        }
+        var order: [Key] = []
+        var latest: [Key: Connection] = [:]
+        for connection in connections {
+            let key = Key(pid: connection.pid, localPort: connection.localPort, remoteIP: connection.remoteIP,
+                          remotePort: connection.remotePort, protocolName: connection.protocolName,
+                          direction: connection.direction)
+            guard let kept = latest[key] else {
+                order.append(key)
+                latest[key] = connection
+                continue
+            }
+            let newer = connection.lastSeen != kept.lastSeen
+                ? connection.lastSeen > kept.lastSeen
+                : connection.bytesIn + connection.bytesOut > kept.bytesIn + kept.bytesOut
+            if newer { latest[key] = connection }
+        }
+        return order.compactMap { latest[$0] }
+    }
+}
+
 public struct Profile: Identifiable, Codable, Hashable, Sendable {
     public static let alwaysName = "always"
     public static let defaultName = "default"

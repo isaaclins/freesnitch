@@ -746,13 +746,19 @@ final class CLIRunner {
                        remediation: "Run `freesnitch blocklists` to see current IDs and names.")
     }
 
-    private func aggregate(connections: [Connection], usage: [ProcessUsage], limit: Int) -> AggregateSummary {
+    private func aggregate(connections saved: [Connection], usage: [ProcessUsage], limit: Int) -> AggregateSummary {
+        // Saved history holds one row per socket per poll, each with that
+        // socket's running total, so only the latest row of each counts (#466).
+        let connections = Connection.latestPerSocket(saved)
         struct ProcessValue {
             var name: String
             var bundle: String?
             var path: String?
             var bytesIn: Int64
             var bytesOut: Int64
+            var usageIn: Int64 = 0
+            var usageOut: Int64 = 0
+            var hasUsage = false
         }
         var processes: [String: ProcessValue] = [:]
         var domains: [String: (Int64, Int64)] = [:]
@@ -788,9 +794,17 @@ final class CLIRunner {
             guard let connection else { continue }
             let processKey = key(for: connection)
             guard var value = processes[processKey] else { continue }
-            value.bytesIn += item.bytesIn
-            value.bytesOut += item.bytesOut
+            // The process total already covers its connections; adding both
+            // counted the same traffic twice. Like the app's Top Processes,
+            // it replaces the connection sum when there is one.
+            value.usageIn += item.bytesIn
+            value.usageOut += item.bytesOut
+            value.hasUsage = true
             processes[processKey] = value
+        }
+        for (processKey, value) in processes where value.hasUsage {
+            processes[processKey]?.bytesIn = value.usageIn
+            processes[processKey]?.bytesOut = value.usageOut
         }
         let topProcesses = processes.values
             .sorted { ($0.bytesIn + $0.bytesOut) > ($1.bytesIn + $1.bytesOut) }
