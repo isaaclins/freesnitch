@@ -231,9 +231,7 @@ extension Rule {
     /// existing one off.
     public var nameOnlyRejectionReason: String? {
         guard enabled, namesAppOnlyByName else { return nil }
-        return "the rule for \u{201C}\(processName ?? "")\u{201D} names the app only by its name. "
-            + "FreeSnitch matches apps by path or bundle id, so this rule would apply to every app. "
-            + "Add the rule again for the app, or keep this one turned off"
+        return String(localized: "the rule for \u{201C}\(processName ?? "")\u{201D} names the app only by its name. FreeSnitch matches apps by path or bundle id, so this rule would apply to every app. Add the rule again for the app, or keep this one turned off")
     }
 }
 
@@ -579,7 +577,7 @@ public struct RuleMatcher: Sendable {
 /// validation exists to fail loudly at the point of entry instead of storing a
 /// rule that can never do what its author meant.
 public enum RuleAddressValidator {
-    public static let remediation = "Use a literal IP address such as 1.2.3.4, a CIDR whose prefix length is 0 through 32 for IPv4 or 0 through 128 for IPv6, or an octet wildcard such as 10.1.*."
+    public static let remediation = String(localized: "Use a literal IP address such as 1.2.3.4, a CIDR whose prefix length is 0 through 32 for IPv4 or 0 through 128 for IPv6, or an octet wildcard such as 10.1.*.")
 
     /// Returns nil when the value is usable as a rule address, otherwise a
     /// short reason. An absent or empty value is not an address constraint at

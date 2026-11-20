@@ -29,7 +29,7 @@ Build target: FreeSnitch. Hit ⌘R. A local contributor build may fail to instal
 
 1. **Firewall build testing** (`project-netext.yml`). This is the build users get, and it is the hardest to test, since it needs the Developer ID profiles. Test the signed universal build, first-launch system extension approval, and per-process flow decisions.
 2. **macOS compatibility**. Test on every macOS version you have, report breakage with a paste of the build error.
-3. **Localization**. The strings are not yet `.strings`-extracted. Help wanted.
+3. **Translations**. All UI text lives in the String Catalog `Resources/Localizable.xcstrings` (English and Russian so far). Open it in Xcode to fix a translation or add a language; text built in code goes through `String(localized:)` so it lands there too. Check the result with `APP_LANGUAGE=<code> Scripts/screenshots.sh`, and keep process names, hostnames, ports and rule values untranslated.
 4. **Blocklist curation**. Add high-quality, low-false-positive sources; remove anything stale.
 5. **UI polish**. Pixel-level fidelity to Little Snitch is the bar. Submit screenshots in the PR: `Scripts/screenshots.sh` captures every screen from sample data (`FREESNITCH_DEMO=1`), in dark and light mode.
 

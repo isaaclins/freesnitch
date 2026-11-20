@@ -13,6 +13,10 @@
 # Needs: macOS with Xcode, xcodegen, and Screen Recording permission for the
 # terminal that runs this. Leave the Mac alone while it runs: every screen opens
 # in front for a few seconds.
+#
+# To check a translation, pass its language code, for example
+#   APP_LANGUAGE=ru Scripts/screenshots.sh build/screenshots-ru
+# WINDOWS picks the screens, for example WINDOWS="settings alert".
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,6 +26,11 @@ OUT="$(cd "$OUT" && pwd)"
 # Main window size in points. The README and website use 1440x880.
 WIDTH="${WIDTH:-1440}"
 HEIGHT="${HEIGHT:-880}"
+WINDOWS="${WINDOWS:-monitor rules insights profiles alert popover}"
+LANGUAGE_ARGS=()
+if [ -n "${APP_LANGUAGE:-}" ]; then
+  LANGUAGE_ARGS=(-AppleLanguages "($APP_LANGUAGE)")
+fi
 
 xcodegen generate --spec project.yml >/dev/null
 xcodebuild -project FreeSnitch.xcodeproj -scheme FreeSnitch -configuration Debug \
@@ -59,7 +68,8 @@ shoot() { # <window> <appearance>
   pkill -x FreeSnitch 2>/dev/null || true
   sleep 1
   FREESNITCH_DEMO=1 FREESNITCH_DEMO_WINDOW="$window" "$BIN" \
-    -"NSWindow Frame FreeSnitch.MainWindow" "$FRAME" ${extra[@]+"${extra[@]}"} >/dev/null 2>&1 &
+    -"NSWindow Frame FreeSnitch.MainWindow" "$FRAME" ${extra[@]+"${extra[@]}"} \
+    ${LANGUAGE_ARGS[@]+"${LANGUAGE_ARGS[@]}"} >/dev/null 2>&1 &
   sleep 6
   # The largest window is the screen under review: the main window, the alert
   # panel or the popover. The status item itself is a few points tall.
@@ -71,7 +81,7 @@ shoot() { # <window> <appearance>
 }
 
 for appearance in dark light; do
-  for window in monitor rules insights profiles alert popover; do
+  for window in $WINDOWS; do
     shoot "$window" "$appearance"
   done
 done

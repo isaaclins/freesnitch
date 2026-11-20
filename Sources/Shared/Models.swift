@@ -284,9 +284,8 @@ public struct ProfileSwitchNotice: Codable, Hashable, Sendable {
     }
 
     public var message: String {
-        let active = "\(activeRuleCount) rules active"
-        guard let pausedProfile, pausedRuleCount > 0 else { return active }
-        return "\(active), \(pausedRuleCount) \(pausedProfile) rules paused"
+        guard let pausedProfile, pausedRuleCount > 0 else { return String(localized: "\(activeRuleCount) rules active") }
+        return String(localized: "\(activeRuleCount) rules active, \(pausedRuleCount) \(pausedProfile) rules paused")
     }
 }
 

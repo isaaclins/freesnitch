@@ -9,9 +9,9 @@ enum RulesPane: Int, CaseIterable, Hashable {
 
     var accessibilityLabel: String {
         switch self {
-        case .categories: return "Categories"
-        case .table: return "Rules"
-        case .inspector: return "Information"
+        case .categories: return String(localized: "Categories")
+        case .table: return String(localized: "Rules")
+        case .inspector: return String(localized: "Information")
         }
     }
 }

@@ -63,7 +63,7 @@ struct ConnectionMapPane: View {
                                                lineJoin: .round))
             }
 
-            Annotation("Your Mac", coordinate: home.point.coordinate) {
+            Annotation(String(localized: "Your Mac"), coordinate: home.point.coordinate) {
                 HomePin(isEstimate: home.isEstimate)
             }
             .annotationTitles(.hidden)
@@ -75,7 +75,7 @@ struct ConnectionMapPane: View {
                 // to answer nothing at all (#138).
                 Annotation(node.title, coordinate: node.point.coordinate) {
                     NodePin(node: node, isSelected: selectedNode?.id == node.id)
-                        .help("\(node.title): \(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s")")
+                        .help("\(node.title): \(node.connectionCount) connections")
                 }
                 // The pin draws its own label, with the connection count and a
                 // material behind it. MapKit draws the title underneath as
@@ -132,7 +132,7 @@ struct ConnectionMapPane: View {
                 }
             }
             Divider()
-            Text("\(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s") · \(PSFormat.bytes(node.bytes))")
+            Text("\(node.connectionCount) connections · \(PSFormat.bytes(node.bytes))")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(14)
@@ -151,7 +151,7 @@ struct ConnectionMapPane: View {
                         Button {
                             selectedNode = node
                         } label: {
-                            Text("\(node.title) · \(node.connectionCount) connection\(node.connectionCount == 1 ? "" : "s")")
+                            Text("\(node.title) · \(node.connectionCount) connections")
                         }
                     }
                 }
@@ -214,9 +214,9 @@ struct ConnectionMapPane: View {
     /// thing they describe (#103). CC BY only asks that the credit be visible
     /// where the data is shown, and a header directly above the map is.
     static func attributionText(hiddenCount: Int, aggregated: Bool) -> String {
-        var parts = ["Locations are estimates"]
-        if aggregated { parts.append("grouped to keep the map readable") }
-        if hiddenCount > 0 { parts.append("\(hiddenCount) quieter locations not shown") }
+        var parts = [String(localized: "Locations are estimates")]
+        if aggregated { parts.append(String(localized: "grouped to keep the map readable", comment: "Part of the map caption, after \"Locations are estimates ·\"")) }
+        if hiddenCount > 0 { parts.append(String(localized: "\(hiddenCount) quieter locations not shown", comment: "Part of the map caption, after \"Locations are estimates ·\"")) }
         return parts.joined(separator: " \u{00b7} ")
     }
 

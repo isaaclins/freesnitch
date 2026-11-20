@@ -145,7 +145,7 @@ struct MenubarPopoverView: View {
         .padding(.horizontal, 12)
     }
 
-    private func legend(color: Color, label: String, value: String) -> some View {
+    private func legend(color: Color, label: LocalizedStringKey, value: String) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label)
@@ -194,7 +194,7 @@ struct MenubarPopoverView: View {
                 HStack(spacing: 8) {
                     ZStack {
                         Circle().fill(state.deniedCount > 0 ? Color(nsColor: .systemRed) : Color.secondary)
-                        Text("\(state.deniedCount)")
+                        Text(verbatim: "\(state.deniedCount)")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
                     }
@@ -210,7 +210,7 @@ struct MenubarPopoverView: View {
         .padding(.top, 10)
     }
 
-    private func sectionLabel(_ text: String) -> some View {
+    private func sectionLabel(_ text: LocalizedStringKey) -> some View {
         Text(text)
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -236,7 +236,7 @@ struct MenubarPopoverView: View {
         .padding(.bottom, 8)
     }
 
-    private func menuLabel(_ title: String, symbol: String) -> some View {
+    private func menuLabel(_ title: LocalizedStringKey, symbol: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: symbol)
                 .foregroundStyle(.secondary)
@@ -320,7 +320,7 @@ struct ProfilePicker: View {
                 .padding(.top, 10)
                 .padding(.bottom, 4)
             if profiles.isEmpty {
-                Text(isAvailable ? "No profiles yet." : unavailableReason)
+                Text(isAvailable ? String(localized: "No profiles yet.") : unavailableReason)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

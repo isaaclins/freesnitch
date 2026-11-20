@@ -10,9 +10,9 @@ import SwiftUI
 extension AppMode {
     var title: String {
         switch self {
-        case .alert: return "Alert"
-        case .silentAllow: return "Silent Allow"
-        case .silentDeny: return "Silent Deny"
+        case .alert: return String(localized: "Alert", comment: "Name of the mode that asks about each new connection")
+        case .silentAllow: return String(localized: "Silent Allow")
+        case .silentDeny: return String(localized: "Silent Deny")
         }
     }
 
@@ -35,9 +35,9 @@ extension AppMode {
     /// What the mode actually does, for a picker's help text.
     var explanation: String {
         switch self {
-        case .alert: return "Ask about connections that no rule covers."
-        case .silentAllow: return "Permit everything no rule covers, and record it."
-        case .silentDeny: return "Refuse everything no rule covers."
+        case .alert: return String(localized: "Ask about connections that no rule covers.")
+        case .silentAllow: return String(localized: "Permit everything no rule covers, and record it.")
+        case .silentDeny: return String(localized: "Refuse everything no rule covers.")
         }
     }
 }
@@ -49,9 +49,9 @@ extension AppMode {
 /// traffic monitor" while rules in the extension went on blocking. One switch
 /// gets one name and one sentence (#139).
 enum EnforcementControl {
-    static let title = "Enforce rules and blocklists"
+    static let title = String(localized: "Enforce rules and blocklists")
 
-    static let help = "Loads the pf firewall anchor and runs the local DNS proxy, so rules and blocklists take effect."
+    static let help = String(localized: "Loads the pf firewall anchor and runs the local DNS proxy, so rules and blocklists take effect.")
 
-    static let explanation = "Off by default. Turning this on lets FreeSnitch load a pf firewall anchor and run a DNS proxy, which changes how this Mac resolves names and filters packets. With it off, blocklists and pf rules do nothing, though decisions you make in Alert mode still apply to new connections."
+    static let explanation = String(localized: "Off by default. Turning this on lets FreeSnitch load a pf firewall anchor and run a DNS proxy, which changes how this Mac resolves names and filters packets. With it off, blocklists and pf rules do nothing, though decisions you make in Alert mode still apply to new connections.")
 }

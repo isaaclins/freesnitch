@@ -47,6 +47,11 @@ targets:
       - path: Sources/GUI
       - path: Sources/Shared
       - path: Resources/Assets.xcassets
+      # UI text in every language. Xcode fills it from the Text("...")
+      # literals and String(localized:) calls in Sources when the app is
+      # built in Xcode; translations live next to the English source text.
+      - path: Resources/Localizable.xcstrings
+      - path: Resources/InfoPlist.xcstrings
     info:
       path: Sources/GUI/Info.plist
       properties:
@@ -63,6 +68,9 @@ targets:
         # map degrades to endpoints without lines when this is refused.
         NSLocationWhenInUseUsageDescription: "FreeSnitch shows your Mac on the connection map so you can see where your traffic goes."
         NSPrincipalClass: NSApplication
+        # English is the fallback for every language without a translation.
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, ru]
         LSApplicationCategoryType: public.app-category.utilities
         SUFeedURL: "https://isaaclins.com/freesnitch/appcast.xml"
         SUPublicEDKey: "s19KDKXgrxZQgfYO2yymuly/OjXMOpCpwqsIvVebbfU="
@@ -103,6 +111,9 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_EMIT_LOC_STRINGS: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+        STRING_CATALOG_GENERATE_SYMBOLS: NO
     postBuildScripts:
       - name: Embed Provisioning Profile
         runOnlyWhenInstalling: false

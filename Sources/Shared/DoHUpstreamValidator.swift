@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DoHUpstreamValidator {
-    public static let remediation = "Use an HTTPS URL with a host, such as https://cloudflare-dns.com/dns-query."
+    public static let remediation = String(localized: "Use an HTTPS URL with a host, such as https://cloudflare-dns.com/dns-query.")
 
     public static func rejectionReason(for value: String) -> String? {
         guard !value.isEmpty else { return "the URL is empty" }

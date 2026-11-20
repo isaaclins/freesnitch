@@ -79,11 +79,17 @@ enum PSFormat {
 }
 
 struct PSChip: View {
-    let text: String
+    let text: Text
     let color: Color
     let icon: String?
+    /// A literal is looked up in the string catalog, like `Text("...")`.
+    init(_ text: LocalizedStringKey, color: Color = .accentColor, icon: String? = nil) {
+        self.text = Text(text); self.color = color; self.icon = icon
+    }
+    /// A string that is already final, such as a name, is shown as it is.
+    @_disfavoredOverload
     init(_ text: String, color: Color = .accentColor, icon: String? = nil) {
-        self.text = text; self.color = color; self.icon = icon
+        self.text = Text(verbatim: text); self.color = color; self.icon = icon
     }
     /// A quiet annotation, not a button.
     ///
@@ -98,7 +104,7 @@ struct PSChip: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(color)
             }
-            Text(text)
+            text
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

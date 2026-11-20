@@ -31,7 +31,7 @@ public struct ActiveVPN: Equatable, Sendable {
 
     /// "Tailscale", or "A VPN" when the VPN set no name.
     public var displayName: String {
-        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return "A VPN" }
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return String(localized: "A VPN") }
         return name
     }
 
@@ -123,9 +123,10 @@ public enum VPNStatus {
     /// interface it leaves by, so they hold inside the tunnel too.
     public static func rulesSummary(_ vpns: [ActiveVPN]) -> String? {
         guard let first = vpns.first else { return nil }
-        let names = vpns.count == 1 ? "\(first.displayName) is" : "\(vpns.count) VPNs are"
-        return "\(names) connected. Your rules still apply to every app's connections through the tunnel. "
-            + "If the VPN stops connecting while FreeSnitch is on, check that neither the VPN app nor its network extension is denied in Rules."
+        if vpns.count == 1 {
+            return String(localized: "\(first.displayName) is connected. Your rules still apply to every app's connections through the tunnel. If the VPN stops connecting while FreeSnitch is on, check that neither the VPN app nor its network extension is denied in Rules.")
+        }
+        return String(localized: "\(vpns.count) VPNs are connected. Your rules still apply to every app's connections through the tunnel. If the VPN stops connecting while FreeSnitch is on, check that neither the VPN app nor its network extension is denied in Rules.")
     }
 
     /// What the connected VPNs mean for FreeSnitch's DNS protection, or nil
@@ -134,11 +135,11 @@ public enum VPNStatus {
     public static func dnsSummary(_ vpns: [ActiveVPN], routesThroughProxy: Bool) -> String? {
         if let owner = dnsOwner(vpns), !routesThroughProxy {
             let servers = owner.dnsServers.joined(separator: ", ")
-            var text = "\(owner.displayName) is handling DNS right now (\(servers)), so FreeSnitch's DNS blocking and upstream don't apply while it is connected."
+            var text = String(localized: "\(owner.displayName) is handling DNS right now (\(servers)), so FreeSnitch's DNS blocking and upstream don't apply while it is connected.")
             if isTailscale(owner) {
-                text += " To use FreeSnitch's DNS while it is connected, turn off Use Tailscale DNS Settings in the Tailscale menu, then set this Mac's DNS server to 127.0.0.1 if it isn't already."
+                text += " " + String(localized: "To use FreeSnitch's DNS while it is connected, turn off Use Tailscale DNS Settings in the Tailscale menu, then set this Mac's DNS server to 127.0.0.1 if it isn't already.")
             } else {
-                text += " To use FreeSnitch's DNS while it is connected, turn off the VPN's own DNS in its settings, if it has that option, then set this Mac's DNS server to 127.0.0.1 if it isn't already."
+                text += " " + String(localized: "To use FreeSnitch's DNS while it is connected, turn off the VPN's own DNS in its settings, if it has that option, then set this Mac's DNS server to 127.0.0.1 if it isn't already.")
             }
             return text
         }
@@ -146,8 +147,11 @@ public enum VPNStatus {
         guard !split.isEmpty else { return nil }
         return split.map { vpn in
             let domains = vpn.matchDomains.prefix(3).joined(separator: ", ")
-            let more = vpn.matchDomains.count > 3 ? " and \(vpn.matchDomains.count - 3) more" : ""
-            return "Lookups for \(domains)\(more) go to \(vpn.displayName), so FreeSnitch's DNS blocking doesn't apply to those names."
+            if vpn.matchDomains.count > 3 {
+                let more = vpn.matchDomains.count - 3
+                return String(localized: "Lookups for \(domains) and \(more) more go to \(vpn.displayName), so FreeSnitch's DNS blocking doesn't apply to those names.")
+            }
+            return String(localized: "Lookups for \(domains) go to \(vpn.displayName), so FreeSnitch's DNS blocking doesn't apply to those names.")
         }.joined(separator: " ")
     }
 

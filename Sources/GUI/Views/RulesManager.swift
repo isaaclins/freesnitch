@@ -173,7 +173,7 @@ struct RulesManagerView: View {
                       contentType: .json,
                       defaultFilename: "freesnitch-rules") { result in
             if case .failure(let error) = result {
-                showError("Could not export the rules", error.localizedDescription)
+                showError(String(localized: "Could not export the rules"), error.localizedDescription)
             }
         }
         .confirmationDialog("Import rules?",
@@ -291,8 +291,8 @@ struct RulesManagerView: View {
         }
     }
 
-    static let blocklistExplanation = "Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH."
-    static let enforcementOffExplanation = "Enforcement is off, so enabled blocklists are currently blocking nothing."
+    static let blocklistExplanation = String(localized: "Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.")
+    static let enforcementOffExplanation = String(localized: "Enforcement is off, so enabled blocklists are currently blocking nothing.")
 
     /// The one thing a reader wants when they learn enforcement is off is to
     /// turn it on, so this is a real toggle rather than a warning label (#80).
@@ -314,8 +314,9 @@ struct RulesManagerView: View {
                         // button on the same line, so one line truncated this
                         // to "Enforce rules...", which reads as an unfinished
                         // sentence rather than a label (#122).
+                        // Three lines, not two: longer languages need them.
                         Text(EnforcementControl.title)
-                            .lineLimit(2)
+                            .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
                         blocklistHelpButton
                     }
@@ -339,17 +340,17 @@ struct RulesManagerView: View {
             enforcementCaptionText(failure, tint: .orange)
         } else if state.enforcementChangePending {
             enforcementCaptionText(state.enforcementEnabled
-                                   ? "Turning enforcement on…"
-                                   : "Turning enforcement off…",
+                                   ? String(localized: "Turning enforcement on…")
+                                   : String(localized: "Turning enforcement off…"),
                                    tint: .secondary)
         } else if !state.helperConnected {
-            enforcementCaptionText("Approve the FreeSnitch helper to change this.", tint: .secondary)
+            enforcementCaptionText(String(localized: "Approve the FreeSnitch helper to change this."), tint: .secondary)
         } else if state.enforcementEnabled {
-            enforcementCaptionText("On: rules and blocklists are in force.", tint: .secondary)
+            enforcementCaptionText(String(localized: "On: rules and blocklists are in force."), tint: .secondary)
         } else if blocklists.contains(where: { activeProfileUses($0) }) {
             enforcementCaptionText(Self.enforcementOffExplanation, tint: .secondary)
         } else {
-            enforcementCaptionText("Off: FreeSnitch is only watching.", tint: .secondary)
+            enforcementCaptionText(String(localized: "Off: FreeSnitch is only watching."), tint: .secondary)
         }
     }
 
@@ -485,7 +486,7 @@ struct RulesManagerView: View {
         )
     }
 
-    private func navRow(_ cat: Category, label: String, icon: String, color: Color = .accentColor, count: Int) -> some View {
+    private func navRow(_ cat: Category, label: LocalizedStringKey, icon: String, color: Color = .accentColor, count: Int) -> some View {
         Label {
             Text(label)
         } icon: {
@@ -527,7 +528,7 @@ struct RulesManagerView: View {
         let profiles = profileClient.profiles
         guard !profiles.isEmpty else { return [] }
         var filters = [ProfileFilter(name: Profile.alwaysName,
-                                     label: "Always",
+                                     label: String(localized: "Always", comment: "The rule layer that applies in every profile"),
                                      icon: "infinity",
                                      count: state.rules.filter { $0.profile == Profile.alwaysName }.count,
                                      inForce: true)]
@@ -624,7 +625,7 @@ struct RulesManagerView: View {
     private func blocklistHeader(_ blocklist: BlocklistInfo) -> some View {
         PaneHeader(blocklist.name, count: paneCount) {
             PaneSearchField(text: searchBinding,
-                            placeholder: "Search \(blocklist.name)",
+                            placeholder: String(localized: "Search \(blocklist.name)"),
                             focusToken: window.searchFocusToken)
                 .frame(width: 220, height: 22)
                 .accessibilityLabel("Search this blocklist")
@@ -854,7 +855,7 @@ struct RulesManagerView: View {
                             get: { rules.allSatisfy { $0.profile == name } },
                             set: { isOn in if isOn { setProfile(name, for: rules) } }
                         )) {
-                            Text(name == Profile.alwaysName ? "Always" : name)
+                            Text(name == Profile.alwaysName ? String(localized: "Always", comment: "The rule layer that applies in every profile") : name)
                         }
                     }
                 }
@@ -933,49 +934,49 @@ struct RulesManagerView: View {
 
     private var emptyTitle: String {
         if case .blocklist(let id) = selectedCategory {
-            return blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
+            return blocklists.first(where: { $0.id == id })?.name ?? String(localized: "Blocklist")
         }
         // A search that matched nothing answers for itself. Blaming the helper
         // here was wrong whenever both were true at once.
-        if !searchText.isEmpty { return "No Results" }
-        if !state.helperConnected { return "Helper not running" }
-        if state.rules.isEmpty { return "No rules yet" }
-        return "Nothing in \(categoryTitle)"
+        if !searchText.isEmpty { return String(localized: "No Results") }
+        if !state.helperConnected { return String(localized: "Helper not running") }
+        if state.rules.isEmpty { return String(localized: "No rules yet") }
+        return String(localized: "Nothing in \(categoryTitle)")
     }
 
     private var emptySubtitle: String {
         if case .blocklist(let id) = selectedCategory {
             let count = blocklists.first(where: { $0.id == id })?.entryCount ?? 0
             return count == 0
-                ? "Nothing has been downloaded for this list yet."
-                : "This blocklist contains \(count) domain entries."
+                ? String(localized: "Nothing has been downloaded for this list yet.")
+                : String(localized: "This blocklist contains \(count) domain entries.")
         }
         if !searchText.isEmpty {
-            return "No rule matches \u{201C}\(searchText)\u{201D}."
+            return String(localized: "No rule matches \u{201C}\(searchText)\u{201D}.")
         }
         if !state.helperConnected {
             // One line. The button below does the navigating that three lines
             // of prose used to describe (#83).
-            return "Approve FreeSnitch in Login Items, and this fills in on its own."
+            return String(localized: "Approve FreeSnitch in Login Items, and this fills in on its own.")
         }
         if state.rules.isEmpty {
-            return "Rules are created automatically when you allow or deny a connection alert."
+            return String(localized: "Rules are created automatically when you allow or deny a connection alert.")
         }
-        return "No rules match this filter."
+        return String(localized: "No rules match this filter.")
     }
 
     private var categoryTitle: String {
         switch selectedCategory {
-        case .all: return "All Rules"
-        case .active: return "Allow"
-        case .deny: return "Deny"
-        case .recentChanges: return "Recent Changes"
-        case .recentlyUsed: return "Recently Used"
-        case .temporary: return "Temporary"
-        case .unapproved: return "Unapproved"
-        case .profile(let n): return n == Profile.alwaysName ? "Always" : n
+        case .all: return String(localized: "All Rules")
+        case .active: return String(localized: "Allow")
+        case .deny: return String(localized: "Deny")
+        case .recentChanges: return String(localized: "Recent Changes")
+        case .recentlyUsed: return String(localized: "Recently Used")
+        case .temporary: return String(localized: "Temporary")
+        case .unapproved: return String(localized: "Unapproved")
+        case .profile(let n): return n == Profile.alwaysName ? String(localized: "Always", comment: "The rule layer that applies in every profile") : n
         case .group(let n): return n
-        case .blocklist(let id): return blocklists.first(where: { $0.id == id })?.name ?? "Blocklist"
+        case .blocklist(let id): return blocklists.first(where: { $0.id == id })?.name ?? String(localized: "Blocklist")
         }
     }
 
@@ -1092,7 +1093,7 @@ struct RulesManagerView: View {
                 // The counts alone never said whether a rule was still live,
                 // and a Temporary rule never said when it ends (#134).
                 infoField("Created", RuleDate.past(r.createdAt))
-                infoField("Last used", r.lastUsedAt.map(RuleDate.past) ?? "Never")
+                infoField("Last used", r.lastUsedAt.map(RuleDate.past) ?? String(localized: "Never"))
                 if let expiresAt = r.expiresAt { infoField("Expires", RuleDate.expiry(expiresAt)) }
                 if let n = r.notes, !n.isEmpty { infoField("Notes", n) }
             }
@@ -1144,7 +1145,7 @@ struct RulesManagerView: View {
     private func multiRuleDetails(_ rules: [Rule]) -> some View {
         Form {
             Section {
-                infoField("Selected", "\(rules.count) rules")
+                infoField("Selected", String(localized: "\(rules.count) rules"))
             }
             summarySection("Process", items: summaryItems(rules) { $0.displayProcessName })
             summarySection("Action", items: summaryItems(rules) { $0.actionLabel })
@@ -1161,11 +1162,11 @@ struct RulesManagerView: View {
         .formStyle(.grouped)
     }
 
-    private func summarySection(_ title: String, items: [RuleSummaryItem]) -> some View {
+    private func summarySection(_ title: LocalizedStringKey, items: [RuleSummaryItem]) -> some View {
         Section(title) {
             ForEach(items) { item in
                 LabeledContent(item.label) {
-                    Text("\(item.count)").monospacedDigit()
+                    Text(verbatim: "\(item.count)").monospacedDigit()
                 }
             }
         }
@@ -1204,24 +1205,24 @@ struct RulesManagerView: View {
     /// it is: "Only in Cafe" reads as enforcing when Cafe is nowhere near
     /// (#134).
     private func appliesToDetail(_ r: Rule) -> String {
-        guard r.profile != Profile.alwaysName else { return "Always" }
+        guard r.profile != Profile.alwaysName else { return String(localized: "Always", comment: "The rule layer that applies in every profile") }
         return r.appliesNow(in: activeProfileName)
-            ? "Only in \(r.profile), which is active"
-            : "Only in \(r.profile), which is not active"
+            ? String(localized: "Only in \(r.profile), which is active")
+            : String(localized: "Only in \(r.profile), which is not active")
     }
 
     private func appliesToHelp(_ r: Rule) -> String {
-        if r.profile == Profile.alwaysName { return "Applies in every profile." }
+        if r.profile == Profile.alwaysName { return String(localized: "Applies in every profile.") }
         if r.appliesNow(in: activeProfileName) {
-            return "\(r.profile) is the active profile, so this rule applies now."
+            return String(localized: "\(r.profile) is the active profile, so this rule applies now.")
         }
-        return "Dormant until \(r.profile) is the active profile."
+        return String(localized: "Dormant until \(r.profile) is the active profile.")
     }
 
     private func ruleHost(_ r: Rule) -> String {
         if let h = r.remoteHost, !h.isEmpty { return h }
         if let ip = r.remoteIP, !ip.isEmpty { return ip }
-        return "Any"
+        return String(localized: "Any", comment: "Host field of a rule that matches every host")
     }
 
     /// Every field copies on click (#94), so the pane behaves the way the Get
@@ -1230,7 +1231,7 @@ struct RulesManagerView: View {
     /// A plain row rather than `LabeledContent`: a control placed in the value
     /// slot of a `LabeledContent` never receives the click, so the field looked
     /// copyable and did nothing.
-    private func infoField(_ label: String, _ value: String) -> some View {
+    private func infoField(_ label: LocalizedStringKey, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
             Spacer(minLength: 8)
@@ -1315,7 +1316,7 @@ struct RulesManagerView: View {
 
     private func openRuleEditor(for app: RuleApplication?) {
         guard state.helperConnected else {
-            showError("Rules can't be added yet", "Approve the FreeSnitch helper before adding rules.")
+            showError(String(localized: "Rules can't be added yet"), String(localized: "Approve the FreeSnitch helper before adding rules."))
             return
         }
         ruleEditorRequest = RuleEditorRequest(app: app, rule: nil)
@@ -1324,7 +1325,7 @@ struct RulesManagerView: View {
     /// The same sheet as Add Rule, filled in with the rule (#433).
     private func openRuleEditor(editing rule: Rule) {
         guard state.helperConnected else {
-            showError("Rules can't be changed yet", "Approve the FreeSnitch helper before changing rules.")
+            showError(String(localized: "Rules can't be changed yet"), String(localized: "Approve the FreeSnitch helper before changing rules."))
             return
         }
         ruleEditorRequest = RuleEditorRequest(app: nil, rule: rule)
@@ -1336,23 +1337,23 @@ struct RulesManagerView: View {
     /// change made elsewhere meanwhile (a toggle or profile move from the CLI,
     /// a learned team) is not undone, and a removed rule is not brought back.
     private func saveEdit(_ edit: RuleEdit, to original: Rule) {
-        let title = "Could not save the changes to \(Self.describe(original))"
+        let title = String(localized: "Could not save the changes to \(Self.describe(original))")
         // The merge base is the helper's stored rule, not this window's copy:
         // the window is not told about a toggle or delete made from the CLI.
         state.helper.allRulesInEveryProfile { rules, error in
             guard let rules else {
-                showError(title, error ?? "The helper did not return the rules.")
+                showError(title, error ?? String(localized: "The helper did not return the rules."))
                 return
             }
             guard let current = rules.first(where: { $0.id == original.id }) else {
-                showError(title, "The rule was removed while you were editing it.")
+                showError(title, String(localized: "The rule was removed while you were editing it."))
                 state.refreshRules()
                 return
             }
             let rule = edit.applied(to: current, openedWith: original)
             state.helper.addRule(rule) { ok, message in
                 guard ok else {
-                    showError(title, message ?? "The helper rejected the change and did not say why.")
+                    showError(title, message ?? String(localized: "The helper rejected the change and did not say why."))
                     return
                 }
                 state.refreshRules()
@@ -1363,7 +1364,7 @@ struct RulesManagerView: View {
     private func addRule(_ rule: Rule) {
         state.helper.addRule(rule) { ok, message in
             guard ok else {
-                showError("Could not add the rule", message ?? "The helper rejected it and did not say why.")
+                showError(String(localized: "Could not add the rule"), message ?? String(localized: "The helper rejected it and did not say why."))
                 return
             }
             state.refreshRules()
@@ -1372,7 +1373,7 @@ struct RulesManagerView: View {
 
     private func importRules(from result: Result<URL, Error>) {
         guard state.helperConnected else {
-            showError("Approve the FreeSnitch helper before importing rules.")
+            showError(String(localized: "Approve the FreeSnitch helper before importing rules."))
             return
         }
         do {
@@ -1393,15 +1394,15 @@ struct RulesManagerView: View {
             // dialog appears: an import is all-or-nothing.
             let imported = try RuleExportCodec.decode(data).rules
             guard !imported.isEmpty else {
-                showError("Nothing to import", "The file contains no rules, so nothing was changed.")
+                showError(String(localized: "Nothing to import"), String(localized: "The file contains no rules, so nothing was changed."))
                 return
             }
             // The dialog has to say what happens to every profile's rules,
             // not only the active profile's, so read them all first (#247).
             state.helper.allRulesInEveryProfile { current, message in
                 guard let current else {
-                    showError("Could not import the rules",
-                              message ?? "The helper did not return the current rules, so nothing was imported.")
+                    showError(String(localized: "Could not import the rules"),
+                              message ?? String(localized: "The helper did not return the current rules, so nothing was imported."))
                     return
                 }
                 pendingImportRules = imported
@@ -1410,10 +1411,10 @@ struct RulesManagerView: View {
             }
         } catch let error as RuleExportError {
             pendingImportRules.removeAll()
-            showError("\(error.errorDescription ?? "The rule file could not be imported.") \(error.remediation)")
+            showError("\(error.errorDescription ?? String(localized: "The rule file could not be imported.")) \(error.remediation)")
         } catch {
             pendingImportRules.removeAll()
-            showError("Could not read that file", error.localizedDescription)
+            showError(String(localized: "Could not read that file"), error.localizedDescription)
         }
     }
 
@@ -1423,15 +1424,15 @@ struct RulesManagerView: View {
         pendingImportPlan = nil
         state.helper.replaceRules(rules, expectedRemovedIDs: plan?.confirmedIDs ?? []) { ok, message in
             guard ok else {
-                let detail = message ?? "The helper rejected the import and did not say why."
-                state.appendLog(level: "error", message: "rule import failed: \(detail)")
+                let detail = message ?? String(localized: "The helper rejected the import and did not say why.")
+                state.appendLog(level: "error", message: String(localized: "rule import failed: \(detail)"))
                 // "rules saved but the firewall refused" means the import was
                 // committed, deletions included, so log what it changed.
                 if detail.hasPrefix("rules saved"), let plan {
                     plan.logLines.forEach { state.appendLog(level: "info", message: $0) }
                 }
                 state.refreshRules()
-                showError("Could not import the rules", detail)
+                showError(String(localized: "Could not import the rules"), detail)
                 return
             }
             if let plan { plan.logLines.forEach { state.appendLog(level: "info", message: $0) } }
@@ -1444,26 +1445,28 @@ struct RulesManagerView: View {
     /// no rule disappears without the user having read that it would (#247).
     private var importConfirmationMessage: String {
         guard let plan = pendingImportPlan else {
-            return "Importing \(pendingImportRules.count) rules."
+            return String(localized: "Importing \(pendingImportRules.count) rules.")
         }
-        let profiles = plan.replacedProfiles.map(Self.profileLabel)
-        var lines = ["Importing \(Self.rulesCount(pendingImportRules.count)) replaces the rules in \(Self.list(profiles))."]
+        let profiles = Self.list(plan.replacedProfiles.map(Self.profileLabel))
+        var lines = [pendingImportRules.count == 1
+                     ? String(localized: "Importing 1 rule replaces the rules in \(profiles).")
+                     : String(localized: "Importing \(pendingImportRules.count) rules replaces the rules in \(profiles).")]
         if plan.removed.isEmpty {
-            lines.append("Every rule stored there is also in the file, so none is deleted.")
+            lines.append(String(localized: "Every rule stored there is also in the file, so none is deleted."))
         } else {
             // Name them, the way the table does, so the user sees which
             // rules go and not only how many.
             let shown = plan.removed.prefix(10).map { "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)))" }
-            let more = plan.removed.count > shown.count ? "\nand \(plan.removed.count - shown.count) more (the log lists them all)" : ""
-            lines.append((plan.removed.count == 1 ? "This rule is not in the file and will be deleted." : "These \(plan.removed.count) rules are not in the file and will be deleted.")
+            let more = plan.removed.count > shown.count ? "\n" + String(localized: "and \(plan.removed.count - shown.count) more (the log lists them all)") : ""
+            lines.append((plan.removed.count == 1 ? String(localized: "This rule is not in the file and will be deleted.") : String(localized: "These \(plan.removed.count) rules are not in the file and will be deleted."))
                          + "\n" + shown.joined(separator: "\n") + more)
         }
         if !plan.moved.isEmpty {
             let moves = plan.moved.prefix(10).map {
                 "\(RuleImportPlan.describe($0)) (\(Self.profileLabel($0.profile)) → \(Self.profileLabel(plan.movedTo[$0.id] ?? $0.profile)))"
             }
-            let more = plan.moved.count > moves.count ? "\nand \(plan.moved.count - moves.count) more (the log lists them all)" : ""
-            lines.append((plan.moved.count == 1 ? "This rule moves to another profile." : "These \(plan.moved.count) rules move to another profile.")
+            let more = plan.moved.count > moves.count ? "\n" + String(localized: "and \(plan.moved.count - moves.count) more (the log lists them all)") : ""
+            lines.append((plan.moved.count == 1 ? String(localized: "This rule moves to another profile.") : String(localized: "These \(plan.moved.count) rules move to another profile."))
                          + "\n" + moves.joined(separator: "\n") + more)
         }
         // A backup restored on another Mac can name profiles that don't exist
@@ -1472,28 +1475,32 @@ struct RulesManagerView: View {
         let existing = Set(profileClient.profiles.map(\.name)).union([Profile.alwaysName])
         let missing = plan.replacedProfiles.filter { !existing.contains($0) }
         if !missing.isEmpty, !profileClient.profiles.isEmpty {
-            lines.append("There is no profile named \(Self.list(missing)) on this Mac. \(missing.count == 1 ? "Its" : "Their") rules are imported but apply nowhere until you create a profile with that name.")
+            let names = Self.list(missing)
+            lines.append(missing.count == 1
+                         ? String(localized: "There is no profile named \(names) on this Mac. Its rules are imported but apply nowhere until you create a profile with that name.")
+                         : String(localized: "There is no profile named \(names) on this Mac. Their rules are imported but apply nowhere until you create a profile with that name."))
         }
         if !plan.kept.isEmpty {
-            let kept = plan.keptByProfile.map { "\(Self.profileLabel($0.profile)) (\($0.count))" }
-            lines.append("The file has no rules for \(Self.list(kept)), so \(plan.kept.count == 1 ? "that rule stays" : "those \(plan.kept.count) rules stay") as \(plan.kept.count == 1 ? "it is" : "they are").")
+            let kept = Self.list(plan.keptByProfile.map { "\(Self.profileLabel($0.profile)) (\($0.count))" })
+            lines.append(plan.kept.count == 1
+                         ? String(localized: "The file has no rules for \(kept), so that rule stays as it is.")
+                         : String(localized: "The file has no rules for \(kept), so those \(plan.kept.count) rules stay as they are."))
         }
         return lines.joined(separator: "\n\n")
     }
 
     private static func profileLabel(_ name: String) -> String {
-        name == Profile.alwaysName ? "Always" : name
-    }
-
-    private static func rulesCount(_ count: Int) -> String {
-        count == 1 ? "1 rule" : "\(count) rules"
+        name == Profile.alwaysName ? String(localized: "Always", comment: "The rule layer that applies in every profile") : name
     }
 
     private static func list(_ items: [String]) -> String {
         switch items.count {
         case 0: return ""
         case 1: return items[0]
-        default: return items.dropLast().joined(separator: ", ") + " and " + items[items.count - 1]
+        default:
+            let leading = items.dropLast().joined(separator: ", ")
+            let last = items[items.count - 1]
+            return String(localized: "\(leading) and \(last)", comment: "The end of a list of profile names, as in Home, Work and Cafe")
         }
     }
 
@@ -1501,20 +1508,20 @@ struct RulesManagerView: View {
     /// profile's layers, so exporting it dropped the others (#247).
     private func exportRules() {
         guard state.helperConnected else {
-            showError("Approve the FreeSnitch helper before exporting rules.")
+            showError(String(localized: "Approve the FreeSnitch helper before exporting rules."))
             return
         }
         state.helper.allRulesInEveryProfile { rules, message in
             guard let rules else {
-                showError("Could not export the rules",
-                          message ?? "The helper did not return the rules, so nothing was exported.")
+                showError(String(localized: "Could not export the rules"),
+                          message ?? String(localized: "The helper did not return the rules, so nothing was exported."))
                 return
             }
             // The helper answers an unreadable rule table with no rules. Never
             // write that as a backup while the window shows rules.
             guard !rules.isEmpty || state.rules.isEmpty else {
-                showError("Could not export the rules",
-                          "The helper returned no rules although FreeSnitch has some, so nothing was exported. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+                showError(String(localized: "Could not export the rules"),
+                          String(localized: "The helper returned no rules although FreeSnitch has some, so nothing was exported. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
                 return
             }
             exportDocument = RuleJSONDocument(rules: rules)
@@ -1530,17 +1537,17 @@ struct RulesManagerView: View {
                                    enabled: used,
                                    profileName: activeProfileName) { ok, message in
             guard !ok else { return }
-            showError("Could not change \(blocklist.name)",
-                      message ?? "The helper rejected the change and did not say why.")
+            showError(String(localized: "Could not change \(blocklist.name)"),
+                      message ?? String(localized: "The helper rejected the change and did not say why."))
         }
     }
 
     /// A rule the way the user reads it in the table: the process and where it
     /// was going, never the identifier the helper stores it under.
     static func describe(_ rule: Rule) -> String {
-        let process = rule.processName ?? rule.processBundleId ?? "any process"
-        let destination = rule.remoteHost ?? rule.remoteIP ?? "any destination"
-        return "\(process) to \(destination)"
+        let process = rule.processName ?? rule.processBundleId ?? String(localized: "any process")
+        let destination = rule.remoteHost ?? rule.remoteIP ?? String(localized: "any destination")
+        return String(localized: "\(process) to \(destination)", comment: "A rule named by its app and where it connects, as in Safari to apple.com")
     }
 
     /// A title that names what failed, and a detail that says why. A rule is
@@ -1556,7 +1563,7 @@ struct RulesManagerView: View {
         copy.enabled.toggle()
         state.helper.addRule(copy) { ok, message in
             guard ok else {
-                showError("Could not change the rule", message ?? "The helper rejected the change and did not say why.")
+                showError(String(localized: "Could not change the rule"), message ?? String(localized: "The helper rejected the change and did not say why."))
                 return
             }
             state.refreshRules()
@@ -1585,8 +1592,8 @@ struct RulesManagerView: View {
             copy.profile = name
             state.helper.addRule(copy) { ok, message in
                 if !ok {
-                    showError("Could not move the rule for \(Self.describe(copy))",
-                              message ?? "The helper rejected the change and did not say why.")
+                    showError(String(localized: "Could not move the rule for \(Self.describe(copy))"),
+                              message ?? String(localized: "The helper rejected the change and did not say why."))
                 }
                 updateNext(index + 1)
             }
@@ -1608,8 +1615,8 @@ struct RulesManagerView: View {
             copy.enabled = enabled
             state.helper.addRule(copy) { ok, message in
                 if !ok {
-                    showError("Could not change the rule for \(Self.describe(copy))",
-                              message ?? "The helper rejected the change and did not say why.")
+                    showError(String(localized: "Could not change the rule for \(Self.describe(copy))"),
+                              message ?? String(localized: "The helper rejected the change and did not say why."))
                 }
                 updateNext(index + 1)
             }
@@ -1622,9 +1629,9 @@ struct RulesManagerView: View {
         guard pendingRemovalIDs.count == 1,
               let id = pendingRemovalIDs.first,
               let rule = state.rules.first(where: { $0.id == id }) else {
-            return "Remove selected rules?"
+            return String(localized: "Remove selected rules?")
         }
-        return "Remove the rule for \(Self.describe(rule))?"
+        return String(localized: "Remove the rule for \(Self.describe(rule))?")
     }
 
     private func removeSelectedRules() {
@@ -1652,8 +1659,9 @@ struct RulesManagerView: View {
             state.helper.removeRule(id: orderedIDs[index]) { ok, message in
                 if !ok {
                     let removed = state.rules.first { $0.id == orderedIDs[index] }
-                    showError("Could not remove the rule for \(removed.map(Self.describe) ?? "that connection")",
-                              message ?? "The helper rejected the removal and did not say why.")
+                    let what = removed.map(Self.describe) ?? String(localized: "that connection")
+                    showError(String(localized: "Could not remove the rule for \(what)"),
+                              message ?? String(localized: "The helper rejected the removal and did not say why."))
                 }
                 removeNext(index + 1)
             }
@@ -1736,8 +1744,8 @@ struct RuleApplication: Equatable {
 
     var icon: NSImage { NSWorkspace.shared.icon(forFile: fileURL.path) }
 
-    static let notAnAppTitle = "That is not an app"
-    static let notAnAppDetail = "Drop an app or a command-line tool to make a rule for it."
+    static let notAnAppTitle = String(localized: "That is not an app")
+    static let notAnAppDetail = String(localized: "Drop an app or a command-line tool to make a rule for it.")
 
     /// The first dropped file, as an app or executable, or nil when it is
     /// neither, so the caller can say so instead of accepting the drop and
@@ -1757,8 +1765,8 @@ struct RuleApplication: Equatable {
     @MainActor
     static func choose() -> RuleApplication? {
         let panel = NSOpenPanel()
-        panel.title = "Choose an App"
-        panel.prompt = "Choose"
+        panel.title = String(localized: "Choose an App")
+        panel.prompt = String(localized: "Choose")
         panel.allowedContentTypes = [.application, .unixExecutable]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -1835,17 +1843,17 @@ struct RuleEditorView: View {
                 Section("Decision") {
                     Picker("Direction", selection: $direction) {
                         ForEach(RuleDirection.allCases, id: \.self) { value in
-                            Text(value.rawValue.capitalized).tag(value)
+                            Text(value.rulesPageLabel).tag(value)
                         }
                     }
                     Picker("Action", selection: $action) {
                         ForEach(RuleAction.allCases, id: \.self) { value in
-                            Text(value.rawValue.capitalized).tag(value)
+                            Text(value.rulesPageLabel).tag(value)
                         }
                     }
                     Picker("Scope", selection: $scope) {
                         ForEach(RuleScope.allCases, id: \.self) { value in
-                            Text(value.rawValue.capitalized).tag(value)
+                            Text(value.rulesPageLabel).tag(value)
                         }
                     }
                     Toggle("Enabled", isOn: $enabled)
@@ -2074,7 +2082,7 @@ private enum RuleDate {
 
     static func expiry(_ date: Date) -> String {
         let phrase = formatter.localizedString(for: date, relativeTo: Date())
-        return date > Date() ? phrase : "Expired \(phrase)"
+        return date > Date() ? phrase : String(localized: "Expired \(phrase)")
     }
 }
 
@@ -2084,25 +2092,24 @@ private enum RuleDate {
 /// because they are presentation concerns and the model is also compiled into
 /// the helper, the extension and the CLI.
 extension Rule {
-    var displayProcessName: String { processName ?? "Any Process" }
+    var displayProcessName: String { processName ?? String(localized: "Any Process") }
 
     /// Rules saved before #151 could name an app only by its name, which the
     /// matcher cannot use (#157). They are shown as what they really do.
-    static let nameOnlyWarning = "This rule names the app only by its name, so it applies to every app. "
-        + "Turn it off, or remove it and add it again for the app."
+    static let nameOnlyWarning = String(localized: "This rule names the app only by its name, so it applies to every app. Turn it off, or remove it and add it again for the app.")
 
     var displayDestination: String {
         if let host = remoteHost, !host.isEmpty { return host }
         if let ip = remoteIP, !ip.isEmpty { return ip }
-        if let port = remotePort, port > 0 { return "Port \(port)" }
+        if let port = remotePort, port > 0 { return String(localized: "Port \(String(port))", comment: "A port number, shown as typed") }
         if let notes, !notes.isEmpty { return notes }
-        return "Any"
+        return String(localized: "Any", comment: "Destination of a rule that matches every destination")
     }
 
-    var directionLabel: String { direction.rawValue.capitalized }
-    var scopeLabel: String { scope.rawValue.capitalized }
+    var directionLabel: String { direction.rulesPageLabel }
+    var scopeLabel: String { scope.rulesPageLabel }
 
-    var appliesToLabel: String { profile == Profile.alwaysName ? "Always" : profile }
+    var appliesToLabel: String { profile == Profile.alwaysName ? String(localized: "Always", comment: "The rule layer that applies in every profile") : profile }
 
     /// Whether this rule's profile is applying. It says nothing about the
     /// rule's own switch, which the Status column carries.
@@ -2110,13 +2117,7 @@ extension Rule {
         profile == Profile.alwaysName || profile == activeProfile
     }
 
-    var actionLabel: String {
-        switch action {
-        case .allow: return "Allow"
-        case .deny: return "Deny"
-        case .ask: return "Ask"
-        }
-    }
+    var actionLabel: String { action.rulesPageLabel }
 
     var actionSymbol: String {
         switch action {
@@ -2145,14 +2146,49 @@ extension Rule {
     }
 
     var statusLabel: String {
-        if !enabled { return "Disabled" }
-        if temporary { return "Temporary" }
-        return "Enabled"
+        if !enabled { return String(localized: "Disabled", comment: "Rule status") }
+        if temporary { return String(localized: "rule-status.temporary", defaultValue: "Temporary", comment: "Rule status: this one rule is temporary") }
+        return String(localized: "Enabled", comment: "Rule status")
     }
 
     var statusSortKey: Int {
         if !enabled { return 0 }
         if temporary { return 1 }
         return 2
+    }
+}
+
+/// The words the rules page shows for the stored values. They used to be the
+/// raw values capitalized, which no translation could reach (and which showed
+/// "Ip" for IP rules).
+fileprivate extension RuleAction {
+    var rulesPageLabel: String {
+        switch self {
+        case .allow: return String(localized: "Allow", comment: "Rule action")
+        case .deny: return String(localized: "Deny", comment: "Rule action")
+        case .ask: return String(localized: "Ask", comment: "Rule action")
+        }
+    }
+}
+
+fileprivate extension RuleDirection {
+    var rulesPageLabel: String {
+        switch self {
+        case .outgoing: return String(localized: "Outgoing", comment: "Rule direction")
+        case .incoming: return String(localized: "Incoming", comment: "Rule direction")
+        case .any: return String(localized: "rule-direction.any", defaultValue: "Any", comment: "Rule direction: both ways")
+        }
+    }
+}
+
+fileprivate extension RuleScope {
+    var rulesPageLabel: String {
+        switch self {
+        case .process: return String(localized: "Process", comment: "Rule scope")
+        case .domain: return String(localized: "Domain", comment: "Rule scope")
+        case .ip: return String(localized: "IP", comment: "Rule scope: an IP address")
+        case .port: return String(localized: "Port", comment: "Rule scope")
+        case .any: return String(localized: "Any", comment: "Rule scope: anything")
+        }
     }
 }

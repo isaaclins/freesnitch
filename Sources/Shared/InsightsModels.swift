@@ -12,14 +12,14 @@ public enum InsightsValidationError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedVersion(let version): return "unsupported insights schema version \(version)"
-        case .tooManyObservations(let count): return "too many insights observations: \(count)"
-        case .tooManyMappings(let count): return "too many insights DNS mappings: \(count)"
-        case .oversizedPayload(let count): return "insights payload is too large: \(count) bytes"
-        case .invalidField(let field): return "invalid insights field: \(field)"
-        case .tooManyRows(let count): return "insights report contains too many rows: \(count)"
-        case .tooManyContacts(let count): return "insights contact snapshot contains too many contacts: \(count)"
-        case .invalidContactSnapshot(let field): return "invalid insights contact snapshot: \(field)"
+        case .unsupportedVersion(let version): return String(localized: "unsupported insights schema version \(version)")
+        case .tooManyObservations(let count): return String(localized: "too many insights observations: \(count)")
+        case .tooManyMappings(let count): return String(localized: "too many insights DNS mappings: \(count)")
+        case .oversizedPayload(let count): return String(localized: "insights payload is too large: \(count) bytes")
+        case .invalidField(let field): return String(localized: "invalid insights field: \(field)")
+        case .tooManyRows(let count): return String(localized: "insights report contains too many rows: \(count)")
+        case .tooManyContacts(let count): return String(localized: "insights contact snapshot contains too many contacts: \(count)")
+        case .invalidContactSnapshot(let field): return String(localized: "invalid insights contact snapshot: \(field)")
         }
     }
 }
@@ -545,21 +545,22 @@ public struct InsightsBehaviourFinding: Codable, Sendable, Hashable, Identifiabl
     /// monospaced font, which reads as developer output rather than as a fact
     /// about an app (#125).
     public var versionLabel: String {
-        guard versionKnown else { return "Version not known" }
+        guard versionKnown else { return String(localized: "Version not known") }
         guard let old = oldVersion, let new = newVersion else {
-            return "Version \(newVersion ?? oldVersion ?? "not known")"
+            if let only = newVersion ?? oldVersion { return String(localized: "Version \(only)") }
+            return String(localized: "Version not known")
         }
-        return "Version \(old) to \(new)"
+        return String(localized: "Version \(old) to \(new)")
     }
 
     public var wording: String {
-        versionKnown ? "New since update" : "New destination, app version not known"
+        versionKnown ? String(localized: "New since update") : String(localized: "New destination, app version not known")
     }
 
     /// The count is already on the row as a chip, so the sentence carries only
     /// what the chip cannot: since when.
     public var evidence: String {
-        "First seen \(firstSeen.formatted(date: .abbreviated, time: .shortened))."
+        String(localized: "First seen \(firstSeen.formatted(date: .abbreviated, time: .shortened)).")
     }
 
     public func proposedRule(processBundleId: String? = nil, processPath: String? = nil) -> InsightsProposedRule? {
@@ -704,9 +705,9 @@ public enum InsightsDataSource: String, Codable, Sendable {
     public var explanation: String {
         switch self {
         case .rawEvents:
-            return "Raw events, kept for 14 days."
+            return String(localized: "Raw events, kept for 14 days.")
         case .dailyRollups:
-            return "Daily rollups, kept for a year. Counts and bytes per day, no per-connection detail."
+            return String(localized: "Daily rollups, kept for a year. Counts and bytes per day, no per-connection detail.")
         }
     }
 }
@@ -867,9 +868,8 @@ public struct InsightsDestinationSummary: Codable, Sendable, Hashable, Identifia
     /// else: no shared cause is observable from socket flows.
     public var correlationNote: String? {
         guard otherAppCount > 0 else { return nil }
-        return otherAppCount == 1
-            ? "also contacted by 1 other app"
-            : "also contacted by \(otherAppCount) other apps"
+        // The catalog holds the singular and every language's plural forms.
+        return String(localized: "also contacted by \(otherAppCount) other apps")
     }
 }
 
@@ -899,7 +899,7 @@ public struct InsightsUnresolvedDestination: Codable, Sendable, Hashable, Identi
     /// Tailscale, NTP and plenty of ordinary software connect to bare
     /// addresses, and the DNS map is only as complete as the DNS proxy.
     public static let signalWording =
-        "Apps usually look up a name before they connect. FreeSnitch saw no lookup for these addresses. That is often harmless: VPNs, Tailscale, time servers and apps that do their own lookups connect to addresses directly. Worth a glance, not a verdict."
+        String(localized: "Apps usually look up a name before they connect. FreeSnitch saw no lookup for these addresses. That is often harmless: VPNs, Tailscale, time servers and apps that do their own lookups connect to addresses directly. Worth a glance, not a verdict.")
 }
 
 /// A proposal. Nothing here is in force. A human accepts each one, per D2.
@@ -1074,8 +1074,8 @@ public struct InsightsOverview: Codable, Sendable, Hashable {
     /// D5's known limits, stated rather than hidden behind bare addresses.
     public var namingNote: String {
         dnsMappingCount == 0
-            ? "No DNS answers have been recorded, so destinations are shown as raw addresses. FreeSnitch only learns names from the DNS proxy, which runs when enforcement is on, and apps that resolve names themselves bypass it."
-            : "Names come from DNS answers seen on this Mac. Apps that resolve names themselves are shown as raw addresses."
+            ? String(localized: "No DNS answers have been recorded, so destinations are shown as raw addresses. FreeSnitch only learns names from the DNS proxy, which runs when enforcement is on, and apps that resolve names themselves bypass it.")
+            : String(localized: "Names come from DNS answers seen on this Mac. Apps that resolve names themselves are shown as raw addresses.")
     }
 }
 

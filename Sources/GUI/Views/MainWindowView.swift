@@ -17,11 +17,11 @@ enum MainPage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .monitor: return "Network Monitor"
-        case .rules: return "Rules"
-        case .insights: return "Insights"
-        case .profiles: return "Profiles"
-        case .settings: return "Settings"
+        case .monitor: return String(localized: "Network Monitor")
+        case .rules: return String(localized: "Rules")
+        case .insights: return String(localized: "Insights")
+        case .profiles: return String(localized: "Profiles")
+        case .settings: return String(localized: "Settings")
         }
     }
 
@@ -46,9 +46,9 @@ enum MainPage: String, CaseIterable, Identifiable {
 
     var searchPlaceholder: String {
         switch self {
-        case .monitor: return "Search apps and destinations"
-        case .rules: return "Search rules"
-        case .insights, .profiles, .settings: return "Search"
+        case .monitor: return String(localized: "Search apps and destinations")
+        case .rules: return String(localized: "Search rules")
+        case .insights, .profiles, .settings: return String(localized: "Search")
         }
     }
 }

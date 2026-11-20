@@ -16,7 +16,7 @@ enum InstallLocation {
     static let bundleName = "FreeSnitch.app"
 
     /// Why a firewall build in ~/Applications is asked to move (#412).
-    static let userApplicationsReason = "macOS only turns on FreeSnitch's network filter when it runs from the main Applications folder, not the one in your home folder."
+    static let userApplicationsReason = String(localized: "macOS only turns on FreeSnitch's network filter when it runs from the main Applications folder, not the one in your home folder.")
 
     enum Plan: Equatable {
         /// Nothing at the destination yet: copy this bundle there.
@@ -57,7 +57,7 @@ enum InstallLocation {
     static func copyBundle(from source: URL, to destination: URL) -> Result<Void, MoveError> {
         let fm = FileManager.default
         guard !fm.fileExists(atPath: destination.path) else {
-            return .failure(.failed("\(destination.path) already exists."))
+            return .failure(.failed(String(localized: "\(destination.path) already exists.")))
         }
         removeLeftoverStaging(in: destination.deletingLastPathComponent())
         let staging = destination.deletingLastPathComponent()
@@ -68,7 +68,7 @@ enum InstallLocation {
             // doesn't count as moved and the original stays where it was.
             guard clearQuarantine(at: staging) else {
                 removeStaging(staging)
-                return .failure(.failed("The download flag could not be removed from the copy."))
+                return .failure(.failed(String(localized: "The download flag could not be removed from the copy.")))
             }
             try fm.moveItem(at: staging, to: destination)
             return .success(())
@@ -280,8 +280,8 @@ enum InstallLocation {
     /// gets it out of translocation is not checked on a real Mac.
     static func reinstallSteps(homebrew: Bool) -> String {
         homebrew
-            ? "Reinstall it with \(brewReinstallCommand) in Terminal."
-            : "Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image."
+            ? String(localized: "Reinstall it with \(brewReinstallCommand) in Terminal.")
+            : String(localized: "Move FreeSnitch from Applications to the Trash in Finder, then drag it in again from the disk image.")
     }
 
     /// Whether this Mac's copy came from Homebrew. Worked out once: the
@@ -332,10 +332,10 @@ enum InstallLocation {
     /// command; a disk image install is fixed in Finder.
     @MainActor
     static var stuckCopyTitle: String {
-        usesHomebrewRoute ? "Reinstall FreeSnitch with Homebrew" : "Put FreeSnitch into Applications again"
+        usesHomebrewRoute ? String(localized: "Reinstall FreeSnitch with Homebrew") : String(localized: "Put FreeSnitch into Applications again")
     }
     @MainActor
-    static var stuckCopyButton: String { usesHomebrewRoute ? "Copy Command" : "Show in Finder" }
+    static var stuckCopyButton: String { usesHomebrewRoute ? String(localized: "Copy Command") : String(localized: "Show in Finder") }
 
     /// What the stuck-copy button does. The demo only shows the button.
     /// `confirm` says the command was copied when nothing else on screen
@@ -348,9 +348,9 @@ enum InstallLocation {
             NSPasteboard.general.setString(brewReinstallCommand, forType: .string)
             if confirm {
                 let alert = NSAlert()
-                alert.messageText = "Command copied"
-                alert.informativeText = "Paste it into Terminal and press Return, then open FreeSnitch again."
-                alert.addButton(withTitle: "OK")
+                alert.messageText = String(localized: "Command copied")
+                alert.informativeText = String(localized: "Paste it into Terminal and press Return, then open FreeSnitch again.")
+                alert.addButton(withTitle: String(localized: "OK"))
                 alert.runModal()
             }
         } else {
@@ -397,17 +397,17 @@ enum InstallLocation {
     /// What the "already in Applications" question says when it doesn't offer
     /// Open It: which build is installed and how to replace it.
     static func replaceMessage(isOlder: Bool, sourceIsFirewall: Bool, installedIsFirewall: Bool) -> (title: String, text: String) {
-        let howTo = "Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace."
+        let howTo = String(localized: "Quit FreeSnitch, then drag this copy onto it in Finder and choose Replace.")
         guard sourceIsFirewall != installedIsFirewall else {
-            return (isOlder ? "An older FreeSnitch is already in Applications" : "FreeSnitch is already in Applications",
-                    "FreeSnitch won't replace it for you, because that copy may be running the network filter. " + howTo)
+            return (isOlder ? String(localized: "An older FreeSnitch is already in Applications") : String(localized: "FreeSnitch is already in Applications"),
+                    String(localized: "FreeSnitch won't replace it for you, because that copy may be running the network filter. \(howTo)"))
         }
         if sourceIsFirewall {
-            return ("Applications has the monitor-only FreeSnitch",
-                    "The copy in Applications is the build without the network filter, so opening it would leave per-app filtering off. This copy is the firewall build. " + howTo)
+            return (String(localized: "Applications has the monitor-only FreeSnitch"),
+                    String(localized: "The copy in Applications is the build without the network filter, so opening it would leave per-app filtering off. This copy is the firewall build. \(howTo)"))
         }
-        return ("Applications has the firewall build of FreeSnitch",
-                "The copy in Applications is the build with the network filter. This copy is the monitor-only build, so replacing it turns per-app filtering off. To keep filtering, open FreeSnitch from Applications instead. To replace it anyway: " + howTo)
+        return (String(localized: "Applications has the firewall build of FreeSnitch"),
+                String(localized: "The copy in Applications is the build with the network filter. This copy is the monitor-only build, so replacing it turns per-app filtering off. To keep filtering, open FreeSnitch from Applications instead. To replace it anyway: \(howTo)"))
     }
 
     /// The disk image case: there is no original to tidy up there.
@@ -481,8 +481,8 @@ extension InstallLocation {
     /// Applications. A stuck installed copy needs a reinstall, not a move.
     static var wrongLocationRepairAdvice: String {
         stuckInstalledCopy == nil
-            ? "Move FreeSnitch to /Applications before registering the helper."
-            : "macOS runs FreeSnitch from a temporary copy. \(reinstallAdvice) Then register the helper."
+            ? String(localized: "Move FreeSnitch to /Applications before registering the helper.")
+            : String(localized: "macOS runs FreeSnitch from a temporary copy. \(reinstallAdvice) Then register the helper.")
     }
 
     /// Says what the user has to do (in Finder, or in Terminal for a
@@ -491,13 +491,13 @@ extension InstallLocation {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = usesHomebrewRoute ? stuckCopyTitle : "macOS is running FreeSnitch from a temporary copy"
+        alert.messageText = usesHomebrewRoute ? stuckCopyTitle : String(localized: "macOS is running FreeSnitch from a temporary copy")
         let why = flagCleared
-            ? "macOS still runs the copy in Applications from a temporary location"
-            : "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it"
-        alert.informativeText = "\(why), so FreeSnitch can't install its helper. \(reinstallAdvice)"
+            ? String(localized: "macOS still runs the copy in Applications from a temporary location")
+            : String(localized: "The copy in Applications still carries the download flag and FreeSnitch isn't allowed to clear it")
+        alert.informativeText = String(localized: "\(why), so FreeSnitch can't install its helper. \(reinstallAdvice)")
         alert.addButton(withTitle: stuckCopyButton)
-        alert.addButton(withTitle: "Not Now")
+        alert.addButton(withTitle: String(localized: "Not Now"))
         if alert.runModal() == .alertFirstButtonReturn {
             stuckCopyAction(installed)
         }
@@ -510,14 +510,14 @@ extension InstallLocation {
         // deleting that copy.
         let fromHome = isInUserApplications(runningOriginal)
         if fromHome {
-            alert.messageText = "Copy FreeSnitch to the main Applications folder?"
-            alert.informativeText = userApplicationsReason + " FreeSnitch can copy itself there and reopen."
+            alert.messageText = String(localized: "Copy FreeSnitch to the main Applications folder?")
+            alert.informativeText = String(localized: "\(userApplicationsReason) FreeSnitch can copy itself there and reopen.")
         } else {
-            alert.messageText = "Move FreeSnitch to Applications?"
-            alert.informativeText = "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen."
+            alert.messageText = String(localized: "Move FreeSnitch to Applications?")
+            alert.informativeText = String(localized: "macOS only lets FreeSnitch install its helper and network filter when it runs from the Applications folder. FreeSnitch can move itself there and reopen.")
         }
-        alert.addButton(withTitle: fromHome ? "Copy to Applications" : "Move to Applications")
-        alert.addButton(withTitle: "Not Now")
+        alert.addButton(withTitle: fromHome ? String(localized: "Copy to Applications") : String(localized: "Move to Applications"))
+        alert.addButton(withTitle: String(localized: "Not Now"))
         return alert
     }
 
@@ -560,17 +560,17 @@ extension InstallLocation {
                 let message = replaceMessage(isOlder: isOlder, sourceIsFirewall: sourceIsFirewall, installedIsFirewall: installedIsFirewall)
                 alert.messageText = message.title
                 alert.informativeText = message.text
-                alert.addButton(withTitle: "Show in Finder")
-                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: String(localized: "Show in Finder"))
+                alert.addButton(withTitle: String(localized: "Cancel"))
                 if alert.runModal() == .alertFirstButtonReturn {
                     NSWorkspace.shared.activateFileViewerSelecting([original, installed])
                 }
                 return false
             }
-            alert.messageText = "FreeSnitch is already in Applications"
-            alert.informativeText = "Open that copy instead of this one."
-            alert.addButton(withTitle: "Open It")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = String(localized: "FreeSnitch is already in Applications")
+            alert.informativeText = String(localized: "Open that copy instead of this one.")
+            alert.addButton(withTitle: String(localized: "Open It"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return false }
             relaunch(at: installed)
             return true
@@ -579,10 +579,10 @@ extension InstallLocation {
             case .failure(.failed(let reason)):
                 let alert = NSAlert()
                 alert.alertStyle = .warning
-                alert.messageText = "FreeSnitch couldn't move itself"
-                alert.informativeText = "\(reason) Drag FreeSnitch into Applications in Finder, then open it from there."
-                alert.addButton(withTitle: "Show in Finder")
-                alert.addButton(withTitle: "Cancel")
+                alert.messageText = String(localized: "FreeSnitch couldn't move itself")
+                alert.informativeText = String(localized: "\(reason) Drag FreeSnitch into Applications in Finder, then open it from there.")
+                alert.addButton(withTitle: String(localized: "Show in Finder"))
+                alert.addButton(withTitle: String(localized: "Cancel"))
                 if alert.runModal() == .alertFirstButtonReturn {
                     NSWorkspace.shared.activateFileViewerSelecting([original])
                 }

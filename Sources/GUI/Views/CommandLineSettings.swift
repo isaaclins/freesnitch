@@ -94,24 +94,24 @@ struct CommandLineSettingsView: View {
 
     private var statusText: String {
         switch state {
-        case .installed(let path): return "Installed at \(path)"
-        case .notInstalled: return "Not installed"
-        case .occupied: return "Not installed"
+        case .installed(let path): return String(localized: "Installed at \(path)")
+        case .notInstalled: return String(localized: "Not installed")
+        case .occupied: return String(localized: "Not installed")
         }
     }
 
     private var explanation: String {
         switch state {
         case .installed(let path) where path == CommandLineTool.linkPath:
-            return "Type `freesnitch` in any Terminal window. `\(path)` is a link to the tool inside FreeSnitch.app, so it updates with the app. Uninstalling FreeSnitch removes it too."
+            return String(localized: "Type `freesnitch` in any Terminal window. `\(path)` is a link to the tool inside FreeSnitch.app, so it updates with the app. Uninstalling FreeSnitch removes it too.")
         case .installed:
-            return "Type `freesnitch` in any Terminal window. FreeSnitch did not make this link, so it leaves it as it is."
+            return String(localized: "Type `freesnitch` in any Terminal window. FreeSnitch did not make this link, so it leaves it as it is.")
         case .notInstalled where canInstall:
-            return "Install Command adds `\(CommandLineTool.linkPath)`, a link to the tool inside FreeSnitch.app. macOS asks for your password once. You can remove it here at any time, and uninstalling FreeSnitch removes it too."
+            return String(localized: "Install Command adds `\(CommandLineTool.linkPath)`, a link to the tool inside FreeSnitch.app. macOS asks for your password once. You can remove it here at any time, and uninstalling FreeSnitch removes it too.")
         case .notInstalled:
-            return "FreeSnitch can set up the command once it runs from the Applications folder. Until then, use the full path below."
+            return String(localized: "FreeSnitch can set up the command once it runs from the Applications folder. Until then, use the full path below.")
         case .occupied(let detail):
-            return "\(detail) FreeSnitch leaves it alone. Use the full path below, or remove that file yourself and come back here."
+            return String(localized: "\(detail) FreeSnitch leaves it alone. Use the full path below, or remove that file yourself and come back here.")
         }
     }
 

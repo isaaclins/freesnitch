@@ -4,6 +4,9 @@ import Darwin
 @main
 struct FreeSnitchCLI {
     static func main() async {
+        // Output is parsed by scripts and quoted in bug reports, and the tool
+        // sits inside the app bundle next to its translations: English only.
+        UserDefaults.standard.setVolatileDomain(["AppleLanguages": ["en"]], forName: UserDefaults.argumentDomain)
         let arguments = Array(CommandLine.arguments.dropFirst())
         do {
             let invocation = try CLIParser.parse(arguments)

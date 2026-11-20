@@ -140,7 +140,7 @@ final class MonitorTreeController: ObservableObject {
                teamID: String? = nil,
                state: AppState) {
         guard state.helperConnected else {
-            errorMessage = "Approve the FreeSnitch helper before deciding anything here. Rules are stored by the helper, not by this window."
+            errorMessage = String(localized: "Approve the FreeSnitch helper before deciding anything here. Rules are stored by the helper, not by this window.")
             return
         }
         let existing = decisions.rule(for: target)
@@ -150,7 +150,7 @@ final class MonitorTreeController: ObservableObject {
                                                action: action,
                                                profile: state.activeProfile,
                                                existing: existing) else {
-            errorMessage = "This row has no destination a rule can name, so nothing was changed."
+            errorMessage = String(localized: "This row has no destination a rule can name, so nothing was changed.")
             return
         }
         pendingTargets.insert(target)
@@ -158,7 +158,7 @@ final class MonitorTreeController: ObservableObject {
             guard let self else { return }
             self.pendingTargets.remove(target)
             guard ok else {
-                self.errorMessage = "The helper refused this rule: \(message ?? "no reason given"). Nothing was changed."
+                self.errorMessage = String(localized: "The helper refused this rule: \(message ?? String(localized: "no reason given")). Nothing was changed.")
                 return
             }
             // Read policy back from the helper. What the row shows next is
@@ -172,7 +172,7 @@ final class MonitorTreeController: ObservableObject {
     func clearDecision(for target: MonitorRuleTarget, state: AppState) {
         guard let rule = decisions.rule(for: target) else { return }
         guard state.helperConnected else {
-            errorMessage = "Approve the FreeSnitch helper before deciding anything here. Rules are stored by the helper, not by this window."
+            errorMessage = String(localized: "Approve the FreeSnitch helper before deciding anything here. Rules are stored by the helper, not by this window.")
             return
         }
         pendingTargets.insert(target)
@@ -180,7 +180,7 @@ final class MonitorTreeController: ObservableObject {
             guard let self else { return }
             self.pendingTargets.remove(target)
             guard ok else {
-                self.errorMessage = "The helper refused to remove this rule: \(message ?? "no reason given"). Nothing was changed."
+                self.errorMessage = String(localized: "The helper refused to remove this rule: \(message ?? String(localized: "no reason given")). Nothing was changed.")
                 return
             }
             state.refreshRules()

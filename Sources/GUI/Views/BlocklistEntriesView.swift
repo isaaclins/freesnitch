@@ -71,8 +71,8 @@ struct BlocklistEntriesView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let page, page.entries.isEmpty {
             message(searchText.isEmpty
-                    ? "Nothing has been downloaded for this list yet."
-                    : "Nothing in \(blocklist.name) matches \u{201C}\(searchText)\u{201D}.",
+                    ? String(localized: "Nothing has been downloaded for this list yet.")
+                    : String(localized: "Nothing in \(blocklist.name) matches \u{201C}\(searchText)\u{201D}."),
                     symbol: searchText.isEmpty ? "shield.lefthalf.filled" : "magnifyingglass",
                     tint: .secondary) {
                 // The download is the answer to this sentence, so it is offered
@@ -104,7 +104,7 @@ struct BlocklistEntriesView: View {
                 guard let entry = selection else { return [] }
                 return [NSItemProvider(object: entry as NSString)]
             }
-            .confirmationDialog("Remove \(pendingEntryRemoval ?? "this name") from \(blocklist.name)?",
+            .confirmationDialog("Remove \(pendingEntryRemoval ?? String(localized: "this name")) from \(blocklist.name)?",
                                 isPresented: Binding(get: { pendingEntryRemoval != nil },
                                                      set: { if !$0 { pendingEntryRemoval = nil } }),
                                 titleVisibility: .visible) {
@@ -196,12 +196,13 @@ struct BlocklistEntriesView: View {
 
     private var rangeLabel: String {
         guard let page, page.total > 0 else {
-            return searchText.isEmpty ? "No entries" : "No matches"
+            return searchText.isEmpty ? String(localized: "No entries") : String(localized: "No matches")
         }
         let first = page.offset + 1
         let last = page.offset + page.entries.count
-        let scope = searchText.isEmpty ? "entries" : "matches"
-        return "\(first) to \(last) of \(page.total) \(scope)"
+        return searchText.isEmpty
+            ? String(localized: "\(first) to \(last) of \(page.total) entries")
+            : String(localized: "\(first) to \(last) of \(page.total) matches")
     }
 
     private func load(resettingOffset: Bool, query: String? = nil) {

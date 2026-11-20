@@ -36,7 +36,7 @@ enum PrivilegedRepair {
     /// thread. `HelperClient` hops to a utility queue before calling.
     static func kickstartHelper() -> Result<Void, Failure> {
         guard let appleScript = NSAppleScript(source: script) else {
-            return .failure(.failed("The recovery action could not be prepared."))
+            return .failure(.failed(String(localized: "The recovery action could not be prepared.")))
         }
         var errorInfo: NSDictionary?
         appleScript.executeAndReturnError(&errorInfo)
@@ -46,7 +46,7 @@ enum PrivilegedRepair {
         let code = (errorInfo[NSAppleScript.errorNumber] as? Int) ?? 0
         if code == -128 { return .failure(.cancelled) }
         let message = (errorInfo[NSAppleScript.errorMessage] as? String)
-            ?? "The privileged restart did not complete."
+            ?? String(localized: "The privileged restart did not complete.")
         return .failure(.failed(message))
     }
 }

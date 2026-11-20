@@ -106,7 +106,7 @@ final class ProfileClient: ObservableObject {
             if snapshot.activeProfile == previousName { snapshot.activeProfile = profile.name }
         case .deleteProfile(let name):
             guard name != Profile.defaultName else {
-                return "The default profile cannot be deleted."
+                return String(localized: "The default profile cannot be deleted.")
             }
             snapshot.profiles.removeAll { $0.name == name }
             if snapshot.activeProfile == name { snapshot.activeProfile = Profile.defaultName }
@@ -161,8 +161,8 @@ final class ProfileClient: ObservableObject {
     /// Why the profile controls are disabled, for the one place that says so.
     var unavailableReason: String {
         transport == nil
-            ? "Profiles live in the privileged helper. Approve the helper first, then reopen this window."
-            : "FreeSnitch cannot reach the privileged helper, so profiles cannot be changed right now."
+            ? String(localized: "Profiles live in the privileged helper. Approve the helper first, then reopen this window.")
+            : String(localized: "FreeSnitch cannot reach the privileged helper, so profiles cannot be changed right now.")
     }
 
     var profiles: [Profile] { snapshot?.profiles ?? [] }
@@ -176,7 +176,7 @@ final class ProfileClient: ObservableObject {
     /// The label the menu bar shows. It is never empty, because a strict
     /// profile applying invisibly is the failure this feature exists to avoid.
     var menuBarLabel: String {
-        isAvailable ? activeProfileName : "\(Profile.defaultName) (helper offline)"
+        isAvailable ? activeProfileName : String(localized: "\(Profile.defaultName) (helper offline)")
     }
 
     var canUndo: Bool { snapshot?.canUndo ?? false }
@@ -273,7 +273,7 @@ final class ProfileClient: ObservableObject {
         refreshTransport { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.blocklistRefresh = .failed(message ?? "The helper did not say why the download failed.")
+                self.blocklistRefresh = .failed(message ?? String(localized: "The helper did not say why the download failed."))
                 return
             }
             // The counts come from the helper's own snapshot afterwards, never
@@ -282,7 +282,7 @@ final class ProfileClient: ObservableObject {
                 guard let self else { return }
                 self.blocklistRefresh = read
                     ? .finished(self.refreshSummary())
-                    : .failed(readMessage ?? "The lists were downloaded, but their new sizes could not be read.")
+                    : .failed(readMessage ?? String(localized: "The lists were downloaded, but their new sizes could not be read."))
             }
         }
     }
@@ -290,7 +290,10 @@ final class ProfileClient: ObservableObject {
     private func refreshSummary() -> String {
         let lists = snapshot?.blocklists ?? []
         let names = lists.reduce(0) { $0 + $1.entryCount }
-        return "Updated \(lists.count) \(lists.count == 1 ? "list" : "lists"), \(names.formatted()) names in total."
+        let total = names.formatted()
+        return lists.count == 1
+            ? String(localized: "Updated \(lists.count) list, \(total) names in total.")
+            : String(localized: "Updated \(lists.count) lists, \(total) names in total.")
     }
 
     /// Explicit "use this here". Nothing else in this class creates a binding.

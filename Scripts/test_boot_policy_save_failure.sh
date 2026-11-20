@@ -872,7 +872,7 @@ mutate_and_expect_failure removal-load-failure-banner \
   'let removalQueued = self.persistenceCycle.queue.peekNewest == SharedRuleBridge.bootSnapshotRemoval' 'let removalQueued = false'
 mutate_and_expect_failure banner-claims-rules-in-use \
   Sources/GUI/Views/HelperBanner.swift \
-  'liveRulesReady ? "The filter is using them now." : nil' '"The filter is using them now."'
+  'liveRulesReady ? String(localized: "The filter is using them now.") : nil' 'String(localized: "The filter is using them now.")'
 mutate_and_expect_failure removal-keeps-banner \
   Sources/GUI/App/SystemExtensionManager.swift \
   $'no longer applies (#311).\n                                self.state?.clearFilterPersistenceFailure()' 'no longer applies (#311).'

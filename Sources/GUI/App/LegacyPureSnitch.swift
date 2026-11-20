@@ -98,14 +98,14 @@ enum LegacyPureSnitch {
     static func removeHelper(_ found: Found) -> Outcome {
         if found.daemon {
             guard let script = NSAppleScript(source: removeDaemon) else {
-                return .failed("The removal could not be prepared.")
+                return .failed(String(localized: "The removal could not be prepared."))
             }
             var errorInfo: NSDictionary?
             script.executeAndReturnError(&errorInfo)
             if let errorInfo {
                 if (errorInfo[NSAppleScript.errorNumber] as? Int) == -128 { return .cancelled }
                 return .failed((errorInfo[NSAppleScript.errorMessage] as? String)
-                               ?? "The old PureSnitch helper could not be removed.")
+                               ?? String(localized: "The old PureSnitch helper could not be removed."))
             }
         }
         return .removed
@@ -119,7 +119,7 @@ enum LegacyPureSnitch {
         NSWorkspace.shared.recycle([app]) { _, error in
             DispatchQueue.main.async {
                 if let error {
-                    completion(.failed("PureSnitch could not be moved to the Trash: \(error.localizedDescription) Drag PureSnitch from Applications to the Trash in Finder."))
+                    completion(.failed(String(localized: "PureSnitch could not be moved to the Trash: \(error.localizedDescription) Drag PureSnitch from Applications to the Trash in Finder.")))
                 } else {
                     completion(.removed)
                 }
@@ -134,18 +134,18 @@ enum LegacyPureSnitch {
         let action: String
         switch (found.daemon, found.app) {
         case (true, true):
-            action = "FreeSnitch can stop PureSnitch's helper and move PureSnitch to the Trash; macOS asks for your password once."
+            action = String(localized: "FreeSnitch can stop PureSnitch's helper and move PureSnitch to the Trash; macOS asks for your password once.")
         case (true, false):
-            action = "PureSnitch's helper is still installed. FreeSnitch can stop and remove that helper; macOS asks for your password once."
+            action = String(localized: "PureSnitch's helper is still installed. FreeSnitch can stop and remove that helper; macOS asks for your password once.")
         default:
-            action = "FreeSnitch can move PureSnitch to the Trash."
+            action = String(localized: "FreeSnitch can move PureSnitch to the Trash.")
         }
-        return "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. \(action) Your PureSnitch data is kept."
+        return String(localized: "PureSnitch is still installed on this Mac. Its network filter and FreeSnitch's must not run together. \(action) Your PureSnitch data is kept.")
     }
 
     /// Only the extension is left: FreeSnitch can't remove another app's
     /// extension, so it says exactly where the user can.
-    static let extensionOnlyText = "PureSnitch's app is gone, but macOS is still running its network extension, and its filter and FreeSnitch's must not run together. If you just removed PureSnitch, restart your Mac first. If it is still there after that, open System Settings > General > Login Items & Extensions, find PureSnitch under Extensions, click its info button and delete its network extension there."
+    static let extensionOnlyText = String(localized: "PureSnitch's app is gone, but macOS is still running its network extension, and its filter and FreeSnitch's must not run together. If you just removed PureSnitch, restart your Mac first. If it is still there after that, open System Settings > General > Login Items & Extensions, find PureSnitch under Extensions, click its info button and delete its network extension there.")
 
     /// Asks at launch when an old install is present. Shown on every launch
     /// until it is gone, because both filters running together is a real
@@ -183,20 +183,20 @@ enum LegacyPureSnitch {
         if !found.app && !found.daemon {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
-            alert.messageText = "PureSnitch's network filter is still on"
+            alert.messageText = String(localized: "PureSnitch's network filter is still on")
             alert.informativeText = extensionOnlyText
-            alert.addButton(withTitle: "Open Network Extensions")
-            alert.addButton(withTitle: "Not Now")
+            alert.addButton(withTitle: String(localized: "Open Network Extensions"))
+            alert.addButton(withTitle: String(localized: "Not Now"))
             if alert.runModal() == .alertFirstButtonReturn, !demoPreview { openNetworkExtensionsSettings() }
             return continueStartup()
         }
 
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Remove the old PureSnitch?"
+        alert.messageText = String(localized: "Remove the old PureSnitch?")
         alert.informativeText = removalText(found)
-        alert.addButton(withTitle: "Remove PureSnitch")
-        alert.addButton(withTitle: "Not Now")
+        alert.addButton(withTitle: String(localized: "Remove PureSnitch"))
+        alert.addButton(withTitle: String(localized: "Not Now"))
         guard alert.runModal() == .alertFirstButtonReturn, !demoPreview else { return continueStartup() }
 
         performRemoval(found, then: continueStartup)
@@ -239,12 +239,12 @@ enum LegacyPureSnitch {
         case .cancelled:
             return
         case .removed:
-            alert.messageText = "PureSnitch was removed"
-            alert.informativeText = "Restart your Mac when it suits you; that finishes removing PureSnitch's network extension. If macOS keeps it, FreeSnitch tells you where to delete it in System Settings."
+            alert.messageText = String(localized: "PureSnitch was removed")
+            alert.informativeText = String(localized: "Restart your Mac when it suits you; that finishes removing PureSnitch's network extension. If macOS keeps it, FreeSnitch tells you where to delete it in System Settings.")
         case .failed(let reason):
             alert.alertStyle = .warning
-            alert.messageText = "PureSnitch could not be removed"
-            alert.informativeText = "\(reason) FreeSnitch will ask again next time it opens."
+            alert.messageText = String(localized: "PureSnitch could not be removed")
+            alert.informativeText = String(localized: "\(reason) FreeSnitch will ask again next time it opens.")
         }
         alert.runModal()
     }

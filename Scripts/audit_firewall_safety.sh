@@ -518,7 +518,7 @@ for problem_case in datedInFuture other; do
 done
 require_text "$SYSTEM_EXTENSION_MANAGER" "if result.reportFailure {" \
   "a save the user cancelled by turning the filter on, off or removing it can bring the warning back"
-require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? "The filter is using them now." : nil' \
+require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? String(localized: "The filter is using them now.") : nil' \
   "the over-limit banner says the filter is using the rules when the extension does not hold them"
 grep -Fq 'clearFilterPersistenceFailure()' <<<"$remove_body" \
   || fail "removing the filter configuration leaves the could-not-save banner up"
@@ -1051,7 +1051,7 @@ fi
 
 require_text "$SYSTEM_EXTENSION_MANAGER" "@Published var status: Status = .idle" \
   "system extension status is not published"
-require_text "$SYSTEM_EXTENSION_MANAGER" "self.fail(\"filter save: \\(saveError.localizedDescription)\")" \
+require_text "$SYSTEM_EXTENSION_MANAGER" "self.fail(String(localized: \"filter save: \\(saveError.localizedDescription)\"))" \
   "filter-save failures are not recorded in the published status"
 require_text "$SYSTEM_EXTENSION_MANAGER" "guard self.requestKind == .activation else" \
   "system extension request completion is not tied to activation"

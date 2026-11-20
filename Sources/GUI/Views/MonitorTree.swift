@@ -230,7 +230,7 @@ struct MonitorTreeBuild: Sendable {
 /// every app with an Apple web view from the shared WebKit networking
 /// service. Rows named after those processes were not where users looked.
 enum MonitorAppPresentation {
-    static let webContentTitle = "Web content (Safari and other apps)"
+    static let webContentTitle = String(localized: "Web content (Safari and other apps)")
 
     struct Presentation: Equatable {
         let title: String
@@ -427,7 +427,7 @@ enum MonitorTreeBuilder {
                                           countryCode: MonitorTreeKey.normalized(connection.countryCode))
         }
         if name.isEmpty {
-            return DestinationAccumulator(label: ip.isEmpty ? "Unknown destination" : ip,
+            return DestinationAccumulator(label: ip.isEmpty ? String(localized: "Unknown destination") : ip,
                                           remoteHost: nil,
                                           remoteIP: ip.isEmpty ? nil : ip,
                                           countryCode: MonitorTreeKey.normalized(connection.countryCode))
@@ -451,7 +451,7 @@ enum MonitorTreeBuilder {
     private static func displayName(for connection: Connection) -> String {
         if !connection.processName.isEmpty { return connection.processName }
         if !connection.processPath.isEmpty { return (connection.processPath as NSString).lastPathComponent }
-        return connection.processBundleId ?? "Unknown process"
+        return connection.processBundleId ?? String(localized: "Unknown process")
     }
 }
 

@@ -26,12 +26,14 @@ public enum SharedRuleBridge {
     /// is the only state involved, and restarting the filter provider clears
     /// it, so no rejection may ever be reported as "reboot to fix".
     public static let snapshotRejectionRemediation =
-        "FreeSnitch can recover by restarting the network extension filter; restarting the Mac is not required."
+        String(localized: "FreeSnitch can recover by restarting the network extension filter; restarting the Mac is not required.")
     /// Said once the automatic restarts are used up, so the user is never left
     /// with a firewall that is off and no next step.
     public static let snapshotRecoveryExhaustedRemediation =
-        "FreeSnitch restarted the network extension filter and the extension still rejected the helper policy. "
-        + "Turn the per-process firewall off and on again in FreeSnitch settings; restarting the Mac is not required."
+        String(localized: "FreeSnitch restarted the network extension filter and the extension still rejected the helper policy. Turn the per-process firewall off and on again in FreeSnitch settings; restarting the Mac is not required.")
+    /// The same, for diagnostics the command line tool reads back.
+    public static let snapshotRecoveryExhaustedRemediationEnglish =
+        "FreeSnitch restarted the network extension filter and the extension still rejected the helper policy. Turn the per-process firewall off and on again in FreeSnitch settings; restarting the Mac is not required."
 
     /// Pure state for the asynchronous provider-preference writer. A caller
     /// may take only the newest pending payload after a load completes; any

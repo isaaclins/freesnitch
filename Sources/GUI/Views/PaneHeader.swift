@@ -12,7 +12,7 @@ import SwiftUI
 /// Padding around a font is rounded per font and per control, which is exactly
 /// what made the bands disagree; a fixed height and a centred row cannot.
 struct PaneHeader<Trailing: View>: View {
-    let title: String
+    let title: Text
     var count: Int?
     @ViewBuilder var trailing: () -> Trailing
 
@@ -21,11 +21,14 @@ struct PaneHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(title)
+            // The title names the pane, so it keeps its room before any
+            // control next to it does.
+            title
                 .font(.headline)
                 .lineLimit(1)
+                .layoutPriority(1)
             if let count {
-                Text("\(count)")
+                Text(verbatim: "\(count)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -40,15 +43,27 @@ struct PaneHeader<Trailing: View>: View {
     }
 }
 
+// A literal title is looked up in the string catalog, like `Text("...")`; a
+// String, such as a profile's name, is shown as it is.
 extension PaneHeader where Trailing == EmptyView {
+    init(_ title: LocalizedStringKey, count: Int? = nil) {
+        self.init(title: Text(title), count: count) { EmptyView() }
+    }
+
+    @_disfavoredOverload
     init(_ title: String, count: Int? = nil) {
-        self.init(title: title, count: count) { EmptyView() }
+        self.init(title: Text(verbatim: title), count: count) { EmptyView() }
     }
 }
 
 extension PaneHeader {
+    init(_ title: LocalizedStringKey, count: Int? = nil, @ViewBuilder trailing: @escaping () -> Trailing) {
+        self.init(title: Text(title), count: count, trailing: trailing)
+    }
+
+    @_disfavoredOverload
     init(_ title: String, count: Int? = nil, @ViewBuilder trailing: @escaping () -> Trailing) {
-        self.init(title: title, count: count, trailing: trailing)
+        self.init(title: Text(verbatim: title), count: count, trailing: trailing)
     }
 }
 

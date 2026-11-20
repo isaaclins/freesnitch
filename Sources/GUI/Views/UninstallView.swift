@@ -105,7 +105,7 @@ final class UninstallFlowModel: ObservableObject {
         if state.enforcementEnabled {
             state.enforcementEnabled = false
         }
-        state.appendLog(level: "info", message: "Uninstall: turning off and removing the network filter.")
+        state.appendLog(level: "info", message: String(localized: "Uninstall: turning off and removing the network filter."))
         if systemExtension.uninstallState.extensionIsGone {
             finish()
             return
@@ -128,7 +128,7 @@ final class UninstallFlowModel: ObservableObject {
         case .idle, .deactivating:
             return
         case .failed(let reason):
-            state.appendLog(level: "error", message: "Uninstall: macOS kept the network extension: \(reason)")
+            state.appendLog(level: "error", message: String(localized: "Uninstall: macOS kept the network extension: \(reason)"))
             phase = .failed(.filterKept(reason))
         case .notInstalled, .pendingReboot, .removed:
             finish()
@@ -166,14 +166,14 @@ final class UninstallFlowModel: ObservableObject {
                         // goes next, and the launchd record for a missing
                         // bundle is inert. Recorded so it is not silent.
                         self.state.appendLog(level: "error",
-                                             message: "Uninstall could not unregister the helper: \(problem)")
+                                             message: String(localized: "Uninstall could not unregister the helper: \(problem)"))
                     }
                     PrivilegedUninstall.removeUserData()
                     self.moveToTrash()
                 case .failure(.cancelled):
                     self.phase = .failed(.passwordCancelled)
                 case .failure(.failed(let reason)):
-                    self.state.appendLog(level: "error", message: "Uninstall could not remove the helper and data: \(reason)")
+                    self.state.appendLog(level: "error", message: String(localized: "Uninstall could not remove the helper and data: \(reason)"))
                     self.phase = .failed(.helperKept(reason))
                 }
             }
@@ -321,7 +321,7 @@ struct UninstallFlowSheet: View {
             Text("Uninstalling FreeSnitch").font(.headline)
             steps
         case .doneUntilRestart:
-            headline("FreeSnitch is uninstalled", icon: "checkmark.circle.fill", tint: Color(nsColor: .systemGreen))
+            headline(String(localized: "FreeSnitch is uninstalled"), icon: "checkmark.circle.fill", tint: Color(nsColor: .systemGreen))
             Text("FreeSnitch isn’t filtering anything now, and macOS finishes removing it the next time you restart.")
                 .fixedSize(horizontal: false, vertical: true)
         case .failed(let failure):
@@ -331,15 +331,15 @@ struct UninstallFlowSheet: View {
 
     private var steps: some View {
         VStack(alignment: .leading, spacing: 10) {
-            stepRow("Turning off the network filter", done: flow.phase != .removingFilter,
+            stepRow(String(localized: "Turning off the network filter"), done: flow.phase != .removingFilter,
                     active: flow.phase == .removingFilter,
                     note: flow.phase == .removingFilter && systemExtension.uninstallNeedsApproval
-                        ? "macOS is asking you to allow this in System Settings." : nil)
-            stepRow("Removing the helper and firewall rules",
+                        ? String(localized: "macOS is asking you to allow this in System Settings.") : nil)
+            stepRow(String(localized: "Removing the helper and firewall rules"),
                     done: flow.phase == .movingToTrash,
                     active: flow.phase == .removingHelper,
-                    note: flow.phase == .removingHelper ? "Enter your password when macOS asks." : nil)
-            stepRow("Moving FreeSnitch to the Trash", done: false,
+                    note: flow.phase == .removingHelper ? String(localized: "Enter your password when macOS asks.") : nil)
+            stepRow(String(localized: "Moving FreeSnitch to the Trash"), done: false,
                     active: flow.phase == .movingToTrash, note: nil)
         }
     }
@@ -371,22 +371,22 @@ struct UninstallFlowSheet: View {
         switch failure {
         case .filterKept(let reason):
             failureHeadline(reason == SystemExtensionManager.noAnswer
-                            ? "macOS didn’t answer FreeSnitch’s request to remove its network filter"
-                            : "macOS didn’t let FreeSnitch remove its network filter")
+                            ? String(localized: "macOS didn’t answer FreeSnitch’s request to remove its network filter")
+                            : String(localized: "macOS didn’t let FreeSnitch remove its network filter"))
             Text("FreeSnitch is turned off and isn’t protecting this Mac, but nothing else was removed. Try again, or quit and reopen FreeSnitch and turn Enforcement back on to keep using it.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)
         case .passwordCancelled:
-            failureHeadline("The password prompt was cancelled")
+            failureHeadline(String(localized: "The password prompt was cancelled"))
             Text("FreeSnitch is turned off and isn’t protecting this Mac. Try again to remove the rest.")
                 .fixedSize(horizontal: false, vertical: true)
         case .helperKept(let reason):
-            failureHeadline("FreeSnitch couldn’t remove its helper and firewall rules")
+            failureHeadline(String(localized: "FreeSnitch couldn’t remove its helper and firewall rules"))
             Text("FreeSnitch is turned off and isn’t protecting this Mac. Try again to remove the rest.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)
         case .appKept(let reason):
-            failureHeadline("FreeSnitch couldn’t move itself to the Trash")
+            failureHeadline(String(localized: "FreeSnitch couldn’t move itself to the Trash"))
             Text("Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish.")
                 .fixedSize(horizontal: false, vertical: true)
             reasonText(reason)

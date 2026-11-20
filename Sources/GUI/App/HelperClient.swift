@@ -49,12 +49,12 @@ enum HelperRecovery {
     static let kickstartCommand = AppConstants.helperKickstartCommand
 
     static func staleHelperMessage(helper: String, app: String) -> String {
-        "The helper process is running v\(helper) while the installed app is v\(app). Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(kickstartCommand)` in Terminal. This works while launchd still has the helper service registered."
+        String(localized: "The helper process is running v\(helper) while the installed app is v\(app). Automatic replacement is disabled because unregistering an enabled helper can remove the service. Run `\(kickstartCommand)` in Terminal. This works while launchd still has the helper service registered.")
     }
 
     /// Shown while the installed app asks the running helper to restart itself.
     static func restartingMessage(helper: String, app: String) -> String {
-        "The helper process is running v\(helper) while the installed app is v\(app). FreeSnitch asked it to restart with `\(kickstartCommand)`; the registration is left untouched. If this message stays, run that command in Terminal."
+        String(localized: "The helper process is running v\(helper) while the installed app is v\(app). FreeSnitch asked it to restart with `\(kickstartCommand)`; the registration is left untouched. If this message stays, run that command in Terminal.")
     }
 
     static func registrationErrorDetails(_ error: Error) -> String {
@@ -170,7 +170,7 @@ final class HelperClient: NSObject, ObservableObject {
     func unregisterDaemonForUninstall() -> String? {
         // A demo never removes the real helper (#389).
         guard !DemoMode.isOn else { return nil }
-        guard let service else { return "SMAppService cannot manage the helper on this macOS version." }
+        guard let service else { return String(localized: "SMAppService cannot manage the helper on this macOS version.") }
         do {
             try service.unregister()
             return nil
@@ -208,7 +208,7 @@ final class HelperClient: NSObject, ObservableObject {
                 let details = HelperRecovery.registrationErrorDetails(error)
                 installState = .failed(HelperRegistrationFailure.message(
                     for: error, inApplications: Self.isInApplicationsFolder))
-                state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
+                state?.appendLog(level: "error", message: String(localized: "Helper registration failed: \(details)"))
             }
         case .guideApproval:
             installState = .requiresApproval
@@ -227,9 +227,9 @@ final class HelperClient: NSObject, ObservableObject {
         let path = Bundle.main.bundleURL.path
         do {
             try service.register()
-            state?.appendLog(level: "info", message: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications.")
+            state?.appendLog(level: "info", message: String(localized: "Registered the helper again from \(path) after copying FreeSnitch out of ~/Applications."))
         } catch {
-            state?.appendLog(level: "error", message: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))")
+            state?.appendLog(level: "error", message: String(localized: "Could not register the helper again from \(path); it keeps running from the copy in ~/Applications: \(HelperRecovery.registrationErrorDetails(error))"))
         }
         refreshInstallState()
     }
@@ -270,13 +270,13 @@ final class HelperClient: NSObject, ObservableObject {
             return
         }
         repairState = .manualRequired(HelperRecovery.restartingMessage(helper: helper, app: installed))
-        state?.appendLog(level: "info", message: "Helper is running v\(helper) but v\(installed) is installed; asking it to restart with launchctl kickstart -k.")
+        state?.appendLog(level: "info", message: String(localized: "Helper is running v\(helper) but v\(installed) is installed; asking it to restart with launchctl kickstart -k."))
         proxy.restartForUpdate? { [weak self] ok, message in
             Task { @MainActor in
                 guard let self else { return }
                 guard ok else {
                     self.repairState = .manualRequired(HelperRecovery.staleHelperMessage(helper: helper, app: installed))
-                    self.state?.appendLog(level: "error", message: "The helper refused the update restart: \(message ?? "no reason given").")
+                    self.state?.appendLog(level: "error", message: String(localized: "The helper refused the update restart: \(message ?? String(localized: "no reason given"))."))
                     return
                 }
                 // Give launchd time to bring the installed binary back, then
@@ -317,7 +317,7 @@ final class HelperClient: NSObject, ObservableObject {
             return
         }
         guard let service else {
-            finishRepairFailure("SMAppService cannot manage the helper on this macOS version.")
+            finishRepairFailure(String(localized: "SMAppService cannot manage the helper on this macOS version."))
             return
         }
 
@@ -332,19 +332,19 @@ final class HelperClient: NSObject, ObservableObject {
         case .register:
             guard Self.hasBundledHelper else {
                 refreshInstallState()
-                finishRepairFailure("This app copy does not contain both the helper declaration and executable, so registration cannot be attempted.")
+                finishRepairFailure(String(localized: "This app copy does not contain both the helper declaration and executable, so registration cannot be attempted."))
                 return
             }
             registerAbsentService(service: service)
         case .guideApproval:
             refreshInstallState()
-            finishRepairFailure("Approve FreeSnitch in System Settings under General > Login Items & Extensions before starting the helper. Registration exists, but launchd cannot start it until approval.")
+            finishRepairFailure(String(localized: "Approve FreeSnitch in System Settings under General > Login Items & Extensions before starting the helper. Registration exists, but launchd cannot start it until approval."))
         case .unavailable:
             refreshInstallState()
-            finishRepairFailure("macOS cannot manage the helper registration on this system.")
+            finishRepairFailure(String(localized: "macOS cannot manage the helper registration on this system."))
         case .alreadyEnabled, .noRegistration:
             refreshInstallState()
-            finishRepairFailure("macOS reported an unsupported helper registration state.")
+            finishRepairFailure(String(localized: "macOS reported an unsupported helper registration state."))
         }
     }
 
@@ -355,7 +355,7 @@ final class HelperClient: NSObject, ObservableObject {
             try service.register()
             refreshInstallState()
             if installState == .requiresApproval {
-                finishRepairFailure("macOS registered the helper, but it still needs approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work.")
+                finishRepairFailure(String(localized: "macOS registered the helper, but it still needs approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work."))
                 return
             }
             isRepairing = false
@@ -363,9 +363,10 @@ final class HelperClient: NSObject, ObservableObject {
             reconnectAndPing(force: true)
         } catch {
             let details = HelperRecovery.registrationErrorDetails(error)
-            state?.appendLog(level: "error", message: "Helper registration failed: \(details)")
-            finishRepairFailure("FreeSnitch could not register the missing helper. " + HelperRegistrationFailure.message(
-                for: error, inApplications: Self.isInApplicationsFolder))
+            state?.appendLog(level: "error", message: String(localized: "Helper registration failed: \(details)"))
+            let reason = HelperRegistrationFailure.message(
+                for: error, inApplications: Self.isInApplicationsFolder)
+            finishRepairFailure(String(localized: "FreeSnitch could not register the missing helper. \(reason)"))
         }
     }
 
@@ -377,22 +378,22 @@ final class HelperClient: NSObject, ObservableObject {
                 guard let self, self.repairConfirmationID == confirmationID else { return }
                 guard case .inProgress = self.repairState else { return }
                 if self.hasVersionMismatch {
-                    self.repairState = .manualRequired("The registered helper did not reconnect with the expected build. Run `\(HelperRecovery.kickstartCommand)` while launchd still has the service registered.")
+                    self.repairState = .manualRequired(String(localized: "The registered helper did not reconnect with the expected build. Run `\(HelperRecovery.kickstartCommand)` while launchd still has the service registered."))
                     return
                 }
                 switch self.installState {
                 case .enabled:
-                    self.repairState = .manualRequired("SMAppService registered the helper, but it did not reconnect. Registration exists, so run `\(HelperRecovery.kickstartCommand)` in Terminal.")
+                    self.repairState = .manualRequired(String(localized: "SMAppService registered the helper, but it did not reconnect. Registration exists, so run `\(HelperRecovery.kickstartCommand)` in Terminal."))
                 case .requiresApproval:
-                    self.repairState = .manualRequired("The helper is registered but still requires approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work.")
+                    self.repairState = .manualRequired(String(localized: "The helper is registered but still requires approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work."))
                 case .notRegistered, .notFound:
-                    self.repairState = .manualRequired("SMAppService did not leave a usable registration record. Do not run the kickstart command yet; run the helper recheck again and report the registration state.")
+                    self.repairState = .manualRequired(String(localized: "SMAppService did not leave a usable registration record. Do not run the kickstart command yet; run the helper recheck again and report the registration state."))
                 case .wrongLocation:
                     self.repairState = .manualRequired(InstallLocation.wrongLocationRepairAdvice)
                 case .failed(let message):
-                    self.repairState = .manualRequired("Helper registration failed: \(message)")
+                    self.repairState = .manualRequired(String(localized: "Helper registration failed: \(message)"))
                 case .unknown:
-                    self.repairState = .manualRequired("SMAppService registration did not produce a reachable helper. Recheck the registration state before using the kickstart command.")
+                    self.repairState = .manualRequired(String(localized: "SMAppService registration did not produce a reachable helper. Recheck the registration state before using the kickstart command."))
                 }
                 self.needsRepair = true
             }
@@ -431,9 +432,9 @@ final class HelperClient: NSObject, ObservableObject {
                     if case .mismatch(let helper, let app) = previous {
                         fallback = HelperRecovery.staleHelperMessage(helper: helper, app: app)
                     } else {
-                        fallback = "The helper is enabled but not responding. Automatic replacement is disabled because unregistering an enabled helper can remove the service, so FreeSnitch only restarts it. Run `\(HelperRecovery.kickstartCommand)` in Terminal if this keeps happening."
+                        fallback = String(localized: "The helper is enabled but not responding. Automatic replacement is disabled because unregistering an enabled helper can remove the service, so FreeSnitch only restarts it. Run `\(HelperRecovery.kickstartCommand)` in Terminal if this keeps happening.")
                     }
-                    self.finishRepairFailure("The privileged restart did not complete: \(reason) \(fallback)")
+                    self.finishRepairFailure(String(localized: "The privileged restart did not complete: \(reason) \(fallback)"))
                 }
             }
         }
@@ -474,7 +475,7 @@ final class HelperClient: NSObject, ObservableObject {
         ProfileClient.shared.setTransport { [weak self] request, completion in
             Task { @MainActor in
                 guard let self else {
-                    completion(Data(), "The privileged helper is unavailable.")
+                    completion(Data(), String(localized: "The privileged helper is unavailable."))
                     return
                 }
                 self.sendProfileCommand(request, completion: completion)
@@ -484,7 +485,7 @@ final class HelperClient: NSObject, ObservableObject {
         // in the same view model, so both pages read one state (#135).
         ProfileClient.shared.setBlocklistRefreshTransport { [weak self] completion in
             guard let self else {
-                completion(false, "The privileged helper is unavailable.")
+                completion(false, String(localized: "The privileged helper is unavailable."))
                 return
             }
             self.refreshBlocklists(completion: completion)
@@ -499,17 +500,17 @@ final class HelperClient: NSObject, ObservableObject {
     private func sendProfileCommand(_ request: Data,
                                     completion: @escaping (Data, String?) -> Void) {
         guard request.count <= ProfileTransportBoundary.maximumRequestBytes else {
-            completion(Data(), "The profile request exceeds the transport limit.")
+            completion(Data(), String(localized: "The profile request exceeds the transport limit."))
             return
         }
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            completion(Data(), "Could not reach the privileged helper: \(error.sentence)")
+            completion(Data(), String(localized: "Could not reach the privileged helper: \(error.sentence)"))
         }) as? HelperProtocol else {
-            completion(Data(), "The privileged helper is unavailable.")
+            completion(Data(), String(localized: "The privileged helper is unavailable."))
             return
         }
         guard proxy.handleProfileCommand != nil else {
-            completion(Data(), "The running helper is too old to manage profiles. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            completion(Data(), String(localized: "The running helper is too old to manage profiles. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             return
         }
         proxy.handleProfileCommand?(request: request, reply: completion)
@@ -666,19 +667,19 @@ final class HelperClient: NSObject, ObservableObject {
             reply(value, error)
         }
         let work = DispatchWorkItem {
-            finish(nil, "Reading the effective DoH upstream timed out. Restart the helper to finish the update.")
+            finish(nil, String(localized: "Reading the effective DoH upstream timed out. Restart the helper to finish the update."))
         }
         timeoutWork = work
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
 
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(nil, "Could not read the effective DoH upstream: \(error.localizedDescription)")
+            finish(nil, String(localized: "Could not read the effective DoH upstream: \(error.localizedDescription)"))
         }) as? HelperProtocol else {
-            finish(nil, "The privileged helper is unavailable.")
+            finish(nil, String(localized: "The privileged helper is unavailable."))
             return
         }
         guard proxy.getDoHUpstream != nil else {
-            finish(nil, "The running helper is too old to report the effective DoH upstream. Restart the helper to finish the update.")
+            finish(nil, String(localized: "The running helper is too old to report the effective DoH upstream. Restart the helper to finish the update."))
             return
         }
         proxy.getDoHUpstream?(reply: { finish($0, nil) })
@@ -700,31 +701,31 @@ final class HelperClient: NSObject, ObservableObject {
             Task { @MainActor in completion(snapshot, error) }
         }
         let work = DispatchWorkItem {
-            finish(nil, "The helper did not return an authoritative rule snapshot within 5 seconds. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(nil, String(localized: "The helper did not return an authoritative rule snapshot within 5 seconds. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
         }
         timeoutWork = work
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
 
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(nil, "Could not read the authoritative rule snapshot: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(nil, String(localized: "Could not read the authoritative rule snapshot: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry."))
         }) as? HelperProtocol else {
-            finish(nil, "The privileged helper is unavailable. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(nil, String(localized: "The privileged helper is unavailable. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             return
         }
         guard proxy.getAuthoritativeSnapshot != nil else {
-            finish(nil, "The running helper does not support authoritative rule snapshots. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(nil, String(localized: "The running helper does not support authoritative rule snapshots. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             return
         }
         proxy.getAuthoritativeSnapshot?(reply: { data in
             guard !data.isEmpty else {
-                finish(nil, "The helper returned an empty authoritative rule snapshot. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+                finish(nil, String(localized: "The helper returned an empty authoritative rule snapshot. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
                 return
             }
             do {
                 try RuleTransportBoundary.validateSnapshotBytes(data)
                 finish(try SharedRuleBridge.decode(data), nil)
             } catch {
-                finish(nil, "The helper returned an invalid authoritative rule snapshot: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+                finish(nil, String(localized: "The helper returned an invalid authoritative rule snapshot: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             }
         })
     }
@@ -735,7 +736,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     func setMode(_ m: AppMode, completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.setMode(rawValue: m.rawValue) { ok, message in
@@ -746,24 +747,24 @@ final class HelperClient: NSObject, ObservableObject {
     @discardableResult
     func ingestObservationBatch(_ data: Data) -> Bool {
         guard data.count <= InsightsLimits.maxBatchBytes else {
-            state?.appendLog(level: "error", message: "Insights batch exceeded the transport limit and was dropped by the GUI.")
+            state?.appendLog(level: "error", message: String(localized: "Insights batch exceeded the transport limit and was dropped by the GUI."))
             return false
         }
         let proxy = connection?.remoteObjectProxyWithErrorHandler { [weak self] error in
             Task { @MainActor in
                 self?.state?.appendLog(level: "error",
-                                       message: "Insights batch transport failed: \(error.sentence)")
+                                       message: String(localized: "Insights batch transport failed: \(error.sentence)"))
             }
         } as? HelperProtocol
         guard let proxy else {
-            state?.appendLog(level: "error", message: "Insights batch dropped because the privileged helper is unavailable.")
+            state?.appendLog(level: "error", message: String(localized: "Insights batch dropped because the privileged helper is unavailable."))
             return false
         }
         proxy.ingestObservationBatch(observationBatch: data) { [weak self] ok, message in
             guard !ok else { return }
             Task { @MainActor in
                 self?.state?.appendLog(level: "error",
-                                       message: "The helper rejected an insights batch: \(message ?? "unknown error").")
+                                       message: String(localized: "The helper rejected an insights batch: \(message ?? String(localized: "unknown error"))."))
             }
         }
         return true
@@ -807,7 +808,7 @@ final class HelperClient: NSObject, ObservableObject {
     func setInsightsRecordingEnabled(_ enabled: Bool,
                                      completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.setInsightsRecordingEnabled(enabled) { ok, message in
@@ -835,23 +836,23 @@ final class HelperClient: NSObject, ObservableObject {
             Task { @MainActor in completion(report, error) }
         }
         let work = DispatchWorkItem {
-            finish(nil, "The helper did not answer the Insights query within 10 seconds.")
+            finish(nil, String(localized: "The helper did not answer the Insights query within 10 seconds."))
         }
         timeoutWork = work
         DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: work)
 
         guard let data = try? FreeSnitchWireCodec.encode(query), data.count <= InsightsLimits.maxQueryRequestBytes else {
-            finish(nil, "Could not encode the Insights query within the transport limit.")
+            finish(nil, String(localized: "Could not encode the Insights query within the transport limit."))
             return
         }
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(nil, "Could not read Insights: \(error.sentence)")
+            finish(nil, String(localized: "Could not read Insights: \(error.sentence)"))
         }) as? HelperProtocol else {
-            finish(nil, "The privileged helper is unavailable.")
+            finish(nil, String(localized: "The privileged helper is unavailable."))
             return
         }
         guard proxy.queryInsights != nil else {
-            finish(nil, "The running helper is too old to answer Insights queries. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(nil, String(localized: "The running helper is too old to answer Insights queries. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             return
         }
         proxy.queryInsights?(request: data, reply: { payload, message in
@@ -860,11 +861,11 @@ final class HelperClient: NSObject, ObservableObject {
                 return
             }
             guard !payload.isEmpty else {
-                finish(nil, "The helper returned an empty Insights report.")
+                finish(nil, String(localized: "The helper returned an empty Insights report."))
                 return
             }
             guard payload.count <= InsightsLimits.maxReportBytes else {
-                finish(nil, "The helper returned an oversized Insights report: \(payload.count) bytes.")
+                finish(nil, String(localized: "The helper returned an oversized Insights report: \(payload.count) bytes."))
                 return
             }
             do {
@@ -872,14 +873,14 @@ final class HelperClient: NSObject, ObservableObject {
                 try report.validateBounds(payloadBytes: payload.count)
                 finish(report, nil)
             } catch {
-                finish(nil, "The helper returned an unreadable Insights report: \(error.sentence)")
+                finish(nil, String(localized: "The helper returned an unreadable Insights report: \(error.sentence)"))
             }
         })
     }
 
     func purgeInsights(completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.purgeInsights { ok, message in
@@ -893,11 +894,11 @@ final class HelperClient: NSObject, ObservableObject {
 
     func addRule(_ rule: Rule, completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let data = try? RuleTransportBoundary.encodeSingleRule(rule) else {
-            completion(false, "Could not encode the rule within the single-rule transport limits.")
+            completion(false, String(localized: "Could not encode the rule within the single-rule transport limits."))
             return
         }
         guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.addRule(ruleJSON: data) { ok, message in
@@ -907,11 +908,11 @@ final class HelperClient: NSObject, ObservableObject {
 
     func reloadRules(_ rules: [Rule], completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules) else {
-            completion(false, "Could not encode the rule batch within the transport limits.")
+            completion(false, String(localized: "Could not encode the rule batch within the transport limits."))
             return
         }
         guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.reloadRules(rulesJSON: data) { ok, message in
@@ -925,7 +926,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     func removeRule(id: UUID, completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = remote else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.removeRule(idString: id.uuidString) { ok, message in
@@ -940,7 +941,7 @@ final class HelperClient: NSObject, ObservableObject {
                       completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let data = try? RuleTransportBoundary.encodeRuleBatch(rules),
               let removedData = try? JSONEncoder().encode(expectedRemovedIDs) else {
-            completion(false, "Could not encode the rule batch within the transport limits.")
+            completion(false, String(localized: "Could not encode the rule batch within the transport limits."))
             return
         }
         let lock = NSLock()
@@ -960,18 +961,18 @@ final class HelperClient: NSObject, ObservableObject {
         // A helper from an older build does not know this request and drops
         // it without answering, so the import must not wait forever (#247).
         let work = DispatchWorkItem {
-            finish(false, "The helper did not answer the import within 30 seconds. The import may still have finished, so check the rule list before importing again. If nothing changed, the helper may be an older version. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(false, String(localized: "The helper did not answer the import within 30 seconds. The import may still have finished, so check the rule list before importing again. If nothing changed, the helper may be an older version. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
         }
         timeoutWork = work
         DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: work)
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(false, "Could not import the rules: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(false, String(localized: "Could not import the rules: \(error.sentence) Run `\(AppConstants.helperKickstartCommand)`, then retry."))
         }) as? HelperProtocol else {
-            finish(false, "The FreeSnitch helper is not connected.")
+            finish(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         guard proxy.replaceRules != nil else {
-            finish(false, "The running helper does not support atomic rule replacement. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            finish(false, String(localized: "The running helper does not support atomic rule replacement. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             return
         }
         proxy.replaceRules?(rulesJSON: data, expectedRemovedIDsJSON: removedData) { ok, message in
@@ -999,17 +1000,17 @@ final class HelperClient: NSObject, ObservableObject {
             timeoutWork?.cancel()
             Task { @MainActor in completion(rules, error) }
         }
-        let retry = "Run `\(AppConstants.helperKickstartCommand)`, then retry."
+        let retry = String(localized: "Run `\(AppConstants.helperKickstartCommand)`, then retry.")
         let work = DispatchWorkItem {
-            finish(nil, "The helper did not return the rules within 5 seconds. \(retry)")
+            finish(nil, String(localized: "The helper did not return the rules within 5 seconds. \(retry)"))
         }
         timeoutWork = work
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
 
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
-            finish(nil, "Could not read the rules: \(error.sentence) \(retry)")
+            finish(nil, String(localized: "Could not read the rules: \(error.sentence) \(retry)"))
         }) as? HelperProtocol else {
-            finish(nil, "The FreeSnitch helper is not connected. \(retry)")
+            finish(nil, String(localized: "The FreeSnitch helper is not connected. \(retry)"))
             return
         }
         // An empty profile name asks for every profile.
@@ -1018,7 +1019,7 @@ final class HelperClient: NSObject, ObservableObject {
                 try RuleTransportBoundary.validateRuleBatchBytes(data)
                 finish(try FreeSnitchWireCodec.decode([Rule].self, from: data), nil)
             } catch {
-                finish(nil, "The helper returned rules that could not be read: \(error.sentence) \(retry)")
+                finish(nil, String(localized: "The helper returned rules that could not be read: \(error.sentence) \(retry)"))
             }
         }
     }
@@ -1042,10 +1043,10 @@ final class HelperClient: NSObject, ObservableObject {
     func refreshBlocklists(completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
             Task { @MainActor in
-                completion(false, "Could not reach the privileged helper: \(error.sentence)")
+                completion(false, String(localized: "Could not reach the privileged helper: \(error.sentence)"))
             }
         }) as? HelperProtocol else {
-            completion(false, "The FreeSnitch helper is not connected.")
+            completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.refreshBlocklists { ok, message in
@@ -1064,18 +1065,18 @@ final class HelperClient: NSObject, ObservableObject {
                                completion: @MainActor @escaping (BlocklistEntryPage?, String?) -> Void) {
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
             Task { @MainActor in
-                completion(nil, "Could not reach the privileged helper: \(error.sentence)")
+                completion(nil, String(localized: "Could not reach the privileged helper: \(error.sentence)"))
             }
         }) as? HelperProtocol else {
-            completion(nil, "The FreeSnitch helper is not connected.")
+            completion(nil, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         guard proxy.queryBlocklistEntries != nil else {
-            completion(nil, "The running helper is too old to list blocklist entries. Run `\(AppConstants.helperKickstartCommand)`, then retry.")
+            completion(nil, String(localized: "The running helper is too old to list blocklist entries. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
             return
         }
         guard let payload = try? FreeSnitchWireCodec.encode(query.bounded()) else {
-            completion(nil, "The blocklist query could not be encoded.")
+            completion(nil, String(localized: "The blocklist query could not be encoded."))
             return
         }
         proxy.queryBlocklistEntries?(request: payload) { data, error in
@@ -1085,7 +1086,7 @@ final class HelperClient: NSObject, ObservableObject {
                     return
                 }
                 guard let page = try? FreeSnitchWireCodec.decode(BlocklistEntryPage.self, from: data) else {
-                    completion(nil, "The helper's answer could not be read.")
+                    completion(nil, String(localized: "The helper's answer could not be read."))
                     return
                 }
                 completion(page, nil)
@@ -1105,7 +1106,7 @@ final class HelperClient: NSObject, ObservableObject {
             guard let self, self.enforcementRequestID == request else { return }
             self.failEnforcement(request: request,
                                  enabled: enabled,
-                                 message: "The helper did not answer within \(Int(Self.enforcementTimeout)) seconds.")
+                                 message: String(localized: "The helper did not answer within \(Int(Self.enforcementTimeout)) seconds."))
         }
         // A transport failure has to roll the UI back too, otherwise the toggle
         // claims enforcement that no daemon ever heard about.
@@ -1113,12 +1114,12 @@ final class HelperClient: NSObject, ObservableObject {
             Task { @MainActor in
                 self?.failEnforcement(request: request,
                                       enabled: enabled,
-                                      message: "The change never reached the helper: \(error.localizedDescription)")
+                                      message: String(localized: "The change never reached the helper: \(error.localizedDescription)"))
             }
         }) as? HelperProtocol else {
             failEnforcement(request: request,
                             enabled: enabled,
-                            message: "The FreeSnitch helper is not connected.")
+                            message: String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.setEnforcementEnabled(enabled) { [weak self] ok, message in
@@ -1127,7 +1128,7 @@ final class HelperClient: NSObject, ObservableObject {
                 guard ok else {
                     self.failEnforcement(request: request,
                                          enabled: enabled,
-                                         message: message ?? "The helper refused the change.")
+                                         message: message ?? String(localized: "The helper refused the change."))
                     return
                 }
                 self.enforcementRequestID = UUID()
@@ -1144,7 +1145,7 @@ final class HelperClient: NSObject, ObservableObject {
     private func failEnforcement(request: UUID, enabled: Bool, message: String) {
         guard enforcementRequestID == request else { return }
         enforcementRequestID = UUID()
-        state?.appendLog(level: "error", message: "Enforcement change failed: \(message)")
+        state?.appendLog(level: "error", message: String(localized: "Enforcement change failed: \(message)"))
         state?.enforcementChangeFailed(revertingTo: !enabled, message: message)
     }
 

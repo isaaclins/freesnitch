@@ -16,24 +16,28 @@ struct ConnectionAlertView: View {
         let asked = state.firstContactAskedToday
         let allowed = state.knownContactsAllowedToday
         guard asked > 0 || allowed > 0 else { return nil }
-        let askedPart = "asked about \(asked) new connection\(asked == 1 ? "" : "s")"
-        guard allowed > 0 else { return "Today FreeSnitch has \(askedPart)." }
-        return "Today FreeSnitch has \(askedPart) and silently allowed \(allowed) it already knew."
+        guard allowed > 0 else { return String(localized: "Today FreeSnitch has asked about \(asked) new connections.") }
+        return String(localized: "Today FreeSnitch has asked about \(asked) new connections and silently allowed \(allowed) it already knew.")
     }
 
     /// What is behind this dialog. A question that is one of several should say
     /// so, and an overflow that was allowed without asking should not be
     /// discoverable only by reading the code (#130).
     private var queueSummary: String? {
-        var parts: [String] = []
         let waiting = state.pendingAlerts.count - 1
-        if waiting > 0 { parts.append("\(waiting) more question\(waiting == 1 ? "" : "s") waiting") }
         let overflow = state.overflowAllowedToday
-        if overflow > 0 {
-            parts.append("\(overflow) connection\(overflow == 1 ? " was" : "s were") allowed today because the queue was full")
+        // Whole sentences per case, so a translation never has to glue two
+        // clauses together.
+        switch (waiting > 0, overflow > 0) {
+        case (true, true):
+            return String(localized: "\(waiting) more questions waiting, \(overflow) connections were allowed today because the queue was full.")
+        case (true, false):
+            return String(localized: "\(waiting) more questions waiting.")
+        case (false, true):
+            return String(localized: "\(overflow) connections were allowed today because the queue was full.")
+        case (false, false):
+            return nil
         }
-        guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: ", ") + "."
     }
 
     /// What the answer will actually create, in the same words the Rules table
@@ -43,21 +47,27 @@ struct ConnectionAlertView: View {
         let host = alert.connection.remoteHost.isEmpty
             ? alert.connection.remoteIP
             : alert.connection.remoteHost
-        let where_: String
-        switch scope {
-        case .anywhere: where_ = "any destination"
-        case .thisHost: where_ = host.isEmpty ? "this destination" : host
-        case .thisAddressAndPort:
-            let address = alert.connection.remoteIP.isEmpty ? host : alert.connection.remoteIP
-            where_ = "\(address) on port \(alert.connection.remotePort)"
-        }
         let howLong: String
         switch duration {
-        case .forever: howLong = "until you remove it"
-        case .oneDay: howLong = "for 24 hours"
-        case .oneHour: howLong = "for 1 hour"
+        case .forever: howLong = String(localized: "until you remove it", comment: "How long a remembered rule lasts, ends the rule summary sentence")
+        case .oneDay: howLong = String(localized: "for 24 hours", comment: "How long a remembered rule lasts, ends the rule summary sentence")
+        case .oneHour: howLong = String(localized: "for 1 hour", comment: "How long a remembered rule lasts, ends the rule summary sentence")
         }
-        return "Creates a rule for \(name) reaching \(where_), \(howLong)."
+        // One sentence per scope, because the destination's grammar changes
+        // with it in other languages; only the duration is a fragment.
+        switch scope {
+        case .anywhere:
+            return String(localized: "Creates a rule for \(name) reaching any destination, \(howLong).")
+        case .thisHost:
+            if host.isEmpty {
+                return String(localized: "Creates a rule for \(name) reaching this destination, \(howLong).")
+            }
+            return String(localized: "Creates a rule for \(name) reaching \(host), \(howLong).")
+        case .thisAddressAndPort:
+            let address = alert.connection.remoteIP.isEmpty ? host : alert.connection.remoteIP
+            let port = alert.connection.remotePort
+            return String(localized: "Creates a rule for \(name) reaching \(address) on port \(String(port)), \(howLong).")
+        }
     }
 
     /// Shaped like a macOS permission dialog, because that is exactly what it
@@ -165,7 +175,7 @@ struct ConnectionAlertView: View {
     }
 
     private var processName: String {
-        alert.connection.processName.isEmpty ? "Unknown" : alert.connection.processName
+        alert.connection.processName.isEmpty ? String(localized: "Unknown", comment: "Shown in place of an app whose name is not known") : alert.connection.processName
     }
 
     private var destination: String {
