@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Regression gate for #464.
 #
-# Settings showed a translated sentence with the helper's English reason for
-# a refused DNS over HTTPS upstream spliced into it ("... the URL is empty
-# ..."). The app now maps each refusal to its own translated sentence, while
-# the helper and the CLI keep logging the English reason.
+# Settings showed the helper's English reason for a refused DNS over HTTPS
+# upstream ("... the URL is empty ...") in an otherwise translated app. The
+# app now maps each refusal to its own translated sentence, while the helper
+# and the CLI keep logging the English reason.
 #
 # This checks that every refusal the validator can return has its own
 # translated sentence in Settings, in every language the catalog carries, and
