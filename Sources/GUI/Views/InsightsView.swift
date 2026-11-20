@@ -161,14 +161,6 @@ struct InsightsView: View {
     /// number without offering a way to go and look (#89). It is not a real
     /// badge because `NSSegmentedControl` has no badge, so it is the count in
     /// the label, which costs no extra row and still disappears at zero.
-    /// "1 destination", not "1 destinations". A count that disagrees with its
-    /// noun is the sort of thing no Apple app ships (#102).
-    static func plural(_ count: Int, _ noun: String) -> String {
-        guard count != 1 else { return "1 \(noun)" }
-        let needsES = noun.hasSuffix("s") || noun.hasSuffix("x") || noun.hasSuffix("ch") || noun.hasSuffix("sh")
-        return "\(count) \(noun)\(needsES ? "es" : "s")"
-    }
-
     private func segmentLabel(_ section: InsightsSection) -> String {
         guard section == .findings, model.changedAppCount > 0 else { return section.shortLabel }
         return "\(section.shortLabel) (\(model.changedAppCount))"

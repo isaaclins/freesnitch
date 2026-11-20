@@ -45,6 +45,15 @@ let fallback = msg("SMAppServiceErrorDomain", 1, "The operation couldn't be comp
 expect(fallback.components(separatedBy: "SMAppServiceErrorDomain").count == 2, "fallback description doesn't repeat the domain and code")
 expect(fallback.contains("error 1.) Retry.") && !fallback.contains(".)."), "fallback description ends cleanly")
 
+// macOS words its errors in the app's language once a translation is
+// declared (#459). A fallback in another language still names the domain
+// and code once, and its own wording of EPERM still means switched off.
+let russianFallback = msg("SMAppServiceErrorDomain", 1, "Не удалось завершить операцию. (SMAppServiceErrorDomain, ошибка 1.)", true)
+expect(russianFallback.components(separatedBy: "SMAppServiceErrorDomain").count == 2, "a fallback in another language doesn't repeat the domain and code")
+expect(msg("SMAppServiceErrorDomain", 1, "(SMAppServiceErrorDomain error 108.)", true).contains("(SMAppServiceErrorDomain 1)"), "another code in the text doesn't count as naming this one, so the real code is added")
+let eperm = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM)).localizedDescription
+expect(msg("SMAppServiceErrorDomain", 1, eperm, true).contains("Allow in the Background"), "macOS's own wording of EPERM points at Login Items")
+
 let other = msg("NSPOSIXErrorDomain", 5, "Input/output error.", true)
 expect(!other.contains(move), "unrelated error: no move advice")
 expect(other.contains("Input/output error (NSPOSIXErrorDomain 5)."), "unrelated error keeps its own text, no double period")
