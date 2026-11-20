@@ -18,6 +18,8 @@ struct SettingsView: View {
     /// Owned by the window model, so Help > Command-Line Tool can open
     /// Settings on that pane (#423).
     @Binding var pane: Pane
+    /// Redraws the About icon when the appearance changes (#471).
+    @Environment(\.colorScheme) private var colorScheme
 
     /// The parts of Settings. A page, not a window, so these are chosen in the
     /// content rather than by a `TabView` (#100).
@@ -470,10 +472,14 @@ struct SettingsView: View {
     private var aboutTab: some View {
         VStack(spacing: 12) {
             // The real application icon, the way Apple's About panel shows it,
-            // not a stand-in symbol (#114).
+            // not a stand-in symbol (#114). On macOS 26 and later the system
+            // picks its light, dark, clear or tinted look; the id redraws it
+            // when the appearance changes, so it follows without a relaunch
+            // (#471).
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 96, height: 96)
+                .id(colorScheme)
                 .accessibilityHidden(true)
             Text("FreeSnitch").font(.title.bold())
             Text("Version \(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
