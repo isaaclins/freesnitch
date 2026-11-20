@@ -261,14 +261,19 @@ final class NetMonitor: @unchecked Sendable {
         let remotePort: Int
     }
 
-    /// One spelling per address. lsof and nettop write the same link-local
-    /// IPv6 address differently (`fe80:f::1` with the scope inside it against
-    /// `fe80::1%en1`) and IPv4 behind IPv6 as `::ffff:1.2.3.4`; all of these
-    /// come out as the plain address.
+    /// One spelling per address. lsof writes a link-local IPv6 address with
+    /// its interface inside it (`fe80:f::1`, interface 15) where nettop
+    /// writes `fe80::1%en1`; both come out in lsof's form, so the same
+    /// address on two interfaces stays two addresses. IPv4 behind IPv6
+    /// (`::ffff:1.2.3.4`) comes out as plain IPv4.
     static func normalizedAddress(_ raw: String) -> String {
         var text = Substring(raw)
         if text.hasPrefix("["), text.hasSuffix("]") { text = text.dropFirst().dropLast() }
-        if let percent = text.firstIndex(of: "%") { text = text[..<percent] }
+        var scope = ""
+        if let percent = text.firstIndex(of: "%") {
+            scope = String(text[text.index(after: percent)...])
+            text = text[..<percent]
+        }
         let plain = String(text)
         var v4 = in_addr()
         if inet_pton(AF_INET, plain, &v4) == 1 { return plain }
@@ -278,8 +283,13 @@ final class NetMonitor: @unchecked Sendable {
         if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
             return bytes[12...].map(String.init).joined(separator: ".")
         }
-        // The kernel keeps a link-local address's scope in its second group.
-        if bytes[0] == 0xfe, bytes[1] & 0xc0 == 0x80 { bytes[2] = 0; bytes[3] = 0 }
+        // The kernel keeps a link-local address's interface in its second
+        // group, which is what lsof shows.
+        if bytes[0] == 0xfe, bytes[1] & 0xc0 == 0x80, bytes[2] == 0, bytes[3] == 0, !scope.isEmpty {
+            let index = UInt32(scope) ?? if_nametoindex(scope)
+            bytes[2] = UInt8((index >> 8) & 0xff)
+            bytes[3] = UInt8(index & 0xff)
+        }
         withUnsafeMutableBytes(of: &v6) { $0.copyBytes(from: bytes) }
         var out = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
         guard inet_ntop(AF_INET6, &v6, &out, socklen_t(out.count)) != nil else { return plain.lowercased() }
