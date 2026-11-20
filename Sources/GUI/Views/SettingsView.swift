@@ -18,7 +18,8 @@ struct SettingsView: View {
     /// Owned by the window model, so Help > Command-Line Tool can open
     /// Settings on that pane (#423).
     @Binding var pane: Pane
-    /// Redraws the About icon when the appearance changes (#471).
+    /// The app icon in the look macOS currently uses for it (#471).
+    @State private var appIcon = SettingsView.currentAppIcon()
     @Environment(\.colorScheme) private var colorScheme
 
     /// The parts of Settings. A page, not a window, so these are chosen in the
@@ -473,13 +474,13 @@ struct SettingsView: View {
         VStack(spacing: 12) {
             // The real application icon, the way Apple's About panel shows it,
             // not a stand-in symbol (#114). On macOS 26 and later the system
-            // picks its light, dark, clear or tinted look; the id redraws it
-            // when the appearance changes, so it follows without a relaunch
-            // (#471).
-            Image(nsImage: NSApp.applicationIconImage)
+            // picks its light, dark, clear or tinted look from the icon style
+            // in System Settings. NSApp.applicationIconImage keeps the look
+            // the app started with, so ask the workspace again whenever the
+            // settings or the appearance change (#471).
+            Image(nsImage: appIcon)
                 .resizable()
                 .frame(width: 96, height: 96)
-                .id(colorScheme)
                 .accessibilityHidden(true)
             Text("FreeSnitch").font(.title.bold())
             Text("Version \(AppConstants.version)").font(.subheadline).foregroundColor(.secondary)
@@ -490,5 +491,32 @@ struct SettingsView: View {
             Text("MIT License · © 2026 FreeSnitch contributors")
                 .font(.caption2).foregroundColor(.secondary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { appIcon = Self.currentAppIcon() }
+        .onChange(of: colorScheme) { _ in appIcon = Self.currentAppIcon() }
+        // macOS sends no notice when only the icon style changes. Changing it
+        // means going to System Settings, so look again when FreeSnitch comes
+        // back to the front.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appIcon = Self.currentAppIcon()
+        }
+    }
+
+    /// A fresh bitmap of the icon as macOS draws it right now. The workspace
+    /// hands back the same image object every time, which SwiftUI would take
+    /// as unchanged and never redraw.
+    private static func currentAppIcon() -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        let side = 96 * (NSScreen.main?.backingScaleFactor ?? 2)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(side), pixelsHigh: Int(side),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return NSApp.applicationIconImage }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: NSSize(width: 96, height: 96))
+        image.addRepresentation(rep)
+        return image
     }
 }
