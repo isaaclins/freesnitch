@@ -5929,12 +5929,32 @@
         }
       }
     },
+    "Hide Map" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть карту"
+          }
+        }
+      }
+    },
     "Hide or show the sidebar" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скрыть или показать боковую панель"
+          }
+        }
+      }
+    },
+    "Hide the map and give the app list its room" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть карту и отдать её место списку приложений"
           }
         }
       }
@@ -9452,6 +9472,16 @@
         }
       }
     },
+    "Show Map" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать карту"
+          }
+        }
+      }
+    },
     "Show alerts on all Spaces" : {
       "localizations" : {
         "ru" : {
@@ -9488,6 +9518,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показать в Finder"
+          }
+        }
+      }
+    },
+    "Show the map" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать карту"
           }
         }
       }

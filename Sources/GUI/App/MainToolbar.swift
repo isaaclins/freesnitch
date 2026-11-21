@@ -40,11 +40,13 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
     private static let sidebarItemID = NSToolbarItem.Identifier("freesnitch.sidebar")
     private static let titleItemID = NSToolbarItem.Identifier("freesnitch.title")
     private static let searchItemID = NSToolbarItem.Identifier("freesnitch.search")
+    private static let mapItemID = NSToolbarItem.Identifier("freesnitch.map")
 
     private let model: MainWindowModel
     private var cancellables: Set<AnyCancellable> = []
     private weak var toolbar: NSToolbar?
     private weak var searchField: NSSearchField?
+    private weak var mapItem: NSToolbarItem?
     private let titleView = ContentTitleView()
 
     init(model: MainWindowModel) {
@@ -74,6 +76,10 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
                 guard let self else { return }
                 self.apply(self.model.page)
             }
+            .store(in: &cancellables)
+        model.$isMonitorMapVisible
+            .receive(on: RunLoop.main)
+            .sink { [weak self] visible in self?.updateMapItem(visible: visible) }
             .store(in: &cancellables)
         // Find. The toolbar answers only while it is the one holding the
         // field; otherwise the pane's own field takes the caret.
@@ -106,12 +112,33 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
             searchField?.stringValue = ""
             model.searchText = ""
         }
+        // The map button only means something on the page with the map
+        // (#473). It sits before the search field, so it goes first.
+        let mapIndex = toolbar.items.firstIndex { $0.itemIdentifier == Self.mapItemID }
+        if page.hasMap, mapIndex == nil {
+            let flexible = toolbar.items.firstIndex { $0.itemIdentifier == .flexibleSpace }
+            toolbar.insertItem(withItemIdentifier: Self.mapItemID, at: flexible.map { $0 + 1 } ?? toolbar.items.count)
+        } else if !page.hasMap, let mapIndex {
+            toolbar.removeItem(at: mapIndex)
+        }
         let index = toolbar.items.firstIndex { $0.itemIdentifier == Self.searchItemID }
         if model.toolbarOwnsSearch, index == nil {
             toolbar.insertItem(withItemIdentifier: Self.searchItemID, at: toolbar.items.count)
         } else if !model.toolbarOwnsSearch, let index {
             toolbar.removeItem(at: index)
         }
+    }
+
+    /// The button reads as on while the map is showing, the way Finder's
+    /// view buttons do, and its words say what a click will do.
+    private func updateMapItem(visible: Bool) {
+        guard let item = mapItem else { return }
+        let words = visible ? String(localized: "Hide Map") : String(localized: "Show Map")
+        item.label = words
+        item.toolTip = visible
+            ? String(localized: "Hide the map and give the app list its room")
+            : String(localized: "Show the map")
+        item.image = NSImage(systemSymbolName: visible ? "map.fill" : "map", accessibilityDescription: words)
     }
 
     private func focusSearchField() {
@@ -123,12 +150,13 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         var identifiers: [NSToolbarItem.Identifier] = [Self.sidebarItemID, Self.titleItemID, .flexibleSpace]
+        if model.page.hasMap { identifiers.append(Self.mapItemID) }
         if model.toolbarOwnsSearch { identifiers.append(Self.searchItemID) }
         return identifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItemID, Self.titleItemID, .flexibleSpace, Self.searchItemID]
+        [Self.sidebarItemID, Self.titleItemID, .flexibleSpace, Self.mapItemID, Self.searchItemID]
     }
 
     func toolbar(_ toolbar: NSToolbar,
@@ -157,6 +185,14 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
             // (WWDC25 "Build an AppKit app with the new design").
             item.isBordered = false
             return item
+        case Self.mapItemID:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.paletteLabel = String(localized: "Map")
+            item.target = self
+            item.action = #selector(toggleMap)
+            mapItem = item
+            updateMapItem(visible: model.isMonitorMapVisible)
+            return item
         case Self.searchItemID:
             let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
             item.searchField.delegate = self
@@ -172,6 +208,10 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
 
     @objc private func toggleSidebar() {
         model.isSidebarVisible.toggle()
+    }
+
+    @objc private func toggleMap() {
+        model.isMonitorMapVisible.toggle()
     }
 
     // MARK: NSSearchFieldDelegate
