@@ -44,6 +44,10 @@ enum MainPage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Whether the page shows the connection map, and so the toolbar's
+    /// button to hide it (#473).
+    var hasMap: Bool { self == .monitor }
+
     var searchPlaceholder: String {
         switch self {
         case .monitor: return String(localized: "Search apps and destinations")
@@ -105,6 +109,13 @@ final class MainWindowModel: ObservableObject {
     @Published var isSidebarVisible = true
     /// Whether the Monitor is narrowed to apps with denied connections.
     @Published var monitorDeniedOnly = false
+    /// Whether the Monitor shows its map. On a small screen the map is the
+    /// biggest of the three panes, so it can be hidden and the app list takes
+    /// its room (#473). Remembered across launches, like the sidebar width.
+    @Published var isMonitorMapVisible: Bool {
+        didSet { UserDefaults.standard.set(isMonitorMapVisible, forKey: Self.monitorMapVisibleKey) }
+    }
+    static let monitorMapVisibleKey = "FreeSnitch.MonitorMapVisible"
     /// The sidebar's current width. Published because the window's real
     /// NSToolbar aligns the title to the content edge, so the title has to move
     /// when the sidebar is dragged (#123).
@@ -121,6 +132,9 @@ final class MainWindowModel: ObservableObject {
 
     init(page: MainPage) {
         self.page = page
+        let defaults = UserDefaults.standard
+        self.isMonitorMapVisible = defaults.object(forKey: Self.monitorMapVisibleKey) == nil
+            || defaults.bool(forKey: Self.monitorMapVisibleKey)
     }
 
     /// Whether the window's toolbar is the one carrying search right now.
