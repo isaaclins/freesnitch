@@ -5949,12 +5949,12 @@
         }
       }
     },
-    "Hide the map and give the app list its room" : {
+    "Hide the map" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Скрыть карту и отдать её место списку приложений"
+            "value" : "Скрыть карту"
           }
         }
       }

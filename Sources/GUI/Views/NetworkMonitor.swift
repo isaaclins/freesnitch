@@ -20,16 +20,16 @@ struct NetworkMonitorView: View {
         VStack(spacing: 0) {
             HelperBanner(systemExtension: systemExtension)
             HStack(spacing: 0) {
+                // One list in both layouts, so hiding the map keeps its scroll
+                // position and focus. Without the map it takes its room (#473).
+                sidebar
+                    .frame(minWidth: MainWindowMetrics.listPaneWidth,
+                           maxWidth: model.isMonitorMapVisible ? MainWindowMetrics.listPaneWidth : .infinity,
+                           maxHeight: .infinity)
                 if model.isMonitorMapVisible {
-                    sidebar
-                        .frame(width: MainWindowMetrics.listPaneWidth)
                     Divider()
                     mapPane
                         .frame(minWidth: MainWindowMetrics.paneMinWidth, maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    // Without the map the list takes its room (#473).
-                    sidebar
-                        .frame(minWidth: MainWindowMetrics.listPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
                 }
                 Divider()
                 summaryPane

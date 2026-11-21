@@ -135,9 +135,7 @@ final class MainToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDel
         guard let item = mapItem else { return }
         let words = visible ? String(localized: "Hide Map") : String(localized: "Show Map")
         item.label = words
-        item.toolTip = visible
-            ? String(localized: "Hide the map and give the app list its room")
-            : String(localized: "Show the map")
+        item.toolTip = visible ? String(localized: "Hide the map") : String(localized: "Show the map")
         item.image = NSImage(systemSymbolName: visible ? "map.fill" : "map", accessibilityDescription: words)
     }
 
