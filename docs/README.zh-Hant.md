@@ -42,7 +42,7 @@ FreeSnitch 提供第四種選擇:
 - 網路監視器,世界地圖即時呈現每個活動連線,依行程、網域、國家匯總
 - Little Snitch 風格的完整規則管理器 - 群組、黑名單、搜尋
 - 內建 DNS over HTTPS,可指向 Cloudflare / Quad9 / Google 或任意 DoH 端點
-- `127.0.0.1:53` 上的本地 DNS 代理,攔截每一次查詢
+- `127.0.0.1:53` 上的本地 DNS 代理,在啟用 Enforcement 時過濾傳送到該代理的查詢
 - 透過 1Hosts、OISD、StevenBlack、HaGeZi 實作網域層級封鎖
 - 透過 `pfctl` 錨點實作核心層級 IP / CIDR / 連接埠封鎖
 - 設定檔 (default / home / public-wifi / lockdown) - 隨網路自動切換

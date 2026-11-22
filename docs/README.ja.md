@@ -42,7 +42,7 @@ FreeSnitch は 4 番目の選択肢です:
 - アクティブな全接続を表示する世界地図、プロセス・ドメイン・国別のサマリー
 - Little Snitch スタイルの完全なルール マネージャー - グループ、ブロックリスト、検索
 - Cloudflare / Quad9 / Google または任意の DoH エンドポイントへの DNS over HTTPS
-- `127.0.0.1:53` のローカル DNS プロキシで全クエリを傍受
+- `127.0.0.1:53` のローカル DNS プロキシ。Enforcement が有効なとき、このプロキシに送られたクエリをフィルタリング
 - 1Hosts / OISD / StevenBlack / HaGeZi によるドメイン ブロック
 - `pfctl` アンカーによる IP / CIDR / ポート単位のカーネル レベル ブロック
 - プロファイル (default / home / public-wifi / lockdown) - ネットワーク変更に応じて自動切替
