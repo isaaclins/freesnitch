@@ -67,13 +67,25 @@ fileprivate func parsePreparedIPv4Address(_ raw: String) -> UInt32? {
     return address
 }
 
+/// DNS names are case-insensitive (RFC 4343): `API.Example.com` and
+/// `api.example.com` are one destination (#198). Rule hosts keep the case
+/// they were typed in and the DNS proxy lowercases every query name, so both
+/// sides are compared in lower case. A host that is already lower case, the
+/// usual one, is returned as is without allocating.
+fileprivate func lowercasedHostName(_ host: String) -> String {
+    host.utf8.contains(where: { ($0 >= 65 && $0 <= 90) || $0 >= 128 }) ? host.lowercased() : host
+}
+
 fileprivate struct PreparedConnectionAddress: Sendable {
     let ipv4: UInt32?
     let ipv6: PreparedIPv6Address?
+    /// The flow's hostname in lower case, worked out once per verdict.
+    let host: String
 
-    init(_ raw: String, needsIPv4: Bool, needsIPv6: Bool) {
+    init(_ raw: String, host: String, needsIPv4: Bool, needsIPv6: Bool) {
         ipv4 = needsIPv4 && !raw.contains(":") ? parsePreparedIPv4Address(raw) : nil
         ipv6 = needsIPv6 && raw.contains(":") ? parsePreparedIPv6Address(raw) : nil
+        self.host = lowercasedHostName(host)
     }
 }
 
@@ -82,7 +94,8 @@ fileprivate enum PreparedHostPattern: Sendable {
     case wildcard(base: String, dottedSuffix: String)
     case suffix(String)
 
-    init(_ raw: String) {
+    init(_ typed: String) {
+        let raw = lowercasedHostName(typed)
         if raw.hasPrefix("*.") {
             let base = String(raw.dropFirst(2))
             self = .wildcard(base: base, dottedSuffix: "." + base)
@@ -93,6 +106,7 @@ fileprivate enum PreparedHostPattern: Sendable {
         }
     }
 
+    /// `host` must already be lower case (`PreparedConnectionAddress.host`).
     func matches(_ host: String) -> Bool {
         switch self {
         case .exact(let value):
@@ -327,7 +341,7 @@ fileprivate struct PreparedRule: Sendable {
                             trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
         if let remotePort, !portMatches(remotePort, connection.remotePort) { return false }
-        if let remoteHost, !remoteHost.matches(connection.remoteHost),
+        if let remoteHost, !remoteHost.matches(address.host),
            !(remoteHostAddress?.matches(rawIP: connection.remoteIP, parsed: address) ?? false) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
         return true
@@ -414,6 +428,7 @@ public struct RuleMatcher: Sendable {
         let now = Date()
         let address = PreparedConnectionAddress(
             c.remoteIP,
+            host: c.remoteHost,
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
@@ -479,7 +494,10 @@ public struct RuleMatcher: Sendable {
         return true
     }
 
-    public func hostMatches(pattern: String, host: String) -> Bool {
+    public func hostMatches(pattern typedPattern: String, host typedHost: String) -> Bool {
+        // Case-insensitive like DNS itself (#198).
+        let pattern = lowercasedHostName(typedPattern)
+        let host = lowercasedHostName(typedHost)
         if pattern == host { return true }
         if pattern.hasPrefix("*.") {
             let suf = String(pattern.dropFirst(2))
