@@ -92,15 +92,14 @@ fileprivate struct PreparedConnectionAddress: Sendable {
 fileprivate enum PreparedHostPattern: Sendable {
     case exact(String)
     case wildcard(base: String, dottedSuffix: String)
-    case suffix(String)
 
+    /// `*.example.com` and `.example.com` mean the same thing: the domain and
+    /// its subdomains. The suffix must start at a label boundary, so
+    /// `notexample.com` never matches (#199).
     init(_ typed: String) {
         let raw = lowercasedHostName(typed)
-        if raw.hasPrefix("*.") {
-            let base = String(raw.dropFirst(2))
+        if let base = domainPatternBase(raw) {
             self = .wildcard(base: base, dottedSuffix: "." + base)
-        } else if raw.hasPrefix(".") {
-            self = .suffix(String(raw.dropFirst()))
         } else {
             self = .exact(raw)
         }
@@ -113,10 +112,16 @@ fileprivate enum PreparedHostPattern: Sendable {
             return host == value
         case .wildcard(let base, let dottedSuffix):
             return host == base || host.hasSuffix(dottedSuffix)
-        case .suffix(let value):
-            return host.hasSuffix(value)
         }
     }
+}
+
+/// The domain a `*.example.com` or `.example.com` host pattern covers, or nil
+/// for an exact host.
+fileprivate func domainPatternBase(_ pattern: String) -> String? {
+    if pattern.hasPrefix("*.") { return String(pattern.dropFirst(2)) }
+    if pattern.hasPrefix(".") { return String(pattern.dropFirst()) }
+    return nil
 }
 
 fileprivate struct PreparedIPPattern: Sendable {
@@ -489,15 +494,8 @@ public struct RuleMatcher: Sendable {
         let pattern = lowercasedHostName(typedPattern)
         let host = lowercasedHostName(typedHost)
         if pattern == host { return true }
-        if pattern.hasPrefix("*.") {
-            let suf = String(pattern.dropFirst(2))
-            return host == suf || host.hasSuffix("." + suf)
-        }
-        if pattern.hasPrefix(".") {
-            let suf = String(pattern.dropFirst())
-            return host.hasSuffix(suf)
-        }
-        return false
+        guard let base = domainPatternBase(pattern) else { return false }
+        return host == base || host.hasSuffix("." + base)
     }
 
     public func ipMatches(pattern: String, ip: String) -> Bool {
