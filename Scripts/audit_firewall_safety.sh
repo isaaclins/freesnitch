@@ -751,7 +751,7 @@ require_text "$FILTER" "private let identityWait: TimeInterval = 2" \
   "the wait for a flow's bundle identity has no explicit short bound"
 require_text "$FILTER" "queue.asyncAfter(deadline: wait.deadline) { finish(true); _ = wait }" \
   "the wait for a flow's bundle identity has no deadline that ends it"
-require_text "$FILTER" "case .now(let verdict): self.resumeFlow(context.flow, with: verdict)" \
+require_text "$FILTER" "self.workQueue.asyncAfter(deadline: earliest) { self.resumeFlow(context.flow, with: verdict) }" \
   "a flow paused for its bundle identity is never resumed"
 
 # A rule's bundle id comes from the process's code signature, never from an

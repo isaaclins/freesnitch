@@ -462,17 +462,32 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// Decides a paused flow once the bundle identity of its process is known
     /// or `identityWait` has passed, whichever comes first, and resumes it.
     private func decideOnceIdentityKnown(_ conn: Connection, context: VerdictContext) {
+        // `resumeFlow` is only valid once `handleNewFlow` has returned the
+        // pause, and nothing here can see that moment. A read finishing within
+        // microseconds of the pause could otherwise resume the flow first, and
+        // a resume macOS ignores would leave the flow held with no deadline
+        // left. So no waited flow is resumed sooner than `resumeFloor` after
+        // it was paused.
+        let earliest = DispatchTime.now() + resumeFloor
         bundleIdentifierCache.whenIdentityKnown(forExecutablePath: conn.processPath,
                                                 auditToken: context.flow.sourceAppAuditToken,
                                                 timeout: identityWait, queue: workQueue) { [weak self] identity, timedOut in
             guard let self else { return }
             if timedOut { self.noteIdentityWaitTimedOut(conn) }
             switch self.decide(Self.connection(conn, with: identity.metadata), identity: identity, context: context) {
-            case .now(let verdict): self.resumeFlow(context.flow, with: verdict)
+            case .now(let verdict):
+                if DispatchTime.now() >= earliest {
+                    self.resumeFlow(context.flow, with: verdict)
+                } else {
+                    self.workQueue.asyncAfter(deadline: earliest) { self.resumeFlow(context.flow, with: verdict) }
+                }
             case .asking: break
             }
         }
     }
+
+    /// See `decideOnceIdentityKnown`.
+    private let resumeFloor: TimeInterval = 0.02
 
     /// Only touched on `workQueue`.
     private var identityWaitTimeoutLogged = false
