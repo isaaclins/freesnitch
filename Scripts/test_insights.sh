@@ -444,7 +444,7 @@ struct InsightsHarness {
         check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.70", remotePort: 443, action: .deny)], now: coverageNow),
               "a port-only rule does not cover an address proposal")
         check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", remotePort: 0, action: .deny)], now: coverageNow),
-              "port 0 matches only port 0, so it does not cover (#218)")
+              "a port 0 rule matches nothing, so it does not cover (#218)")
         check(!domainProposal.isCovered(by: [Rule(remoteHost: "api.example.com", direction: .incoming, action: .deny)], now: coverageNow),
               "an incoming-only rule does not cover an outgoing proposal")
         check(!addressProposal("203.0.113.70").isCovered(by: [Rule(remoteIP: "203.0.113.0/24", direction: .incoming, action: .deny)], now: coverageNow),
