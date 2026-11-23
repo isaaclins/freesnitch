@@ -261,6 +261,15 @@ fileprivate func bundleIdMatches(_ ruleBundleId: String, team ruleTeam: String?,
     return connection.processTeamId == ruleTeam
 }
 
+/// Whether a rule's port covers a connection's port. A rule's port 0 matches
+/// nothing (#218): no real connection goes to port 0, and a connection whose
+/// port is not known yet is recorded with 0 (a DNS lookup in the proxy, a
+/// flow before its destination is set), so comparing 0 with 0 would make an
+/// old port 0 deny catch every one of those. Matching nothing fails open.
+func portMatches(_ rulePort: Int, _ connectionPort: Int) -> Bool {
+    rulePort != 0 && rulePort == connectionPort
+}
+
 fileprivate struct PreparedRule: Sendable {
     let action: RuleAction
     let expiresAt: Date?
@@ -282,9 +291,9 @@ fileprivate struct PreparedRule: Sendable {
         processBundleId = rule.processBundleId.flatMap { $0.isEmpty ? nil : $0 }
         processTeamId = rule.processTeamId.flatMap { $0.isEmpty ? nil : $0 }
         processPath = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
-        // A port is a port: 0 matches only port 0. Read as "no port", a deny
-        // rule with nothing but port 0 had no condition left and blocked
-        // every connection (#218).
+        // Port 0 is kept, never read as "no port": a deny rule with nothing
+        // but port 0 then had no condition left and blocked every
+        // connection (#218). See portMatches for how it compares.
         remotePort = rule.remotePort
         remoteHost = rule.remoteHost.flatMap { $0.isEmpty ? nil : PreparedHostPattern($0) }
         remoteHostAddress = rule.addressInHostField.map(PreparedIPPattern.init)
@@ -317,7 +326,7 @@ fileprivate struct PreparedRule: Sendable {
            !bundleIdMatches(processBundleId, team: processTeamId, connection,
                             trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
-        if let remotePort, connection.remotePort != remotePort { return false }
+        if let remotePort, !portMatches(remotePort, connection.remotePort) { return false }
         if let remoteHost, !remoteHost.matches(connection.remoteHost),
            !(remoteHostAddress?.matches(rawIP: connection.remoteIP, parsed: address) ?? false) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
@@ -459,8 +468,7 @@ public struct RuleMatcher: Sendable {
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }
         }
-        // Port 0 matches only port 0, never every port (#218).
-        if let port = r.remotePort, c.remotePort != port { return false }
+        if let port = r.remotePort, !portMatches(port, c.remotePort) { return false }
         if let host = r.remoteHost, !host.isEmpty {
             if !hostMatches(pattern: host, host: c.remoteHost),
                !(r.addressInHostField.map { ipMatches(pattern: $0, ip: c.remoteIP) } ?? false) { return false }

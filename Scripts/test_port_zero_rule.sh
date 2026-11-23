@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A rule's port 0 matches only port 0, never every port (issue #218).
+# A rule's port 0 matches nothing, never every port (issue #218).
 #
 # Port 0 used to be read as "no port". A deny rule whose only field was port 0
 # then had no condition left and blocked every outgoing connection the Network
@@ -46,8 +46,17 @@ struct Verify {
             let v = verdicts(portZero, conn(port))
             check(v.prepared == .allow && !v.direct, "a port 0 deny leaves port \(port) alone")
         }
+        // A connection whose port is not known yet is recorded with port 0;
+        // a port 0 rule matches nothing, so it never catches those either.
         let zero = verdicts(portZero, conn(0))
-        check(zero.prepared == .deny && zero.direct, "a port 0 deny still matches a connection to port 0")
+        check(zero.prepared == .allow && !zero.direct, "a port 0 deny leaves a flow with no known port alone")
+        // The DNS proxy decides a lookup with a connection that has only a
+        // host, so its port is 0 (Sources/Helper/DNSProxy.swift).
+        let lookup = Connection(pid: 0, processName: "", processPath: "", remoteHost: "example.com", direction: .outgoing, status: .pending)
+        let dns = verdicts(portZero, lookup)
+        check(dns.prepared == .allow && !dns.direct, "a port 0 deny does not turn DNS lookups into NXDOMAIN")
+        let dnsDefaultDeny = RuleMatcher().decision(for: lookup, rules: [Rule(remoteHost: "example.com", remotePort: 0, direction: .outgoing, action: .deny, scope: .domain)], defaultMode: .silentAllow)
+        check(dnsDefaultDeny == .allow, "a host deny with port 0 does not block the host's lookups")
 
         // With an address, port 0 narrows the rule instead of vanishing.
         let addressZero = Rule(remoteIP: "203.0.113.7", remotePort: 0, direction: .outgoing, action: .deny, scope: .ip)
