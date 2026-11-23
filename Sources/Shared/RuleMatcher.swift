@@ -275,13 +275,28 @@ fileprivate func bundleIdMatches(_ ruleBundleId: String, team ruleTeam: String?,
     return connection.processTeamId == ruleTeam
 }
 
-/// Whether a rule's port covers a connection's port. A rule's port 0 matches
-/// nothing (#218): no real connection goes to port 0, and a connection whose
-/// port is not known yet is recorded with 0 (a DNS lookup in the proxy, a
-/// flow before its destination is set), so comparing 0 with 0 would make an
-/// old port 0 deny catch every one of those. Matching nothing fails open.
-func portMatches(_ rulePort: Int, _ connectionPort: Int) -> Bool {
-    rulePort != 0 && rulePort == connectionPort
+/// Whether a rule's port covers a connection's port (#218).
+///
+/// Port 0 is never a real destination: a connection whose port is not known
+/// yet is recorded with 0 (a DNS lookup in the proxy, a flow before its
+/// destination is set, ICMP). Read as "no port", a deny rule with nothing but
+/// port 0 had no condition left and blocked every connection; compared with
+/// the connection's 0, it would still catch all of those. So a deny rule's
+/// port 0 matches nothing. An allow or ask rule's port 0 keeps meaning any
+/// port, as it always did: the alert dialog saved ping rules that way, and
+/// narrowing them would block more than the user asked. Both fail open.
+func portMatches(_ rulePort: Int, action: RuleAction, _ connectionPort: Int) -> Bool {
+    if rulePort == 0 { return action != .deny }
+    return rulePort == connectionPort
+}
+
+extension Rule {
+    /// The rule matches only some ports: a real port, or a deny rule's port 0,
+    /// which matches none (see portMatches).
+    public var restrictsPort: Bool {
+        guard let remotePort else { return false }
+        return remotePort != 0 || action == .deny
+    }
 }
 
 fileprivate struct PreparedRule: Sendable {
@@ -340,7 +355,7 @@ fileprivate struct PreparedRule: Sendable {
            !bundleIdMatches(processBundleId, team: processTeamId, connection,
                             trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
-        if let remotePort, !portMatches(remotePort, connection.remotePort) { return false }
+        if let remotePort, !portMatches(remotePort, action: action, connection.remotePort) { return false }
         if let remoteHost, !remoteHost.matches(address.host),
            !(remoteHostAddress?.matches(rawIP: connection.remoteIP, parsed: address) ?? false) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
@@ -483,7 +498,7 @@ public struct RuleMatcher: Sendable {
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }
         }
-        if let port = r.remotePort, !portMatches(port, c.remotePort) { return false }
+        if let port = r.remotePort, !portMatches(port, action: r.action, c.remotePort) { return false }
         if let host = r.remoteHost, !host.isEmpty {
             if !hostMatches(pattern: host, host: c.remoteHost),
                !(r.addressInHostField.map { ipMatches(pattern: $0, ip: c.remoteIP) } ?? false) { return false }

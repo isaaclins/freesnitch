@@ -966,8 +966,8 @@ public struct InsightsProposedRule: Codable, Sendable, Hashable, Identifiable {
             // The matcher skips a rule once its expiry has passed.
             if let expiresAt = rule.expiresAt, expiresAt < now { return false }
             guard rule.direction != .incoming else { return false }
-            // Any port, port 0 included, narrows the rule, as in the matcher (#218).
-            if rule.remotePort != nil { return false }
+            // Same port reading as the matcher (#218).
+            if rule.restrictsPort { return false }
             let destinationMatches: Bool
             if let domain {
                 // Same comparison as the matcher, so a wildcard (*.example.com)

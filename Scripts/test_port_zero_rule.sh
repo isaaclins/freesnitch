@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# A rule's port 0 matches nothing, never every port (issue #218).
+# A deny rule's port 0 matches nothing, never every port (issue #218).
+# An allow or ask rule's port 0 keeps meaning any port, so old rules saved
+# that way (the alert dialog did for ping) never block more than before.
 #
 # Port 0 used to be read as "no port". A deny rule whose only field was port 0
 # then had no condition left and blocked every outgoing connection the Network
@@ -70,6 +72,19 @@ struct Verify {
         let none = Rule(remoteIP: "203.0.113.7", direction: .outgoing, action: .deny, scope: .ip)
         check(verdicts(none, conn(8443, ip: "203.0.113.7")).prepared == .deny, "an address deny without a port still covers every port")
 
+        // Allow and ask rules with port 0 keep covering every port, so an old
+        // one never makes Silent Deny block more than it did.
+        let allowZero = Rule(remoteIP: "203.0.113.7", remotePort: 0, direction: .outgoing, action: .allow, scope: .ip)
+        for port in [0, 443] {
+            check(RuleMatcher().decision(for: conn(port, ip: "203.0.113.7"), rules: [allowZero], defaultMode: .silentDeny) == .allow,
+                  "an old allow with port 0 still lets port \(port) of its address through in Silent Deny")
+        }
+        let askZero = Rule(remoteIP: "203.0.113.7", remotePort: 0, direction: .outgoing, action: .ask, scope: .ip)
+        check(RuleMatcher().decision(for: conn(443, ip: "203.0.113.7"), rules: [askZero], defaultMode: .silentDeny) == .ask,
+              "an old ask with port 0 still asks instead of falling to Silent Deny")
+        check(portZero.restrictsPort && !allowZero.restrictsPort && !askZero.restrictsPort,
+              "Insights and the monitor tree read port 0 the way the matcher does")
+
         // pf: the port is never dropped, so the address is not blocked on every port.
         var rejected: [String] = []
         let anchor = PFManager(anchorPath: "/nonexistent/freesnitch-test", pfctl: "/usr/bin/false")
@@ -78,7 +93,10 @@ struct Verify {
               "pf does not block every port of an address for a port 0 rule")
         check(!anchor.split(separator: "\n").contains { $0.hasPrefix("block") && $0.contains("port 0") },
               "pf gets no port 0 line")
-        check(rejected.count == 2, "pf reports both port 0 rules as left to the Network Extension (\(rejected))")
+        check(rejected.count == 2, "pf reports both port 0 deny rules (\(rejected))")
+        let allowAnchor = PFManager(anchorPath: "/nonexistent/freesnitch-test", pfctl: "/usr/bin/false").renderAnchor(rules: [allowZero])
+        check(allowAnchor.split(separator: "\n").contains { $0.hasPrefix("pass") && $0.contains("203.0.113.7") && !$0.contains("port 0") },
+              "pf still passes the whole address for an old allow with port 0")
         let real = PFManager(anchorPath: "/nonexistent/freesnitch-test", pfctl: "/usr/bin/false")
             .renderAnchor(rules: [Rule(remoteIP: "203.0.113.7", remotePort: 8443, direction: .outgoing, action: .deny, scope: .ip)])
         check(real.split(separator: "\n").contains { $0.hasPrefix("block") && $0.contains("203.0.113.7 port 8443") },

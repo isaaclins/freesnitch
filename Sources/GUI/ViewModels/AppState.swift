@@ -837,7 +837,9 @@ final class AppState: ObservableObject {
                 ruleScope = usesAddress ? .ip : .domain
             case .thisAddressAndPort:
                 scopedIP = alert.connection.remoteIP
-                scopedPort = alert.connection.remotePort
+                // ICMP and flows without a known port carry 0, which is no
+                // port to scope to (#218): the rule covers the address.
+                scopedPort = alert.connection.remotePort > 0 ? alert.connection.remotePort : nil
                 ruleScope = .ip
             }
             let rule = Rule(
