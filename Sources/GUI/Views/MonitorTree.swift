@@ -522,7 +522,7 @@ struct MonitorRuleTarget: Hashable, Sendable {
     /// this tree at all. Port-specific rules, wildcard patterns and rules with
     /// no process identity address something else and are left alone.
     static func of(_ rule: Rule) -> MonitorRuleTarget? {
-        if let port = rule.remotePort, port != 0 { return nil }
+        if rule.remotePort != nil { return nil }
         let bundle = MonitorTreeKey.normalized(rule.processBundleId)
         let path = MonitorTreeKey.normalized(rule.processPath)
         guard bundle != nil || path != nil else { return nil }

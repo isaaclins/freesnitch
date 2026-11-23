@@ -282,7 +282,10 @@ fileprivate struct PreparedRule: Sendable {
         processBundleId = rule.processBundleId.flatMap { $0.isEmpty ? nil : $0 }
         processTeamId = rule.processTeamId.flatMap { $0.isEmpty ? nil : $0 }
         processPath = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
-        remotePort = rule.remotePort.flatMap { $0 == 0 ? nil : $0 }
+        // A port is a port: 0 matches only port 0. Read as "no port", a deny
+        // rule with nothing but port 0 had no condition left and blocked
+        // every connection (#218).
+        remotePort = rule.remotePort
         remoteHost = rule.remoteHost.flatMap { $0.isEmpty ? nil : PreparedHostPattern($0) }
         remoteHostAddress = rule.addressInHostField.map(PreparedIPPattern.init)
         remoteIP = rule.remoteIP.flatMap { $0.isEmpty ? nil : PreparedIPPattern($0) }
@@ -456,9 +459,8 @@ public struct RuleMatcher: Sendable {
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }
         }
-        if let port = r.remotePort, port != 0 {
-            if c.remotePort != port { return false }
-        }
+        // Port 0 matches only port 0, never every port (#218).
+        if let port = r.remotePort, c.remotePort != port { return false }
         if let host = r.remoteHost, !host.isEmpty {
             if !hostMatches(pattern: host, host: c.remoteHost),
                !(r.addressInHostField.map { ipMatches(pattern: $0, ip: c.remoteIP) } ?? false) { return false }

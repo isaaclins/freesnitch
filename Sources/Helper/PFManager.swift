@@ -428,7 +428,12 @@ final class PFManager: @unchecked Sendable {
         }
 
         var port: Int?
-        if let rawPort = r.remotePort, rawPort != 0 {
+        if let rawPort = r.remotePort {
+            // Dropping port 0 would widen the rule to every port of its
+            // address (#218); the Network Extension matches it as port 0.
+            guard rawPort != 0 else {
+                return reject("destination port 0 is enforced by the Network Extension filter layer when active and is not emitted to PF")
+            }
             guard (1...65535).contains(rawPort) else {
                 return reject("invalid destination port \(rawPort); expected 1 through 65535")
             }

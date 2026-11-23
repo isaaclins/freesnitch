@@ -125,13 +125,14 @@ reEnabled.profile = "Cafe"
 let both = reEnabled.applied(to: meanwhile, openedWith: original)
 guard both.profile == "Cafe", !both.enabled else { fail("the user's own profile change lost, or an untouched toggle was reverted") }
 // Untouched fields the sheet shows differently are not rewritten: a rule
-// with no app that gained a path meanwhile, port 0, notes with spaces.
+// with no app that gained a path meanwhile, port 0 (shown as 0, #218),
+// notes with spaces.
 let bare = Rule(processBundleId: "", processTeamId: "ABCDE12345", remoteHost: "bare.example", remoteIP: "",
                 remotePort: 0, action: .deny, notes: " keep ")
 var bareNow = bare
 bareNow.processPath = "/usr/bin/curl"
 let bareEdit = RuleEdit(process: .anyApp, bundleId: nil, remoteHost: "bare.example", remoteIP: nil,
-                        remotePort: nil, direction: bare.direction, action: .allow, scope: bare.scope,
+                        remotePort: 0, direction: bare.direction, action: .allow, scope: bare.scope,
                         profile: bare.profile, notes: "keep", enabled: true).applied(to: bareNow, openedWith: bare)
 guard bareEdit.processPath == "/usr/bin/curl", bareEdit.remotePort == 0, bareEdit.notes == " keep ",
       bareEdit.processBundleId == "", bareEdit.processTeamId == "ABCDE12345", bareEdit.remoteIP == "",

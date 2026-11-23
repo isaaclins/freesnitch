@@ -78,9 +78,9 @@ public struct RuleEdit: Equatable, Sendable {
         }
         if Self.text(remoteHost) != Self.text(snapshot.remoteHost) { rule.remoteHost = remoteHost }
         if Self.text(remoteIP) != Self.text(snapshot.remoteIP) { rule.remoteIP = remoteIP }
-        // The sheet shows port 0 and an empty string as an empty field and
-        // trims text, so none of that counts as a change on its own.
-        if Self.port(remotePort) != Self.port(snapshot.remotePort) { rule.remotePort = remotePort }
+        // The sheet shows port 0 as 0 (#218), so only a different port, or
+        // clearing it, counts as a change.
+        if remotePort != snapshot.remotePort { rule.remotePort = remotePort }
         if direction != snapshot.direction { rule.direction = direction }
         if action != snapshot.action { rule.action = action }
         if scope != snapshot.scope { rule.scope = scope }
@@ -91,7 +91,6 @@ public struct RuleEdit: Equatable, Sendable {
     }
 
     private static func present(_ value: String?) -> Bool { !(value ?? "").isEmpty }
-    private static func port(_ value: Int?) -> Int? { (value ?? 0) > 0 ? value : nil }
     private static func text(_ value: String?) -> String? {
         let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
