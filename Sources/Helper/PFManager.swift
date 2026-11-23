@@ -567,55 +567,98 @@ final class PFManager: @unchecked Sendable {
 
     /// `text` with an active `anchor "puresnitch"` and an active
     /// `load anchor "puresnitch" from "<anchorPath>"` appended where they are
-    /// missing, or nil when both are already there.
+    /// missing, or nil when both are already there. Only a top-level attach
+    /// for all traffic counts: one limited by options such as `on lo0`
+    /// leaves the rest of the traffic outside the anchor.
     static func pfConfAttachingAnchor(_ text: String, anchorPath: String) -> String? {
         let directives = pfConfDirectives(text)
-        let attached = directives.contains { $0.count >= 2 && $0[0] == "anchor" && $0[1] == anchorName }
-        let loaded = directives.contains {
-            $0.count >= 5 && $0[0] == "load" && $0[1] == "anchor" && $0[2] == anchorName
-                && $0[3] == "from" && $0[4] == anchorPath
-        }
+        let attached = directives.contains { $0 == ["anchor", anchorName] || $0 == ["anchor", anchorName, "all"] }
+        let loaded = directives.contains { $0 == ["load", "anchor", anchorName, "from", anchorPath] }
         if attached && loaded { return nil }
         var updated = text
         if !updated.isEmpty && !updated.hasSuffix("\n") { updated += "\n" }
+        // A last line ending in a backslash continues onto the next line, so
+        // the attach would become part of it (a comment, say). An empty line
+        // ends it first.
+        if updated.hasSuffix("\\\n") || updated.hasSuffix("\\\r\n") { updated += "\n" }
         if !attached { updated += "anchor \"\(anchorName)\"\n" }
         if !loaded { updated += "load anchor \"\(anchorName)\" from \"\(anchorPath)\"\n" }
         return updated
     }
 
-    /// The words of each active line of a pf.conf, as pfctl reads them: a
-    /// backslash at the end of a line continues it, `#` outside quotes starts
-    /// a comment that runs to the end of the line, and a quoted string is one
-    /// word without its quotes.
+    /// The words of each active top-level line of a pf.conf, read the way
+    /// pfctl's lexer reads it: a backslash before a line end joins the two
+    /// lines with nothing between them, `#` outside quotes starts a comment
+    /// that runs to the end of the (joined) line, a quoted string is one word
+    /// without its quotes and may run over several lines, and lines inside an
+    /// inline anchor's `{ }` block are not top level.
     static func pfConfDirectives(_ text: String) -> [[String]] {
-        let joined = text.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
+        let chars = Array(text.unicodeScalars)
         var directives: [[String]] = []
-        for line in joined.split(whereSeparator: \.isNewline) {
-            var words: [String] = []
-            var word = ""
-            var inWord = false
-            var quote: Character?
-            loop: for c in line {
-                if let q = quote {
-                    if c == q { quote = nil } else { word.append(c) }
+        var words: [String] = []
+        var word = ""
+        var inWord = false
+        var quote: Unicode.Scalar?
+        var inComment = false
+        var depth = 0
+        var startDepth = 0
+
+        func endWord() {
+            if inWord { words.append(word) }
+            word = ""
+            inWord = false
+        }
+        func endLine() {
+            endWord()
+            if !words.isEmpty && startDepth == 0 { directives.append(words) }
+            words = []
+            startDepth = depth
+        }
+
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\\" {
+                if i + 1 < chars.count, chars[i + 1] == "\n" { i += 2; continue }
+                if i + 2 < chars.count, chars[i + 1] == "\r", chars[i + 2] == "\n" { i += 3; continue }
+                if let q = quote, i + 1 < chars.count, chars[i + 1] == q {
+                    word.unicodeScalars.append(q)
+                    i += 2
                     continue
                 }
-                switch c {
-                case "#":
-                    break loop
-                case "\"", "'":
-                    quote = c
-                    inWord = true
-                case " ", "\t":
-                    if inWord { words.append(word); word = ""; inWord = false }
-                default:
-                    word.append(c)
-                    inWord = true
-                }
             }
-            if inWord { words.append(word) }
-            if !words.isEmpty { directives.append(words) }
+            i += 1
+            if let q = quote {
+                if c == q { quote = nil } else if c != "\n" && c != "\r" { word.unicodeScalars.append(c) }
+                continue
+            }
+            if inComment {
+                if c == "\n" { inComment = false; endLine() }
+                continue
+            }
+            switch c {
+            case "\n":
+                endLine()
+            case "#":
+                endWord()
+                inComment = true
+            case "\"", "'":
+                quote = c
+                inWord = true
+            case " ", "\t", "\r":
+                endWord()
+            case "{":
+                endWord()
+                depth += 1
+            case "}":
+                endWord()
+                depth = max(0, depth - 1)
+            default:
+                word.unicodeScalars.append(c)
+                inWord = true
+            }
         }
+        endLine()
         return directives
     }
 

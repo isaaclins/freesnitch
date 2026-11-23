@@ -99,6 +99,17 @@ struct Verify {
         expectAttached("a comment after another directive", apple + "pass all # \(attach)\n")
         // pfctl continues a comment over a trailing backslash.
         expectAttached("a comment continued onto the next line", apple + "# see below \\\n\(attach)\n")
+        // A last comment that ends in a backslash would swallow the next line.
+        expectAttached("a last comment ending in a backslash", apple + "# trailing \\\n")
+        expectAttached("a last comment ending in a backslash, no newline", apple + "# trailing \\")
+        // Text inside a quoted macro value is not a directive, even over lines.
+        expectAttached("both lines inside a multi-line macro",
+                       apple + "notes = \"\n\(attach)\n\(load)\n\"\n")
+        // Lines inside another anchor's inline block are not top level.
+        expectAttached("an attach nested in another anchor's block",
+                       apple + "anchor \"other\" {\n  \(attach)\n}\n" + load + "\n")
+        // An attach limited by options leaves the rest of the traffic out.
+        expectAttached("an attach limited to one interface", apple + "anchor \"puresnitch\" on lo0\n" + load + "\n")
         // Half references.
         expectAttached("an attach without its load", apple + attach + "\n")
         expectAttached("a load without its attach", apple + load + "\n")
@@ -123,6 +134,9 @@ struct Verify {
             ("unquoted, with tabs and extra options", "anchor\tpuresnitch all\nload  anchor 'puresnitch' from \"/etc/pf.anchors/puresnitch\" # ok\n"),
             ("a load continued over two lines", attach + "\nload anchor \"puresnitch\" \\\n  from \"/etc/pf.anchors/puresnitch\"\n"),
             ("Windows line ends", attach + "\r\n" + load + "\r\n"),
+            // pfctl joins a backslash-newline with nothing between, even in quotes.
+            ("a quoted name split over two lines", "anchor \"pure\\\nsnitch\"\n" + load + "\n"),
+            ("an attach with a list on the same line", "pass proto { tcp udp } all\n" + attach + "\n" + load + "\n"),
         ] {
             checks.expect(PFManager.pfConfAttachingAnchor(text, anchorPath: anchorPath) == nil,
                           "\(name): an already attached anchor was added again")
