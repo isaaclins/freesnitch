@@ -1538,7 +1538,7 @@ require_text "$DNS_PROXY" "base.requiredLocalEndpoint = .hostPort(host: host, po
   "the DNS proxy listeners are not pinned to a loopback address"
 require_text "$DNS_PROXY" "static let loopbackHosts: [NWEndpoint.Host] = [.ipv4(.loopback), .ipv6(.loopback)]" \
   "the DNS proxy binds something other than 127.0.0.1 and ::1"
-if grep -Eq 'NWListener\(using:[^)]*, on:' "$DNS_PROXY"; then
+if grep -Eq 'NWListener\(using:.*, on:' "$DNS_PROXY"; then
   fail "the DNS proxy creates a listener on a bare port, which binds every interface"
 fi
 for path in UDP TCP; do

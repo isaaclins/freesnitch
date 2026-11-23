@@ -246,22 +246,17 @@ struct SettingsView: View {
     /// upstream above, when the network's DNS server is this Mac. Without
     /// saying so, a saved upstream read as broken: the Mac kept asking the
     /// resolver it already had (#142).
-    /// The proxy answers on loopback only (#205), so only a loopback DNS
-    /// server reaches it.
+    /// The proxy answers on 127.0.0.1 and ::1 only (#205), so only a DNS
+    /// server set to one of those reaches it.
     private var routesThroughProxy: Bool {
-        systemResolvers.contains { server in
-            server == "::1" || server.hasPrefix("127.")
-        }
+        systemResolvers.contains(where: DNSProxyAddress.reachesProxy)
     }
 
     /// A DNS server set to one of this Mac's own network addresses. Before
     /// #205 that reached the proxy; it no longer does, so it is named here
     /// rather than reported as working.
     private var ownNetworkResolvers: [String] {
-        let own = Self.ownAddresses()
-        return systemResolvers.filter { server in
-            !(server == "::1" || server.hasPrefix("127.")) && own.contains(server)
-        }
+        DNSProxyAddress.ownNetworkResolvers(systemResolvers, own: Self.ownAddresses())
     }
 
     private static func ownAddresses() -> Set<String> {
@@ -462,7 +457,7 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 // Network Settings can't take DNS back from a VPN that
                 // brings its own, so the button would lead nowhere (#424).
-                if state.dnsProxyEnabled != routesThroughProxy,
+                if state.dnsProxyEnabled != routesThroughProxy || (!routesThroughProxy && !ownNetworkResolvers.isEmpty),
                    routesThroughProxy || VPNStatus.dnsOwner(network.vpns) == nil {
                     Button("Open Network Settings…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {

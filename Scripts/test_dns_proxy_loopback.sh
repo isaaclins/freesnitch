@@ -65,6 +65,10 @@ final class Bound {
     var udpReceived = 0
     /// isLoopbackPeer of every connection the listener really accepted.
     var peerVerdicts: [Bool] = []
+    /// Signalled once per accepted TCP connection and per received datagram,
+    /// so the probes wait for an arrival instead of sleeping.
+    let tcpArrival = DispatchSemaphore(value: 0)
+    let udpArrival = DispatchSemaphore(value: 0)
     let lock = NSLock()
     let queue = DispatchQueue(label: "harness")
 
@@ -90,10 +94,14 @@ final class Bound {
                 conn.start(queue: self.queue)
                 if index == 0 {
                     self.lock.lock(); self.tcpAccepted += 1; self.lock.unlock()
+                    self.tcpArrival.signal()
                     conn.cancel()
                 } else {
                     conn.receiveMessage { data, _, _, _ in
-                        if data != nil { self.lock.lock(); self.udpReceived += 1; self.lock.unlock() }
+                        if data != nil {
+                            self.lock.lock(); self.udpReceived += 1; self.lock.unlock()
+                            self.udpArrival.signal()
+                        }
                         conn.cancel()
                     }
                 }
@@ -137,7 +145,6 @@ func sendUDP(_ host: NWEndpoint.Host, _ port: NWEndpoint.Port) {
     }
     conn.start(queue: DispatchQueue(label: "udp-probe"))
     _ = done.wait(timeout: .now() + 3)
-    Thread.sleep(forTimeInterval: 0.3)
     conn.cancel()
 }
 
@@ -170,6 +177,21 @@ struct Main {
             checks.expect(DNSProxy.isLoopbackPeer(.hostPort(host: host, port: 53)), "the proxy only binds loopback (\(host))")
         }
 
+        print("what Settings counts as reaching the proxy")
+        checks.expect(DNSProxy.loopbackHosts.map { "\($0)" } == [DNSProxyAddress.ipv4, DNSProxyAddress.ipv6],
+                      "Settings and the helper agree on the proxy's addresses")
+        for server in ["127.0.0.1", "::1"] {
+            checks.expect(DNSProxyAddress.reachesProxy(server), "\(server) reaches the proxy")
+        }
+        for server in ["127.0.0.2", "127.0.0.53", "192.168.1.20", "9.9.9.9", "::", "fe80::1"] {
+            checks.expect(!DNSProxyAddress.reachesProxy(server), "\(server) does not reach the proxy")
+        }
+        let own: Set<String> = ["127.0.0.1", "::1", "192.168.1.20", "fd00::20"]
+        checks.expect(DNSProxyAddress.ownNetworkResolvers(["192.168.1.20", "9.9.9.9", "fd00::20"], own: own) == ["192.168.1.20", "fd00::20"],
+                      "a DNS server set to this Mac's own network address is named")
+        checks.expect(DNSProxyAddress.ownNetworkResolvers(["127.0.0.1", "::1", "127.0.0.2", "192.168.1.1"], own: own).isEmpty,
+                      "loopback and other machines are not counted as this Mac's network address")
+
         print("helper bind")
         let port = freePort()
         var bound: [Bound] = []
@@ -183,12 +205,24 @@ struct Main {
             checks.expect(false, "binding the helper's loopback listeners on \(port): \(error)")
         }
         func total() -> (Int, Int) { bound.reduce((0, 0)) { ($0.0 + $1.counts().0, $0.1 + $1.counts().1) } }
+        /// Waits up to `seconds` for any listener to report an arrival.
+        func anyArrival(within seconds: Double) -> Bool {
+            let deadline = DispatchTime.now() + seconds
+            while DispatchTime.now() < deadline {
+                for b in bound {
+                    if b.tcpArrival.wait(timeout: .now()) == .success { return true }
+                    if b.udpArrival.wait(timeout: .now()) == .success { return true }
+                }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            return false
+        }
 
-        for host in DNSProxy.loopbackHosts {
+        for (host, b) in zip(DNSProxy.loopbackHosts, bound) {
             checks.expect(tcpConnects(host, port), "tcp to \(host):\(port) is accepted")
-            let before = total().1
+            checks.expect(b.tcpArrival.wait(timeout: .now() + 5) == .success, "the tcp connection to \(host) reached its listener")
             sendUDP(host, port)
-            checks.expect(total().1 > before, "udp to \(host):\(port) is received")
+            checks.expect(b.udpArrival.wait(timeout: .now() + 5) == .success, "udp to \(host):\(port) is received")
         }
 
         if external.isEmpty {
@@ -198,6 +232,8 @@ struct Main {
             let (tcpBefore, udpBefore) = total()
             checks.expect(!tcpConnects(host, port), "tcp to \(host):\(port) is refused")
             sendUDP(host, port)
+            // Proving that nothing arrived can only be a bounded wait.
+            checks.expect(!anyArrival(within: 1), "nothing sent to \(host) arrived within a second")
             let (tcpAfter, udpAfter) = total()
             checks.expect(tcpAfter == tcpBefore, "no tcp connection from \(host) reached the listener")
             checks.expect(udpAfter == udpBefore, "no udp datagram sent to \(host) reached the listener")
@@ -214,12 +250,13 @@ struct Main {
                 let tcp = NWParameters.tcp; tcp.allowLocalEndpointReuse = true
                 let udp = NWParameters.udp; udp.allowLocalEndpointReuse = true
                 let wild = try Bound(tcp: tcp, udp: udp, port: wildPort)
-                var reached = false
-                for host in external where tcpConnects(host, wildPort) { reached = true }
-                checks.expect(reached, "a wildcard bind is reachable through a non-loopback address")
+                var reached = 0
+                for host in external where tcpConnects(host, wildPort) {
+                    if wild.tcpArrival.wait(timeout: .now() + 5) == .success { reached += 1 }
+                }
+                checks.expect(reached > 0, "a wildcard bind is reachable through a non-loopback address")
                 // Over a LAN address the peer is that address, not loopback,
                 // so the peer check would close these if the bind ever widened.
-                Thread.sleep(forTimeInterval: 0.3)
                 let lanPeers = wild.verdicts()
                 checks.expect(!lanPeers.isEmpty && !lanPeers.contains(true),
                               "connections really accepted through a non-loopback address fail isLoopbackPeer (\(lanPeers.count) seen)")

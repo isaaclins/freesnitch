@@ -185,6 +185,7 @@ final class DNSProxy: @unchecked Sendable {
             throw NSError(domain: "DNSProxy", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad port"])
         }
         var started: [NWListener] = []
+        var hosts: [String] = []
         for host in Self.loopbackHosts {
             // 127.0.0.1 is the address users point their DNS at, so a failure
             // there stops the proxy. ::1 is served as well, but a Mac without
@@ -192,6 +193,7 @@ final class DNSProxy: @unchecked Sendable {
             let primary = host == Self.loopbackHosts[0]
             do {
                 started += try startListeners(on: host, port: p, primary: primary)
+                hosts.append("\(host)")
             } catch where !primary {
                 PSLog.error(PSLog.dns, "dns proxy could not listen on \(host): \(error)")
             } catch {
@@ -202,7 +204,7 @@ final class DNSProxy: @unchecked Sendable {
         self.listeners = started
 
         running = true
-        PSLog.info(PSLog.dns, "dns proxy listening on 127.0.0.1 and ::1 port \(port) (udp+tcp)")
+        PSLog.info(PSLog.dns, "dns proxy listening on \(hosts.joined(separator: " and ")) port \(port) (udp+tcp)")
     }
 
     func stop() {
