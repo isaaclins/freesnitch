@@ -377,11 +377,21 @@ final class FilterDataProvider: NEFilterDataProvider {
         // decide this flow, it waits, paused, for that read, and never longer
         // than `identityWait`: past that it is decided with what is known,
         // exactly as before.
+        var flowConn = conn
+        var flowIdentity = identity
         if identity.pending, matcher.bundleRuleMightDecide(for: conn, prepared: policy.prepared) {
-            decideOnceIdentityKnown(conn, context: context)
-            return .pause()
+            // Looked at again right before pausing: the read may have finished
+            // during the checks above, and a flow must not be resumed before
+            // this returns `.pause()`. Only a read still running pauses it.
+            flowIdentity = bundleIdentifierCache.cachedIdentity(forExecutablePath: conn.processPath,
+                                                                auditToken: socketFlow.sourceAppAuditToken)
+            if flowIdentity.pending {
+                decideOnceIdentityKnown(conn, context: context)
+                return .pause()
+            }
+            flowConn = Self.connection(conn, with: flowIdentity.metadata)
         }
-        switch decide(conn, identity: identity, context: context) {
+        switch decide(flowConn, identity: flowIdentity, context: context) {
         case .now(let verdict): return verdict
         case .asking: return .pause()
         }
@@ -1358,8 +1368,9 @@ final class BundleIdentifierCache: @unchecked Sendable {
     }
 
     /// Runs `action` once the resolve under way for `path` has finished, on
-    /// the resolve queue, and returns true; returns false at once when none is
-    /// under way, so the caller can use the answer it has now.
+    /// the resolve queue, and returns the registration's id (for
+    /// `forgetWaiter`); returns nil at once when none is under way, so the
+    /// caller can use the answer it has now.
     private func whenResolved(_ path: String, _ action: @escaping @Sendable () -> Void) -> UInt64? {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
