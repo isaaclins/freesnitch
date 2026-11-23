@@ -1236,7 +1236,10 @@ final class BundleIdentifierCache: @unchecked Sendable {
     /// Flows paused until the identity of their path is known (#197), woken
     /// when that path's resolve finishes. Each one also has its own deadline
     /// in the provider, so a resolve that never comes cannot hold a flow.
-    private var waiters: [String: [@Sendable () -> Void]] = [:]
+    /// A wait that ends at its deadline takes its entry back out, so a
+    /// resolve that never finishes holds only the waits still running.
+    private var waiters: [String: [UInt64: @Sendable () -> Void]] = [:]
+    private var nextWaiterID: UInt64 = 0
     /// Set once the kernel failed to give a flow's code hash, so that is
     /// logged once instead of every allow quietly turning into an alert.
     private var codeHashFailureLogged = false
@@ -1357,12 +1360,20 @@ final class BundleIdentifierCache: @unchecked Sendable {
     /// Runs `action` once the resolve under way for `path` has finished, on
     /// the resolve queue, and returns true; returns false at once when none is
     /// under way, so the caller can use the answer it has now.
-    private func whenResolved(_ path: String, _ action: @escaping @Sendable () -> Void) -> Bool {
+    private func whenResolved(_ path: String, _ action: @escaping @Sendable () -> Void) -> UInt64? {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
-        guard pending.contains(path) else { return false }
-        waiters[path, default: []].append(action)
-        return true
+        guard pending.contains(path) else { return nil }
+        nextWaiterID &+= 1
+        waiters[path, default: [:]][nextWaiterID] = action
+        return nextWaiterID
+    }
+
+    private func forgetWaiter(_ id: UInt64, path: String) {
+        os_unfair_lock_lock(lock)
+        waiters[path]?.removeValue(forKey: id)
+        if waiters[path]?.isEmpty == true { waiters.removeValue(forKey: path) }
+        os_unfair_lock_unlock(lock)
     }
 
     /// Calls `done` once, on `queue`, with the identity of the flow's app as
@@ -1378,18 +1389,27 @@ final class BundleIdentifierCache: @unchecked Sendable {
             guard let wait, !wait.settled else { return }
             wait.settled = true
             wait.check = nil
+            if let id = wait.registered { self?.forgetWaiter(id, path: path) }
             let identity: FlowIdentity = self?.cachedIdentity(forExecutablePath: path, auditToken: auditToken)
                 ?? (metadata: nil, pending: false)
             done(identity, timedOut && identity.pending)
         }
         wait.check = { [weak self, weak wait] in
             guard let wait, !wait.settled else { return }
-            guard let self,
-                  self.cachedIdentity(forExecutablePath: path, auditToken: auditToken).pending,
-                  DispatchTime.now() < wait.deadline,
-                  self.whenResolved(path, { [weak wait] in queue.async { wait?.check?() } }) else {
-                return finish(false)
+            wait.registered = nil
+            guard let self else { return finish(false) }
+            // A resolve can finish between the look and the registration, and
+            // the one that finished may not have checked this flow's code. The
+            // next look then starts the check this flow needs, so look again
+            // rather than deciding early; every round means a resolve finished.
+            while DispatchTime.now() < wait.deadline,
+                  self.cachedIdentity(forExecutablePath: path, auditToken: auditToken).pending {
+                if let id = self.whenResolved(path, { [weak wait] in queue.async { wait?.check?() } }) {
+                    wait.registered = id
+                    return
+                }
             }
+            finish(false)
         }
         // The deadline holds the only strong reference: the wait lives until
         // it, and a resolve that finishes later finds nothing to wake.
@@ -1403,6 +1423,8 @@ final class BundleIdentifierCache: @unchecked Sendable {
         let deadline: DispatchTime
         var settled = false
         var check: (() -> Void)?
+        /// The cache's waiter entry while one is registered.
+        var registered: UInt64?
         init(deadline: DispatchTime) { self.deadline = deadline }
     }
 
@@ -1470,7 +1492,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
             }
         }
         insertLocked(path, entry: entry)
-        let woken = waiters.removeValue(forKey: path) ?? []
+        let woken = waiters.removeValue(forKey: path)?.values.map { $0 } ?? []
         os_unfair_lock_unlock(lock)
         for action in woken { action() }
 
@@ -1557,6 +1579,13 @@ final class BundleIdentifierCache: @unchecked Sendable {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
         return entries.count
+    }
+
+    /// Test seam: how many paused flows are registered to be woken.
+    var waiterCount: Int {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        return waiters.values.reduce(0) { $0 + $1.count }
     }
 
     /// Test seam: block until the reads scheduled so far have finished.

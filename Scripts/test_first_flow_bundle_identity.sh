@@ -22,7 +22,9 @@
 #     rules, a rule without a bundle id that already decides it, a bundle rule
 #     for another port, an executable outside an .app, or a signature that
 #     could not be read once already
-#   - new code at a path already known waits for its own signature check
+#   - new code at a path already known waits for its own signature check, also
+#     while another instance's check at that path is still running
+#   - a read that never finishes does not collect paused flows
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -234,6 +236,55 @@ do {
            "new code at the same path has no signed id yet and waits for its own check")
     let r = decideAfterWait(cache, auditToken: otherToken, prepared: denies, mode: .silentAllow)
     expect(r?.action == .deny && r?.timedOut == false, "and gets the app's deny once checked")
+}
+
+// 7. A flow whose code is not the code being checked at its path: the read
+// that finishes first is not its own, and it still waits for its own check
+// instead of being decided when that other read ends.
+do {
+    let gateA = Gate()
+    let gateB = Gate()
+    let cache = BundleIdentifierCache(
+        read: { _ in .read(AppBundleMetadata(bundleIdentifier: "com.example.app", version: "1.0")) },
+        identify: { _, token in (token?.first == 2 ? gateB : gateA).wait(); return .resolved(signed) },
+        codeHash: { token in token.map { CDHash(($0.first == 2 ? 2 : 1, 0, 0)) } })
+    _ = cache.cachedIdentity(forExecutablePath: app, auditToken: token)      // A's check, held
+    let b = cache.cachedIdentity(forExecutablePath: app, auditToken: otherToken)
+    expect(b.pending, "a second app instance with other code waits while the first one's check runs")
+    let done = DispatchSemaphore(value: 0)
+    var result: (RuleAction, Bool)?
+    cache.whenIdentityKnown(forExecutablePath: app, auditToken: otherToken, timeout: 10, queue: queue) { identity, timedOut in
+        result = (matcher.decision(for: withIdentity(flow(), identity.metadata), prepared: denies, defaultMode: .silentAllow), timedOut)
+        done.signal()
+    }
+    queue.sync {}
+    gateA.release()
+    cache.waitForPendingResolves()
+    queue.sync {}
+    expect(result == nil, "the first instance's check finishing does not decide the second one's flow")
+    gateB.release()
+    _ = done.wait(timeout: .now() + 20)
+    expect(result?.0 == .deny && result?.1 == false, "it is decided by its own check: denied")
+}
+
+// 8. A read that never finishes does not collect paused flows: each wait
+// takes its registration back at its deadline.
+do {
+    let gate = Gate()
+    let cache = makeCache(gate: gate)
+    _ = cache.cachedIdentity(forExecutablePath: app, auditToken: token)
+    let group = DispatchGroup()
+    for _ in 0..<50 {
+        group.enter()
+        cache.whenIdentityKnown(forExecutablePath: app, auditToken: token, timeout: 0.2, queue: queue) { _, _ in group.leave() }
+    }
+    queue.sync {}
+    expect(cache.waiterCount == 50, "fifty paused flows wait on the stuck read")
+    _ = group.wait(timeout: .now() + 20)
+    queue.sync {}
+    expect(cache.waiterCount == 0, "after their deadline none of them is still registered")
+    gate.release()
+    cache.waitForPendingResolves()
 }
 
 print("first flow harness: PASS")
