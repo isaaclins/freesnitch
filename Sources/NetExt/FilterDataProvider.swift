@@ -1409,7 +1409,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
                     return
                 }
             }
-            finish(false)
+            finish(DispatchTime.now() >= wait.deadline)
         }
         // The deadline holds the only strong reference: the wait lives until
         // it, and a resolve that finishes later finds nothing to wake.

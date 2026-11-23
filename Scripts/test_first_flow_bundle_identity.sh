@@ -244,22 +244,27 @@ do {
 do {
     let gateA = Gate()
     let gateB = Gate()
+    let bStarted = DispatchSemaphore(value: 0)
     let cache = BundleIdentifierCache(
         read: { _ in .read(AppBundleMetadata(bundleIdentifier: "com.example.app", version: "1.0")) },
-        identify: { _, token in (token?.first == 2 ? gateB : gateA).wait(); return .resolved(signed) },
+        identify: { _, token in
+            if token?.first == 2 { bStarted.signal(); gateB.wait() } else { gateA.wait() }
+            return .resolved(signed)
+        },
         codeHash: { token in token.map { CDHash(($0.first == 2 ? 2 : 1, 0, 0)) } })
     _ = cache.cachedIdentity(forExecutablePath: app, auditToken: token)      // A's check, held
     let b = cache.cachedIdentity(forExecutablePath: app, auditToken: otherToken)
     expect(b.pending, "a second app instance with other code waits while the first one's check runs")
     let done = DispatchSemaphore(value: 0)
     var result: (RuleAction, Bool)?
-    cache.whenIdentityKnown(forExecutablePath: app, auditToken: otherToken, timeout: 10, queue: queue) { identity, timedOut in
+    cache.whenIdentityKnown(forExecutablePath: app, auditToken: otherToken, timeout: 30, queue: queue) { identity, timedOut in
         result = (matcher.decision(for: withIdentity(flow(), identity.metadata), prepared: denies, defaultMode: .silentAllow), timedOut)
         done.signal()
     }
     queue.sync {}
     gateA.release()
-    cache.waitForPendingResolves()
+    // B's own check starts only after A's finished and woke the wait.
+    expect(bStarted.wait(timeout: .now() + 20) == .success, "the first instance's check finishing starts the second one's")
     queue.sync {}
     expect(result == nil, "the first instance's check finishing does not decide the second one's flow")
     gateB.release()
@@ -276,15 +281,28 @@ do {
     let group = DispatchGroup()
     for _ in 0..<50 {
         group.enter()
-        cache.whenIdentityKnown(forExecutablePath: app, auditToken: token, timeout: 0.2, queue: queue) { _, _ in group.leave() }
+        cache.whenIdentityKnown(forExecutablePath: app, auditToken: token, timeout: 60, queue: queue) { _, _ in group.leave() }
     }
     queue.sync {}
-    expect(cache.waiterCount == 50, "fifty paused flows wait on the stuck read")
+    expect(cache.waiterCount == 50, "fifty paused flows wait on a running read")
+    gate.release()
     _ = group.wait(timeout: .now() + 20)
     queue.sync {}
-    expect(cache.waiterCount == 0, "after their deadline none of them is still registered")
-    gate.release()
-    cache.waitForPendingResolves()
+    expect(cache.waiterCount == 0, "the read finishing wakes and unregisters all of them")
+
+    let stuck = Gate()
+    let stuckCache = makeCache(gate: stuck)
+    _ = stuckCache.cachedIdentity(forExecutablePath: app, auditToken: token)
+    let expiring = DispatchGroup()
+    for _ in 0..<50 {
+        expiring.enter()
+        stuckCache.whenIdentityKnown(forExecutablePath: app, auditToken: token, timeout: 0.2, queue: queue) { _, _ in expiring.leave() }
+    }
+    expect(expiring.wait(timeout: .now() + 20) == .success, "fifty waits on a stuck read all end at their deadline")
+    queue.sync {}
+    expect(stuckCache.waiterCount == 0, "after their deadline none of them is still registered")
+    stuck.release()
+    stuckCache.waitForPendingResolves()
 }
 
 print("first flow harness: PASS")
