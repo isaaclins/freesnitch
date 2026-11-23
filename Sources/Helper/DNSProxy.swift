@@ -169,8 +169,9 @@ final class DNSProxy: @unchecked Sendable {
             return isLoopbackV4(address)
         case .ipv6(let address):
             if address.isLoopback { return true }
-            // An IPv4 loopback peer can show up as ::ffff:127.x.y.z.
-            if let mapped = address.asIPv4 { return isLoopbackV4(mapped) }
+            // An IPv4 loopback peer can show up as ::ffff:127.x.y.z. asIPv4
+            // also unwraps IPv4-compatible ::127.x.y.z, which is not loopback.
+            if address.isIPv4Mapped, let mapped = address.asIPv4 { return isLoopbackV4(mapped) }
             return false
         default:
             return false
@@ -184,34 +185,19 @@ final class DNSProxy: @unchecked Sendable {
             throw NSError(domain: "DNSProxy", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad port"])
         }
         var started: [NWListener] = []
-        do {
-            for host in Self.loopbackHosts {
-                // 127.0.0.1 is the address users point their DNS at, so a
-                // failure there stops the proxy. ::1 is served as well, but a
-                // Mac without IPv6 loopback must not lose the IPv4 proxy.
-                let primary = host == Self.loopbackHosts[0]
-                let udp = try NWListener(using: Self.listenerParameters(.udp, host: host, port: p))
-                udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
-                udp.stateUpdateHandler = { [weak self] state in
-                    if case let .failed(err) = state {
-                        PSLog.error(PSLog.dns, "udp listener on \(host) failed: \(err)")
-                        if primary { self?.running = false }
-                    }
-                }
-                let tcp = try NWListener(using: Self.listenerParameters(.tcp, host: host, port: p))
-                tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
-                tcp.stateUpdateHandler = { state in
-                    if case let .failed(err) = state {
-                        PSLog.error(PSLog.dns, "tcp listener on \(host) failed: \(err)")
-                    }
-                }
-                udp.start(queue: queue)
-                tcp.start(queue: queue)
-                started += [udp, tcp]
+        for host in Self.loopbackHosts {
+            // 127.0.0.1 is the address users point their DNS at, so a failure
+            // there stops the proxy. ::1 is served as well, but a Mac without
+            // IPv6 loopback must not lose the IPv4 proxy over it.
+            let primary = host == Self.loopbackHosts[0]
+            do {
+                started += try startListeners(on: host, port: p, primary: primary)
+            } catch where !primary {
+                PSLog.error(PSLog.dns, "dns proxy could not listen on \(host): \(error)")
+            } catch {
+                started.forEach { $0.cancel() }
+                throw error
             }
-        } catch {
-            started.forEach { $0.cancel() }
-            throw error
         }
         self.listeners = started
 
@@ -223,6 +209,29 @@ final class DNSProxy: @unchecked Sendable {
         listeners.forEach { $0.cancel() }
         listeners = []
         running = false
+    }
+
+    /// One UDP and one TCP listener on `host`:`port`. Nothing is started
+    /// unless both could be created, so a throw leaves nothing listening.
+    private func startListeners(on host: NWEndpoint.Host, port: NWEndpoint.Port, primary: Bool) throws -> [NWListener] {
+        let udp = try NWListener(using: Self.listenerParameters(.udp, host: host, port: port))
+        let tcp = try NWListener(using: Self.listenerParameters(.tcp, host: host, port: port))
+        udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
+        udp.stateUpdateHandler = { [weak self] state in
+            if case let .failed(err) = state {
+                PSLog.error(PSLog.dns, "udp listener on \(host) failed: \(err)")
+                if primary { self?.running = false }
+            }
+        }
+        tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
+        tcp.stateUpdateHandler = { state in
+            if case let .failed(err) = state {
+                PSLog.error(PSLog.dns, "tcp listener on \(host) failed: \(err)")
+            }
+        }
+        udp.start(queue: queue)
+        tcp.start(queue: queue)
+        return [udp, tcp]
     }
 
     // MARK: - UDP path

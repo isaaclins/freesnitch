@@ -63,6 +63,8 @@ final class Bound {
     let listeners: [NWListener]
     var tcpAccepted = 0
     var udpReceived = 0
+    /// isLoopbackPeer of every connection the listener really accepted.
+    var peerVerdicts: [Bool] = []
     let lock = NSLock()
     let queue = DispatchQueue(label: "harness")
 
@@ -84,6 +86,7 @@ final class Bound {
             }
             listener.newConnectionHandler = { [weak self] conn in
                 guard let self else { return }
+                self.lock.lock(); self.peerVerdicts.append(DNSProxy.isLoopbackPeer(conn.endpoint)); self.lock.unlock()
                 conn.start(queue: self.queue)
                 if index == 0 {
                     self.lock.lock(); self.tcpAccepted += 1; self.lock.unlock()
@@ -100,6 +103,7 @@ final class Bound {
         for _ in listeners { _ = ready.wait(timeout: .now() + 5) }
         if failed { throw NSError(domain: "harness", code: 1, userInfo: [NSLocalizedDescriptionKey: "listener failed"]) }
     }
+    func verdicts() -> [Bool] { lock.lock(); defer { lock.unlock() }; return peerVerdicts }
     func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (tcpAccepted, udpReceived) }
     func cancel() { listeners.forEach { $0.cancel() } }
 }
@@ -156,7 +160,7 @@ struct Main {
         checks.expect(peer("127.8.9.10"), "127.8.9.10 is a loopback peer")
         checks.expect(peer("::1"), "::1 is a loopback peer")
         checks.expect(peer("::ffff:127.0.0.1"), "::ffff:127.0.0.1 is a loopback peer")
-        for text in ["192.168.1.20", "10.0.0.2", "100.64.1.1", "0.0.0.0", "fe80::1", "2001:db8::1", "::ffff:192.168.1.20", "::"] {
+        for text in ["::127.0.0.1", "192.168.1.20", "10.0.0.2", "100.64.1.1", "0.0.0.0", "fe80::1", "2001:db8::1", "::ffff:192.168.1.20", "::"] {
             checks.expect(!peer(text), "\(text) is not a loopback peer")
         }
         checks.expect(!DNSProxy.isLoopbackPeer(.service(name: "x", type: "_dns._udp", domain: "local", interface: nil)),
@@ -198,6 +202,9 @@ struct Main {
             checks.expect(tcpAfter == tcpBefore, "no tcp connection from \(host) reached the listener")
             checks.expect(udpAfter == udpBefore, "no udp datagram sent to \(host) reached the listener")
         }
+        let realPeers = bound.flatMap { $0.verdicts() }
+        checks.expect(!realPeers.isEmpty && realPeers.allSatisfy { $0 },
+                      "every connection really accepted over loopback passes isLoopbackPeer (\(realPeers.count) seen)")
         bound.forEach { $0.cancel() }
 
         if !external.isEmpty {
@@ -210,6 +217,12 @@ struct Main {
                 var reached = false
                 for host in external where tcpConnects(host, wildPort) { reached = true }
                 checks.expect(reached, "a wildcard bind is reachable through a non-loopback address")
+                // Over a LAN address the peer is that address, not loopback,
+                // so the peer check would close these if the bind ever widened.
+                Thread.sleep(forTimeInterval: 0.3)
+                let lanPeers = wild.verdicts()
+                checks.expect(!lanPeers.isEmpty && !lanPeers.contains(true),
+                              "connections really accepted through a non-loopback address fail isLoopbackPeer (\(lanPeers.count) seen)")
                 wild.cancel()
             } catch {
                 checks.expect(false, "binding the wildcard control listener: \(error)")
