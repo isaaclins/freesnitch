@@ -69,8 +69,7 @@ struct DNSPolicy: Sendable {
 }
 
 final class DNSProxy: @unchecked Sendable {
-    private var udpListener: NWListener?
-    private var tcpListener: NWListener?
+    private var listeners: [NWListener] = []
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.dns", qos: .userInitiated)
     private let upstreamQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.up")
     /// Backstop timers only. Kept off `queue` so a pending ask can never wait
@@ -144,44 +143,94 @@ final class DNSProxy: @unchecked Sendable {
 
     var statistics: (queries: Int, blocked: Int, allowed: Int) { stats.snapshot() }
 
+    /// The proxy only ever serves this Mac. It binds the loopback addresses
+    /// and nothing else, so another device on the same network cannot reach
+    /// it through the Mac's LAN, VPN or any other address (#205). A wildcard
+    /// bind would turn the Mac into an open DoH forwarder for its network.
+    static let loopbackHosts: [NWEndpoint.Host] = [.ipv4(.loopback), .ipv6(.loopback)]
+
+    /// Parameters for one listener pinned to `host`:`port`. Shared with the
+    /// loopback harness so the test binds exactly what the helper binds.
+    static func listenerParameters(_ base: NWParameters, host: NWEndpoint.Host, port: NWEndpoint.Port) -> NWParameters {
+        base.allowLocalEndpointReuse = true
+        base.requiredLocalEndpoint = .hostPort(host: host, port: port)
+        return base
+    }
+
+    /// Defence in depth behind the loopback bind: a connection whose peer is
+    /// not a loopback address is closed before anything is read from it.
+    static func isLoopbackPeer(_ endpoint: NWEndpoint) -> Bool {
+        guard case let .hostPort(host, _) = endpoint else { return false }
+        // IPv4Address.isLoopback only answers for 127.0.0.1, while the whole
+        // of 127.0.0.0/8 is loopback.
+        func isLoopbackV4(_ address: IPv4Address) -> Bool { address.rawValue.first == 127 }
+        switch host {
+        case .ipv4(let address):
+            return isLoopbackV4(address)
+        case .ipv6(let address):
+            if address.isLoopback { return true }
+            // An IPv4 loopback peer can show up as ::ffff:127.x.y.z.
+            if let mapped = address.asIPv4 { return isLoopbackV4(mapped) }
+            return false
+        default:
+            return false
+        }
+    }
+
     func start(port: UInt16 = 53) throws {
         if running { return }   // already listening; avoid re-binding port 53
         self.port = port
-        let params = NWParameters.udp
-        params.allowLocalEndpointReuse = true
         guard let p = NWEndpoint.Port(rawValue: port) else {
             throw NSError(domain: "DNSProxy", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad port"])
         }
-        let udp = try NWListener(using: params, on: p)
-        udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
-        udp.stateUpdateHandler = { [weak self] state in
-            if case let .failed(err) = state {
-                PSLog.error(PSLog.dns, "udp listener failed: \(err)")
-                self?.running = false
+        var started: [NWListener] = []
+        do {
+            for host in Self.loopbackHosts {
+                // 127.0.0.1 is the address users point their DNS at, so a
+                // failure there stops the proxy. ::1 is served as well, but a
+                // Mac without IPv6 loopback must not lose the IPv4 proxy.
+                let primary = host == Self.loopbackHosts[0]
+                let udp = try NWListener(using: Self.listenerParameters(.udp, host: host, port: p))
+                udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
+                udp.stateUpdateHandler = { [weak self] state in
+                    if case let .failed(err) = state {
+                        PSLog.error(PSLog.dns, "udp listener on \(host) failed: \(err)")
+                        if primary { self?.running = false }
+                    }
+                }
+                let tcp = try NWListener(using: Self.listenerParameters(.tcp, host: host, port: p))
+                tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
+                tcp.stateUpdateHandler = { state in
+                    if case let .failed(err) = state {
+                        PSLog.error(PSLog.dns, "tcp listener on \(host) failed: \(err)")
+                    }
+                }
+                udp.start(queue: queue)
+                tcp.start(queue: queue)
+                started += [udp, tcp]
             }
+        } catch {
+            started.forEach { $0.cancel() }
+            throw error
         }
-        udp.start(queue: queue)
-        self.udpListener = udp
-
-        let tparams = NWParameters.tcp
-        tparams.allowLocalEndpointReuse = true
-        let tcp = try NWListener(using: tparams, on: p)
-        tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
-        tcp.start(queue: queue)
-        self.tcpListener = tcp
+        self.listeners = started
 
         running = true
-        PSLog.info(PSLog.dns, "dns proxy listening on \(port) (udp+tcp)")
+        PSLog.info(PSLog.dns, "dns proxy listening on 127.0.0.1 and ::1 port \(port) (udp+tcp)")
     }
 
     func stop() {
-        udpListener?.cancel(); tcpListener?.cancel()
-        udpListener = nil; tcpListener = nil
+        listeners.forEach { $0.cancel() }
+        listeners = []
         running = false
     }
 
     // MARK: - UDP path
     private func handleUDP(_ conn: NWConnection) {
+        guard Self.isLoopbackPeer(conn.endpoint) else {
+            PSLog.error(PSLog.dns, "refused a udp dns query from a non-loopback peer")
+            conn.cancel(); return
+        }
         conn.start(queue: queue)
         receiveUDP(conn)
     }
@@ -199,6 +248,10 @@ final class DNSProxy: @unchecked Sendable {
 
     // MARK: - TCP path
     private func handleTCP(_ conn: NWConnection) {
+        guard Self.isLoopbackPeer(conn.endpoint) else {
+            PSLog.error(PSLog.dns, "refused a tcp dns query from a non-loopback peer")
+            conn.cancel(); return
+        }
         conn.start(queue: queue)
         readTCP(conn, accumulated: Data())
     }

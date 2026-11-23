@@ -1530,6 +1530,22 @@ require_text "$DNS_PROXY" "let policy = policySnapshot()" \
   "the DNS query path does not decide from a single policy snapshot"
 require_text "$DNS_PROXY" "func applyPolicy(mode" \
   "DNSProxy has no combined mode-and-rules transition"
+# The DNS proxy serves this Mac only (#205). Its listeners are pinned to the
+# loopback addresses and every accepted connection is checked for a loopback
+# peer; a listener created on a bare port binds every interface and turns the
+# Mac into an open DoH forwarder for its network.
+require_text "$DNS_PROXY" "base.requiredLocalEndpoint = .hostPort(host: host, port: port)" \
+  "the DNS proxy listeners are not pinned to a loopback address"
+require_text "$DNS_PROXY" "static let loopbackHosts: [NWEndpoint.Host] = [.ipv4(.loopback), .ipv6(.loopback)]" \
+  "the DNS proxy binds something other than 127.0.0.1 and ::1"
+if grep -Eq 'NWListener\(using:[^)]*, on:' "$DNS_PROXY"; then
+  fail "the DNS proxy creates a listener on a bare port, which binds every interface"
+fi
+for path in UDP TCP; do
+  if ! text_within_block "$DNS_PROXY" "private func handle${path}[(]" 'guard Self.isLoopbackPeer(conn.endpoint) else'; then
+    fail "the DNS proxy ${path} path does not refuse non-loopback peers"
+  fi
+done
 if grep -Fq 'didSet { preparedRules' "$DNS_PROXY"; then
   fail "DNSProxy still rebuilds its prepared rules in a didSet, which tears the pairing"
 fi
@@ -1734,4 +1750,4 @@ grep -Fq -- '"-F", "all"' <<<"$unload_body" \
 grep -Eq 'removeItem|"-d"' <<<"$unload_body" \
   && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, a DNS proxy reachable only over loopback, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
