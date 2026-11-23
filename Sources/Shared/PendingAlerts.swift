@@ -468,7 +468,7 @@ public enum PendingAlertRuleFactory {
 
     public static func rule(for descriptor: PendingAlertDescriptor,
                             answer: PendingAlertAnswer,
-                            profile: String = "default",
+                            profile: String,
                             now: Date = Date()) throws -> Rule? {
         guard answer.remember.storesRule else { return nil }
         let scope = answer.scope ?? defaultScope(for: descriptor)

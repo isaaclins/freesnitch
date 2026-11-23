@@ -391,12 +391,13 @@ struct PendingAlertHarness {
                   "an unnamed destination falls back to an address rule")
 
             let answered = PendingAlertAnswer(allow: false, scope: nil, remember: .no)
-            check((try? PendingAlertRuleFactory.rule(for: named, answer: answered)) ?? nil == nil,
+            check((try? PendingAlertRuleFactory.rule(for: named, answer: answered, profile: "default")) ?? nil == nil,
                   "answering without --remember stores no rule")
 
             let forever = try! PendingAlertRuleFactory.rule(
                 for: named,
-                answer: PendingAlertAnswer(allow: true, scope: .domain, remember: .forever))!
+                answer: PendingAlertAnswer(allow: true, scope: .domain, remember: .forever),
+                profile: "default")!
             equal(forever.action, .allow, "an allow answer stores an allow rule")
             equal(forever.scope, .domain, "the requested scope is honored")
             equal(forever.remoteHost, "api.example.com", "the domain rule targets the asked destination")
@@ -410,7 +411,8 @@ struct PendingAlertHarness {
                                     host: "ads.example.com", ip: "", port: 53)
             let rememberedLookup = try! PendingAlertRuleFactory.rule(
                 for: lookup,
-                answer: PendingAlertAnswer(allow: false, scope: .domain, remember: .forever))!
+                answer: PendingAlertAnswer(allow: false, scope: .domain, remember: .forever),
+                profile: "default")!
             equal(rememberedLookup.remoteHost, "ads.example.com", "a remembered DNS answer targets the looked-up name")
             check(rememberedLookup.nameOnlyRejectionReason == nil,
                   "a remembered DNS answer is not refused as a rule that names its app only by name")
@@ -423,6 +425,7 @@ struct PendingAlertHarness {
             let temporary = try! PendingAlertRuleFactory.rule(
                 for: unnamed,
                 answer: PendingAlertAnswer(allow: false, scope: nil, remember: .duration(1800)),
+                profile: "default",
                 now: now)!
             equal(temporary.action, .deny, "a deny answer stores a deny rule")
             equal(temporary.scope, .ip, "an unnamed destination stores an address rule")
@@ -433,13 +436,15 @@ struct PendingAlertHarness {
 
             let port = try! PendingAlertRuleFactory.rule(
                 for: named,
-                answer: PendingAlertAnswer(allow: true, scope: .port, remember: .forever))!
+                answer: PendingAlertAnswer(allow: true, scope: .port, remember: .forever),
+                profile: "default")!
             equal(port.remotePort, 443, "a port rule carries the asked port")
             check(port.remoteHost == nil && port.remoteIP == nil, "a port rule is not also pinned to a destination")
 
             let process = try! PendingAlertRuleFactory.rule(
                 for: named,
-                answer: PendingAlertAnswer(allow: true, scope: .process, remember: .forever))!
+                answer: PendingAlertAnswer(allow: true, scope: .process, remember: .forever),
+                profile: "default")!
             equal(process.scope, .process, "a process rule keeps process scope")
             check(process.remoteHost == nil && process.remoteIP == nil && process.remotePort == nil,
                   "a process rule matches the app rather than one destination")
@@ -454,12 +459,53 @@ struct PendingAlertHarness {
                 do {
                     _ = try PendingAlertRuleFactory.rule(
                         for: alert,
-                        answer: PendingAlertAnswer(allow: true, scope: scope, remember: .forever))
+                        answer: PendingAlertAnswer(allow: true, scope: scope, remember: .forever),
+                profile: "default")
                     check(false, "\(label) is refused")
                 } catch {
                     check(true, "\(label) is refused: \(error.localizedDescription)")
                 }
             }
+        }
+
+        // MARK: a remembered decision lands in the profile that is active (#201)
+        do {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("freesnitch-pending-profile-\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let store = try! RuleStore(path: dir.appendingPathComponent("rules.sqlite").path)
+            _ = try! store.setActiveProfile(name: "home")
+
+            // The same two steps the helper runs for `alerts answer --remember`.
+            let built = try! PendingAlertRuleFactory.rule(
+                for: descriptor(),
+                answer: PendingAlertAnswer(allow: false, scope: .domain, remember: .forever),
+                profile: store.activeProfileName())!
+            var stored: Rule?
+            let enforced = try! store.mutateActivePolicy { draft in
+                stored = draft.appendToActiveProfile(built)
+            }
+            equal(stored?.profile, "home", "a CLI-remembered rule is stored in the active profile")
+            check(enforced.rules.contains { $0.id == built.id && $0.action == .deny },
+                  "the remembered deny is part of the policy enforced while home is active")
+            check(!store.allRules(profile: Profile.defaultName).contains { $0.id == built.id },
+                  "the remembered rule is not parked in the inactive default profile")
+
+            // The profile switches after the rule was built but before it
+            // commits: the rule follows the profile that is enforced.
+            let early = try! PendingAlertRuleFactory.rule(
+                for: descriptor(host: "late.example.com"),
+                answer: PendingAlertAnswer(allow: true, scope: .domain, remember: .forever),
+                profile: store.activeProfileName())!
+            equal(early.profile, "home", "the rule is built while home is active")
+            _ = try! store.setActiveProfile(name: "lockdown")
+            let afterSwitch = try! store.mutateActivePolicy { draft in
+                stored = draft.appendToActiveProfile(early)
+            }
+            equal(stored?.profile, "lockdown", "a rule committed after a switch belongs to the newly active profile")
+            check(afterSwitch.rules.contains { $0.id == early.id },
+                  "the rule committed after a switch is enforced in the newly active profile")
         }
 
         // MARK: durations are bounded on the way in
@@ -555,6 +601,9 @@ require_text "$HELPER" "if !XPCPeerValidator.isCLI(newConnection) {" \
   "the CLI is still refused notification-client status by the helper listener"
 require_text "$HELPER" "XPCPeerValidator.isCLI(connection)" \
   "the helper refuses a pending alert registration from the CLI"
+# A remembered CLI answer is stored in the profile that is enforced (#201).
+require_text "$HELPER" "storedProfile = updated.appendToActiveProfile(rule).profile" \
+  "the helper stores a remembered CLI answer in the active profile"
 # Fail open is still the extension's answer to an unanswered flow.
 require_text "$PROVIDER" "workQueue.asyncAfter(deadline: .now() + askTimeout) { resumeOnce(NEFilterNewFlowVerdict.allow(), .unfiltered) }" \
   "an unanswered flow still resumes with the fail-open allow verdict"
