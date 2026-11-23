@@ -5,6 +5,7 @@ final class PFManager: @unchecked Sendable {
     static let anchorName = "puresnitch"
     private let anchorPath: String
     private let pfctl: String
+    private let pfConfPath: String
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.pf")
     private var loaded = false
 
@@ -33,9 +34,11 @@ final class PFManager: @unchecked Sendable {
 
     /// The paths are parameters only so a harness can point them at a scratch
     /// file and a stub; the helper always uses the defaults.
-    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl") {
+    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl",
+         pfConfPath: String = "/etc/pf.conf") {
         self.anchorPath = anchorPath
         self.pfctl = pfctl
+        self.pfConfPath = pfConfPath
     }
 
     /// Loads the anchor with `rules`, the policy in force right now. Loading
@@ -546,20 +549,74 @@ final class PFManager: @unchecked Sendable {
         onWarning?(message)
     }
 
+    /// Makes pf.conf attach the anchor to packet processing and load it from
+    /// the anchor file at boot. Only active directives count: a comment such
+    /// as `# anchor "puresnitch"`, or an attach without its load, used to be
+    /// taken as both, so FreeSnitch loaded its rules into an anchor no packet
+    /// ever passed through (issue #206). Only the missing directives are
+    /// added, at the end, and the user's own lines are left as they are.
     private func ensureMainPFConfReferencesAnchor() throws {
-        let path = "/etc/pf.conf"
-        guard let original = try? String(contentsOfFile: path, encoding: .utf8) else { return }
-        if original.contains("anchor \"puresnitch\"") { return }
-        var lines = original.components(separatedBy: "\n")
-        if !lines.contains(where: { $0.contains("anchor \"puresnitch\"") }) {
-            lines.append("anchor \"puresnitch\"")
-            lines.append("load anchor \"puresnitch\" from \"/etc/pf.anchors/puresnitch\"")
-        }
-        let backup = path + ".puresnitch.bak"
+        guard let original = try? String(contentsOfFile: pfConfPath, encoding: .utf8) else { return }
+        guard let updated = PFManager.pfConfAttachingAnchor(original, anchorPath: anchorPath) else { return }
+        let backup = pfConfPath + ".puresnitch.bak"
         if !FileManager.default.fileExists(atPath: backup) {
             try? original.write(toFile: backup, atomically: true, encoding: .utf8)
         }
-        try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        try updated.write(toFile: pfConfPath, atomically: true, encoding: .utf8)
+    }
+
+    /// `text` with an active `anchor "puresnitch"` and an active
+    /// `load anchor "puresnitch" from "<anchorPath>"` appended where they are
+    /// missing, or nil when both are already there.
+    static func pfConfAttachingAnchor(_ text: String, anchorPath: String) -> String? {
+        let directives = pfConfDirectives(text)
+        let attached = directives.contains { $0.count >= 2 && $0[0] == "anchor" && $0[1] == anchorName }
+        let loaded = directives.contains {
+            $0.count >= 5 && $0[0] == "load" && $0[1] == "anchor" && $0[2] == anchorName
+                && $0[3] == "from" && $0[4] == anchorPath
+        }
+        if attached && loaded { return nil }
+        var updated = text
+        if !updated.isEmpty && !updated.hasSuffix("\n") { updated += "\n" }
+        if !attached { updated += "anchor \"\(anchorName)\"\n" }
+        if !loaded { updated += "load anchor \"\(anchorName)\" from \"\(anchorPath)\"\n" }
+        return updated
+    }
+
+    /// The words of each active line of a pf.conf, as pfctl reads them: a
+    /// backslash at the end of a line continues it, `#` outside quotes starts
+    /// a comment that runs to the end of the line, and a quoted string is one
+    /// word without its quotes.
+    static func pfConfDirectives(_ text: String) -> [[String]] {
+        let joined = text.replacingOccurrences(of: "\\\r\n", with: " ").replacingOccurrences(of: "\\\n", with: " ")
+        var directives: [[String]] = []
+        for line in joined.split(whereSeparator: \.isNewline) {
+            var words: [String] = []
+            var word = ""
+            var inWord = false
+            var quote: Character?
+            loop: for c in line {
+                if let q = quote {
+                    if c == q { quote = nil } else { word.append(c) }
+                    continue
+                }
+                switch c {
+                case "#":
+                    break loop
+                case "\"", "'":
+                    quote = c
+                    inWord = true
+                case " ", "\t":
+                    if inWord { words.append(word); word = ""; inWord = false }
+                default:
+                    word.append(c)
+                    inWord = true
+                }
+            }
+            if inWord { words.append(word) }
+            if !words.isEmpty { directives.append(words) }
+        }
+        return directives
     }
 
     @discardableResult
