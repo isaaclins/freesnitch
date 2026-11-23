@@ -580,7 +580,7 @@ final class PFManager: @unchecked Sendable {
         // A last line ending in a backslash continues onto the next line, so
         // the attach would become part of it (a comment, say). An empty line
         // ends it first.
-        if updated.hasSuffix("\\\n") || updated.hasSuffix("\\\r\n") { updated += "\n" }
+        if updated.hasSuffix("\\\n") { updated += "\n" }
         if !attached { updated += "anchor \"\(anchorName)\"\n" }
         if !loaded { updated += "load anchor \"\(anchorName)\" from \"\(anchorPath)\"\n" }
         return updated
@@ -618,32 +618,51 @@ final class PFManager: @unchecked Sendable {
         var i = 0
         while i < chars.count {
             let c = chars[i]
-            if c == "\\" {
-                if i + 1 < chars.count, chars[i + 1] == "\n" { i += 2; continue }
-                if i + 2 < chars.count, chars[i + 1] == "\r", chars[i + 2] == "\n" { i += 3; continue }
-                if let q = quote, i + 1 < chars.count, chars[i + 1] == q {
-                    word.unicodeScalars.append(q)
-                    i += 2
-                    continue
-                }
-            }
-            i += 1
+            let next: Unicode.Scalar? = i + 1 < chars.count ? chars[i + 1] : nil
+            let lineEndAfter = next == "\n"
+
             if let q = quote {
-                if c == q { quote = nil } else if c != "\n" && c != "\r" { word.unicodeScalars.append(c) }
+                // Inside quotes: a backslash before a line end joins the
+                // lines, one before the quote keeps it, and a bare line end
+                // is dropped.
+                if c == "\\" && lineEndAfter { i += 2; continue }
+                if c == "\\" && next == q { word.unicodeScalars.append(q); i += 2; continue }
+                i += 1
+                if c == q {
+                    // A quoted string is a word of its own.
+                    quote = nil
+                    endWord()
+                } else if c != "\n" {
+                    word.unicodeScalars.append(c)
+                }
                 continue
             }
+
+            // Outside quotes a backslash pairs with the next character: before
+            // a line end it joins the lines, before anything else it stands
+            // for that character. So `\\` followed by a line end ends the line.
+            var ch = c
+            if c == "\\" {
+                if lineEndAfter { i += 2; continue }
+                if let next { ch = next; i += 2 } else { i += 1 }
+            } else {
+                i += 1
+            }
+
             if inComment {
-                if c == "\n" { inComment = false; endLine() }
+                if ch == "\n" { inComment = false; endLine() }
                 continue
             }
-            switch c {
+            switch ch {
             case "\n":
                 endLine()
             case "#":
                 endWord()
                 inComment = true
-            case "\"", "'":
-                quote = c
+            case "\"", "'" where !inWord:
+                // A quote only opens a string at the start of a word; inside
+                // an unquoted word pfctl keeps it as a plain character.
+                quote = ch
                 inWord = true
             case " ", "\t", "\r":
                 endWord()
@@ -653,8 +672,12 @@ final class PFManager: @unchecked Sendable {
             case "}":
                 endWord()
                 depth = max(0, depth - 1)
+            case "(", ")", "<", ">", "!", "=", "/", ",":
+                // pfctl ends an unquoted word at these and reads them apart.
+                endWord()
+                words.append(String(ch))
             default:
-                word.unicodeScalars.append(c)
+                word.unicodeScalars.append(ch)
                 inWord = true
             }
         }

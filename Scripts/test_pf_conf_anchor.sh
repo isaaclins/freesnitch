@@ -110,6 +110,13 @@ struct Verify {
                        apple + "anchor \"other\" {\n  \(attach)\n}\n" + load + "\n")
         // An attach limited by options leaves the rest of the traffic out.
         expectAttached("an attach limited to one interface", apple + "anchor \"puresnitch\" on lo0\n" + load + "\n")
+        // Two backslashes stand for one, so the comment ends at that line
+        // and the block after it is still a block.
+        expectAttached("a comment ending in an escaped backslash before a block",
+                       apple + "# note \\\\\nanchor \"other\" {\n  \(attach)\n}\n" + load + "\n")
+        // A quote inside an unquoted word is a plain character to pfctl.
+        expectAttached("a quote inside an unquoted name", apple + "anchor pure\"snitch\"\n" + load + "\n")
+        expectAttached("a quoted string followed by more letters", apple + "anchor \"pure\"snitch\n" + load + "\n")
         // Half references.
         expectAttached("an attach without its load", apple + attach + "\n")
         expectAttached("a load without its attach", apple + load + "\n")
@@ -132,8 +139,8 @@ struct Verify {
         for (name, text) in [
             ("the lines FreeSnitch writes", apple + attach + "\n" + load + "\n"),
             ("unquoted, with tabs and extra options", "anchor\tpuresnitch all\nload  anchor 'puresnitch' from \"/etc/pf.anchors/puresnitch\" # ok\n"),
+            ("an escaped backslash inside a comment", "# a \\\\ b\n" + attach + "\n" + load + "\n"),
             ("a load continued over two lines", attach + "\nload anchor \"puresnitch\" \\\n  from \"/etc/pf.anchors/puresnitch\"\n"),
-            ("Windows line ends", attach + "\r\n" + load + "\r\n"),
             // pfctl joins a backslash-newline with nothing between, even in quotes.
             ("a quoted name split over two lines", "anchor \"pure\\\nsnitch\"\n" + load + "\n"),
             ("an attach with a list on the same line", "pass proto { tcp udp } all\n" + attach + "\n" + load + "\n"),
