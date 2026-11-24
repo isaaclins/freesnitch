@@ -1373,7 +1373,15 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         let base = "\(verdict) \(alert.processName.isEmpty ? "an unnamed process" : alert.processName) to \(alert.destination)."
         let rule: Rule?
         do {
-            rule = try PendingAlertRuleFactory.rule(for: alert, answer: answer, now: now)
+            // The rule belongs to the profile the user is in, like a rule the
+            // GUI alert panel remembers. Stored under "default" while another
+            // profile was active, it was reported remembered but never
+            // enforced there (#201). The name is read again when the rule
+            // commits, below.
+            rule = try PendingAlertRuleFactory.rule(for: alert,
+                                                    answer: answer,
+                                                    profile: store.activeProfileName(),
+                                                    now: now)
         } catch {
             return PendingAlertAnswerResponse(id: alert.id,
                                               state: .answered,
@@ -1403,13 +1411,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                                               ruleMessage: reason,
                                               message: "\(base) No rule was stored: \(reason)")
         }
+        var storedProfile = rule.profile
         do {
             try RuleTransportBoundary.validate(rule: rule)
             _ = try mutatePolicy { draft in
-                var updated = draft.rules
-                updated.append(rule)
-                try RuleTransportBoundary.validate(rules: updated)
-                draft.rules = updated
+                // Stamp the profile that is active as this commits, so a
+                // profile switch between building the rule and storing it
+                // cannot park the rule in a profile that is not enforced.
+                var updated = draft
+                storedProfile = updated.appendToActiveProfile(rule).profile
+                try RuleTransportBoundary.validate(rules: updated.rules)
+                draft = updated
             }
         } catch {
             return PendingAlertAnswerResponse(id: alert.id,
@@ -1439,7 +1451,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                                           ruleStored: true,
                                           ruleID: rule.id,
                                           ruleMessage: ruleMessage,
-                                          message: "\(base) Remembered \(remembered) with \(scope) scope.")
+                                          message: "\(base) Remembered \(remembered) with \(scope) scope in the \(storedProfile) profile.")
     }
 
     func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void) {

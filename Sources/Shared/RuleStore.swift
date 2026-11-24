@@ -45,10 +45,27 @@ public final class RuleStore: @unchecked Sendable {
         /// Set to also write this mode to the active profile, in the same
         /// transaction. What is enforced is the active profile's mode.
         public var activeProfileMode: AppMode?
+        /// The profile that is active while this mutation commits, read in
+        /// the same critical section. A rule that belongs to "the profile the
+        /// user is in" takes its name from here, so a profile switch cannot
+        /// land between reading the name and storing the rule (#201).
+        public internal(set) var activeProfileName: String
 
-        public init(mode: AppMode, rules: [Rule]) {
+        public init(mode: AppMode, rules: [Rule], activeProfileName: String = Profile.defaultName) {
             self.mode = mode
             self.rules = rules
+            self.activeProfileName = activeProfileName
+        }
+
+        /// Appends a rule that belongs to the profile the user is in, stamped
+        /// with the profile active as this mutation commits, and returns the
+        /// rule as stored.
+        @discardableResult
+        public mutating func appendToActiveProfile(_ rule: Rule) -> Rule {
+            var stamped = rule
+            stamped.profile = activeProfileName
+            rules.append(stamped)
+            return stamped
         }
     }
 
@@ -517,7 +534,9 @@ public final class RuleStore: @unchecked Sendable {
 
     private func mutatePolicyLocked(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
         let current = policyStateLocked()
-        var draft = PolicyDraft(mode: current.mode, rules: current.rules)
+        var draft = PolicyDraft(mode: current.mode,
+                                rules: current.rules,
+                                activeProfileName: activeProfileLocked()?.name ?? Profile.defaultName)
         try change(&draft)
         guard current.generation < UInt64.max else {
             throw PolicyStoreError.generationExhausted
