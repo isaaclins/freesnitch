@@ -102,7 +102,7 @@ A rule names the remote side, so a deny's incoming half is written `from` it. Th
 
 `RuleMatcher.decision(for:rules:defaultMode:)` walks enabled, unexpired rules in `priority DESC` order. First match wins. No match = fall back to active mode (`alert` → `.ask`, `silentAllow` → `.allow`, `silentDeny` → `.deny`).
 
-Host glob: `*.example.com`, `.example.com` both match.
+Host glob: `*.example.com` and `.example.com` both match `example.com` and its subdomains (`api.example.com`), never a name that only ends in the same text (`notexample.com`).
 IP CIDR: `10.0.0.0/8` matches anywhere in that block.
 Process: bundle ID match wins; otherwise the rule's path covers the process at exactly that path and anything inside it as a folder (`/usr/local/bin/node` does not match `/usr/local/bin/nodemon`, `/Applications/X.app` covers its helpers).
 
