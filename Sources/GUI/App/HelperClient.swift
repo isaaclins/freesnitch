@@ -1057,7 +1057,7 @@ final class HelperClient: NSObject, ObservableObject {
     /// The IP and CIDR feeds and what they block now (#209). A helper too old
     /// to answer says so rather than showing an empty list.
     func listIPFeeds(completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void) {
-        ipFeedsCall(completion: completion) { proxy, reply in
+        ipFeedsCall(timeout: 15, completion: completion) { proxy, reply in
             guard proxy.listIPFeeds != nil else { return false }
             proxy.listIPFeeds?(reply: reply)
             return true
@@ -1068,15 +1068,32 @@ final class HelperClient: NSObject, ObservableObject {
     /// hands the new set to pf before it answers.
     func setIPFeedEnabled(_ id: UUID, enabled: Bool,
                           completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void) {
-        ipFeedsCall(completion: completion) { proxy, reply in
+        // The helper downloads every enabled feed before it answers, and one
+        // feed may take up to its 30-second request timeout.
+        ipFeedsCall(timeout: 120, completion: completion) { proxy, reply in
             guard proxy.setIPFeedEnabled != nil else { return false }
             proxy.setIPFeedEnabled?(idString: id.uuidString, enabled: enabled, reply: reply)
             return true
         }
     }
 
-    private func ipFeedsCall(completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void,
+    /// A helper that takes the request and never answers must not leave the
+    /// switch disabled on "Downloading…": the first of the answer, the
+    /// transport error and the timeout wins, and the others are dropped.
+    private func ipFeedsCall(timeout: TimeInterval,
+                             completion done: @MainActor @escaping (IPFeedsReport?, String?) -> Void,
                              _ invoke: (HelperProtocol, @escaping (Data, String?) -> Void) -> Bool) {
+        var finished = false
+        let completion: @MainActor (IPFeedsReport?, String?) -> Void = { report, error in
+            guard !finished else { return }
+            finished = true
+            done(report, error)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+            MainActor.assumeIsolated {
+                completion(nil, String(localized: "The helper did not answer within \(Int(timeout)) seconds."))
+            }
+        }
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
             Task { @MainActor in
                 completion(nil, String(localized: "Could not reach the privileged helper: \(error.sentence)"))

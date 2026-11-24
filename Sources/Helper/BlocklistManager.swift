@@ -191,9 +191,13 @@ final class BlocklistManager: @unchecked Sendable {
     }
 
     /// The feeds and what they block, for the app and the command-line tool.
-    func ipFeedsReport(enforcementEnabled: Bool, resolverAddresses: [String] = []) -> IPFeedsReport {
-        let policy = ipBlocklistPolicy(enforcementEnabled: enforcementEnabled, resolverAddresses: resolverAddresses)
-        return IPFeedsReport(feeds: policy.feeds, status: policy.status)
+    func ipFeedsReport(enforcementEnabled: Bool,
+                       addressTableRefused: Bool = false,
+                       resolverAddresses: [String] = []) -> IPFeedsReport {
+        let refused = enforcementEnabled && addressTableRefused && !currentIPBlocklist().isEmpty
+        let policy = ipBlocklistPolicy(enforcementEnabled: enforcementEnabled && !refused,
+                                       resolverAddresses: resolverAddresses)
+        return IPFeedsReport(feeds: policy.feeds, status: policy.status, addressTableRefused: refused)
     }
 
     /// Downloads every enabled address feed and rebuilds the matcher.

@@ -650,11 +650,19 @@ public struct IPBlocklistPolicy: Sendable {
 public struct IPFeedsReport: Codable, Sendable, Equatable {
     public var feeds: [IPBlocklistFeed]
     public var status: IPBlocklistStatus
+    /// pf refused the anchor with the address table in it, so the anchor was
+    /// loaded without it and the feeds block nothing. `status` then reports
+    /// enforcement as off for the feeds; callers show this instead of its
+    /// summary, which would blame the enforcement switch.
+    public var addressTableRefused: Bool
 
-    public init(feeds: [IPBlocklistFeed], status: IPBlocklistStatus) {
+    public init(feeds: [IPBlocklistFeed], status: IPBlocklistStatus, addressTableRefused: Bool = false) {
         self.feeds = feeds
         self.status = status
+        self.addressTableRefused = addressTableRefused
     }
+
+    public static let refusedSummary = "The firewall refused the address table, so the feeds are blocking nothing. Your own rules still apply."
 
     /// The feed a user named, by id or by name, ignoring case. Nil when
     /// nothing matches or a name matches more than one feed.

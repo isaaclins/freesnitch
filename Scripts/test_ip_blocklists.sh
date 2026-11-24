@@ -824,6 +824,11 @@ struct IPBlocklistHarness {
         checks.expect(report.feed(named: feedID.lowercased())?.id.uuidString == feedID,
                       "a feed must be found by its id, ignoring case")
         checks.expect(report.feed(named: "no such feed") == nil, "an unknown feed name must find nothing")
+        let refused = manager.ipFeedsReport(enforcementEnabled: true, addressTableRefused: true)
+        checks.expect(refused.addressTableRefused && refused.status.blockingEntryCount == 0,
+                      "when pf refused the address table the report must say the feeds block nothing")
+        checks.expect(!manager.ipFeedsReport(enforcementEnabled: false, addressTableRefused: true).addressTableRefused,
+                      "with enforcement off a refused table is not the reason nothing is blocked")
         if let encoded = try? FreeSnitchWireCodec.encode(report),
            let decoded = try? FreeSnitchWireCodec.decode(IPFeedsReport.self, from: encoded) {
             checks.expect(decoded == report, "the report must survive the XPC encoding unchanged")

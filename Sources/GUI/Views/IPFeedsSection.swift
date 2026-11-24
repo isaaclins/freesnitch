@@ -32,9 +32,16 @@ struct IPFeedsSection: View {
                     .disabled(!state.helperConnected || pending.contains(feed.id))
                     .help(URL(string: feed.url)?.host ?? feed.url)
                 }
-                Text(report.status.summary)
-                    .font(.caption).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if report.addressTableRefused {
+                    Label("The firewall refused the address table, so the feeds are blocking nothing. Your own rules still apply.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(report.status.summary)
+                        .font(.caption).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else if !state.helperConnected {
                 Text("The feeds live in the privileged helper, so they can be changed once the helper is connected.")
                     .font(.caption).foregroundColor(.secondary)
@@ -91,7 +98,8 @@ struct IPFeedsSection: View {
     private func load(keepingFailure: Bool = false) {
         guard state.helperConnected else { return }
         if DemoMode.isOn {
-            if report == nil { report = Self.demoReport(enforcing: state.enforcementEnabled) }
+            report = report.map { Self.demoReport(from: $0, enforcing: state.enforcementEnabled) }
+                ?? Self.demoReport(enforcing: state.enforcementEnabled)
             return
         }
         state.helper.listIPFeeds { value, error in

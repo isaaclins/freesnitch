@@ -181,7 +181,7 @@ enum CLIParser {
         case "blocklist":
             command = try parseBlocklist(Array(arguments.dropFirst()))
         case "ip-feeds":
-            var cursor = TokenCursor(tokens: Array(arguments.dropFirst()))
+            let cursor = TokenCursor(tokens: Array(arguments.dropFirst()))
             try cursor.requireEnd("ip-feeds")
             command = .ipFeeds
         case "ip-feed":

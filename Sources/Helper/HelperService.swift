@@ -1043,6 +1043,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// the report is told, not the preference (#22, #209).
     private func currentIPFeedsReport() -> IPFeedsReport {
         blocklists.ipFeedsReport(enforcementEnabled: pf.isLoaded,
+                                 addressTableRefused: pf.isIPBlocklistRefused,
                                  resolverAddresses: configuredResolverAddresses())
     }
 

@@ -1068,7 +1068,8 @@ final class CLIRunner {
             return line
         }.joined(separator: "\n")
         let feeds = report.feeds.isEmpty ? "IP feeds: none." : listing
-        return feeds + "\n\n" + report.status.summary + "\n" + Self.ipFeedScopeNote
+        let summary = report.addressTableRefused ? IPFeedsReport.refusedSummary : report.status.summary
+        return feeds + "\n\n" + summary + "\n" + Self.ipFeedScopeNote
     }
 
     static let ipFeedScopeNote = "IP feeds block connections to the listed addresses in the pf firewall, for every app, while enforcement is on. Loopback, DHCP, private and shared ranges, and your DNS servers are never blocked."

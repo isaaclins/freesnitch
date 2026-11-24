@@ -10553,6 +10553,16 @@
         }
       }
     },
+    "The firewall refused the address table, so the feeds are blocking nothing. Your own rules still apply." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Брандмауэр отклонил таблицу адресов, поэтому источники ничего не блокируют. Ваши собственные правила по-прежнему действуют."
+          }
+        }
+      }
+    },
     "The helper did not answer the Insights query within 10 seconds." : {
       "localizations" : {
         "ru" : {

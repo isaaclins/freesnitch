@@ -18,6 +18,10 @@ final class PFManager: @unchecked Sendable {
 
     private let stateLock = NSLock()
     private var ipBlocklist: IPBlocklistSet = .empty
+    /// True after pf refused the anchor with the address table in it and the
+    /// anchor was loaded without it, so the feeds are blocking nothing even
+    /// though enforcement is on (#209).
+    private var ipBlocklistRefused = false
     private var resolverAddresses: [String] = []
     private var lastRules: [Rule] = []
 
@@ -114,6 +118,12 @@ final class PFManager: @unchecked Sendable {
 
     var isLoaded: Bool { loaded }
 
+    var isIPBlocklistRefused: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return ipBlocklistRefused
+    }
+
     /// The rules the anchor renders the next time it is written.
     var currentRules: [Rule] {
         stateLock.lock()
@@ -171,9 +181,13 @@ final class PFManager: @unchecked Sendable {
         try writeAnchorFile(rules: rules, includeIPBlocklist: true)
         do {
             try loadAnchor()
+            stateLock.lock()
+            ipBlocklistRefused = false
+            stateLock.unlock()
         } catch {
             stateLock.lock()
             let hadBlocklist = !ipBlocklist.isEmpty
+            if hadBlocklist { ipBlocklistRefused = true }
             stateLock.unlock()
             guard hadBlocklist else { throw error }
             onWarning?(
