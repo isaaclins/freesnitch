@@ -574,6 +574,9 @@ final class AppState: ObservableObject {
     private enum SilentAllowReason {
         case knownContact
         case queueFull(Int)
+        /// Repeats of a question that was already on screen, logged once when
+        /// that question closes (#245).
+        case sameQuestionOnScreen(Int)
     }
 
     private func recordSilentAllow(_ c: Connection, because reason: SilentAllowReason) {
@@ -586,6 +589,8 @@ final class AppState: ObservableObject {
             message = String(localized: "Allowed \(name) to reach \(destination) without asking, because this app already reaches it.")
         case .queueFull(let waiting):
             message = String(localized: "Allowed \(name) to reach \(destination) without asking, because \(waiting) questions were already waiting.")
+        case .sameQuestionOnScreen(let count):
+            message = String(localized: "Allowed \(name) to reach \(destination) \(count) more times without asking, because the same question was already on screen.")
         }
         appendLog(level: "warning", message: message)
     }
@@ -739,22 +744,13 @@ final class AppState: ObservableObject {
         guard let index = pendingAlerts.firstIndex(where: { $0.id == id }) else { return false }
         let alert = pendingAlerts.remove(at: index)
         alert.reply(allow, remember)
-        recordRepeatsAllowed(while: alert)
+        // The repeats it let through while it waited, as one line in the same
+        // log as the other silent allows: one per question rather than one per
+        // repeat, so a chatty app cannot flood the log (#245).
+        if alert.repeatsAllowed > 0 {
+            recordSilentAllow(alert.connection, because: .sameQuestionOnScreen(alert.repeatsAllowed))
+        }
         return true
-    }
-
-    /// The repeats a question collected while it waited, as one line in the
-    /// same log as the other silent allows. One line per question rather than
-    /// one per repeat, so a chatty app cannot flood the log (#245).
-    private func recordRepeatsAllowed(while alert: PendingAlert) {
-        let count = alert.repeatsAllowed
-        guard count > 0 else { return }
-        let c = alert.connection
-        let name = c.processName.isEmpty ? String(localized: "An app") : c.processName
-        let host = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
-        let destination = host.isEmpty ? String(localized: "a destination") : host
-        appendLog(level: "warning",
-                  message: String(localized: "Allowed \(name) to reach \(destination) \(count) more times without asking, because the same question was already on screen."))
     }
 
     func firstContactContext(for connection: Connection) -> String? {

@@ -621,7 +621,7 @@ require_text "$APP_STATE" "PendingAlertRegistry.defaultDecision" \
 # these it went through with no record at all.
 require_text "$APP_STATE" "pendingAlerts[waitingIndex].repeatsAllowed += 1" \
   "a repeat of a waiting question is counted on that question"
-require_text "$APP_STATE" "recordRepeatsAllowed(while: alert)" \
+require_text "$APP_STATE" "recordSilentAllow(alert.connection, because: .sameQuestionOnScreen(alert.repeatsAllowed))" \
   "closing a question logs the repeats it let through"
 require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" "alert.repeatsAllowed" \
   "the alert shows how many repeats were let through while it waited"
