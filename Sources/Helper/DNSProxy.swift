@@ -80,7 +80,31 @@ final class DNSProxy: @unchecked Sendable {
     /// query can leave this proxy without a reply.
     private let askBackstopTimeout: TimeInterval = 65
     private(set) var port: UInt16 = 53
-    private(set) var running = false
+    /// Whether the proxy is fully serving 127.0.0.1. Written from XPC queues
+    /// by start and stop and from `queue` by a listener that fails, so it
+    /// lives behind a lock. Each start or stop begins a new generation, and
+    /// a failure only clears `running` for the generation that started the
+    /// failed listener, so a late failure can't undo a newer start.
+    private let stateLock = NSLock()
+    private var isRunning = false
+    private var generation: UInt64 = 0
+    var running: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return isRunning
+    }
+
+    /// Starts a new generation with the given running state.
+    private func beginGeneration(running: Bool) -> UInt64 {
+        stateLock.lock(); defer { stateLock.unlock() }
+        generation &+= 1
+        isRunning = running
+        return generation
+    }
+
+    private func primaryListenerFailed(generation failed: UInt64) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        if generation == failed { isRunning = false }
+    }
 
     /// The whole policy lives in one value behind one lock. Writers arrive on
     /// XPC and blocklist queues, readers on the DNS queue from `NWConnection`
@@ -184,11 +208,14 @@ final class DNSProxy: @unchecked Sendable {
         guard let p = NWEndpoint.Port(rawValue: port) else {
             throw NSError(domain: "DNSProxy", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad port"])
         }
-        // A failed 127.0.0.1 UDP listener clears `running` while the other
+        // A failed 127.0.0.1 listener clears `running` while the other
         // listeners from the last start may still hold their ports. Cancel
         // them so this start binds cleanly instead of leaking them.
         listeners.forEach { $0.cancel() }
         listeners = []
+        // Running from before the first listener starts: a bind can fail on
+        // `queue` before this function returns, and that failure must stick.
+        let gen = beginGeneration(running: true)
         var started: [NWListener] = []
         var hosts: [String] = []
         for host in Self.loopbackHosts {
@@ -201,33 +228,32 @@ final class DNSProxy: @unchecked Sendable {
             // bad 127.0.0.1 listener stops the start, a bad ::1 one is logged.
             let primary = host == Self.loopbackHosts[0]
             do {
-                started += try startListeners(on: host, port: p, primary: primary)
+                started += try startListeners(on: host, port: p, primary: primary, generation: gen)
                 hosts.append("\(host)")
             } catch where !primary {
                 PSLog.error(PSLog.dns, "dns proxy could not create its listeners on \(host): \(error)")
             } catch {
                 started.forEach { $0.cancel() }
+                _ = beginGeneration(running: false)
                 throw error
             }
         }
         self.listeners = started
-
-        running = true
         PSLog.info(PSLog.dns, "dns proxy listening on \(hosts.joined(separator: " and ")) port \(port) (udp+tcp)")
     }
 
     func stop() {
         listeners.forEach { $0.cancel() }
         listeners = []
-        running = false
+        _ = beginGeneration(running: false)
     }
 
     /// One UDP and one TCP listener on `host`:`port`. Nothing is started
     /// unless both could be created, so a throw leaves nothing listening.
-    private func startListeners(on host: NWEndpoint.Host, port: NWEndpoint.Port, primary: Bool) throws -> [NWListener] {
+    private func startListeners(on host: NWEndpoint.Host, port: NWEndpoint.Port, primary: Bool, generation: UInt64) throws -> [NWListener] {
         let udp = try NWListener(using: Self.listenerParameters(.udp, host: host, port: port))
         let tcp = try NWListener(using: Self.listenerParameters(.tcp, host: host, port: port))
-        let primaryFailed: () -> Void = { [weak self] in self?.running = false }
+        let primaryFailed: () -> Void = { [weak self] in self?.primaryListenerFailed(generation: generation) }
         udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
         udp.stateUpdateHandler = Self.listenerStateHandler("udp", host: host, primary: primary, onPrimaryFailure: primaryFailed)
         tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
