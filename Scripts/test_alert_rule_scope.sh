@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regression harness for #64.
+# Regression harness for #64 and #224.
 #
 # A remembered alert decision for a destination with no host name must produce
 # a rule that matches ONLY that address. The failure this guards against is
@@ -80,12 +80,50 @@ let broken = Rule(processBundleId: approved.processBundleId,
 check(matcher.matches(rule: broken, connection: unrelated),
       "a rule with an empty destination really does match everything, which is why it must never be stored")
 
+// #224: the extension reports an address-only flow with the address in BOTH
+// fields. "This host" must store an address rule, and that rule must keep
+// matching the address when a later flow to it carries a name.
+func rememberedThisHost(_ c: Connection, action: RuleAction) -> Rule {
+    let (host, ip) = c.rememberedHostDestination
+    return Rule(processBundleId: c.processBundleId,
+                processPath: c.processPath,
+                processName: c.processName,
+                remoteHost: host,
+                remoteIP: ip,
+                direction: c.direction,
+                action: action,
+                scope: host == nil ? .ip : .domain,
+                priority: 100)
+}
+let numericFlow = connection(host: "203.0.113.10", ip: "203.0.113.10")
+let numericDeny = rememberedThisHost(numericFlow, action: .deny)
+check(numericDeny.remoteHost == nil && numericDeny.remoteIP == "203.0.113.10" && numericDeny.scope == .ip,
+      "This host on an address-only flow stores an address rule (#224)")
+let namedLater = connection(host: "api.example.com", ip: "203.0.113.10")
+check(matcher.decision(for: namedLater, rules: [numericDeny], defaultMode: .silentAllow) == .deny,
+      "the remembered address deny still blocks that address when a later flow carries a name (#224)")
+check(matcher.decision(for: connection(host: "api.example.com", ip: "198.51.100.77"), rules: [numericDeny], defaultMode: .silentAllow) == .allow,
+      "the remembered address deny does not block the same name at another address")
+let v6Deny = rememberedThisHost(connection(host: "2001:db8::10", ip: "2001:db8::10"), action: .deny)
+check(v6Deny.remoteHost == nil && v6Deny.remoteIP == "2001:db8::10" && v6Deny.scope == .ip,
+      "an IPv6 address-only flow also stores an address rule")
+let named = rememberedThisHost(connection(host: "api.example.com", ip: "203.0.113.10"), action: .allow)
+check(named.remoteHost == "api.example.com" && named.remoteIP == nil && named.scope == .domain,
+      "a flow with a real name still stores a host rule")
+check(!matcher.matches(rule: named, connection: connection(host: "other.example.com", ip: "203.0.113.10")),
+      "a host rule does not widen to every name sharing that address")
+let ipOnlyIP = rememberedThisHost(connection(host: "", ip: "203.0.113.10"), action: .allow)
+check(ipOnlyIP.remoteHost == nil && ipOnlyIP.remoteIP == "203.0.113.10",
+      "a flow with an empty name still stores its address")
+
 // And the guard that stops it being created at all.
 let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
 check(source.contains("scopedIP = ruleIP") && source.contains("remoteIP: scopedIP"),
       "AppState carries the remote address into the remembered rule")
 check(source.contains("hasDestination"),
       "AppState refuses to store a remembered rule with an empty destination")
+check(source.contains("rememberedHostDestination"),
+      "AppState picks the remembered destination with the shared helper")
 
 if failures > 0 {
     print("alert rule scope verification: FAILED (\(failures))")
