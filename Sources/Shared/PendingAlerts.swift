@@ -759,3 +759,19 @@ public final class PendingAlertRegistry: @unchecked Sendable {
         }
     }
 }
+
+extension Connection {
+    /// What a remembered "This host" answer keys on: the name when the flow
+    /// carries a real one, the address otherwise. The extension puts the
+    /// address in `remoteHost` when a flow has no name, so testing that field
+    /// for emptiness stored a numeric address as a hostname rule (#224). Such
+    /// a rule is an address rule, and it has to keep matching that address
+    /// when a later flow to it also carries a name.
+    public var rememberedHostDestination: (host: String?, ip: String?) {
+        let kind = remoteHost.isEmpty ? nil : PFHostValidator.kind(for: remoteHost)
+        if !remoteHost.isEmpty, kind != .ip, kind != .cidr {
+            return (remoteHost, nil)
+        }
+        return (nil, remoteIP.isEmpty ? remoteHost : remoteIP)
+    }
+}

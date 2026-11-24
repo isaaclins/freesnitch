@@ -805,9 +805,10 @@ final class AppState: ObservableObject {
         // destination tests in the matcher, because each is an `if let`, and
         // silently becomes "this process, anywhere": an allow would grant far
         // more than the user approved. See issue #64.
-        let usesAddress = alert.connection.remoteHost.isEmpty
-        let ruleHost: String? = usesAddress ? nil : alert.connection.remoteHost
-        let ruleIP: String? = usesAddress ? host : nil
+        // A numeric address in the name field is an address, not a name
+        // (#224): the rule stores it as one.
+        let (ruleHost, ruleIP) = alert.connection.rememberedHostDestination
+        let usesAddress = ruleHost == nil
         let hasDestination = !(ruleHost ?? ruleIP ?? "").isEmpty
         // "Anywhere" is the one scope with no destination, and it is only safe
         // because the user asked for it by name. It still needs something to
