@@ -249,7 +249,9 @@ final class BlocklistManager: @unchecked Sendable {
                 entries.append(contentsOf: built.acceptedEntries.prefix(loaded))
                 feeds[index].loadedEntryCount = loaded
                 if built.acceptedEntries.count > remaining {
-                    feeds[index].lastError = "combined IP blocklist range limit reached; feed tail was not loaded"
+                    feeds[index].lastError = loaded == 0
+                        ? "combined IP blocklist range limit reached by earlier feeds; this feed was not loaded"
+                        : "combined IP blocklist range limit reached; feed tail was not loaded"
                 }
             case .some(.failure(let reason)):
                 feeds[index].lastError = reason
