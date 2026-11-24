@@ -856,18 +856,31 @@ struct IPBlocklistHarness {
             func release() { lock.lock(); released = true; lock.unlock() }
             func isReleased() -> Bool { lock.lock(); defer { lock.unlock() }; return released }
         }
+        /// Waits for a signal from the other side, but never forever: a
+        /// regression where a download never starts fails the harness
+        /// instead of hanging it.
+        @Sendable func waitFor(_ what: String, _ condition: @escaping @Sendable () -> Bool) async {
+            let deadline = Date().addingTimeInterval(30)
+            while !condition() {
+                if Date() > deadline {
+                    FileHandle.standardError.write(Data("ip blocklist harness: FAIL: gave up waiting for \(what)\n".utf8))
+                    exit(1)
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+        }
         let gate = Gate()
         let slowFirstFeed = IPBlocklistCatalog.defaults[0].id
         manager.ipFeedFetcher = { feed in
             if feed.id == slowFirstFeed && !gate.isStarted() {
                 gate.markStarted()
-                while !gate.isReleased() { try? await Task.sleep(nanoseconds: 1_000_000) }
+                await waitFor("the slow download to be released") { gate.isReleased() }
                 return .body("198.51.100.0/24\n")
             }
             return feed.id == slowFirstFeed ? .body("203.0.113.0/24\n") : .body("192.0.2.0/24\n")
         }
         let slow = Task { await manager.refreshIPBlocklists() }
-        while !gate.isStarted() { try? await Task.sleep(nanoseconds: 1_000_000) }
+        await waitFor("the slow download to start") { gate.isStarted() }
         checks.expect(manager.setIPFeedEnabled(idString: secondID, enabled: true),
                       "turning the second feed on must succeed while a download is running")
         await manager.refreshIPBlocklists()
@@ -903,32 +916,44 @@ struct IPBlocklistHarness {
         let thirdFetches = Counter()
         let toggleGate = Gate()
         let overtakerGate = Gate()
+        let toggleDownloadReturned = Gate()
         manager.ipFeedFetcher = { feed in
             if feed.id == thirdFeed.id {
                 let call = thirdFetches.bump()
                 let gate: Gate? = call == 1 ? toggleGate : (call == 2 ? overtakerGate : nil)
                 if let gate {
                     gate.markStarted()
-                    while !gate.isReleased() { try? await Task.sleep(nanoseconds: 1_000_000) }
+                    await waitFor("download \(call) to be released") { gate.isReleased() }
                 }
+                if call == 1 { toggleDownloadReturned.markStarted() }
                 return .body("198.18.0.0/15\n100.24.0.0/16\n")
             }
             return feed.id == slowFirstFeed ? .body("203.0.113.0/24\n") : .body("192.0.2.0/24\n")
         }
         // The toggle's download starts, then a newer refresh starts and is
-        // still downloading when the toggle's download finishes and is dropped.
-        let toggle = Task { await manager.setIPFeedEnabledAndRefresh(idString: thirdFeed.id.uuidString, enabled: true) }
-        while !toggleGate.isStarted() { try? await Task.sleep(nanoseconds: 1_000_000) }
+        // still downloading when the toggle's download finishes and is
+        // dropped. The toggle must answer only once that newer refresh, which
+        // already carries the change, is published, and must not download
+        // again: two switches flipped together used to keep cancelling each
+        // other's downloads that way.
+        let toggle = Task { () -> IPBlocklistFeed? in
+            let ok = await manager.setIPFeedEnabledAndRefresh(idString: thirdFeed.id.uuidString, enabled: true)
+            checks.expect(ok, "a toggle overtaken by another refresh must still succeed")
+            return manager.ipFeedsReport(enforcementEnabled: true).feeds.first(where: { $0.id == thirdFeed.id })
+        }
+        await waitFor("the toggle's download to start") { toggleGate.isStarted() }
         let overtaker = Task { await manager.refreshIPBlocklists() }
-        while !overtakerGate.isStarted() { try? await Task.sleep(nanoseconds: 1_000_000) }
+        await waitFor("the newer refresh's download to start") { overtakerGate.isStarted() }
         toggleGate.release()
-        checks.expect(await toggle.value, "a toggle overtaken by another refresh must still succeed")
-        let afterToggle = manager.ipFeedsReport(enforcementEnabled: true).feeds.first(where: { $0.id == thirdFeed.id })
+        await waitFor("the toggle's download to finish") { toggleDownloadReturned.isStarted() }
+        for _ in 0..<50 { await Task.yield() }
+        overtakerGate.release()
+        let afterToggle = await toggle.value
         checks.expect(afterToggle?.enabled == true && afterToggle?.lastUpdated != nil && afterToggle?.entryCount == 1,
                       "the toggle's answer must carry the counts of a download after it, got \(String(describing: afterToggle))")
-        overtakerGate.release()
-        checks.expect(!(await overtaker.value), "the refresh the toggle's retry overtook must drop its result")
-        checks.expect(thirdFetches.read() >= 2, "a toggle whose download was dropped must download again, got \(thirdFetches.read()) downloads")
+        checks.expect(await overtaker.value, "the newer refresh that carries the toggle must publish")
+        checks.expect(thirdFetches.read() == 2,
+                      "an overtaken toggle must wait for the newer refresh, not download again, got \(thirdFetches.read()) downloads")
         checks.expect(publishedAnchor.contains("100.24.0.0/16"), "the toggled feed's entries must reach the pf table")
         checks.expect(!publishedAnchor.contains("198.18.0.0/15"), "a proxy fake-IP range must never reach the pf table")
         checks.expect(await manager.setIPFeedEnabledAndRefresh(idString: thirdFeed.id.uuidString, enabled: false),

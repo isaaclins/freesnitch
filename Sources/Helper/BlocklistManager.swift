@@ -28,6 +28,10 @@ final class BlocklistManager: @unchecked Sendable {
     /// Held while a refresh result is stored and handed to pf, so two results
     /// are never published out of order.
     private let ipPublishLock = NSLock()
+    /// The number of the last refresh whose result was published, and the
+    /// toggles waiting for a refresh newer than their own change to publish.
+    private var ipPublishedGeneration = 0
+    private var ipPublishWaiters: [(after: Int, resume: CheckedContinuation<Void, Never>)] = []
 
     /// Called after every IP feed refresh with the newly built set. Wiring
     /// this is what pushes address blocking into pf.
@@ -267,17 +271,33 @@ final class BlocklistManager: @unchecked Sendable {
         return applyIPEntries(entries, to: feeds, generation: generation)
     }
 
-    /// A toggle followed by a refresh whose result is the one published, so
-    /// the caller can answer with counts from a download that started after
-    /// the toggle (#493). When another refresh overtakes this one, this one
-    /// is dropped, so it downloads again; the attempts are bounded, and after
-    /// the last one the caller still answers with what is current.
-    func setIPFeedEnabledAndRefresh(idString: String, enabled: Bool, attempts: Int = 3) async -> Bool {
+    /// A toggle, then a refresh, returning once a refresh that started after
+    /// the toggle has been published, so the caller answers with counts from
+    /// a download that already includes the change (#493).
+    ///
+    /// When another refresh overtakes this one, this one is dropped and the
+    /// newer one carries the change, because it read the feeds after the
+    /// toggle. So this waits for that one instead of downloading again, which
+    /// let two switches flipped close together keep cancelling each other's
+    /// downloads. Every toggle is followed by a refresh, and the newest
+    /// refresh always publishes, so the wait always ends.
+    func setIPFeedEnabledAndRefresh(idString: String, enabled: Bool) async -> Bool {
         guard setIPFeedEnabled(idString: idString, enabled: enabled) else { return false }
-        for _ in 0..<max(1, attempts) {
-            if await refreshIPBlocklists() { break }
-        }
+        let toggleGeneration = queue.sync { ipRefreshGeneration }
+        if await refreshIPBlocklists() { return true }
+        await waitForIPPublish(after: toggleGeneration)
         return true
+    }
+
+    private func waitForIPPublish(after generation: Int) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let alreadyPublished: Bool = queue.sync {
+                if ipPublishedGeneration > generation { return true }
+                ipPublishWaiters.append((generation, continuation))
+                return false
+            }
+            if alreadyPublished { continuation.resume() }
+        }
     }
 
     /// The current address matcher. Immutable, so a caller can hold it across
@@ -308,11 +328,20 @@ final class BlocklistManager: @unchecked Sendable {
             guard generation == ipRefreshGeneration else { return nil }
             ipSet = set
             ipFeedsCache = feeds
+            ipPublishedGeneration = generation
             return feeds
         }
         guard let published else { return false }
         storeIPFeeds(published)
         onIPBlocklistUpdate?(set, published)
+        // Released once pf has the set, so a waiting toggle answers with what
+        // is enforced.
+        let ready: [CheckedContinuation<Void, Never>] = queue.sync {
+            let due = ipPublishWaiters.filter { $0.after < generation }.map(\.resume)
+            ipPublishWaiters.removeAll { $0.after < generation }
+            return due
+        }
+        ready.forEach { $0.resume() }
         return true
     }
 
