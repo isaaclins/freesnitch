@@ -5,6 +5,7 @@ final class PFManager: @unchecked Sendable {
     static let anchorName = "puresnitch"
     private let anchorPath: String
     private let pfctl: String
+    private let pfConfPath: String
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.pf")
     private var loaded = false
 
@@ -33,9 +34,11 @@ final class PFManager: @unchecked Sendable {
 
     /// The paths are parameters only so a harness can point them at a scratch
     /// file and a stub; the helper always uses the defaults.
-    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl") {
+    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl",
+         pfConfPath: String = "/etc/pf.conf") {
         self.anchorPath = anchorPath
         self.pfctl = pfctl
+        self.pfConfPath = pfConfPath
     }
 
     /// Loads the anchor with `rules`, the policy in force right now. Loading
@@ -61,10 +64,15 @@ final class PFManager: @unchecked Sendable {
         loaded = true
     }
 
+    /// Turns enforcement off. Throws when FreeSnitch cannot confirm the kernel
+    /// anchor is empty: the old rules may still be in force, so reporting
+    /// success would show the firewall off while it can still block (issue
+    /// #211). The anchor then stays marked as loaded, so status keeps saying
+    /// pf is active and rule edits keep reaching the rules that are left.
     func uninstall() throws {
         applyLock.lock()
         defer { applyLock.unlock() }
-        unloadLocked()
+        if let error = unloadLocked() { throw error }
     }
 
     /// Run once when the helper starts, before it accepts any client. The
@@ -74,8 +82,8 @@ final class PFManager: @unchecked Sendable {
     /// recorded and pf kept enforcing what the user had since changed (issue
     /// #189). Clearing them fails open: the app turns enforcement back on with
     /// the current rules as soon as it reconnects. Throws when the kernel
-    /// anchor could not be flushed: no client is connected yet to hear a
-    /// warning, so the helper reports it in its status instead.
+    /// anchor could not be confirmed empty: no client is connected yet to hear
+    /// a warning, so the helper reports it in its status instead.
     func clearLeftoverAnchor() throws {
         applyLock.lock()
         defer { applyLock.unlock() }
@@ -87,12 +95,14 @@ final class PFManager: @unchecked Sendable {
     /// load of pf.conf (boot, a VPN, another tool) brought them back while
     /// FreeSnitch reported enforcement off (issue #190). The file is emptied,
     /// not deleted: pf.conf still names it, and a missing file would make that
-    /// load fail. Caller holds `applyLock`. Returns why the kernel anchor
-    /// could not be flushed, if it could not.
+    /// load fail. Caller holds `applyLock`.
+    ///
+    /// The kernel anchor counts as empty when either the flush or loading an
+    /// empty rule set into it succeeds. When both fail, nothing confirms the
+    /// old rules are gone, so the anchor keeps its loaded state and its expiry
+    /// timer, and the error is returned for the caller to report (issue #211).
     @discardableResult
     private func unloadLocked() -> Error? {
-        expiryTimer?.cancel()
-        expiryTimer = nil
         if FileManager.default.fileExists(atPath: anchorPath) {
             do {
                 try PFManager.emptyAnchor.write(toFile: anchorPath, atomically: true, encoding: .utf8)
@@ -102,11 +112,23 @@ final class PFManager: @unchecked Sendable {
                     + "back FreeSnitch's last rules: \(error.localizedDescription)")
             }
         }
-        var flushError: Error?
-        do { try run(pfctl, ["-a", PFManager.anchorName, "-F", "all"]) } catch { flushError = error }
-        _ = try? run(pfctl, ["-a", PFManager.anchorName, "-f", "/dev/null"])
+        let flushError: Error?
+        do { _ = try run(pfctl, ["-a", PFManager.anchorName, "-F", "all"]); flushError = nil } catch { flushError = error }
+        let emptyLoadError: Error?
+        do { _ = try run(pfctl, ["-a", PFManager.anchorName, "-f", "/dev/null"]); emptyLoadError = nil } catch {
+            emptyLoadError = error
+        }
+        if let flushError, let emptyLoadError {
+            let message = "FreeSnitch could not empty its pf anchor, so its last firewall rules may still be "
+                + "active. Flushing it failed: \(flushError.localizedDescription). Loading an empty rule set "
+                + "failed: \(emptyLoadError.localizedDescription)"
+            PSLog.error(PSLog.pf, message)
+            return NSError(domain: "PFManager", code: 211, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        expiryTimer?.cancel()
+        expiryTimer = nil
         loaded = false
-        return flushError
+        return nil
     }
 
     /// What the anchor file holds while enforcement is off: no rules at all.
@@ -553,7 +575,7 @@ final class PFManager: @unchecked Sendable {
     }
 
     private func ensureMainPFConfReferencesAnchor() throws {
-        let path = "/etc/pf.conf"
+        let path = pfConfPath
         guard let original = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         if original.contains("anchor \"puresnitch\"") { return }
         var lines = original.components(separatedBy: "\n")

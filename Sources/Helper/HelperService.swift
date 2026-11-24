@@ -987,8 +987,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 clearPFError()
                 reply(true, nil)
             } catch {
+                // The old rules may still be in pf, so this is not "off":
+                // keep the error in status and tell the caller (issue #211).
                 recordPFError(error)
-                reply(false, "\(error)")
+                reply(false, error.localizedDescription)
             }
         }
     }
@@ -1099,7 +1101,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             recordPFError(error)
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
@@ -1111,7 +1113,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             recordPFError(error)
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
