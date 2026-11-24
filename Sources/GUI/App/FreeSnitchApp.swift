@@ -252,13 +252,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // without this it is the one screen nobody can review before it
                 // ships. The reply is a no-op here; nothing is enforced.
                 case "alert": self.seedDemoAlert()
+                // An address macOS reported without a port, as for ping (#223).
+                case "alert-noport": self.seedDemoAlert(port: 0)
                 default: break
                 }
             }
         }
     }
 
-    private func seedDemoAlert() {
+    private func seedDemoAlert(port: Int = 443) {
         // Built here rather than picked out of `state.connections`: a running
         // helper replaces that list with live data, so the demo alert appeared
         // or did not depending on what the Mac happened to be doing.
@@ -267,9 +269,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     processName: "Discord",
                                     processPath: "/Applications/Discord.app",
                                     processBundleId: "com.hnc.Discord",
-                                    remoteHost: "gateway.discord.gg",
+                                    remoteHost: port > 0 ? "gateway.discord.gg" : "",
                                     remoteIP: "162.159.128.233",
-                                    remotePort: 443,
+                                    remotePort: port,
                                     direction: .outgoing,
                                     status: .pending,
                                     bytesIn: 0,

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regression harness for #64.
+# Regression harness for #64 and #223.
 #
 # A remembered alert decision for a destination with no host name must produce
 # a rule that matches ONLY that address. The failure this guards against is
@@ -87,6 +87,56 @@ check(source.contains("scopedIP = ruleIP") && source.contains("remoteIP: scopedI
 check(source.contains("hasDestination"),
       "AppState refuses to store a remembered rule with an empty destination")
 
+// #223: "This address and port" needs both. A flow macOS reports with port 0
+// (ICMP, or no port known) must not get it, because the rule it saved had no
+// port and so covered the address on every port.
+func flow(ip: String, port: Int) -> Connection {
+    Connection(pid: 501, processName: "Demo",
+               processPath: "/Applications/Demo.app/Contents/MacOS/Demo",
+               processBundleId: "com.example.demo",
+               remoteHost: "", remoteIP: ip, remotePort: port, direction: .outgoing)
+}
+check(flow(ip: "203.0.113.10", port: 443).canPinAddressAndPort,
+      "an address with a real port can be remembered as address and port")
+check(!flow(ip: "203.0.113.10", port: 0).canPinAddressAndPort,
+      "an address with port 0 is NOT offered as address and port")
+check(!flow(ip: "", port: 443).canPinAddressAndPort,
+      "a port without an address is NOT offered as address and port")
+check(!flow(ip: "0.0.0.0", port: 443).canPinAddressAndPort && !flow(ip: "::", port: 443).canPinAddressAndPort,
+      "the unspecified address is NOT offered as address and port")
+
+// What the old code saved for that alert: the address with no port. It denies
+// the address on a port the alert never showed, which is the bug.
+let portZero = flow(ip: "203.0.113.10", port: 0)
+let wideDeny = Rule(processBundleId: portZero.processBundleId,
+                    processPath: portZero.processPath,
+                    processName: portZero.processName,
+                    remoteIP: portZero.remoteIP,
+                    remotePort: nil,
+                    direction: .outgoing, action: .deny, scope: .ip, priority: 100)
+check(matcher.decision(for: flow(ip: "203.0.113.10", port: 443), rules: [wideDeny], defaultMode: .alert) == .deny,
+      "a remembered address rule with no port really does deny every port, which is why port 0 must never produce one")
+
+// The rule AppState builds when the pair is real is pinned to that port.
+let pinned = Rule(processBundleId: approved.processBundleId,
+                  processPath: approved.processPath,
+                  processName: approved.processName,
+                  remoteIP: approved.remoteIP,
+                  remotePort: approved.remotePort,
+                  direction: .outgoing, action: .deny, scope: .ip, priority: 100)
+check(matcher.decision(for: approved, rules: [pinned], defaultMode: .alert) == .deny,
+      "an address-and-port deny blocks the port it was made for")
+check(matcher.decision(for: flow(ip: approved.remoteIP, port: 8443), rules: [pinned], defaultMode: .alert) != .deny,
+      "an address-and-port deny does NOT block the same address on another port")
+
+check(source.contains("effectiveScope == .thisAddressAndPort && !alert.connection.canPinAddressAndPort"),
+      "AppState remembers nothing for address and port when the pair is not real")
+check(!source.contains("remotePort > 0 ? alert.connection.remotePort : nil"),
+      "AppState no longer saves an address-and-port answer without its port")
+let view = try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)
+check(view.contains("ForEach(availableScopes)") && view.contains("alert.connection.canPinAddressAndPort"),
+      "the alert only offers address and port when the connection has both")
+
 if failures > 0 {
     print("alert rule scope verification: FAILED (\(failures))")
     exit(1)
@@ -104,4 +154,4 @@ xcrun swiftc -O \
     "$WORK/main.swift" "${SHARED[@]}" \
     -lsqlite3
 
-"$WORK/harness" "$ROOT/Sources/GUI/ViewModels/AppState.swift"
+"$WORK/harness" "$ROOT/Sources/GUI/ViewModels/AppState.swift" "$ROOT/Sources/GUI/Views/ConnectionAlert.swift"

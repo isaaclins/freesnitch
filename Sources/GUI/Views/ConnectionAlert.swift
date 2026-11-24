@@ -40,6 +40,15 @@ struct ConnectionAlertView: View {
         }
     }
 
+    /// The scopes this connection can really be remembered at. Without a
+    /// known address and port, "This address and port" would save a rule for
+    /// the address on every port (#223), so it is not offered.
+    private var availableScopes: [AppState.RememberScope] {
+        AppState.RememberScope.allCases.filter {
+            $0 != .thisAddressAndPort || alert.connection.canPinAddressAndPort
+        }
+    }
+
     /// What the answer will actually create, in the same words the Rules table
     /// uses, so the two can be recognised as the same thing.
     private var ruleSummary: String {
@@ -137,7 +146,7 @@ struct ConnectionAlertView: View {
             Form {
                 Toggle("Remember this decision", isOn: $remember)
                 Picker("Applies to", selection: $scope) {
-                    ForEach(AppState.RememberScope.allCases) { s in Text(s.title).tag(s) }
+                    ForEach(availableScopes) { s in Text(s.title).tag(s) }
                 }.disabled(!remember)
                 Picker("Expires", selection: $duration) {
                     ForEach(AppState.RememberDuration.allCases) { d in Text(d.title).tag(d) }
@@ -172,6 +181,12 @@ struct ConnectionAlertView: View {
         }
         .padding(20)
         .frame(width: 440)
+        // The next alert reuses this view and its choices. A scope the new
+        // connection cannot have falls back to the default instead of being
+        // applied to it unseen.
+        .onChange(of: alert.id) { _ in
+            if !availableScopes.contains(scope) { scope = .thisHost }
+        }
     }
 
     private var processName: String {

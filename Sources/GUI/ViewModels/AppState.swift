@@ -815,11 +815,18 @@ final class AppState: ObservableObject {
         // than becoming a rule that matches every flow on the Mac.
         let processIdentity = !(alert.connection.processBundleId ?? "").isEmpty
             || !(alert.connection.processPath.isEmpty)
-        var effectiveScope = (scope == .anywhere && !processIdentity) ? .thisHost : scope
-        // Pinning to an address needs an address. Without one, the honest
-        // narrowing is the host, not a rule keyed on a bare port number.
-        if effectiveScope == .thisAddressAndPort && alert.connection.remoteIP.isEmpty {
-            effectiveScope = .thisHost
+        let effectiveScope = (scope == .anywhere && !processIdentity) ? .thisHost : scope
+        // Pinning to an address and port needs both. Without them there is
+        // no rule as narrow as the one asked for: the host would cover every
+        // port, and a rule with no port covers the address on every port
+        // (#223). Answer this flow and remember nothing, which never blocks
+        // or allows more than the user chose. The dialog does not offer the
+        // scope then, so this only catches an answer that arrives anyway.
+        if effectiveScope == .thisAddressAndPort && !alert.connection.canPinAddressAndPort {
+            if remember {
+                appendLog(level: "info", message: String(localized: "This connection has no address and port to remember, so the answer applied to this connection only."))
+            }
+            return
         }
         let needsDestination = effectiveScope != .anywhere
         if remember && (!needsDestination || (!isUnspecified && hasDestination)) {
@@ -836,10 +843,9 @@ final class AppState: ObservableObject {
                 scopedIP = ruleIP
                 ruleScope = usesAddress ? .ip : .domain
             case .thisAddressAndPort:
+                // Both are real here: `canPinAddressAndPort` was checked above.
                 scopedIP = alert.connection.remoteIP
-                // ICMP and flows without a known port carry 0, which is no
-                // port to scope to (#218): the rule covers the address.
-                scopedPort = alert.connection.remotePort > 0 ? alert.connection.remotePort : nil
+                scopedPort = alert.connection.remotePort
                 ruleScope = .ip
             }
             let rule = Rule(
