@@ -44,7 +44,8 @@ final class VPNMonitor: ObservableObject {
     func refresh() {
         if DemoMode.isOn {
             vpns = DemoMode.showsVPN ? [DemoMode.sampleVPN] : []
-            systemResolvers = DemoMode.showsVPN ? DemoMode.sampleVPN.dnsServers : ["192.168.1.1"]
+            systemResolvers = DemoMode.sampleResolvers
+                ?? (DemoMode.showsVPN ? DemoMode.sampleVPN.dnsServers : ["192.168.1.1"])
             return
         }
         guard let store else { vpns = []; systemResolvers = []; return }

@@ -18,6 +18,15 @@ enum DemoMode {
                                      dnsServers: ["100.100.100.100", "fd7a:115c:a1e0::53"],
                                      matchDomains: [], handlesAllLookups: true)
 
+    /// `FREESNITCH_DEMO_DNS=192.168.1.20,9.9.9.9`: the DNS servers a demo
+    /// reports for this Mac, for reviewing what Settings says about them
+    /// (#205). Without it a demo shows 192.168.1.1.
+    static var sampleResolvers: [String]? {
+        guard isOn, let list = ProcessInfo.processInfo.environment["FREESNITCH_DEMO_DNS"] else { return nil }
+        let servers = list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return servers.isEmpty ? nil : servers
+    }
+
     /// `FREESNITCH_DEMO_SETTINGS_PANE=dns` opens Settings on that pane.
     static var settingsPane: String? {
         isOn ? ProcessInfo.processInfo.environment["FREESNITCH_DEMO_SETTINGS_PANE"] : nil
