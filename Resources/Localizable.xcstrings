@@ -12637,6 +12637,16 @@
         }
       }
     },
+    "Use a port from 1 through 65535, or leave it empty for every port." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите порт от 1 до 65535 или оставьте поле пустым для всех портов."
+          }
+        }
+      }
+    },
     "Use an HTTPS URL with a host, such as https://cloudflare-dns.com/dns-query." : {
       "localizations" : {
         "ru" : {
