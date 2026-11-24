@@ -129,6 +129,9 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// Bumped by every registration and every reset, so a late answer or a
     /// scheduled attempt from before it is ignored.
     private var ipcRegistration = 0
+    /// "Extension IPC unavailable." was logged for the current outage, so the
+    /// spaced retries do not repeat it.
+    private var ipcUnavailableLogged = false
 
     init(state: AppState, demo: Bool = DemoMode.isOn) {
         self.state = state
@@ -882,12 +885,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                 // this answer moot: its "unavailable" must not overwrite the
                 // newer link's status or schedule another attempt.
                 guard let self, registration == self.ipcRegistration else { return }
-                let retrying = !ok && self.ipcReconnect.attempts > 0
                 if ok {
-                    self.ipcReconnect.connected()
+                    self.ipcUnavailableLogged = false
                     state.appendLog(level: "info", message: String(localized: "Connected to network extension."))
-                } else if !retrying {
-                    // Logged once per episode, not for every spaced retry.
+                } else if !self.ipcUnavailableLogged {
+                    // Logged once per outage, not for every spaced retry.
+                    self.ipcUnavailableLogged = true
                     state.appendLog(level: "error", message: String(localized: "Extension IPC unavailable."))
                 }
                 self.recordSnapshotStatus(remoteStatus)
@@ -912,7 +915,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case .alreadyScheduled, .gaveUp:
             return
         case .exhausted:
-            let message = String(localized: "FreeSnitch could not connect to the network extension again. Rule changes and alerts reach it again after FreeSnitch is quit and opened, or the filter is turned off and on.")
+            let message = String(localized: "FreeSnitch lost its connection to the network extension. Quit and reopen FreeSnitch, or turn the filter off and on, to get rule changes and alerts back.")
             state?.appendLog(level: "error", message: message)
             os_log("%{public}@", log: log, type: .error, message)
         case .retry(let delay):
@@ -1031,6 +1034,8 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         self.snapshotStatus = snapshotStatus
         if snapshotStatus.isReady {
             snapshotRecovery.noteHealthy()
+            // The link works again: a later drop gets the full budget (#212).
+            ipcReconnect.policyDelivered()
             state?.recordFilterRecovery(nil)
         } else {
             recoverFromSnapshotRejection(snapshotStatus)

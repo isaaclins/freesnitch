@@ -176,8 +176,10 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         }
         newConnection.interruptionHandler = { [weak self, weak newConnection] in
             // The extension process went away (its filter was restarted, or
-            // macOS replaced it). Nothing reconnects this one by itself.
+            // macOS replaced it). Nothing reconnects this one by itself, so it
+            // is closed; its invalidation no longer counts as a second loss.
             if self?.clearCurrentConnection(newConnection) == true { self?.onAppConnectionLost?() }
+            newConnection?.invalidate()
         }
         // A connection from an earlier registration is closed, so the old
         // extension process is not left holding it. It is no longer current,

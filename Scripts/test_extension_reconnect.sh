@@ -36,8 +36,8 @@ expect(reconnect.linkLost() == .alreadyScheduled, "one loss scheduled two attemp
 reconnect.attemptStarted()
 expect(reconnect.linkLost() == .retry(after: ExtensionReconnect.delays[1]), "a failed attempt was not retried")
 reconnect.attemptStarted()
-reconnect.connected()
-expect(reconnect.attempts == 0, "a link that came back did not return the budget")
+reconnect.policyDelivered()
+expect(reconnect.attempts == 0, "a link that delivered the rules again did not return the budget")
 expect(reconnect.linkLost() == .retry(after: ExtensionReconnect.delays[0]),
        "a later drop did not start again from the shortest wait")
 print("extension reconnect harness: a dropped link is retried until the extension takes it")
@@ -62,6 +62,16 @@ expect(waited >= 60 && waited <= 180, "the attempts cover \(waited) s, not a pro
 stuck.reset()
 expect(stuck.linkLost() == .retry(after: ExtensionReconnect.delays[0]),
        "turning the filter on again did not allow new attempts")
+// An extension that takes the registration and drops it again before any
+// rules arrive must not be reconnected forever.
+var flapping = ExtensionReconnect()
+var flaps = 0
+while case .retry = flapping.linkLost() {
+    flapping.attemptStarted()  // registered, accepted, and dropped again
+    flaps += 1
+    expect(flaps <= ExtensionReconnect.delays.count, "an accept-then-drop extension is reconnected without end")
+}
+print("extension reconnect harness: an extension that keeps dropping the link is given up on after \(flaps) attempts")
 print("extension reconnect harness: attempts are bounded and spaced (\(Int(waited)) s in all)")
 
 // A reset drops an attempt that was still scheduled, so the next loss is
@@ -100,8 +110,9 @@ check_wiring() {
   register="$(function_body "$ipc" 'public func register(')"
   lost="$(function_body "$sem" 'private func extensionLinkLost(')"
   show="$(function_body "$sem" 'private func showNotFiltering(')"
-  local reg_app
+  local reg_app record
   reg_app="$(function_body "$sem" 'private func registerIPC(')"
+  record="$(function_body "$sem" 'private func recordSnapshotStatus(')"
 
   # The restart registers again, since the old link may reach a process that
   # is gone. Resending the rules alone went over the dead link.
@@ -124,6 +135,15 @@ check_wiring() {
   grep -Fq 'self.extensionLinkLost()' <<<"$reg_app" || { echo "a failed registration is not retried"; return 1; }
   grep -Fq 'registration == self.ipcRegistration' <<<"$reg_app" \
     || { echo "a stale registration answer can overwrite a newer link"; return 1; }
+  # The budget comes back only once the extension accepted the rules.
+  grep -Fq 'ipcReconnect.policyDelivered()' <<<"$record" \
+    || { echo "the reconnect budget never comes back after rules are delivered"; return 1; }
+  if grep -Fq 'ipcReconnect.policyDelivered()' <<<"$reg_app"; then
+    echo "an accepted registration alone returns the budget, so an accept-then-drop extension is reconnected forever"; return 1
+  fi
+  # An interrupted connection is closed, not left open.
+  grep -Fq 'newConnection?.invalidate()' <<<"$register" \
+    || { echo "an interrupted connection is left open"; return 1; }
   # Turning the filter off stops the attempts.
   grep -Fq 'ipcReconnect.reset()' <<<"$show" || { echo "turning the filter off leaves reconnect attempts running"; return 1; }
   return 0
@@ -157,7 +177,7 @@ mutate_and_expect_failure restart-only-resends Sources/GUI/App/SystemExtensionMa
   $'                                // authoritative path.\n                                self.ipcReconnect.reset()\n                                self.registerIPC()' \
   $'                                // authoritative path.\n                                self.state?.syncSharedRules()'
 mutate_and_expect_failure interruption-silent Sources/Shared/IPCConnection.swift \
-  $'            // macOS replaced it). Nothing reconnects this one by itself.\n            if self?.clearCurrentConnection(newConnection) == true { self?.onAppConnectionLost?() }' \
+  $'            // is closed; its invalidation no longer counts as a second loss.\n            if self?.clearCurrentConnection(newConnection) == true { self?.onAppConnectionLost?() }' \
   '            self?.clearCurrentConnection(newConnection)'
 mutate_and_expect_failure old-connection-kept Sources/Shared/IPCConnection.swift \
   'previous?.invalidate()' '_ = previous'
@@ -166,9 +186,12 @@ mutate_and_expect_failure no-listener Sources/GUI/App/SystemExtensionManager.swi
 mutate_and_expect_failure failure-not-retried Sources/GUI/App/SystemExtensionManager.swift \
   $'                } else {\n                    self.extensionLinkLost()\n                }' '                }'
 mutate_and_expect_failure stale-answer-wins Sources/GUI/App/SystemExtensionManager.swift \
-  'guard let self, registration == self.ipcRegistration else { return }
-                let retrying' 'guard let self else { return }
-                let retrying'
+  $'guard let self, registration == self.ipcRegistration else { return }\n                if ok {' \
+  $'guard let self else { return }\n                if ok {'
+mutate_and_expect_failure budget-never-returned Sources/GUI/App/SystemExtensionManager.swift \
+  '            ipcReconnect.policyDelivered()' '            _ = ipcReconnect'
+mutate_and_expect_failure interrupted-left-open Sources/Shared/IPCConnection.swift \
+  '            newConnection?.invalidate()' ''
 mutate_and_expect_failure off-keeps-retrying Sources/GUI/App/SystemExtensionManager.swift \
   $'        ipcRegistration &+= 1\n        ipcReconnect.reset()' '        ipcRegistration &+= 1'
 

@@ -54,11 +54,12 @@ public struct ExtensionReconnect: Sendable {
         scheduled = false
     }
 
-    /// The extension took the registration: the budget is returned for the
-    /// next time the link drops.
-    public mutating func connected() {
+    /// The extension accepted the current rules over the restored link, so
+    /// it really works again: the budget is returned for the next time the
+    /// link drops. A registration that is accepted and then dropped before
+    /// any rules arrive does not count, so that cannot reconnect forever.
+    public mutating func policyDelivered() {
         attempts = 0
-        scheduled = false
         reportedExhausted = false
     }
 
@@ -66,6 +67,8 @@ public struct ExtensionReconnect: Sendable {
     /// restarted), or the filter is off and nothing should reconnect. Any
     /// scheduled attempt is dropped and the budget starts over.
     public mutating func reset() {
-        connected()
+        attempts = 0
+        scheduled = false
+        reportedExhausted = false
     }
 }

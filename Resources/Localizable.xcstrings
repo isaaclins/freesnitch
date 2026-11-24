@@ -5677,12 +5677,12 @@
         }
       }
     },
-    "FreeSnitch could not connect to the network extension again. Rule changes and alerts reach it again after FreeSnitch is quit and opened, or the filter is turned off and on." : {
+    "FreeSnitch lost its connection to the network extension. Quit and reopen FreeSnitch, or turn the filter off and on, to get rule changes and alerts back." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "FreeSnitch не удалось снова подключиться к сетевому расширению. Изменения правил и запросы снова будут доходить до него, если закрыть и снова открыть FreeSnitch или выключить и включить фильтр."
+            "value" : "FreeSnitch потерял связь с сетевым расширением. Закройте и снова откройте FreeSnitch или выключите и включите фильтр, чтобы изменения правил и запросы снова работали."
           }
         }
       }
