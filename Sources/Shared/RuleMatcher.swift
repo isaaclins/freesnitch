@@ -67,42 +67,61 @@ fileprivate func parsePreparedIPv4Address(_ raw: String) -> UInt32? {
     return address
 }
 
+/// DNS names are case-insensitive (RFC 4343): `API.Example.com` and
+/// `api.example.com` are one destination (#198). Rule hosts keep the case
+/// they were typed in and the DNS proxy lowercases every query name, so both
+/// sides are compared in lower case. A host that is already lower case, the
+/// usual one, is returned as is without allocating.
+fileprivate func lowercasedHostName(_ host: String) -> String {
+    host.utf8.contains(where: { ($0 >= 65 && $0 <= 90) || $0 >= 128 }) ? host.lowercased() : host
+}
+
 fileprivate struct PreparedConnectionAddress: Sendable {
     let ipv4: UInt32?
     let ipv6: PreparedIPv6Address?
+    /// The flow's hostname in lower case, worked out once per verdict.
+    let host: String
 
-    init(_ raw: String, needsIPv4: Bool, needsIPv6: Bool) {
+    init(_ raw: String, host: String, needsIPv4: Bool, needsIPv6: Bool) {
         ipv4 = needsIPv4 && !raw.contains(":") ? parsePreparedIPv4Address(raw) : nil
         ipv6 = needsIPv6 && raw.contains(":") ? parsePreparedIPv6Address(raw) : nil
+        self.host = lowercasedHostName(host)
     }
 }
 
 fileprivate enum PreparedHostPattern: Sendable {
     case exact(String)
     case wildcard(base: String, dottedSuffix: String)
-    case suffix(String)
 
-    init(_ raw: String) {
-        if raw.hasPrefix("*.") {
-            let base = String(raw.dropFirst(2))
+    /// `*.example.com` and `.example.com` mean the same thing: the domain and
+    /// its subdomains. The suffix must start at a label boundary, so
+    /// `notexample.com` never matches (#199).
+    init(_ typed: String) {
+        let raw = lowercasedHostName(typed)
+        if let base = domainPatternBase(raw) {
             self = .wildcard(base: base, dottedSuffix: "." + base)
-        } else if raw.hasPrefix(".") {
-            self = .suffix(String(raw.dropFirst()))
         } else {
             self = .exact(raw)
         }
     }
 
+    /// `host` must already be lower case (`PreparedConnectionAddress.host`).
     func matches(_ host: String) -> Bool {
         switch self {
         case .exact(let value):
             return host == value
         case .wildcard(let base, let dottedSuffix):
             return host == base || host.hasSuffix(dottedSuffix)
-        case .suffix(let value):
-            return host.hasSuffix(value)
         }
     }
+}
+
+/// The domain a `*.example.com` or `.example.com` host pattern covers, or nil
+/// for an exact host.
+fileprivate func domainPatternBase(_ pattern: String) -> String? {
+    if pattern.hasPrefix("*.") { return String(pattern.dropFirst(2)) }
+    if pattern.hasPrefix(".") { return String(pattern.dropFirst()) }
+    return nil
 }
 
 fileprivate struct PreparedIPPattern: Sendable {
@@ -261,6 +280,30 @@ fileprivate func bundleIdMatches(_ ruleBundleId: String, team ruleTeam: String?,
     return connection.processTeamId == ruleTeam
 }
 
+/// Whether a rule's port covers a connection's port (#218).
+///
+/// Port 0 is never a real destination: a connection whose port is not known
+/// yet is recorded with 0 (a DNS lookup in the proxy, a flow before its
+/// destination is set, ICMP). Read as "no port", a deny rule with nothing but
+/// port 0 had no condition left and blocked every connection; compared with
+/// the connection's 0, it would still catch all of those. So a deny rule's
+/// port 0 matches nothing. An allow or ask rule's port 0 keeps meaning any
+/// port, as it always did: the alert dialog saved ping rules that way, and
+/// narrowing them would block more than the user asked. Both fail open.
+func portMatches(_ rulePort: Int, action: RuleAction, _ connectionPort: Int) -> Bool {
+    if rulePort == 0 { return action != .deny }
+    return rulePort == connectionPort
+}
+
+extension Rule {
+    /// The rule matches only some ports: a real port, or a deny rule's port 0,
+    /// which matches none (see portMatches).
+    public var restrictsPort: Bool {
+        guard let remotePort else { return false }
+        return remotePort != 0 || action == .deny
+    }
+}
+
 fileprivate struct PreparedRule: Sendable {
     let action: RuleAction
     let expiresAt: Date?
@@ -282,7 +325,10 @@ fileprivate struct PreparedRule: Sendable {
         processBundleId = rule.processBundleId.flatMap { $0.isEmpty ? nil : $0 }
         processTeamId = rule.processTeamId.flatMap { $0.isEmpty ? nil : $0 }
         processPath = rule.processPath.flatMap { $0.isEmpty ? nil : $0 }
-        remotePort = rule.remotePort.flatMap { $0 == 0 ? nil : $0 }
+        // Port 0 is kept, never read as "no port": a deny rule with nothing
+        // but port 0 then had no condition left and blocked every
+        // connection (#218). See portMatches for how it compares.
+        remotePort = rule.remotePort
         remoteHost = rule.remoteHost.flatMap { $0.isEmpty ? nil : PreparedHostPattern($0) }
         remoteHostAddress = rule.addressInHostField.map(PreparedIPPattern.init)
         remoteIP = rule.remoteIP.flatMap { $0.isEmpty ? nil : PreparedIPPattern($0) }
@@ -314,8 +360,8 @@ fileprivate struct PreparedRule: Sendable {
            !bundleIdMatches(processBundleId, team: processTeamId, connection,
                             trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
-        if let remotePort, connection.remotePort != remotePort { return false }
-        if let remoteHost, !remoteHost.matches(connection.remoteHost),
+        if let remotePort, !portMatches(remotePort, action: action, connection.remotePort) { return false }
+        if let remoteHost, !remoteHost.matches(address.host),
            !(remoteHostAddress?.matches(rawIP: connection.remoteIP, parsed: address) ?? false) { return false }
         if let remoteIP, !remoteIP.matches(rawIP: connection.remoteIP, parsed: address) { return false }
         return true
@@ -402,6 +448,7 @@ public struct RuleMatcher: Sendable {
         let now = Date()
         let address = PreparedConnectionAddress(
             c.remoteIP,
+            host: c.remoteHost,
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
@@ -456,9 +503,7 @@ public struct RuleMatcher: Sendable {
         if let path = r.processPath, !path.isEmpty {
             if !processPathCovers(path, c.processPath) { return false }
         }
-        if let port = r.remotePort, port != 0 {
-            if c.remotePort != port { return false }
-        }
+        if let port = r.remotePort, !portMatches(port, action: r.action, c.remotePort) { return false }
         if let host = r.remoteHost, !host.isEmpty {
             if !hostMatches(pattern: host, host: c.remoteHost),
                !(r.addressInHostField.map { ipMatches(pattern: $0, ip: c.remoteIP) } ?? false) { return false }
@@ -469,17 +514,13 @@ public struct RuleMatcher: Sendable {
         return true
     }
 
-    public func hostMatches(pattern: String, host: String) -> Bool {
+    public func hostMatches(pattern typedPattern: String, host typedHost: String) -> Bool {
+        // Case-insensitive like DNS itself (#198).
+        let pattern = lowercasedHostName(typedPattern)
+        let host = lowercasedHostName(typedHost)
         if pattern == host { return true }
-        if pattern.hasPrefix("*.") {
-            let suf = String(pattern.dropFirst(2))
-            return host == suf || host.hasSuffix("." + suf)
-        }
-        if pattern.hasPrefix(".") {
-            let suf = String(pattern.dropFirst())
-            return host.hasSuffix(suf)
-        }
-        return false
+        guard let base = domainPatternBase(pattern) else { return false }
+        return host == base || host.hasSuffix("." + base)
     }
 
     public func ipMatches(pattern: String, ip: String) -> Bool {
