@@ -70,7 +70,8 @@ public enum PendingAlertError: LocalizedError, Equatable {
     }
 }
 
-/// The remember scopes the GUI alert offers, in CLI spelling.
+/// The remember scopes a command line answer can pick. They only partly match
+/// the alert panel's scopes (see `PendingAlertRuleFactory`).
 public enum PendingAlertScope: String, Codable, Sendable, CaseIterable {
     case process
     case domain
