@@ -79,6 +79,15 @@ struct Verify {
         check(DNSPolicy(mode: .silentAllow, rules: [byBundle], blocklist: list).verdict(forName: "listed.example"),
               .deny, "an app's allow rule (by bundle id) does not open the name to every lookup")
 
+        check(DNSPolicy(mode: .silentAllow, rules: [allowAnyway], blocklist: list).verdict(forName: "www.ads.example"),
+              .deny, "a subdomain of the allowed name stays blocked by the list")
+        let wildcard = Rule(remoteHost: "*.tracker.example", action: .allow, priority: 100)
+        let wildcardPolicy = DNSPolicy(mode: .silentAllow, rules: [wildcard], blocklist: list)
+        check(wildcardPolicy.verdict(forName: "cdn.tracker.example"), .allow,
+              "an app-less wildcard allow opens the names it covers")
+        check(wildcardPolicy.verdict(forName: "listed.example"), .deny,
+              "an app-less wildcard allow leaves names it doesn't cover blocked")
+
         let deny = Rule(remoteHost: "ads.example", action: .deny, priority: 100)
         check(DNSPolicy(mode: .silentAllow, rules: [deny, allowAnyway], blocklist: list).verdict(forName: "ads.example"),
               .deny, "a higher-priority deny for the name still wins")
