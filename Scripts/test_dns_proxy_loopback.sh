@@ -336,6 +336,13 @@ struct Main {
             guard ready.wait(timeout: .now() + 5) == .success else { l.cancel(); return nil }
             return l
         }
+        /// Cancels `l` and waits until it has let go of its port.
+        func release(_ l: NWListener) -> Bool {
+            let gone = DispatchSemaphore(value: 0)
+            l.stateUpdateHandler = { if case .cancelled = $0 { gone.signal() } }
+            l.cancel()
+            return gone.wait(timeout: .now() + 5) == .success
+        }
         /// True once `proxy.running` equals `want` within `seconds`.
         func settles(_ proxy: DNSProxy, to want: Bool, within seconds: Double) -> Bool {
             let deadline = DispatchTime.now() + seconds
@@ -364,7 +371,9 @@ struct Main {
             // The same proxy starts again once the port is free: the
             // leftover listeners are cancelled and the new generation
             // stays running.
-            squatter.cancel()
+            guard release(squatter) else {
+                checks.expect(false, "the \(proto) squatter never let go of \(takenPort)"); proxy.stop(); continue
+            }
             do {
                 try proxy.start(port: takenPort.rawValue)
                 checks.expect(proxy.running && !settles(proxy, to: false, within: 1),

@@ -228,6 +228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.windowManager.showInsights()
                 case "profiles": self.windowManager.showProfiles()
                 case "settings": self.windowManager.showSettings()
+                // Settings after the DNS proxy lost its 127.0.0.1 listener (#490).
+                case "dns-proxy-stopped":
+                    self.state.showDemoDNSProxyStopped()
+                    self.windowManager.showSettings()
                 case "cli": self.windowManager.showCommandLineSettings()
                 case "uninstall":
                     self.windowManager.showSettings()
