@@ -11773,12 +11773,12 @@
         }
       }
     },
-    "This Mac's DNS server is set to %@, one of this Mac's own network addresses. The FreeSnitch DNS proxy only answers on 127.0.0.1, so unless another DNS app answers there, names cannot be looked up. To use FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS." : {
+    "This Mac's DNS servers include %@, an address of this Mac itself. The FreeSnitch DNS proxy only answers on 127.0.0.1, so lookups sent there get no answer unless another DNS app answers. To use FreeSnitch, turn enforcement on and set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "В качестве DNS-сервера этого Mac указан %@ — один из собственных сетевых адресов этого Mac. DNS-прокси FreeSnitch отвечает только на 127.0.0.1, поэтому, если там не отвечает другое DNS-приложение, имена не будут разрешаться. Чтобы использовать FreeSnitch, укажите DNS-сервер 127.0.0.1 в меню «Системные настройки» > «Сеть» > ваша сеть > «Подробнее» > «DNS»."
+            "value" : "Среди DNS-серверов этого Mac есть %@ — адрес самого этого Mac. DNS-прокси FreeSnitch отвечает только на 127.0.0.1, поэтому запросы туда остаются без ответа, если там не отвечает другое DNS-приложение. Чтобы использовать FreeSnitch, включите фильтрацию и укажите DNS-сервер 127.0.0.1 в меню «Системные настройки» > «Сеть» > ваша сеть > «Подробнее» > «DNS»."
           }
         }
       }

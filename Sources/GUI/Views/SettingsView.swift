@@ -289,7 +289,7 @@ struct SettingsView: View {
         if !routesThroughProxy, !ownNetworkResolvers.isEmpty {
             let servers = ownNetworkResolvers.joined(separator: ", ")
             return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
-                    String(localized: "This Mac's DNS server is set to \(servers), one of this Mac's own network addresses. The FreeSnitch DNS proxy only answers on 127.0.0.1, so unless another DNS app answers there, names cannot be looked up. To use FreeSnitch, set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS."))
+                    String(localized: "This Mac's DNS servers include \(servers), an address of this Mac itself. The FreeSnitch DNS proxy only answers on 127.0.0.1, so lookups sent there get no answer unless another DNS app answers. To use FreeSnitch, turn enforcement on and set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS."))
         }
         guard state.enforcementEnabled else {
             return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
