@@ -1054,6 +1054,55 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
+    /// The IP and CIDR feeds and what they block now (#209). A helper too old
+    /// to answer says so rather than showing an empty list.
+    func listIPFeeds(completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void) {
+        ipFeedsCall(completion: completion) { proxy, reply in
+            guard proxy.listIPFeeds != nil else { return false }
+            proxy.listIPFeeds?(reply: reply)
+            return true
+        }
+    }
+
+    /// Turns one feed on or off. The helper downloads the enabled feeds and
+    /// hands the new set to pf before it answers.
+    func setIPFeedEnabled(_ id: UUID, enabled: Bool,
+                          completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void) {
+        ipFeedsCall(completion: completion) { proxy, reply in
+            guard proxy.setIPFeedEnabled != nil else { return false }
+            proxy.setIPFeedEnabled?(idString: id.uuidString, enabled: enabled, reply: reply)
+            return true
+        }
+    }
+
+    private func ipFeedsCall(completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void,
+                             _ invoke: (HelperProtocol, @escaping (Data, String?) -> Void) -> Bool) {
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            Task { @MainActor in
+                completion(nil, String(localized: "Could not reach the privileged helper: \(error.sentence)"))
+            }
+        }) as? HelperProtocol else {
+            completion(nil, String(localized: "The FreeSnitch helper is not connected."))
+            return
+        }
+        let sent = invoke(proxy) { data, error in
+            Task { @MainActor in
+                if let error {
+                    completion(nil, error)
+                    return
+                }
+                guard let report = try? FreeSnitchWireCodec.decode(IPFeedsReport.self, from: data) else {
+                    completion(nil, String(localized: "The helper's answer could not be read."))
+                    return
+                }
+                completion(report, nil)
+            }
+        }
+        if !sent {
+            completion(nil, String(localized: "The running helper is too old to manage IP feeds. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
+        }
+    }
+
     /// Enforcement only counts once the helper says it took. The UI stays in a
     /// pending state until then, and a refusal, a transport failure or a helper
     /// that never answers puts the toggle back where reality is, with the

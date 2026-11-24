@@ -23,6 +23,8 @@ enum CLICommand {
     case blocklists
     case refreshBlocklists
     case blocklist(id: String, enabled: Bool)
+    case ipFeeds
+    case ipFeed(reference: String, enabled: Bool)
     case doh(String)
     case enforcement(Bool)
     case pf(PFCommand)
@@ -178,6 +180,12 @@ enum CLIParser {
             command = try parseBlocklists(Array(arguments.dropFirst()))
         case "blocklist":
             command = try parseBlocklist(Array(arguments.dropFirst()))
+        case "ip-feeds":
+            var cursor = TokenCursor(tokens: Array(arguments.dropFirst()))
+            try cursor.requireEnd("ip-feeds")
+            command = .ipFeeds
+        case "ip-feed":
+            command = try parseIPFeed(Array(arguments.dropFirst()))
         case "doh":
             command = .doh(try parseSingleValue(Array(arguments.dropFirst()), context: "doh"))
         case "enforcement":
@@ -524,6 +532,18 @@ enum CLIParser {
         return .blocklist(id: id, enabled: enabled)
     }
 
+    private static func parseIPFeed(_ tokens: [String]) throws -> CLICommand {
+        var cursor = TokenCursor(tokens: tokens)
+        guard let reference = cursor.next(), let value = cursor.next() else {
+            throw CLIError(.invalidArgument, message: "ip-feed requires an ID or name and an on/off value.", remediation: "Use `ip-feeds` to find a feed, then `ip-feed ID on` or `ip-feed ID off`.")
+        }
+        try cursor.requireEnd("ip-feed")
+        guard let enabled = parseToggle(value) else {
+            throw CLIError(.invalidArgument, message: "invalid ip-feed state `\(value)`.", remediation: "Use on or off.")
+        }
+        return .ipFeed(reference: reference, enabled: enabled)
+    }
+
     private static func parsePF(_ tokens: [String]) throws -> PFCommand {
         var cursor = TokenCursor(tokens: tokens)
         guard let value = cursor.next() else {
@@ -634,6 +654,8 @@ enum CLIParser {
         case .blocklists: return "blocklists"
         case .refreshBlocklists: return "blocklists refresh"
         case .blocklist: return "blocklist"
+        case .ipFeeds: return "ip-feeds"
+        case .ipFeed: return "ip-feed"
         case .doh: return "doh"
         case .enforcement: return "enforcement"
         case .pf: return "pf"

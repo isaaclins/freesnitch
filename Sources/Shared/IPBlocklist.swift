@@ -643,6 +643,31 @@ public struct IPBlocklistPolicy: Sendable {
     }
 }
 
+/// What the app and the command-line tool are told about the address feeds:
+/// every feed with its own state, and what the set as a whole blocks right
+/// now. One value, so a caller never pairs a feed list with a status from a
+/// different moment (#209).
+public struct IPFeedsReport: Codable, Sendable, Equatable {
+    public var feeds: [IPBlocklistFeed]
+    public var status: IPBlocklistStatus
+
+    public init(feeds: [IPBlocklistFeed], status: IPBlocklistStatus) {
+        self.feeds = feeds
+        self.status = status
+    }
+
+    /// The feed a user named, by id or by name, ignoring case. Nil when
+    /// nothing matches or a name matches more than one feed.
+    public func feed(named query: String) -> IPBlocklistFeed? {
+        let wanted = query.trimmingCharacters(in: .whitespaces)
+        if let byID = feeds.first(where: { $0.id.uuidString.caseInsensitiveCompare(wanted) == .orderedSame }) {
+            return byID
+        }
+        let byName = feeds.filter { $0.name.caseInsensitiveCompare(wanted) == .orderedSame }
+        return byName.count == 1 ? byName[0] : nil
+    }
+}
+
 /// Honest state, per #22 and #12: what is loaded, and what is actually being
 /// blocked right now, which are not the same number.
 public struct IPBlocklistStatus: Codable, Sendable, Equatable {

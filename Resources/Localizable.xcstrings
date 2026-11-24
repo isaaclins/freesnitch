@@ -1138,6 +1138,202 @@
         }
       }
     },
+    "%lld entries, %lld refused, updated %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, отклонено: %#@r@, обновлено %3$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg запись"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  }
+                }
+              }
+            },
+            "r" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, %#@r@ refused, updated %3$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entry"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entries"
+                    }
+                  }
+                }
+              }
+            },
+            "r" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld entries, updated %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, обновлено %2$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg запись"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, updated %2$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entry"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entries"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld in this range" : {
       "localizations" : {
         "ru" : {
@@ -3813,6 +4009,16 @@
         }
       }
     },
+    "Blocks connections to the addresses and ranges a feed lists, for every app, while enforcement is on. A feed that can't be downloaded blocks nothing. Your own network, private and shared ranges, DHCP and your DNS servers are never blocked." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Блокирует соединения с адресами и диапазонами из источника для всех приложений, пока включено применение правил. Источник, который не удалось скачать, ничего не блокирует. Ваша сеть, частные и общие диапазоны, DHCP и ваши DNS-серверы никогда не блокируются."
+          }
+        }
+      }
+    },
     "Bundle ID" : {
       "localizations" : {
         "ru" : {
@@ -5010,6 +5216,16 @@
         }
       }
     },
+    "Downloading…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачивание…"
+          }
+        }
+      }
+    },
     "Draft a rule for the selected app and this address. Nothing is enforced until you accept it." : {
       "localizations" : {
         "ru" : {
@@ -6069,6 +6285,16 @@
         }
       }
     },
+    "IP address blocklists" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Списки блокировки IP-адресов"
+          }
+        }
+      }
+    },
     "If blocked" : {
       "localizations" : {
         "ru" : {
@@ -6540,6 +6766,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Загрузить ещё предложения"
+          }
+        }
+      }
+    },
+    "Loading…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка…"
           }
         }
       }
@@ -7492,6 +7728,16 @@
         }
       }
     },
+    "Not downloaded yet." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё не скачан."
+          }
+        }
+      }
+    },
     "Not filtered" : {
       "localizations" : {
         "ru" : {
@@ -7518,6 +7764,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пока неизвестно"
+          }
+        }
+      }
+    },
+    "Not loaded, so it blocks nothing: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не загружен, поэтому ничего не блокирует: %@"
           }
         }
       }
@@ -10155,6 +10411,16 @@
         }
       }
     },
+    "The feeds live in the privileged helper, so they can be changed once the helper is connected." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Источники настраиваются в привилегированной службе, поэтому их можно изменить после подключения службы."
+          }
+        }
+      }
+    },
     "The file contains no rules, so nothing was changed." : {
       "localizations" : {
         "ru" : {
@@ -11475,6 +11741,16 @@
         }
       }
     },
+    "The running helper is too old to manage IP feeds. Run `%@`, then retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запущенная служба слишком старая, чтобы управлять IP-источниками. Выполните `%@` и повторите попытку."
+          }
+        }
+      }
+    },
     "The running helper is too old to manage profiles. Run `%@`, then retry." : {
       "localizations" : {
         "ru" : {
@@ -12322,6 +12598,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выключение сетевого фильтра"
+          }
+        }
+      }
+    },
+    "Turning off…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключение…"
           }
         }
       }

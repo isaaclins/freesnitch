@@ -23,6 +23,8 @@ final class CLIRunner {
         case .blocklists: return try await listBlocklists()
         case .refreshBlocklists: return try await refreshBlocklists()
         case .blocklist(let id, let enabled): return try await setBlocklist(id: id, enabled: enabled)
+        case .ipFeeds: return try await listIPFeeds()
+        case .ipFeed(let reference, let enabled): return try await setIPFeed(reference: reference, enabled: enabled)
         case .doh(let url): return try await setDoH(url)
         case .enforcement(let enabled): return try await setEnforcement(enabled)
         case .pf(let operation): return try await pf(operation)
@@ -426,6 +428,30 @@ final class CLIRunner {
         try await helper.setBlocklist(id: target.id.uuidString, enabled: enabled)
         let report = BlocklistReport(id: target.id, name: target.name, url: target.url, enabled: enabled, lastUpdated: target.lastUpdated, entryCount: target.entryCount)
         return CommandResult(data: report, human: "Blocklist \(target.name) (\(target.id.uuidString)): \(humanBool(enabled)).")
+    }
+
+    private func listIPFeeds() async throws -> CommandResult {
+        let helper = CLIHelperClient()
+        _ = try await helper.prepare()
+        let report = try await helper.ipFeeds()
+        return CommandResult(data: report, human: humanIPFeeds(report))
+    }
+
+    private func setIPFeed(reference: String, enabled: Bool) async throws -> CommandResult {
+        let helper = CLIHelperClient()
+        _ = try await helper.prepare()
+        guard let target = try await helper.ipFeeds().feed(named: reference) else {
+            throw CLIError(.operationFailed,
+                           code: "ip_feed_not_found",
+                           message: "No IP feed named or identified by `\(reference)` exists.",
+                           remediation: "Run `freesnitch ip-feeds` to see current IDs and names.")
+        }
+        let report = try await helper.setIPFeed(id: target.id, enabled: enabled)
+        var lines = ["IP feed \(target.name) (\(target.id.uuidString)): \(humanBool(enabled))."]
+        if enabled, let error = report.feeds.first(where: { $0.id == target.id })?.lastError {
+            lines.append("It could not be loaded and is blocking nothing: \(error)")
+        }
+        return CommandResult(data: report, human: lines.joined(separator: "\n") + "\n" + humanIPFeeds(report))
     }
 
     private func setDoH(_ value: String) async throws -> CommandResult {
@@ -1031,6 +1057,21 @@ final class CLIRunner {
         }
         return listing + "\n\n" + notes.joined(separator: "\n")
     }
+
+    private func humanIPFeeds(_ report: IPFeedsReport) -> String {
+        let listing = report.feeds.map { feed -> String in
+            var line = "  \(feed.id.uuidString)  \(feed.name)  \(feed.enabled ? "on" : "off")"
+            if feed.enabled || feed.lastUpdated != nil { line += "  entries=\(feed.entryCount)" }
+            if feed.rejectedCount > 0 { line += " rejected=\(feed.rejectedCount)" }
+            if let date = feed.lastUpdated { line += " updated=\(formatDate(date))" }
+            if feed.enabled, let error = feed.lastError { line += "\n      not loaded: \(error)" }
+            return line
+        }.joined(separator: "\n")
+        let feeds = report.feeds.isEmpty ? "IP feeds: none." : listing
+        return feeds + "\n\n" + report.status.summary + "\n" + Self.ipFeedScopeNote
+    }
+
+    static let ipFeedScopeNote = "IP feeds block connections to the listed addresses in the pf firewall, for every app, while enforcement is on. Loopback, DHCP, private and shared ranges, and your DNS servers are never blocked."
 
     static let blocklistScopeNote = "Blocklists filter DNS names only. They do not stop connections made to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH."
 

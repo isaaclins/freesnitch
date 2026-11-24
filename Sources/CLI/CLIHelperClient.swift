@@ -186,6 +186,45 @@ final class CLIHelperClient: NSObject {
         }
     }
 
+    /// The IP and CIDR feeds and what they block (#209).
+    func ipFeeds() async throws -> IPFeedsReport {
+        let reply: (Data?, String?) = try await perform(timeout: timeout) { proxy, reply in
+            guard proxy.listIPFeeds != nil else {
+                reply((nil, nil))
+                return
+            }
+            proxy.listIPFeeds?(reply: { reply(($0, $1)) })
+        }
+        return try ipFeedsReport(from: reply)
+    }
+
+    /// Turns one feed on or off. The helper downloads the enabled feeds before
+    /// it answers, so this waits as long as a blocklist refresh does.
+    func setIPFeed(id: UUID, enabled: Bool) async throws -> IPFeedsReport {
+        let reply: (Data?, String?) = try await perform(timeout: 120) { proxy, reply in
+            guard proxy.setIPFeedEnabled != nil else {
+                reply((nil, nil))
+                return
+            }
+            proxy.setIPFeedEnabled?(idString: id.uuidString, enabled: enabled, reply: { reply(($0, $1)) })
+        }
+        return try ipFeedsReport(from: reply)
+    }
+
+    private func ipFeedsReport(from reply: (Data?, String?)) throws -> IPFeedsReport {
+        if let message = reply.1 {
+            throw CLIError(.operationFailed,
+                           message: message,
+                           remediation: "Run `freesnitch ip-feeds` to see current IDs and names.")
+        }
+        guard let data = reply.0 else {
+            throw CLIError(.helperVersionMismatch,
+                           message: "The running helper does not support IP and CIDR feeds.",
+                           remediation: "The helper is still running from an earlier build. Run `\(AppConstants.helperKickstartCommand)`, then rerun the command.")
+        }
+        return try decode(IPFeedsReport.self, data: data, what: "IP feed")
+    }
+
     func getDoH() async throws -> String {
         let value: String? = try await perform(timeout: timeout) { proxy, reply in
             guard proxy.getDoHUpstream != nil else {

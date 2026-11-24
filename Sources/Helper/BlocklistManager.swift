@@ -19,6 +19,15 @@ final class BlocklistManager: @unchecked Sendable {
     static let ipFeedsSettingKey = "ip_blocklists"
     private var ipSet: IPBlocklistSet = .empty
     private var ipFeedsCache: [IPBlocklistFeed]?
+    /// Bumped by every IP feed refresh and every toggle. A refresh whose
+    /// number is no longer the latest drops its result instead of publishing
+    /// it, so a slow download that started before the user flipped a feed can
+    /// neither undo the flip nor push an older set to pf after a newer one
+    /// (#209).
+    private var ipRefreshGeneration = 0
+    /// Held while a refresh result is stored and handed to pf, so two results
+    /// are never published out of order.
+    private let ipPublishLock = NSLock()
 
     /// Called after every IP feed refresh with the newly built set. Wiring
     /// this is what pushes address blocking into pf.
@@ -162,11 +171,29 @@ final class BlocklistManager: @unchecked Sendable {
     /// nothing.
     @discardableResult
     func setIPFeedEnabled(idString: String, enabled: Bool) -> Bool {
-        var feeds = ipFeeds()
-        guard let index = feeds.firstIndex(where: { $0.id.uuidString == idString }) else { return false }
-        feeds[index].enabled = enabled
-        persistIPFeeds(feeds)
+        _ = ipFeeds()
+        ipPublishLock.lock()
+        defer { ipPublishLock.unlock() }
+        let changed: [IPBlocklistFeed]? = queue.sync {
+            guard var feeds = ipFeedsCache,
+                  let index = feeds.firstIndex(where: {
+                      $0.id.uuidString.caseInsensitiveCompare(idString) == .orderedSame
+                  }) else { return nil }
+            feeds[index].enabled = enabled
+            ipFeedsCache = feeds
+            // Whatever refresh is in flight was planned without this change.
+            ipRefreshGeneration += 1
+            return feeds
+        }
+        guard let changed else { return false }
+        storeIPFeeds(changed)
         return true
+    }
+
+    /// The feeds and what they block, for the app and the command-line tool.
+    func ipFeedsReport(enforcementEnabled: Bool, resolverAddresses: [String] = []) -> IPFeedsReport {
+        let policy = ipBlocklistPolicy(enforcementEnabled: enforcementEnabled, resolverAddresses: resolverAddresses)
+        return IPFeedsReport(feeds: policy.feeds, status: policy.status)
     }
 
     /// Downloads every enabled address feed and rebuilds the matcher.
@@ -177,10 +204,15 @@ final class BlocklistManager: @unchecked Sendable {
     /// blocks nothing. An address feed must never be able to take the machine
     /// off the network, least of all by failing.
     func refreshIPBlocklists() async {
-        var feeds = ipFeeds()
+        _ = ipFeeds()
+        let (generation, snapshot): (Int, [IPBlocklistFeed]) = queue.sync {
+            ipRefreshGeneration += 1
+            return (ipRefreshGeneration, ipFeedsCache ?? IPBlocklistCatalog.defaults)
+        }
+        var feeds = snapshot
         let enabled = feeds.enumerated().filter { $0.element.enabled }
         guard !enabled.isEmpty else {
-            applyIPEntries([], to: &feeds)
+            applyIPEntries([], to: feeds, generation: generation)
             return
         }
 
@@ -222,7 +254,7 @@ final class BlocklistManager: @unchecked Sendable {
             }
         }
 
-        applyIPEntries(entries, to: &feeds)
+        applyIPEntries(entries, to: feeds, generation: generation)
     }
 
     /// The current address matcher. Immutable, so a caller can hold it across
@@ -242,15 +274,24 @@ final class BlocklistManager: @unchecked Sendable {
         )
     }
 
-    private func applyIPEntries(_ entries: [String], to feeds: inout [IPBlocklistFeed]) {
+    private func applyIPEntries(_ entries: [String], to feeds: [IPBlocklistFeed], generation: Int) {
         let set = IPBlocklistSet(entries: entries)
-        queue.sync { ipSet = set }
-        persistIPFeeds(feeds)
-        onIPBlocklistUpdate?(set, feeds)
+        ipPublishLock.lock()
+        defer { ipPublishLock.unlock() }
+        let published: [IPBlocklistFeed]? = queue.sync {
+            // A newer refresh or a toggle happened while this one downloaded.
+            // The newer refresh publishes; this result is already out of date.
+            guard generation == ipRefreshGeneration else { return nil }
+            ipSet = set
+            ipFeedsCache = feeds
+            return feeds
+        }
+        guard let published else { return }
+        storeIPFeeds(published)
+        onIPBlocklistUpdate?(set, published)
     }
 
-    private func persistIPFeeds(_ feeds: [IPBlocklistFeed]) {
-        queue.sync { ipFeedsCache = feeds }
+    private func storeIPFeeds(_ feeds: [IPBlocklistFeed]) {
         guard let data = try? JSONEncoder().encode(feeds),
               let text = String(data: data, encoding: .utf8) else { return }
         try? store.setSetting(BlocklistManager.ipFeedsSettingKey, text)

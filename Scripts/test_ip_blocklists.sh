@@ -808,6 +808,91 @@ struct IPBlocklistHarness {
         checks.expect(store.allBlocklists().allSatisfy { $0.url != IPBlocklistCatalog.defaults[0].url },
                       "an address feed must never appear in the domain blocklist table")
 
+        // 7b. The supported controls (#209): a feed turned on through the
+        // helper's report path ends up in the pf table, and a download that
+        // began before a newer toggle can neither undo that toggle nor publish
+        // its older set after the newer one.
+        let report = manager.ipFeedsReport(enforcementEnabled: true, resolverAddresses: ["9.9.9.9"])
+        checks.expect(report.feeds.count == IPBlocklistCatalog.defaults.count,
+                      "the report must list every feed, got \(report.feeds.count)")
+        checks.expect(report.status.enabledFeedCount == 1 && report.status.blockingEntryCount == 3,
+                      "the report must say one feed blocks 3 entries, got \(report.status)")
+        checks.expect(manager.ipFeedsReport(enforcementEnabled: false).status.blockingEntryCount == 0,
+                      "with enforcement off the report must say the feeds block nothing")
+        checks.expect(report.feed(named: IPBlocklistCatalog.defaults[0].name.uppercased())?.id.uuidString == feedID,
+                      "a feed must be found by its name, ignoring case")
+        checks.expect(report.feed(named: feedID.lowercased())?.id.uuidString == feedID,
+                      "a feed must be found by its id, ignoring case")
+        checks.expect(report.feed(named: "no such feed") == nil, "an unknown feed name must find nothing")
+        if let encoded = try? FreeSnitchWireCodec.encode(report),
+           let decoded = try? FreeSnitchWireCodec.decode(IPFeedsReport.self, from: encoded) {
+            checks.expect(decoded == report, "the report must survive the XPC encoding unchanged")
+        } else {
+            checks.expect(false, "the report must encode and decode for XPC")
+        }
+
+        let pf7b = PFManager()
+        var publishedAnchor = ""
+        var publishedSets: [IPBlocklistSet] = []
+        manager.onIPBlocklistUpdate = { set, _ in
+            publishedSets.append(set)
+            publishedAnchor = pf7b.renderAnchor(rules: [], ipBlocklist: set, resolverAddresses: ["9.9.9.9"])
+        }
+        let secondID = IPBlocklistCatalog.defaults[1].id.uuidString
+        checks.expect(manager.setIPFeedEnabled(idString: secondID.lowercased(), enabled: false),
+                      "a feed id must be accepted in any letter case")
+
+        final class Gate: @unchecked Sendable {
+            let lock = NSLock()
+            var started = false
+            var released = false
+            func markStarted() { lock.lock(); started = true; lock.unlock() }
+            func isStarted() -> Bool { lock.lock(); defer { lock.unlock() }; return started }
+            func release() { lock.lock(); released = true; lock.unlock() }
+            func isReleased() -> Bool { lock.lock(); defer { lock.unlock() }; return released }
+        }
+        let gate = Gate()
+        let slowFirstFeed = IPBlocklistCatalog.defaults[0].id
+        manager.ipFeedFetcher = { feed in
+            if feed.id == slowFirstFeed && !gate.isStarted() {
+                gate.markStarted()
+                while !gate.isReleased() { try? await Task.sleep(nanoseconds: 1_000_000) }
+                return .body("198.51.100.0/24\n")
+            }
+            return feed.id == slowFirstFeed ? .body("203.0.113.0/24\n") : .body("192.0.2.0/24\n")
+        }
+        let slow = Task { await manager.refreshIPBlocklists() }
+        while !gate.isStarted() { try? await Task.sleep(nanoseconds: 1_000_000) }
+        checks.expect(manager.setIPFeedEnabled(idString: secondID, enabled: true),
+                      "turning the second feed on must succeed while a download is running")
+        await manager.refreshIPBlocklists()
+        gate.release()
+        await slow.value
+        checks.expect(publishedSets.count == 1,
+                      "only the newer refresh may publish, got \(publishedSets.count) publishes")
+        checks.expect(manager.ipFeeds().first(where: { $0.id.uuidString == secondID })?.enabled == true,
+                      "a download that began before a toggle must not undo it")
+        checks.expect(BlocklistManager(store: store).ipFeeds().first(where: { $0.id.uuidString == secondID })?.enabled == true,
+                      "the toggle must still be stored after the older download finished")
+        let current = manager.currentIPBlocklist()
+        checks.expect(current.contains("192.0.2.7") && current.contains("203.0.113.7") && !current.contains("198.51.100.7"),
+                      "the matcher must hold the newer refresh's set, not the older one's")
+        checks.expect(publishedAnchor.contains("192.0.2.0/24") && publishedAnchor.contains("203.0.113.0/24"),
+                      "an enabled feed's entries must reach the pf table")
+        checks.expect(!publishedAnchor.contains("198.51.100.0/24"),
+                      "the older download's entries must not reach the pf table")
+
+        checks.expect(manager.setIPFeedEnabled(idString: secondID, enabled: false),
+                      "turning the second feed off must succeed")
+        await manager.refreshIPBlocklists()
+        checks.expect(!publishedAnchor.contains("192.0.2.0/24") && publishedAnchor.contains("203.0.113.0/24"),
+                      "turning a feed off must take its entries out of the pf table")
+        checks.expect(manager.setIPFeedEnabled(idString: feedID, enabled: false),
+                      "turning the last feed off must succeed")
+        await manager.refreshIPBlocklists()
+        checks.expect(manager.currentIPBlocklist().isEmpty && !publishedAnchor.contains("203.0.113.0/24"),
+                      "with every feed off nothing may be left in the pf table")
+
         // 8. Size and time. A feed of this size is ordinary for this data.
         // Wall-clock limits only apply in the opt-in benchmark (issue #356):
         // timing depends on the machine's load, not on the code.
