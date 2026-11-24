@@ -139,7 +139,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         self.filterPreferences = FilterPreferencesLine(closed: demo)
         super.init()
         state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
-            self?.recordSnapshotStatus(snapshotStatus)
+            self?.recordSnapshotStatus(snapshotStatus, delivered: true)
         }
         state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
             self?.requestPersistedSnapshot(snapshot)
@@ -862,6 +862,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         // Nothing to reconnect to while nothing filters.
         ipcRegistration &+= 1
         ipcReconnect.reset()
+        ipcUnavailableLogged = false
         abandonedTurnOnShown = false
         if status != .unsupported { status = .idle }
     }
@@ -893,7 +894,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                     self.ipcUnavailableLogged = true
                     state.appendLog(level: "error", message: String(localized: "Extension IPC unavailable."))
                 }
-                self.recordSnapshotStatus(remoteStatus)
+                // A new extension may answer "ready" here from its saved boot
+                // rules. That is not proof the live rules get through, so it
+                // does not return the reconnect budget.
+                self.recordSnapshotStatus(remoteStatus, delivered: false)
                 // The extension starts with no in-memory snapshot, so hand the
                 // current one over as soon as the link is up, not only after a
                 // later rule or mode change.
@@ -1030,12 +1034,15 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         done()
     }
 
-    private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
+    /// `delivered` is true for the extension's answer to rules the app just
+    /// sent, false for the status it reports when the app registers.
+    private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus, delivered: Bool) {
         self.snapshotStatus = snapshotStatus
         if snapshotStatus.isReady {
             snapshotRecovery.noteHealthy()
-            // The link works again: a later drop gets the full budget (#212).
-            ipcReconnect.policyDelivered()
+            // The extension accepted rules sent over this link, so it works
+            // again: a later drop gets the full budget (#212).
+            if delivered { ipcReconnect.policyDelivered() }
             state?.recordFilterRecovery(nil)
         } else {
             recoverFromSnapshotRejection(snapshotStatus)

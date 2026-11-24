@@ -136,11 +136,18 @@ check_wiring() {
   grep -Fq 'registration == self.ipcRegistration' <<<"$reg_app" \
     || { echo "a stale registration answer can overwrite a newer link"; return 1; }
   # The budget comes back only once the extension accepted the rules.
-  grep -Fq 'ipcReconnect.policyDelivered()' <<<"$record" \
-    || { echo "the reconnect budget never comes back after rules are delivered"; return 1; }
-  if grep -Fq 'ipcReconnect.policyDelivered()' <<<"$reg_app"; then
-    echo "an accepted registration alone returns the budget, so an accept-then-drop extension is reconnected forever"; return 1
-  fi
+  # A new extension can answer "ready" at registration from its saved boot
+  # rules, so only the answer to rules the app sent may return the budget.
+  # Otherwise an extension that drops the link once live rules arrive is
+  # reconnected forever.
+  grep -Fq 'if delivered { ipcReconnect.policyDelivered() }' <<<"$record" \
+    || { echo "the reconnect budget comes back without rules having been delivered, or never"; return 1; }
+  [[ "$(grep -c 'policyDelivered()' "$sem")" -eq 1 ]] \
+    || { echo "the reconnect budget is returned somewhere other than after delivered rules"; return 1; }
+  grep -Fq 'self.recordSnapshotStatus(remoteStatus, delivered: false)' <<<"$reg_app" \
+    || { echo "a registration answer counts as delivered rules, so an accept-then-drop extension is reconnected forever"; return 1; }
+  grep -Fq 'self?.recordSnapshotStatus(snapshotStatus, delivered: true)' "$sem" \
+    || { echo "the answer to delivered rules does not return the reconnect budget"; return 1; }
   # An interrupted connection is closed, not left open.
   grep -Fq 'newConnection?.invalidate()' <<<"$register" \
     || { echo "an interrupted connection is left open"; return 1; }
@@ -189,7 +196,11 @@ mutate_and_expect_failure stale-answer-wins Sources/GUI/App/SystemExtensionManag
   $'guard let self, registration == self.ipcRegistration else { return }\n                if ok {' \
   $'guard let self else { return }\n                if ok {'
 mutate_and_expect_failure budget-never-returned Sources/GUI/App/SystemExtensionManager.swift \
-  '            ipcReconnect.policyDelivered()' '            _ = ipcReconnect'
+  'if delivered { ipcReconnect.policyDelivered() }' '_ = delivered'
+mutate_and_expect_failure budget-on-any-ready Sources/GUI/App/SystemExtensionManager.swift \
+  'if delivered { ipcReconnect.policyDelivered() }' 'ipcReconnect.policyDelivered()'
+mutate_and_expect_failure registration-counts-as-delivery Sources/GUI/App/SystemExtensionManager.swift \
+  'self.recordSnapshotStatus(remoteStatus, delivered: false)' 'self.recordSnapshotStatus(remoteStatus, delivered: true)'
 mutate_and_expect_failure interrupted-left-open Sources/Shared/IPCConnection.swift \
   '            newConnection?.invalidate()' ''
 mutate_and_expect_failure off-keeps-retrying Sources/GUI/App/SystemExtensionManager.swift \
