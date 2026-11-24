@@ -919,9 +919,11 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         case .alreadyScheduled, .gaveUp:
             return
         case .exhausted:
-            let message = String(localized: "FreeSnitch lost its connection to the network extension. Quit and reopen FreeSnitch, or turn the filter off and on, to get rule changes and alerts back.")
-            state?.appendLog(level: "error", message: message)
-            os_log("%{public}@", log: log, type: .error, message)
+            // Shown in the banner, whose Send Rules Again tries again; it
+            // goes away once rules get through.
+            state?.recordFilterRecovery(String(localized: "FreeSnitch lost its connection to the network extension. Send Rules Again, quit and reopen FreeSnitch, or turn the filter off and on to get rule changes and alerts back."))
+            os_log("FreeSnitch lost its connection to the network extension and stopped trying to reconnect.",
+                   log: log, type: .error)
         case .retry(let delay):
             let registration = ipcRegistration
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -1039,13 +1041,26 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus, delivered: Bool) {
         self.snapshotStatus = snapshotStatus
         if snapshotStatus.isReady {
-            snapshotRecovery.noteHealthy()
-            // The extension accepted rules sent over this link, so it works
-            // again: a later drop gets the full budget (#212).
-            if delivered { ipcReconnect.policyDelivered() }
-            state?.recordFilterRecovery(nil)
+            // Only the answer to rules the app sent proves the live rules got
+            // through. After a filter restart the new extension answers the
+            // registration with "ready" from its saved boot rules; counting
+            // that would hand back the restart limit (#70) and the reconnect
+            // budget before the live rules were accepted (#212).
+            if delivered {
+                snapshotRecovery.noteHealthy()
+                ipcReconnect.policyDelivered()
+                state?.recordFilterRecovery(nil)
+            }
         } else {
             recoverFromSnapshotRejection(snapshotStatus)
+            // Rules sent while the reconnect attempts are used up (Send Rules
+            // Again, or a rule change) start a new, equally bounded round of
+            // attempts instead of failing on a link that is gone.
+            if delivered, ipcReconnect.hasGivenUp, filterConfigurationActive,
+               !IPCConnection.shared.isAppConnected {
+                ipcReconnect.reset()
+                registerIPC()
+            }
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {

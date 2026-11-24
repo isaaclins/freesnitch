@@ -241,6 +241,9 @@ extension IPCConnection: NSXPCListenerDelegate {
         connectionLock.unlock()
     }
 
+    /// App side: whether a connection made by `register` is still current.
+    public var isAppConnected: Bool { connectionSnapshot() != nil }
+
     private func replaceCurrentConnection(with connection: NSXPCConnection) -> NSXPCConnection? {
         connectionLock.lock()
         defer { connectionLock.unlock() }

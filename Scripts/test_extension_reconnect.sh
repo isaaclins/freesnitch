@@ -57,6 +57,7 @@ for attempt in 0..<ExtensionReconnect.delays.count {
     stuck.attemptStarted()
 }
 expect(stuck.linkLost() == .exhausted, "reconnect attempts are not bounded")
+expect(stuck.hasGivenUp, "a used-up budget is not reported as given up")
 expect(stuck.linkLost() == .gaveUp, "giving up was reported more than once")
 expect(waited >= 60 && waited <= 180, "the attempts cover \(waited) s, not a provider that takes a while to start")
 stuck.reset()
@@ -140,8 +141,23 @@ check_wiring() {
   # rules, so only the answer to rules the app sent may return the budget.
   # Otherwise an extension that drops the link once live rules arrive is
   # reconnected forever.
-  grep -Fq 'if delivered { ipcReconnect.policyDelivered() }' <<<"$record" \
+  local healthy
+  healthy="$(awk '/if delivered \{/{f=1} f{print} f&&/^            \}/{exit}' <<<"$record")"
+  grep -Fq 'ipcReconnect.policyDelivered()' <<<"$healthy" \
     || { echo "the reconnect budget comes back without rules having been delivered, or never"; return 1; }
+  # The same goes for the #70 restart limit: a "ready" from saved boot rules
+  # after a restart must not hand it back, or a refusal the restart can't
+  # clear restarts the filter without end.
+  grep -Fq 'snapshotRecovery.noteHealthy()' <<<"$healthy" \
+    || { echo "the filter restart limit comes back without rules having been delivered"; return 1; }
+  [[ "$(grep -c 'noteHealthy()' "$sem")" -eq 1 ]] \
+    || { echo "the filter restart limit is handed back somewhere other than after delivered rules"; return 1; }
+  # Once the attempts are used up, it says so where the user sees it, and
+  # sending the rules again starts a new round instead of failing.
+  grep -Fq 'state?.recordFilterRecovery(String(localized: "FreeSnitch lost its connection' <<<"$lost" \
+    || { echo "giving up on the extension is not shown in the banner"; return 1; }
+  grep -Fq 'if delivered, ipcReconnect.hasGivenUp, filterConfigurationActive,' <<<"$record" \
+    || { echo "sending the rules again after giving up does not reconnect"; return 1; }
   [[ "$(grep -c 'policyDelivered()' "$sem")" -eq 1 ]] \
     || { echo "the reconnect budget is returned somewhere other than after delivered rules"; return 1; }
   grep -Fq 'self.recordSnapshotStatus(remoteStatus, delivered: false)' <<<"$reg_app" \
@@ -196,9 +212,15 @@ mutate_and_expect_failure stale-answer-wins Sources/GUI/App/SystemExtensionManag
   $'guard let self, registration == self.ipcRegistration else { return }\n                if ok {' \
   $'guard let self else { return }\n                if ok {'
 mutate_and_expect_failure budget-never-returned Sources/GUI/App/SystemExtensionManager.swift \
-  'if delivered { ipcReconnect.policyDelivered() }' '_ = delivered'
-mutate_and_expect_failure budget-on-any-ready Sources/GUI/App/SystemExtensionManager.swift \
-  'if delivered { ipcReconnect.policyDelivered() }' 'ipcReconnect.policyDelivered()'
+  '                ipcReconnect.policyDelivered()' ''
+mutate_and_expect_failure healthy-on-any-ready Sources/GUI/App/SystemExtensionManager.swift \
+  $'        if snapshotStatus.isReady {\n' $'        if snapshotStatus.isReady {\n            snapshotRecovery.noteHealthy()\n'
+mutate_and_expect_failure restart-limit-never-returned Sources/GUI/App/SystemExtensionManager.swift \
+  '                snapshotRecovery.noteHealthy()' ''
+mutate_and_expect_failure give-up-only-logged Sources/GUI/App/SystemExtensionManager.swift \
+  'state?.recordFilterRecovery(String(localized: "FreeSnitch lost its connection' 'state?.appendLog(level: "error", message: String(localized: "FreeSnitch lost its connection'
+mutate_and_expect_failure resend-after-give-up-fails Sources/GUI/App/SystemExtensionManager.swift \
+  'if delivered, ipcReconnect.hasGivenUp, filterConfigurationActive,' 'if false, ipcReconnect.hasGivenUp, filterConfigurationActive,'
 mutate_and_expect_failure registration-counts-as-delivery Sources/GUI/App/SystemExtensionManager.swift \
   'self.recordSnapshotStatus(remoteStatus, delivered: false)' 'self.recordSnapshotStatus(remoteStatus, delivered: true)'
 mutate_and_expect_failure interrupted-left-open Sources/Shared/IPCConnection.swift \

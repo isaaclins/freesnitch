@@ -32,6 +32,9 @@ public struct ExtensionReconnect: Sendable {
     public private(set) var attempts = 0
     public private(set) var scheduled = false
     private var reportedExhausted = false
+    /// The attempts are used up and nothing reconnects until something new
+    /// (rules sent again, the filter turned on) starts another round.
+    public var hasGivenUp: Bool { reportedExhausted }
 
     public init() {}
 
