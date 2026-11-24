@@ -1080,7 +1080,7 @@ struct RulesManagerView: View {
                     infoField("Signed by", RuleSigningTeam.label(r.processTeamId))
                 }
                 infoField("Host", ruleHost(r))
-                if let port = r.remotePort, port > 0 { infoField("Port", "\(port)") }
+                if let port = r.remotePort { infoField("Port", "\(port)") }
             }
             Section {
                 infoField("Direction", r.directionLabel)
@@ -1831,7 +1831,7 @@ struct RuleEditorView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Section("Match") {
+                Section {
                     TextField("Bundle ID", text: $processBundleID)
                     TextField("Host or domain", text: $remoteHost)
                     TextField("IP address", text: $remoteIP)
@@ -1839,6 +1839,14 @@ struct RuleEditorView: View {
                         .onChange(of: remotePort) { value in
                             remotePort = value.filter { $0.isNumber }
                         }
+                } header: {
+                    Text("Match")
+                } footer: {
+                    if !portIsValid {
+                        Text("Use a port from 1 through 65535, or leave it empty for every port.")
+                            .font(.caption).foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Section("Decision") {
                     Picker("Direction", selection: $direction) {
@@ -1901,7 +1909,7 @@ struct RuleEditorView: View {
         processBundleID = rule.processBundleId ?? ""
         remoteHost = rule.remoteHost ?? ""
         remoteIP = rule.remoteIP ?? ""
-        remotePort = rule.remotePort.map { $0 > 0 ? String($0) : "" } ?? ""
+        remotePort = rule.remotePort.map { String($0) } ?? ""
         direction = rule.direction
         action = rule.action
         scope = rule.scope
@@ -1991,7 +1999,14 @@ struct RuleEditorView: View {
         if noDestination { scope = .process }
     }
 
+    /// Empty, or a real port. Port 0 is refused (#218): no connection goes
+    /// to it, and the CLI and rule import refuse it too.
+    private var portIsValid: Bool {
+        remotePort.isEmpty || Int(remotePort).map { (1...65535).contains($0) } == true
+    }
+
     private var canSave: Bool {
+        guard portIsValid else { return false }
         let hasMatch = [processBundleID, remoteHost, remoteIP]
             .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return hasProcess || hasMatch || !remotePort.isEmpty
@@ -2101,7 +2116,7 @@ extension Rule {
     var displayDestination: String {
         if let host = remoteHost, !host.isEmpty { return host }
         if let ip = remoteIP, !ip.isEmpty { return ip }
-        if let port = remotePort, port > 0 { return String(localized: "Port \(String(port))", comment: "A port number, shown as typed") }
+        if let port = remotePort { return String(localized: "Port \(String(port))", comment: "A port number, shown as typed") }
         if let notes, !notes.isEmpty { return notes }
         return String(localized: "Any", comment: "Destination of a rule that matches every destination")
     }

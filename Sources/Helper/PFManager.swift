@@ -428,7 +428,13 @@ final class PFManager: @unchecked Sendable {
         }
 
         var port: Int?
-        if let rawPort = r.remotePort, rawPort != 0 {
+        if let rawPort = r.remotePort, rawPort != 0 || verb == "block" {
+            // A deny rule's port 0 matches nothing (#218). Dropping it would
+            // block every port of the address; an allow's port 0 still means
+            // any port, as in the matcher.
+            guard rawPort != 0 else {
+                return reject("deny rule names destination port 0, which matches no connection")
+            }
             guard (1...65535).contains(rawPort) else {
                 return reject("invalid destination port \(rawPort); expected 1 through 65535")
             }
