@@ -976,7 +976,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 try dns.start(port: AppConstants.dnsProxyPort)
                 reply(true, nil)
             } catch {
-                _ = try? pf.uninstall()
+                // A rollback that cannot empty the anchor leaves pf on, so it
+                // is recorded like a failed turn-off (issue #211).
+                do { try pf.uninstall() } catch let rollbackError { recordPFError(rollbackError) }
                 dns.stop()
                 reply(false, error.localizedDescription)
             }

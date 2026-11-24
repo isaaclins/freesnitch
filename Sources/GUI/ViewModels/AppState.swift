@@ -221,7 +221,7 @@ final class AppState: ObservableObject {
         dnsProxyPort = status.dnsProxyPort
         pfctlFailure = status.pfctlError
         guard !enforcementChangePending else { return }
-        let live = status.pfctlActive || status.dnsProxyActive
+        let live = status.enforcementActive
         guard live != enforcementEnabled else { return }
         setEnforcementFlagWithoutApplying(live)
     }

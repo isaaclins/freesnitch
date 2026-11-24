@@ -17,6 +17,8 @@
 #      when neither the flush nor loading an empty rule set succeeds, so the
 #      helper cannot report the firewall off while the old rules may still
 #      block (#211). Either one succeeding is enough to call the anchor empty.
+#   6. The GUI toggle and the CLI read enforcement as on while either the pf
+#      anchor or the DNS proxy is active (#211).
 #
 # Nothing here touches the real pf or /etc: PFManager is pointed at a scratch
 # anchor file and a stub pfctl that only logs its arguments, and install() is
@@ -186,6 +188,19 @@ struct Verify {
             }
         }
 
+        // What the toggle and the CLI read as enforcement: pf left loaded by a
+        // failed turn-off, with the DNS proxy stopped, is still on (#211).
+        func status(pf: Bool, dns: Bool) -> HelperStatus {
+            HelperStatus(version: "test", running: true, pfctlActive: pf, dnsProxyActive: dns,
+                         dnsProxyPort: 53, activeRules: 0, blockedToday: 0)
+        }
+        checks.expect(status(pf: true, dns: false).enforcementActive,
+                      "a loaded pf anchor with the DNS proxy stopped reads as enforcement off")
+        checks.expect(status(pf: false, dns: true).enforcementActive,
+                      "a running DNS proxy without the pf anchor reads as enforcement off")
+        checks.expect(status(pf: true, dns: true).enforcementActive, "full enforcement reads as off")
+        checks.expect(!status(pf: false, dns: false).enforcementActive, "nothing running reads as enforcement on")
+
         // A Mac where enforcement was never on has no anchor file; clearing
         // must not create one.
         try FileManager.default.removeItem(atPath: anchor)
@@ -208,5 +223,10 @@ xcrun swiftc -O -sdk "$SDK" -target "$TARGET" -parse-as-library \
 
 mkdir -p "$TMP/work"
 PF_WORK="$TMP/work" PF_STUB="$TMP/pfctl" PF_STUB_LOG="$TMP/pfctl.log" PF_STUB_FAIL="$TMP/pfctl.fail" PF_STUB_FAIL_ARGS="$TMP/pfctl.fail-args" "$TMP/run"
+
+# The toggle must take its state from that same property, or the GUI can read
+# off while pf still blocks (#211).
+grep -q 'let live = status.enforcementActive' "$ROOT/Sources/GUI/ViewModels/AppState.swift" \
+  || { printf 'pf leftover harness: FAIL: the enforcement toggle does not read HelperStatus.enforcementActive\n' >&2; exit 1; }
 
 printf 'pf leftover verification: PASS\n'

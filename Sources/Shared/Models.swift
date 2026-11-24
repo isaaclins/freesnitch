@@ -398,6 +398,11 @@ public struct HelperStatus: Codable, Sendable {
     public let pfctlActive: Bool
     public let pfctlError: String?
     public let dnsProxyActive: Bool
+    /// Whether anything FreeSnitch runs can still block: the pf anchor is
+    /// loaded or the DNS proxy is listening. A turn-off that could not empty
+    /// the anchor leaves pf on with the proxy stopped, and that is not off
+    /// (issue #211).
+    public var enforcementActive: Bool { pfctlActive || dnsProxyActive }
     public let dnsProxyPort: Int
     public let activeRules: Int
     public let blockedToday: Int
