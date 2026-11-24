@@ -192,15 +192,19 @@ final class DNSProxy: @unchecked Sendable {
         var started: [NWListener] = []
         var hosts: [String] = []
         for host in Self.loopbackHosts {
-            // 127.0.0.1 is the address users point their DNS at, so a failure
-            // there stops the proxy. ::1 is served as well, but a Mac without
-            // IPv6 loopback must not lose the IPv4 proxy over it.
+            // 127.0.0.1 is the address users point their DNS at, ::1 is served
+            // as well. A port that is taken or a missing IPv6 loopback does not
+            // throw here: NWListener(using:) only rejects parameters it cannot
+            // build, and a bind that fails is reported later as `.failed` to
+            // the state handler (see listenerStateHandler). So these catches
+            // only see malformed parameters, and they keep the same split: a
+            // bad 127.0.0.1 listener stops the start, a bad ::1 one is logged.
             let primary = host == Self.loopbackHosts[0]
             do {
                 started += try startListeners(on: host, port: p, primary: primary)
                 hosts.append("\(host)")
             } catch where !primary {
-                PSLog.error(PSLog.dns, "dns proxy could not listen on \(host): \(error)")
+                PSLog.error(PSLog.dns, "dns proxy could not create its listeners on \(host): \(error)")
             } catch {
                 started.forEach { $0.cancel() }
                 throw error
@@ -223,22 +227,33 @@ final class DNSProxy: @unchecked Sendable {
     private func startListeners(on host: NWEndpoint.Host, port: NWEndpoint.Port, primary: Bool) throws -> [NWListener] {
         let udp = try NWListener(using: Self.listenerParameters(.udp, host: host, port: port))
         let tcp = try NWListener(using: Self.listenerParameters(.tcp, host: host, port: port))
+        let primaryFailed: () -> Void = { [weak self] in self?.running = false }
         udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
-        udp.stateUpdateHandler = { [weak self] state in
-            if case let .failed(err) = state {
-                PSLog.error(PSLog.dns, "udp listener on \(host) failed: \(err)")
-                if primary { self?.running = false }
-            }
-        }
+        udp.stateUpdateHandler = Self.listenerStateHandler("udp", host: host, primary: primary, onPrimaryFailure: primaryFailed)
         tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
-        tcp.stateUpdateHandler = { state in
-            if case let .failed(err) = state {
-                PSLog.error(PSLog.dns, "tcp listener on \(host) failed: \(err)")
-            }
-        }
+        tcp.stateUpdateHandler = Self.listenerStateHandler("tcp", host: host, primary: primary, onPrimaryFailure: primaryFailed)
         udp.start(queue: queue)
         tcp.start(queue: queue)
         return [udp, tcp]
+    }
+
+    /// How a listener reacts when its bind fails after `start`. A taken port
+    /// or an unusable address only shows up here, as `.failed`.
+    ///
+    /// A failed 127.0.0.1 listener, UDP or TCP alike, means the proxy is no
+    /// longer fully serving the address users point their DNS at, so the
+    /// proxy stops reporting itself running and the next `start()` binds
+    /// everything again. Nothing else is torn down: the sibling listener that
+    /// still works keeps answering, so a failure never blocks a lookup that
+    /// would otherwise work. A failed ::1 listener is only logged, so a Mac
+    /// without IPv6 loopback keeps its IPv4 proxy.
+    static func listenerStateHandler(_ proto: String, host: NWEndpoint.Host, primary: Bool,
+                                     onPrimaryFailure: @escaping () -> Void) -> (NWListener.State) -> Void {
+        return { state in
+            guard case let .failed(err) = state else { return }
+            PSLog.error(PSLog.dns, "\(proto) listener on \(host) failed: \(err)")
+            if primary { onPrimaryFailure() }
+        }
     }
 
     // MARK: - UDP path

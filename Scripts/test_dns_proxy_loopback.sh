@@ -10,7 +10,11 @@
 #   - the same port on every non-loopback address of this Mac does not,
 #   - a wildcard bind (what the helper did before) does accept on those
 #     addresses, so the harness can tell the bug from the fix,
-#   - DNSProxy.isLoopbackPeer accepts only loopback peers.
+#   - DNSProxy.isLoopbackPeer accepts only loopback peers,
+#   - a listener whose port is already taken is created without a throw and
+#     fails later in its state handler, and the helper's handler then stops
+#     the proxy reporting itself running for 127.0.0.1 (UDP and TCP) but not
+#     for ::1 (issue #490).
 #
 # A runner with no non-loopback IPv4 or IPv6 address skips the LAN half and
 # says so; the loopback and peer checks still run.
@@ -263,6 +267,58 @@ struct Main {
                 wild.cancel()
             } catch {
                 checks.expect(false, "binding the wildcard control listener: \(error)")
+            }
+        }
+
+        print("a listener whose port is taken (#490)")
+        for host in DNSProxy.loopbackHosts {
+            let primary = host == DNSProxy.loopbackHosts[0]
+            for proto in ["udp", "tcp"] {
+                let takenPort = freePort()
+                let base: () -> NWParameters = { proto == "udp" ? .udp : .tcp }
+                // The squatter binds without address reuse, so the helper's
+                // listener cannot share the port.
+                let squatParams = base()
+                squatParams.requiredLocalEndpoint = .hostPort(host: host, port: takenPort)
+                let squatReady = DispatchSemaphore(value: 0)
+                guard let squatter = try? NWListener(using: squatParams) else {
+                    checks.expect(false, "could not create the \(proto) squatter on \(host)"); continue
+                }
+                squatter.newConnectionHandler = { $0.cancel() }
+                squatter.stateUpdateHandler = { if case .ready = $0 { squatReady.signal() } }
+                squatter.start(queue: DispatchQueue(label: "squatter"))
+                guard squatReady.wait(timeout: .now() + 5) == .success else {
+                    checks.expect(false, "the \(proto) squatter on \(host):\(takenPort) never got ready"); squatter.cancel(); continue
+                }
+                let listener: NWListener
+                do {
+                    listener = try NWListener(using: DNSProxy.listenerParameters(base(), host: host, port: takenPort))
+                    checks.expect(true, "\(proto) on a taken \(host) port is created without a throw")
+                } catch {
+                    checks.expect(false, "\(proto) on a taken \(host) port threw instead of failing later: \(error)")
+                    squatter.cancel(); continue
+                }
+                let failed = DispatchSemaphore(value: 0)
+                let lock = NSLock()
+                var stoppedProxy = false
+                let helperHandler = DNSProxy.listenerStateHandler(proto, host: host, primary: primary) {
+                    lock.lock(); stoppedProxy = true; lock.unlock()
+                }
+                listener.newConnectionHandler = { $0.cancel() }
+                listener.stateUpdateHandler = { state in
+                    helperHandler(state)
+                    if case .failed = state { failed.signal() }
+                }
+                listener.start(queue: DispatchQueue(label: "taken"))
+                checks.expect(failed.wait(timeout: .now() + 5) == .success, "\(proto) on a taken \(host) port reports .failed")
+                lock.lock(); let stopped = stoppedProxy; lock.unlock()
+                if primary {
+                    checks.expect(stopped, "a failed \(proto) listener on \(host) stops the proxy reporting itself running")
+                } else {
+                    checks.expect(!stopped, "a failed \(proto) listener on \(host) leaves the proxy running")
+                }
+                listener.cancel()
+                squatter.cancel()
             }
         }
 
