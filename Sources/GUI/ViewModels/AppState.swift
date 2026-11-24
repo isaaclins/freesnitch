@@ -822,7 +822,8 @@ final class AppState: ObservableObject {
         // (#223). Answer this flow and remember nothing, which never blocks
         // or allows more than the user chose. The dialog does not offer the
         // scope then, so this only catches an answer that arrives anyway.
-        if effectiveScope == .thisAddressAndPort && !alert.connection.canPinAddressAndPort {
+        let pinned = alert.connection.pinnedAddressAndPort
+        if effectiveScope == .thisAddressAndPort && pinned == nil {
             if remember {
                 appendLog(level: "info", message: String(localized: "This connection has no address and port to remember, so the answer applied to this connection only."))
             }
@@ -843,9 +844,9 @@ final class AppState: ObservableObject {
                 scopedIP = ruleIP
                 ruleScope = usesAddress ? .ip : .domain
             case .thisAddressAndPort:
-                // Both are real here: `canPinAddressAndPort` was checked above.
-                scopedIP = alert.connection.remoteIP
-                scopedPort = alert.connection.remotePort
+                // Both are real here: `pinned` was checked above.
+                scopedIP = pinned?.ip
+                scopedPort = pinned?.port
                 ruleScope = .ip
             }
             let rule = Rule(

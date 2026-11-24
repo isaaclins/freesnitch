@@ -96,46 +96,65 @@ func flow(ip: String, port: Int) -> Connection {
                processBundleId: "com.example.demo",
                remoteHost: "", remoteIP: ip, remotePort: port, direction: .outgoing)
 }
-check(flow(ip: "203.0.113.10", port: 443).canPinAddressAndPort,
-      "an address with a real port can be remembered as address and port")
-check(!flow(ip: "203.0.113.10", port: 0).canPinAddressAndPort,
+// The pair `pinnedAddressAndPort` gives is what AppState writes into the rule,
+// so the rule below is built from it exactly as resolveAlert builds it.
+func addressAndPortRule(for c: Connection, action: RuleAction) -> Rule? {
+    guard let pin = c.pinnedAddressAndPort else { return nil }
+    return Rule(processBundleId: c.processBundleId,
+                processPath: c.processPath,
+                processName: c.processName,
+                remoteIP: pin.ip,
+                remotePort: pin.port,
+                direction: c.direction, action: action, scope: .ip, priority: 100)
+}
+
+let withPort = flow(ip: "203.0.113.10", port: 443)
+check(withPort.pinnedAddressAndPort?.ip == "203.0.113.10" && withPort.pinnedAddressAndPort?.port == 443,
+      "an address with a real port can be remembered as that address and port")
+check(flow(ip: "203.0.113.10", port: 0).pinnedAddressAndPort == nil,
       "an address with port 0 is NOT offered as address and port")
-check(!flow(ip: "", port: 443).canPinAddressAndPort,
+check(flow(ip: "203.0.113.10", port: 70000).pinnedAddressAndPort == nil,
+      "a port outside 1...65535 is NOT offered as address and port")
+check(flow(ip: "", port: 443).pinnedAddressAndPort == nil,
       "a port without an address is NOT offered as address and port")
-check(!flow(ip: "0.0.0.0", port: 443).canPinAddressAndPort && !flow(ip: "::", port: 443).canPinAddressAndPort,
+check(flow(ip: "0.0.0.0", port: 443).pinnedAddressAndPort == nil && flow(ip: "::", port: 443).pinnedAddressAndPort == nil,
       "the unspecified address is NOT offered as address and port")
 
-// What the old code saved for that alert: the address with no port. It denies
-// the address on a port the alert never showed, which is the bug.
-let portZero = flow(ip: "203.0.113.10", port: 0)
-let wideDeny = Rule(processBundleId: portZero.processBundleId,
-                    processPath: portZero.processPath,
-                    processName: portZero.processName,
-                    remoteIP: portZero.remoteIP,
+// Port 0: no rule at all, rather than what the old code saved (the address
+// with no port, which denies every port the alert never showed).
+check(addressAndPortRule(for: flow(ip: "203.0.113.10", port: 0), action: .deny) == nil,
+      "an alert with port 0 produces no address-and-port rule")
+let wideDeny = Rule(processBundleId: withPort.processBundleId,
+                    processPath: withPort.processPath,
+                    processName: withPort.processName,
+                    remoteIP: withPort.remoteIP,
                     remotePort: nil,
                     direction: .outgoing, action: .deny, scope: .ip, priority: 100)
-check(matcher.decision(for: flow(ip: "203.0.113.10", port: 443), rules: [wideDeny], defaultMode: .alert) == .deny,
+check(matcher.decision(for: withPort, rules: [wideDeny], defaultMode: .alert) == .deny,
       "a remembered address rule with no port really does deny every port, which is why port 0 must never produce one")
 
-// The rule AppState builds when the pair is real is pinned to that port.
-let pinned = Rule(processBundleId: approved.processBundleId,
-                  processPath: approved.processPath,
-                  processName: approved.processName,
-                  remoteIP: approved.remoteIP,
-                  remotePort: approved.remotePort,
-                  direction: .outgoing, action: .deny, scope: .ip, priority: 100)
-check(matcher.decision(for: approved, rules: [pinned], defaultMode: .alert) == .deny,
-      "an address-and-port deny blocks the port it was made for")
-check(matcher.decision(for: flow(ip: approved.remoteIP, port: 8443), rules: [pinned], defaultMode: .alert) != .deny,
-      "an address-and-port deny does NOT block the same address on another port")
+// With a real pair, the rule is pinned to that port and nothing wider.
+if let pinnedDeny = addressAndPortRule(for: withPort, action: .deny) {
+    check(matcher.decision(for: withPort, rules: [pinnedDeny], defaultMode: .alert) == .deny,
+          "an address-and-port deny blocks the port it was made for")
+    check(matcher.decision(for: flow(ip: "203.0.113.10", port: 8443), rules: [pinnedDeny], defaultMode: .alert) != .deny,
+          "an address-and-port deny does NOT block the same address on another port")
+    check(matcher.decision(for: flow(ip: "203.0.113.11", port: 443), rules: [pinnedDeny], defaultMode: .alert) != .deny,
+          "an address-and-port deny does NOT block another address on the same port")
+} else {
+    check(false, "an address with a real port produces an address-and-port rule")
+}
 
-check(source.contains("effectiveScope == .thisAddressAndPort && !alert.connection.canPinAddressAndPort"),
-      "AppState remembers nothing for address and port when the pair is not real")
+// The GUI is wired to the same pair: AppState and the dialog both use it.
+check(source.contains("effectiveScope == .thisAddressAndPort && pinned == nil")
+        && source.contains("scopedIP = pinned?.ip") && source.contains("scopedPort = pinned?.port"),
+      "AppState writes exactly the pinned pair and remembers nothing without one")
 check(!source.contains("remotePort > 0 ? alert.connection.remotePort : nil"),
       "AppState no longer saves an address-and-port answer without its port")
 let view = try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)
-check(view.contains("ForEach(availableScopes)") && view.contains("alert.connection.canPinAddressAndPort"),
-      "the alert only offers address and port when the connection has both")
+check(view.contains("ForEach(availableScopes)") && view.contains("alert.connection.pinnedAddressAndPort != nil")
+        && view.contains("scope: effectiveScope"),
+      "the alert only offers and answers with address and port when the connection has both")
 
 if failures > 0 {
     print("alert rule scope verification: FAILED (\(failures))")

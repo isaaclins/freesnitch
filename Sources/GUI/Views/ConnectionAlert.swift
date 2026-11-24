@@ -45,8 +45,16 @@ struct ConnectionAlertView: View {
     /// the address on every port (#223), so it is not offered.
     private var availableScopes: [AppState.RememberScope] {
         AppState.RememberScope.allCases.filter {
-            $0 != .thisAddressAndPort || alert.connection.canPinAddressAndPort
+            $0 != .thisAddressAndPort || alert.connection.pinnedAddressAndPort != nil
         }
+    }
+
+    /// The choice as this alert can have it. The view is reused for the next
+    /// alert in the queue, so a choice made for one with a port can still be
+    /// set when the next has none: it reads as "This host" then, in the
+    /// picker, the summary and the answer alike, from the first frame.
+    private var effectiveScope: AppState.RememberScope {
+        availableScopes.contains(scope) ? scope : .thisHost
     }
 
     /// What the answer will actually create, in the same words the Rules table
@@ -64,7 +72,7 @@ struct ConnectionAlertView: View {
         }
         // One sentence per scope, because the destination's grammar changes
         // with it in other languages; only the duration is a fragment.
-        switch scope {
+        switch effectiveScope {
         case .anywhere:
             return String(localized: "Creates a rule for \(name) reaching any destination, \(howLong).")
         case .thisHost:
@@ -145,7 +153,7 @@ struct ConnectionAlertView: View {
             // hand-stacked rows never quite manage.
             Form {
                 Toggle("Remember this decision", isOn: $remember)
-                Picker("Applies to", selection: $scope) {
+                Picker("Applies to", selection: Binding(get: { effectiveScope }, set: { scope = $0 })) {
                     ForEach(availableScopes) { s in Text(s.title).tag(s) }
                 }.disabled(!remember)
                 Picker("Expires", selection: $duration) {
@@ -172,21 +180,15 @@ struct ConnectionAlertView: View {
                 // were the only two of their kind on the system: macOS says
                 // "which one is the default" with the accent fill, and says
                 // everything else with the words on the button.
-                Button("Deny") { state.resolveAlert(alert, allow: false, remember: remember, scope: scope, duration: duration) }
+                Button("Deny") { state.resolveAlert(alert, allow: false, remember: remember, scope: effectiveScope, duration: duration) }
                     .keyboardShortcut(.cancelAction)
-                Button("Allow") { state.resolveAlert(alert, allow: true, remember: remember, scope: scope, duration: duration) }
+                Button("Allow") { state.resolveAlert(alert, allow: true, remember: remember, scope: effectiveScope, duration: duration) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }
         }
         .padding(20)
         .frame(width: 440)
-        // The next alert reuses this view and its choices. A scope the new
-        // connection cannot have falls back to the default instead of being
-        // applied to it unseen.
-        .onChange(of: alert.id) { _ in
-            if !availableScopes.contains(scope) { scope = .thisHost }
-        }
     }
 
     private var processName: String {
