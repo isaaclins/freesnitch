@@ -51,6 +51,14 @@ import Foundation
     /// Optional so an older helper simply does not answer it rather than
     /// breaking the connection (#79).
     @objc optional func queryBlocklistEntries(request: Data, reply: @escaping (Data, String?) -> Void)
+    /// The IP and CIDR feeds and what they block right now, as an encoded
+    /// `IPFeedsReport`. Optional because a helper from before #209 does not
+    /// have it; callers say so instead of showing an empty list.
+    @objc optional func listIPFeeds(reply: @escaping (Data, String?) -> Void)
+    /// Turns one IP or CIDR feed on or off, downloads the enabled feeds again
+    /// and answers with the resulting `IPFeedsReport` once the new set has been
+    /// handed to pf (#209).
+    @objc optional func setIPFeedEnabled(idString: String, enabled: Bool, reply: @escaping (Data, String?) -> Void)
     @objc optional func getDoHUpstream(reply: @escaping (String) -> Void)
     func setDoHUpstream(url: String, reply: @escaping (Bool, String?) -> Void)
 
