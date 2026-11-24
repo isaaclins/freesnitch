@@ -715,7 +715,7 @@ fi
 # A verdict must never wait on the filesystem. The bundle identifier comes from
 # a bounded in-memory cache, and the Info.plist read happens on a background
 # queue, so a cold page cache or a slow volume cannot become filter latency.
-require_text "$FILTER" "let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path," \
+require_text "$FILTER" "let identity = bundleIdentifierCache.cachedIdentity(forExecutablePath: path," \
   "the verdict path no longer answers bundle identifiers from the bounded cache"
 require_text "$FILTER" "capacity: Int = 512" \
   "the bundle identifier cache capacity is not explicit and bounded"
@@ -724,7 +724,7 @@ require_text "$FILTER" "resolveQueue.async" \
 require_text "$FILTER" "private let lock: UnsafeMutablePointer<os_unfair_lock_s>" \
   "the bundle identifier cache does not hold its lock at a stable address"
 connection_body="$(awk '
-  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, version: String\?, signatureChecked: Bool\)/ {
+  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, identity: FlowIdentity\)/ {
     active = 1
     depth = 0
   }
@@ -740,6 +740,21 @@ connection_body="$(awk '
 if grep -Eq 'Data\(contentsOf:|PropertyListSerialization|SecStaticCode|SecCodeCopy' <<<"$connection_body"; then
   fail "the verdict path reads an Info.plist or checks a signature synchronously"
 fi
+
+# A flow whose bundle identity is still being read waits for it, paused, when
+# a bundle id rule could decide it (#197), but never on a thread and never
+# without a deadline: past it the flow is decided as if it had not waited, so
+# a stuck read can only delay a first flow, never hold it or block it.
+require_text "$FILTER" "if identity.pending, matcher.bundleRuleMightDecide(for: conn, prepared: policy.prepared) {" \
+  "the first flow of an app is decided before its bundle identity is known"
+require_text "$FILTER" "private let identityWait: TimeInterval = 2" \
+  "the wait for a flow's bundle identity has no explicit short bound"
+require_text "$FILTER" "queue.asyncAfter(deadline: wait.deadline) { finish(true); _ = wait }" \
+  "the wait for a flow's bundle identity has no deadline that ends it"
+require_text "$FILTER" "case .now(let verdict): self.resume(context.flow, with: verdict, notBefore: earliest)" \
+  "a flow paused for its bundle identity is never resumed"
+require_text "$FILTER" "promptAndResume(flow: flow, conn: conn, observe: observe, notBefore: notBefore)" \
+  "a flow that waited for its identity and is then asked about can be resumed before its floor"
 
 # A rule's bundle id comes from the process's code signature, never from an
 # unsigned Info.plist anyone can write next to a binary (#351).
