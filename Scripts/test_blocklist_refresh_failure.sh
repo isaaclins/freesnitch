@@ -14,7 +14,8 @@
 #   4. Once the source answers again, the new download replaces the saved
 #      names, so a failure never keeps a name blocked after a good download.
 #      Resetting hand edits removes hand-added names from the saved copy, so a
-#      failed download after a reset does not keep them blocking.
+#      failed download after a reset does not keep them blocking. Changing a
+#      list's source drops the old source's names the same way.
 #   5. A list that never downloaded and fails adds nothing to the set.
 set -euo pipefail
 
@@ -123,15 +124,29 @@ struct Verify {
                "the new download and the hand edit must be blocked")
         expect(store.blocklist(id: alpha.id)?.entryCount == 2, "the recovered list must count its new entries")
 
+        let alphaRecovered = store.blocklist(id: alpha.id)?.lastUpdated
         // 4b. Resetting the hand edits, then a failed download, must not keep
         // the hand-added name blocking.
         try? store.clearBlocklistEdits(id: alpha.id)
         answers.set("Alpha", nil)
+        expect(store.blocklist(id: alpha.id)?.lastUpdated == alphaRecovered, "a reset must not make a list look freshly downloaded")
         result = await m.refresh()
         expect(result.failedLists == ["Alpha"], "the reset list's failed download must be named")
         expect(!published.contains("hand.example"), "a hand-added name must stop blocking once its edits are reset")
         expect(published.contains("a-new.example"), "the reset list's downloaded names must still block when its source is down")
         answers.set("Alpha", ["a-new.example"])
+        _ = await m.refresh()
+
+        // 4c. Pointing a list at a new source that fails must not keep the
+        // old source's names blocking; its hand edits stay.
+        _ = try? store.addBlocklistEntries(id: beta.id, domains: ["beta-hand.example"])
+        _ = try? store.updateBlocklistURL(id: beta.id, url: "https://example.com/beta-moved.txt")
+        answers.set("Beta", nil)
+        result = await m.refresh()
+        expect(result.failedLists == ["Beta"], "the moved list's failed download must be named")
+        expect(!published.contains("b.example"), "the old source's names must stop blocking once the source changes")
+        expect(published.contains("beta-hand.example"), "a hand edit must survive a source change")
+        answers.set("Beta", ["b.example"])
         _ = await m.refresh()
 
         // 5. A list that never downloaded adds nothing when it fails.
@@ -143,7 +158,6 @@ struct Verify {
         result = await m.refresh()
         expect(result.failedLists == ["Gamma"], "a never-downloaded failing list must be named, got \(result.failedLists)")
         expect(published == before, "a never-downloaded failing list must not change what is blocked")
-        _ = beta
         finish()
     }
 

@@ -1102,15 +1102,23 @@ public final class RuleStore: @unchecked Sendable {
         } catch {
             throw StoreError.invalidBlocklistURL(error.localizedDescription)
         }
-        return try queue.sync {
+        let (updated, changed): (BlocklistInfo, Bool) = try queue.sync {
             guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
+            let changed = current.url != url
             try executeLocked("UPDATE blocklists SET url=? WHERE id=?;") { stmt in
                 sqlite3_bind_text(stmt, 1, url, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
             }
             current.url = url
-            return current
+            return (current, changed)
         }
+        guard changed else { return updated }
+        // What was saved came from the old source. A failed download keeps
+        // blocking what is saved (#252), so the old names must go now or they
+        // would keep blocking under a source that never listed them. The hand
+        // edits stay: they belong to the list, not to its source.
+        try replaceBlocklistEntries(blocklistID: id, domains: blocklistEdits(id: id).added)
+        return try recountBlocklist(id: id, markUpdated: false)
     }
 
     // MARK: - Hand edits to a blocklist (#97)
@@ -1181,7 +1189,7 @@ public final class RuleStore: @unchecked Sendable {
         // too until then, which only ever blocks less.
         if !added.isEmpty {
             try deleteBlocklistEntries(id: id, domains: added)
-            _ = try recountBlocklist(id: id)
+            _ = try recountBlocklist(id: id, markUpdated: false)
         }
     }
 
@@ -1279,8 +1287,10 @@ public final class RuleStore: @unchecked Sendable {
 
     /// The stored count follows the stored entries, so the sidebar and the pane
     /// header cannot disagree with the list they describe.
+    /// `markUpdated` is false when the change is not new content, so a list
+    /// whose next download then fails does not look freshly updated (#252).
     @discardableResult
-    private func recountBlocklist(id: UUID) throws -> BlocklistInfo {
+    private func recountBlocklist(id: UUID, markUpdated: Bool = true) throws -> BlocklistInfo {
         try queue.sync {
             guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
             var count = 0
@@ -1289,6 +1299,14 @@ public final class RuleStore: @unchecked Sendable {
             if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM blocklist_entries WHERE blocklist_id=?;", -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
                 if sqlite3_step(stmt) == SQLITE_ROW { count = Int(sqlite3_column_int(stmt, 0)) }
+            }
+            guard markUpdated else {
+                try executeLocked("UPDATE blocklists SET entry_count=? WHERE id=?;") { stmt in
+                    sqlite3_bind_int(stmt, 1, Int32(count))
+                    sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                current.entryCount = count
+                return current
             }
             let now = Date()
             try executeLocked("UPDATE blocklists SET entry_count=?, last_updated=? WHERE id=?;") { stmt in
