@@ -5677,6 +5677,16 @@
         }
       }
     },
+    "FreeSnitch could not connect to the network extension again. Rule changes and alerts reach it again after FreeSnitch is quit and opened, or the filter is turned off and on." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось снова подключиться к сетевому расширению. Изменения правил и запросы снова будут доходить до него, если закрыть и снова открыть FreeSnitch или выключить и включить фильтр."
+          }
+        }
+      }
+    },
     "FreeSnitch could not deliver its rules" : {
       "localizations" : {
         "ru" : {
