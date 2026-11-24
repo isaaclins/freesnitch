@@ -389,8 +389,9 @@ struct Main {
 
         print("overlapping start and stop calls (#501)")
         /// True when nothing holds `proto` on host:port anymore: a squatter
-        /// without address reuse can bind it. Retries briefly, because a
-        /// cancelled listener lets go of its socket on its own queue.
+        /// without address reuse can bind it. A cancelled listener lets go of
+        /// its socket on its own queue, so a quick failure is tried again
+        /// for up to 3 s; a squat that hangs uses its own 5 s timeout once.
         func isFree(_ proto: String, _ host: NWEndpoint.Host, _ port: NWEndpoint.Port) -> Bool {
             let deadline = DispatchTime.now() + 3
             repeat {
