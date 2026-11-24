@@ -184,6 +184,11 @@ final class DNSProxy: @unchecked Sendable {
         guard let p = NWEndpoint.Port(rawValue: port) else {
             throw NSError(domain: "DNSProxy", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad port"])
         }
+        // A failed 127.0.0.1 UDP listener clears `running` while the other
+        // listeners from the last start may still hold their ports. Cancel
+        // them so this start binds cleanly instead of leaking them.
+        listeners.forEach { $0.cancel() }
+        listeners = []
         var started: [NWListener] = []
         var hosts: [String] = []
         for host in Self.loopbackHosts {
