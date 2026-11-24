@@ -55,6 +55,15 @@ struct ConnectionAlertView: View {
         availableScopes.contains(scope) ? scope : .thisHost
     }
 
+    /// Connections like this one that got through while the question waited.
+    /// Whatever the answer is, those are already allowed, so the dialog says
+    /// so instead of leaving them to be found in the log (#245).
+    private var repeatsSummary: String? {
+        let repeats = alert.repeatsAllowed
+        guard repeats > 0 else { return nil }
+        return String(localized: "\(repeats) more connections like this one were allowed while this question waited.")
+    }
+
     /// What the answer will actually create, in the same words the Rules table
     /// uses, so the two can be recognised as the same thing.
     private var ruleSummary: String {
@@ -138,6 +147,12 @@ struct ConnectionAlertView: View {
                 Text(todaySummary)
                     .font(.footnote)
                     .foregroundStyle(.tertiary)
+            }
+            if let repeatsSummary {
+                Label(repeatsSummary, systemImage: "arrow.triangle.2.circlepath")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let queueSummary {
                 Label(queueSummary, systemImage: "clock.badge.exclamationmark")

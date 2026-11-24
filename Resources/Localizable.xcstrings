@@ -1468,6 +1468,58 @@
         }
       }
     },
+    "%lld more connections like this one were allowed while this question waited." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Пока этот вопрос ждал ответа, разрешено ещё %lld такое же соединение."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Пока этот вопрос ждал ответа, разрешено ещё %lld таких же соединения."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Пока этот вопрос ждал ответа, разрешено ещё %lld таких же соединений."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Пока этот вопрос ждал ответа, разрешено ещё %lld таких же соединения."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more connection like this one was allowed while this question waited."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more connections like this one were allowed while this question waited."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld more destinations, %lld connections past the grouping bound, counted in the totals above." : {
       "localizations" : {
         "ru" : {
@@ -2902,6 +2954,58 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Разрешено"
+          }
+        }
+      }
+    },
+    "Allowed %@ to reach %@ %lld more times without asking, because the same question was already on screen." : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ ещё %lld раз разрешён без запроса, так как тот же вопрос уже был на экране."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ ещё %lld раза разрешён без запроса, так как тот же вопрос уже был на экране."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ ещё %lld раз разрешён без запроса, так как тот же вопрос уже был на экране."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@: доступ к %@ ещё %lld раза разрешён без запроса, так как тот же вопрос уже был на экране."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Allowed %@ to reach %@ %lld more time without asking, because the same question was already on screen."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Allowed %@ to reach %@ %lld more times without asking, because the same question was already on screen."
+                }
+              }
+            }
           }
         }
       }

@@ -37,9 +37,6 @@ final class AppState: ObservableObject {
     /// Connections allowed because the question queue was full. This used to
     /// happen with nothing counted, logged or shown (#130).
     @Published private(set) var overflowAllowedToday = 0
-    /// Repeats of a question already on screen, so the dialog can say how many
-    /// more of the same are waiting instead of dropping them silently.
-    @Published private(set) var coalescedAlertCount = 0
     /// Whether Alert mode asks about destinations an app already uses.
     @Published var askAboutKnownContacts = AppPreferences.bool(forKey: AppPreferences.Key.askKnownContacts) {
         didSet {
@@ -241,10 +238,16 @@ final class AppState: ObservableObject {
         let id: UUID
         let connection: Connection
         let reply: (Bool, Bool) -> Void
+        /// Connections from the same app to the same destination that were
+        /// allowed while this question was waiting. They are not new
+        /// questions, but they did get through, so the dialog says how many
+        /// and the log records them when the question closes (#245).
+        var repeatsAllowed: Int
 
-        init(id: UUID = UUID(), connection: Connection, reply: @escaping (Bool, Bool) -> Void) {
+        init(id: UUID = UUID(), connection: Connection, repeatsAllowed: Int = 0, reply: @escaping (Bool, Bool) -> Void) {
             self.id = id
             self.connection = connection
+            self.repeatsAllowed = repeatsAllowed
             self.reply = reply
         }
     }
@@ -564,7 +567,6 @@ final class AppState: ObservableObject {
         firstContactAskedToday = 0
         knownContactsAllowedToday = 0
         overflowAllowedToday = 0
-        coalescedAlertCount = 0
     }
 
     /// Every connection Alert mode lets through without asking leaves a line
@@ -624,16 +626,17 @@ final class AppState: ObservableObject {
         }
         // One question per process and destination. Without this a single
         // chatty process floods the queue with identical prompts.
-        let isDuplicate = pendingAlerts.contains {
+        let waitingIndex = pendingAlerts.firstIndex {
             $0.connection.processPath == c.processPath
                 && $0.connection.remoteHost == c.remoteHost
                 && $0.connection.remoteIP == c.remoteIP
                 && $0.connection.remotePort == c.remotePort
         }
-        if isDuplicate {
-            // Not a new decision, so it is not a new question. It still counts,
-            // because the dialog says how many are waiting behind it.
-            coalescedAlertCount += 1
+        if let waitingIndex {
+            // Not a new decision, so it is not a new question. It is still let
+            // through, so it is counted on the question it repeats: the dialog
+            // shows the count and closing the question logs it (#245).
+            pendingAlerts[waitingIndex].repeatsAllowed += 1
             unansweredAlerts.note(c.id)
             reply(true, false)
             return
@@ -736,7 +739,22 @@ final class AppState: ObservableObject {
         guard let index = pendingAlerts.firstIndex(where: { $0.id == id }) else { return false }
         let alert = pendingAlerts.remove(at: index)
         alert.reply(allow, remember)
+        recordRepeatsAllowed(while: alert)
         return true
+    }
+
+    /// The repeats a question collected while it waited, as one line in the
+    /// same log as the other silent allows. One line per question rather than
+    /// one per repeat, so a chatty app cannot flood the log (#245).
+    private func recordRepeatsAllowed(while alert: PendingAlert) {
+        let count = alert.repeatsAllowed
+        guard count > 0 else { return }
+        let c = alert.connection
+        let name = c.processName.isEmpty ? String(localized: "An app") : c.processName
+        let host = c.remoteHost.isEmpty ? c.remoteIP : c.remoteHost
+        let destination = host.isEmpty ? String(localized: "a destination") : host
+        appendLog(level: "warning",
+                  message: String(localized: "Allowed \(name) to reach \(destination) \(count) more times without asking, because the same question was already on screen."))
     }
 
     func firstContactContext(for connection: Connection) -> String? {
