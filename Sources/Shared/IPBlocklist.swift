@@ -69,6 +69,11 @@ public struct IPBlocklistFeed: Codable, Sendable, Identifiable, Hashable {
     /// the previous counts, because a feed that could not be fetched has not
     /// become empty.
     public var lastError: String?
+    /// How many of this feed's entries are in the set being enforced, as of
+    /// the last refresh. Lower than `entryCount` only when the combined feeds
+    /// hit the range limit and this feed's tail was left out (#492). Nil for
+    /// feeds stored before this was recorded.
+    public var loadedEntryCount: Int?
 
     public init(
         id: UUID = UUID(),
@@ -78,7 +83,8 @@ public struct IPBlocklistFeed: Codable, Sendable, Identifiable, Hashable {
         lastUpdated: Date? = nil,
         entryCount: Int = 0,
         rejectedCount: Int = 0,
-        lastError: String? = nil
+        lastError: String? = nil,
+        loadedEntryCount: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -88,6 +94,14 @@ public struct IPBlocklistFeed: Codable, Sendable, Identifiable, Hashable {
         self.entryCount = entryCount
         self.rejectedCount = rejectedCount
         self.lastError = lastError
+        self.loadedEntryCount = loadedEntryCount
+    }
+
+    /// Enabled, with some entries blocking but not all of them: the error
+    /// then explains the missing tail, not a feed that blocks nothing.
+    public var isPartlyLoaded: Bool {
+        guard enabled, lastError != nil, let loaded = loadedEntryCount else { return false }
+        return loaded > 0 && loaded < entryCount
     }
 }
 
@@ -640,6 +654,39 @@ public struct IPBlocklistPolicy: Sendable {
             enabledFeedCount: feeds.filter { $0.enabled }.count,
             failedFeedCount: feeds.filter { $0.enabled && $0.lastError != nil }.count
         )
+    }
+}
+
+/// What the app and the command-line tool are told about the address feeds:
+/// every feed with its own state, and what the set as a whole blocks right
+/// now. One value, so a caller never pairs a feed list with a status from a
+/// different moment (#209).
+public struct IPFeedsReport: Codable, Sendable, Equatable {
+    public var feeds: [IPBlocklistFeed]
+    public var status: IPBlocklistStatus
+    /// pf refused the anchor with the address table in it, so the anchor was
+    /// loaded without it and the feeds block nothing. `status` then reports
+    /// enforcement as off for the feeds; callers show this instead of its
+    /// summary, which would blame the enforcement switch.
+    public var addressTableRefused: Bool
+
+    public init(feeds: [IPBlocklistFeed], status: IPBlocklistStatus, addressTableRefused: Bool = false) {
+        self.feeds = feeds
+        self.status = status
+        self.addressTableRefused = addressTableRefused
+    }
+
+    public static let refusedSummary = "The firewall refused the address table, so the feeds are blocking nothing. Your own rules still apply."
+
+    /// The feed a user named, by id or by name, ignoring case. Nil when
+    /// nothing matches or a name matches more than one feed.
+    public func feed(named query: String) -> IPBlocklistFeed? {
+        let wanted = query.trimmingCharacters(in: .whitespaces)
+        if let byID = feeds.first(where: { $0.id.uuidString.caseInsensitiveCompare(wanted) == .orderedSame }) {
+            return byID
+        }
+        let byName = feeds.filter { $0.name.caseInsensitiveCompare(wanted) == .orderedSame }
+        return byName.count == 1 ? byName[0] : nil
     }
 }
 

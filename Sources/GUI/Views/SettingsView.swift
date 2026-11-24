@@ -206,6 +206,7 @@ struct SettingsView: View {
                     Text(EnforcementControl.explanation)
                         .font(.caption).foregroundColor(.secondary)
                 }
+                IPFeedsSection()
                 Section("Mode") {
                     Picker("Default mode", selection: Binding(get: { state.mode }, set: { state.setMode($0) })) {
                         ForEach(AppMode.allCases, id: \.self) { mode in

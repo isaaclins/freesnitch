@@ -126,6 +126,7 @@ Command-specific `data` shapes are:
 | `alerts list` | `count`, `appAttached`, `capacity`, `alerts`, and `reason` when the list is empty |
 | `alerts answer` | `id`, `state`, `allow`, `decision`, `answeredBy`, `resolvedAt`, `scope`, `remember`, `ruleStored`, `ruleId`, `ruleMessage`, `message` |
 | blocklists | an array of ID, name, URL, enabled state, update time, and entry count |
+| `ip-feeds` and `ip-feed` | `feeds` (each with `id`, `name`, `url`, `enabled`, `lastUpdated`, `entryCount`, `rejectedCount`, `lastError`, `loadedEntryCount`), `status` (`enforcementEnabled`, `loadedEntryCount`, `loadedRangeCount`, `rejectedEntryCount`, `truncated`, `enabledFeedCount`, `failedFeedCount`), and `addressTableRefused` |
 | settings | the changed or queried setting and its value |
 | `pf` and `flush` | the existing `puresnitch` anchor diagnostic |
 
@@ -292,6 +293,16 @@ freesnitch blocklist BLOCKLIST_ID on
 ```
 
 Blocklists are DNS-name filters enforced by the helper's local DNS proxy only when Enforcement is enabled. They apply to names sent to that proxy, not hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.
+
+IP and CIDR feeds are a separate kind of list, also in Settings > General:
+
+```sh
+freesnitch ip-feeds
+freesnitch ip-feed "Spamhaus DROP" on
+freesnitch ip-feed FEED_ID off
+```
+
+A feed is named by its ID or its name. Every feed ships off. Turning one on or off makes the helper download the enabled feeds again before it answers, so the answer carries the new entry counts. Feeds are enforced in the pf anchor, for every app, only while Enforcement is enabled; a feed that can't be downloaded blocks nothing, and loopback, DHCP, private and shared ranges and the DNS servers are never blocked.
 
 ## Recovery operations
 

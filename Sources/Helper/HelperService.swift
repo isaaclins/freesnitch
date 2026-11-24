@@ -1042,6 +1042,45 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
+    /// The address feeds as the user should see them. Whether they block
+    /// anything depends on the pf anchor actually being loaded, so that is what
+    /// the report is told, not the preference (#22, #209).
+    private func currentIPFeedsReport() -> IPFeedsReport {
+        blocklists.ipFeedsReport(enforcementEnabled: pf.isLoaded,
+                                 addressTableRefused: pf.isIPBlocklistRefused,
+                                 resolverAddresses: configuredResolverAddresses())
+    }
+
+    func listIPFeeds(reply: @escaping (Data, String?) -> Void) {
+        do {
+            reply(try FreeSnitchWireCodec.encode(currentIPFeedsReport()), nil)
+        } catch {
+            reply(Data(), "The address feeds could not be encoded: \(error.localizedDescription)")
+        }
+    }
+
+    /// Stores the choice, downloads the enabled feeds and hands the new set to
+    /// pf before answering, so the reply carries the counts and errors of the
+    /// download it caused rather than the ones from before it (#209).
+    func setIPFeedEnabled(idString: String, enabled: Bool, reply: @escaping (Data, String?) -> Void) {
+        guard idString.count <= 64 else {
+            reply(Data(), "The feed id is not valid.")
+            return
+        }
+        PSLog.error(PSLog.helper, "AUDIT: address feed \(idString) \(enabled ? "enable" : "disable") requested")
+        Task {
+            guard await self.blocklists.setIPFeedEnabledAndRefresh(idString: idString, enabled: enabled) else {
+                reply(Data(), "No address feed has that id.")
+                return
+            }
+            do {
+                reply(try FreeSnitchWireCodec.encode(self.currentIPFeedsReport()), nil)
+            } catch {
+                reply(Data(), "The address feeds could not be encoded: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// One page of one list. The query is re-bounded here rather than trusted:
     /// the caller is on the other side of an XPC connection (#79).
     func queryBlocklistEntries(request: Data, reply: @escaping (Data, String?) -> Void) {
