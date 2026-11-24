@@ -53,7 +53,7 @@ struct IPFeedsSection: View {
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Blocks connections to the addresses and ranges a feed lists, for every app, while enforcement is on. A feed that can't be downloaded blocks nothing. Your own network, private and shared ranges, DHCP and your DNS servers are never blocked.")
+            Text("Blocks connections to the addresses and ranges a feed lists, for every app, while enforcement is on. A feed that can't be downloaded blocks nothing. Loopback, DHCP, private and shared ranges and your DNS servers are never blocked.")
                 .font(.caption).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

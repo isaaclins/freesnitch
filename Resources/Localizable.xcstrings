@@ -4009,12 +4009,12 @@
         }
       }
     },
-    "Blocks connections to the addresses and ranges a feed lists, for every app, while enforcement is on. A feed that can't be downloaded blocks nothing. Your own network, private and shared ranges, DHCP and your DNS servers are never blocked." : {
+    "Blocks connections to the addresses and ranges a feed lists, for every app, while enforcement is on. A feed that can't be downloaded blocks nothing. Loopback, DHCP, private and shared ranges and your DNS servers are never blocked." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Блокирует соединения с адресами и диапазонами из источника для всех приложений, пока включено применение правил. Источник, который не удалось скачать, ничего не блокирует. Ваша сеть, частные и общие диапазоны, DHCP и ваши DNS-серверы никогда не блокируются."
+            "value" : "Блокирует соединения с адресами и диапазонами из источника для всех приложений, пока включено применение правил. Источник, который не удалось скачать, ничего не блокирует. Loopback, DHCP, частные и общие диапазоны и ваши DNS-серверы никогда не блокируются."
           }
         }
       }
