@@ -79,6 +79,9 @@ struct IPFeedsSection: View {
         guard feed.enabled else {
             return URL(string: feed.url)?.host ?? feed.url
         }
+        if feed.isPartlyLoaded, let loaded = feed.loadedEntryCount {
+            return String(localized: "Only \(loaded) of \(feed.entryCount) entries fit under the address limit and block.")
+        }
         if let error = feed.lastError {
             return String(localized: "Not loaded, so it blocks nothing: \(error)")
         }

@@ -1063,13 +1063,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(Data(), "The feed id is not valid.")
             return
         }
-        guard blocklists.setIPFeedEnabled(idString: idString, enabled: enabled) else {
-            reply(Data(), "No address feed has that id.")
-            return
-        }
-        PSLog.error(PSLog.helper, "AUDIT: address feed \(idString) \(enabled ? "enabled" : "disabled")")
+        PSLog.error(PSLog.helper, "AUDIT: address feed \(idString) \(enabled ? "enable" : "disable") requested")
         Task {
-            await self.blocklists.refreshIPBlocklists()
+            guard await self.blocklists.setIPFeedEnabledAndRefresh(idString: idString, enabled: enabled) else {
+                reply(Data(), "No address feed has that id.")
+                return
+            }
             do {
                 reply(try FreeSnitchWireCodec.encode(self.currentIPFeedsReport()), nil)
             } catch {

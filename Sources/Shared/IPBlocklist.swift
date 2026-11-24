@@ -69,6 +69,11 @@ public struct IPBlocklistFeed: Codable, Sendable, Identifiable, Hashable {
     /// the previous counts, because a feed that could not be fetched has not
     /// become empty.
     public var lastError: String?
+    /// How many of this feed's entries are in the set being enforced, as of
+    /// the last refresh. Lower than `entryCount` only when the combined feeds
+    /// hit the range limit and this feed's tail was left out (#492). Nil for
+    /// feeds stored before this was recorded.
+    public var loadedEntryCount: Int?
 
     public init(
         id: UUID = UUID(),
@@ -78,7 +83,8 @@ public struct IPBlocklistFeed: Codable, Sendable, Identifiable, Hashable {
         lastUpdated: Date? = nil,
         entryCount: Int = 0,
         rejectedCount: Int = 0,
-        lastError: String? = nil
+        lastError: String? = nil,
+        loadedEntryCount: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -88,6 +94,14 @@ public struct IPBlocklistFeed: Codable, Sendable, Identifiable, Hashable {
         self.entryCount = entryCount
         self.rejectedCount = rejectedCount
         self.lastError = lastError
+        self.loadedEntryCount = loadedEntryCount
+    }
+
+    /// Enabled, with some entries blocking but not all of them: the error
+    /// then explains the missing tail, not a feed that blocks nothing.
+    public var isPartlyLoaded: Bool {
+        guard enabled, lastError != nil, let loaded = loadedEntryCount else { return false }
+        return loaded > 0 && loaded < entryCount
     }
 }
 

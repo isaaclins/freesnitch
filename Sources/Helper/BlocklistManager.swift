@@ -207,7 +207,10 @@ final class BlocklistManager: @unchecked Sendable {
     /// why, and a refresh where every feed fails leaves an empty set that
     /// blocks nothing. An address feed must never be able to take the machine
     /// off the network, least of all by failing.
-    func refreshIPBlocklists() async {
+    /// Returns false when a newer refresh or a toggle overtook this one, so
+    /// its result was dropped rather than published.
+    @discardableResult
+    func refreshIPBlocklists() async -> Bool {
         _ = ipFeeds()
         let (generation, snapshot): (Int, [IPBlocklistFeed]) = queue.sync {
             ipRefreshGeneration += 1
@@ -216,8 +219,7 @@ final class BlocklistManager: @unchecked Sendable {
         var feeds = snapshot
         let enabled = feeds.enumerated().filter { $0.element.enabled }
         guard !enabled.isEmpty else {
-            applyIPEntries([], to: feeds, generation: generation)
-            return
+            return applyIPEntries([], to: feeds, generation: generation)
         }
 
         var bodies: [Int: IPFeedFetchResult] = [:]
@@ -242,23 +244,38 @@ final class BlocklistManager: @unchecked Sendable {
                 feeds[index].rejectedCount = built.rejectedEntryCount
                 feeds[index].lastUpdated = Date()
                 feeds[index].lastError = nil
-                let remaining = IPBlocklistLimits.maxRanges - entries.count
-                if remaining > 0 {
-                    entries.append(contentsOf: built.acceptedEntries.prefix(remaining))
-                }
+                let remaining = max(0, IPBlocklistLimits.maxRanges - entries.count)
+                let loaded = min(remaining, built.acceptedEntries.count)
+                entries.append(contentsOf: built.acceptedEntries.prefix(loaded))
+                feeds[index].loadedEntryCount = loaded
                 if built.acceptedEntries.count > remaining {
                     feeds[index].lastError = "combined IP blocklist range limit reached; feed tail was not loaded"
                 }
             case .some(.failure(let reason)):
                 feeds[index].lastError = reason
+                feeds[index].loadedEntryCount = 0
                 PSLog.error(PSLog.pf, "IP blocklist \(feeds[index].name) unavailable: \(reason); it is enforcing nothing")
             case .none:
                 feeds[index].lastError = "feed was not read"
+                feeds[index].loadedEntryCount = 0
                 PSLog.error(PSLog.pf, "IP blocklist \(feeds[index].name) was not read; it is enforcing nothing")
             }
         }
 
-        applyIPEntries(entries, to: feeds, generation: generation)
+        return applyIPEntries(entries, to: feeds, generation: generation)
+    }
+
+    /// A toggle followed by a refresh whose result is the one published, so
+    /// the caller can answer with counts from a download that started after
+    /// the toggle (#493). When another refresh overtakes this one, this one
+    /// is dropped, so it downloads again; the attempts are bounded, and after
+    /// the last one the caller still answers with what is current.
+    func setIPFeedEnabledAndRefresh(idString: String, enabled: Bool, attempts: Int = 3) async -> Bool {
+        guard setIPFeedEnabled(idString: idString, enabled: enabled) else { return false }
+        for _ in 0..<max(1, attempts) {
+            if await refreshIPBlocklists() { break }
+        }
+        return true
     }
 
     /// The current address matcher. Immutable, so a caller can hold it across
@@ -278,7 +295,8 @@ final class BlocklistManager: @unchecked Sendable {
         )
     }
 
-    private func applyIPEntries(_ entries: [String], to feeds: [IPBlocklistFeed], generation: Int) {
+    @discardableResult
+    private func applyIPEntries(_ entries: [String], to feeds: [IPBlocklistFeed], generation: Int) -> Bool {
         let set = IPBlocklistSet(entries: entries)
         ipPublishLock.lock()
         defer { ipPublishLock.unlock() }
@@ -290,9 +308,10 @@ final class BlocklistManager: @unchecked Sendable {
             ipFeedsCache = feeds
             return feeds
         }
-        guard let published else { return }
+        guard let published else { return false }
         storeIPFeeds(published)
         onIPBlocklistUpdate?(set, published)
+        return true
     }
 
     private func storeIPFeeds(_ feeds: [IPBlocklistFeed]) {

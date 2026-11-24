@@ -448,8 +448,10 @@ final class CLIRunner {
         }
         let report = try await helper.setIPFeed(id: target.id, enabled: enabled)
         var lines = ["IP feed \(target.name) (\(target.id.uuidString)): \(humanBool(enabled))."]
-        if enabled, let error = report.feeds.first(where: { $0.id == target.id })?.lastError {
-            lines.append("It could not be loaded and is blocking nothing: \(error)")
+        if enabled, let feed = report.feeds.first(where: { $0.id == target.id }), let error = feed.lastError {
+            lines.append(feed.isPartlyLoaded
+                         ? "Only \(feed.loadedEntryCount ?? 0) of \(feed.entryCount) entries fit under the address limit and block."
+                         : "It could not be loaded and is blocking nothing: \(error)")
         }
         return CommandResult(data: report, human: lines.joined(separator: "\n") + "\n" + humanIPFeeds(report))
     }
@@ -1064,7 +1066,11 @@ final class CLIRunner {
             if feed.enabled || feed.lastUpdated != nil { line += "  entries=\(feed.entryCount)" }
             if feed.rejectedCount > 0 { line += " rejected=\(feed.rejectedCount)" }
             if let date = feed.lastUpdated { line += " updated=\(formatDate(date))" }
-            if feed.enabled, let error = feed.lastError { line += "\n      not loaded: \(error)" }
+            if feed.isPartlyLoaded {
+                line += "\n      partly loaded: \(feed.loadedEntryCount ?? 0) of \(feed.entryCount) entries fit under the address limit"
+            } else if feed.enabled, let error = feed.lastError {
+                line += "\n      not loaded: \(error)"
+            }
             return line
         }.joined(separator: "\n")
         let feeds = report.feeds.isEmpty ? "IP feeds: none." : listing
