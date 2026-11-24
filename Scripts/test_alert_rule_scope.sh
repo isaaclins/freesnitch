@@ -115,8 +115,6 @@ check(!matcher.matches(rule: named, connection: connection(host: "other.example.
 let ipOnlyIP = rememberedThisHost(connection(host: "", ip: "203.0.113.10"), action: .allow)
 check(ipOnlyIP.remoteHost == nil && ipOnlyIP.remoteIP == "203.0.113.10",
       "a flow with an empty name still stores its address")
-check(source.contains("rememberedHostDestination"),
-      "AppState picks the remembered destination with the shared helper")
 
 // And the guard that stops it being created at all.
 let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
@@ -124,6 +122,8 @@ check(source.contains("scopedIP = ruleIP") && source.contains("remoteIP: scopedI
       "AppState carries the remote address into the remembered rule")
 check(source.contains("hasDestination"),
       "AppState refuses to store a remembered rule with an empty destination")
+check(source.contains("rememberedHostDestination"),
+      "AppState picks the remembered destination with the shared helper")
 
 if failures > 0 {
     print("alert rule scope verification: FAILED (\(failures))")
