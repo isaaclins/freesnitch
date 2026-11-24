@@ -329,13 +329,13 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
         guard let socketFlow = flow as? NEFilterSocketFlow else { return .allow() }
-        let (conn, version, signatureChecked) = connection(from: socketFlow)
+        let (conn, identity) = connection(from: socketFlow)
         // Every flow that gets this far is recorded exactly once, with the
         // decision it really got (#447). Stamped now, so a flow that waits on
         // an alert still sits in the history at the moment it started.
         let observedAt = Date()
         let observe: (FlowDecision) -> Void = { [weak self] decision in
-            self?.recordObservation(conn, observedAt: observedAt, version: version, decision: decision)
+            self?.recordObservation(conn, observedAt: observedAt, version: identity.metadata?.version, decision: decision)
         }
         // FreeSnitch must never hold up its own traffic. The helper shells out
         // to nettop and lsof to observe connections, and pausing those to ask
@@ -368,8 +368,68 @@ final class FilterDataProvider: NEFilterDataProvider {
         let sentByResolver = conn.direction == .outgoing
             && (sentByOtherProcess || conn.processPath == RuleMatcher.systemResolverPath)
             && systemResolverIdentity.isSystemResolver(processAuditToken: senderToken)
-        let decision = matcher.explainedDecision(for: conn, prepared: policy.prepared, defaultMode: snapshot.mode,
-                                                 sentBySystemResolver: sentByResolver)
+        let context = VerdictContext(flow: socketFlow, prepared: policy.prepared, mode: snapshot.mode,
+                                     sentByResolver: sentByResolver, destinationKnown: destinationKnown,
+                                     observedAt: observedAt)
+        // A bundle id rule cannot match a flow whose bundle identity is still
+        // being read (#197): its first flow would get the default mode, and a
+        // deny rule for the app would let it through. When such a rule could
+        // decide this flow, it waits, paused, for that read, and never longer
+        // than `identityWait`: past that it is decided with what is known,
+        // exactly as before.
+        var flowConn = conn
+        var flowIdentity = identity
+        if identity.pending, matcher.bundleRuleMightDecide(for: conn, prepared: policy.prepared) {
+            // Looked at again right before pausing: the read may have finished
+            // during the checks above, and a flow must not be resumed before
+            // this returns `.pause()`. Only a read still running pauses it.
+            flowIdentity = bundleIdentifierCache.cachedIdentity(forExecutablePath: conn.processPath,
+                                                                auditToken: socketFlow.sourceAppAuditToken)
+            if flowIdentity.pending {
+                decideOnceIdentityKnown(conn, context: context)
+                return .pause()
+            }
+            flowConn = Self.connection(conn, with: flowIdentity.metadata)
+        }
+        switch decide(flowConn, identity: flowIdentity, context: context) {
+        case .now(let verdict): return verdict
+        case .asking: return .pause()
+        }
+    }
+
+    /// What a flow's verdict depends on besides its connection.
+    private struct VerdictContext {
+        let flow: NEFilterSocketFlow
+        let prepared: PreparedRuleSet
+        let mode: AppMode
+        let sentByResolver: Bool
+        let destinationKnown: Bool
+        let observedAt: Date
+    }
+
+    private enum PlannedVerdict {
+        case now(NEFilterNewFlowVerdict)
+        /// Paused while the user is asked; `promptAndResume` resumes it.
+        case asking
+    }
+
+    /// The rules' verdict for a connection whose identity is as known as it
+    /// will get. Records the flow and counts the rule that decided it.
+    /// `notBefore` is for a flow already paused: any resume, the user's answer
+    /// included, waits until then (see `decideOnceIdentityKnown`).
+    private func decide(_ conn: Connection, identity: FlowIdentity, context: VerdictContext,
+                        notBefore: DispatchTime? = nil) -> PlannedVerdict {
+        let observedAt = context.observedAt
+        let version = identity.metadata?.version
+        let observe: (FlowDecision) -> Void = { [weak self] decision in
+            self?.recordObservation(conn, observedAt: observedAt, version: version, decision: decision)
+        }
+        let flow = context.flow
+        let destinationKnown = context.destinationKnown
+        let signatureChecked = identity.metadata?.signatureChecked ?? false
+        let decision = matcher.explainedDecision(for: conn, prepared: context.prepared, defaultMode: context.mode,
+                                                 sentBySystemResolver: context.sentByResolver)
+
         // Only once the flow's own code was checked: before that, a missing
         // signed id means "not known yet", and the log would wrongly say the
         // signature does not vouch for a signed app. And only when the flow was
@@ -386,14 +446,67 @@ final class FilterDataProvider: NEFilterDataProvider {
         switch decision.action {
         case .allow:
             observe(.allowed)
-            return reportingLateDestination(.allow(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
+            return .now(reportingLateDestination(.allow(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
         case .deny:
             observe(.blocked)
-            return reportingLateDestination(.drop(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown)
+            return .now(reportingLateDestination(.drop(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
         case .ask:
-            promptAndResume(flow: flow, conn: conn, observe: observe)
-            return .pause()
+            promptAndResume(flow: flow, conn: conn, observe: observe, notBefore: notBefore)
+            return .asking
         }
+    }
+
+    /// Longest a flow waits for its app's bundle identity (#197). The read is
+    /// one Info.plist and one signature check of code the kernel already
+    /// validated, so this is only reached when something is wrong; the flow is
+    /// then decided as if it had not waited.
+    private let identityWait: TimeInterval = 2
+
+    /// Decides a paused flow once the bundle identity of its process is known
+    /// or `identityWait` has passed, whichever comes first, and resumes it.
+    private func decideOnceIdentityKnown(_ conn: Connection, context: VerdictContext) {
+        // `resumeFlow` is only valid once `handleNewFlow` has returned the
+        // pause, and nothing here can see that moment. A read finishing within
+        // microseconds of the pause could otherwise resume the flow first, and
+        // a resume macOS ignores would leave the flow held with no deadline
+        // left. So no waited flow is resumed sooner than `resumeFloor` after
+        // it was paused.
+        let earliest = DispatchTime.now() + resumeFloor
+        bundleIdentifierCache.whenIdentityKnown(forExecutablePath: conn.processPath,
+                                                auditToken: context.flow.sourceAppAuditToken,
+                                                timeout: identityWait, queue: workQueue) { [weak self] identity, timedOut in
+            guard let self else { return }
+            if timedOut { self.noteIdentityWaitTimedOut(conn) }
+            switch self.decide(Self.connection(conn, with: identity.metadata), identity: identity, context: context,
+                               notBefore: earliest) {
+            case .now(let verdict): self.resume(context.flow, with: verdict, notBefore: earliest)
+            case .asking: break
+            }
+        }
+    }
+
+    /// See `decideOnceIdentityKnown`.
+    private let resumeFloor: TimeInterval = 0.02
+
+    /// Resumes a paused flow, but not before `notBefore` when one is given.
+    private func resume(_ flow: NEFilterFlow, with verdict: NEFilterNewFlowVerdict, notBefore: DispatchTime?) {
+        guard let notBefore, DispatchTime.now() < notBefore else {
+            resumeFlow(flow, with: verdict)
+            return
+        }
+        workQueue.asyncAfter(deadline: notBefore) { [weak self] in self?.resumeFlow(flow, with: verdict) }
+    }
+
+    /// Only touched on `workQueue`.
+    private var identityWaitTimeoutLogged = false
+
+    /// Once per extension run, so a resolve queue that has stopped answering
+    /// shows up without one line per flow.
+    private func noteIdentityWaitTimedOut(_ conn: Connection) {
+        guard !identityWaitTimeoutLogged else { return }
+        identityWaitTimeoutLogged = true
+        PSLog.error(PSLog.netext,
+                    "The bundle identity of \(conn.processPath) was not known after \(Int(identityWait)) s, so its flow was decided without it: bundle id rules did not apply to it. Logged once.")
     }
 
     /// The compact evidence event, queued without waiting: trylock-only, a
@@ -624,10 +737,11 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// `observe` is called once, with what the flow finally got: the user's
     /// answer, or `.unfiltered` when it was let through because nobody could
     /// answer (#447). A pending flow is never recorded as decided.
-    private func promptAndResume(flow: NEFilterFlow, conn: Connection, observe: @escaping (FlowDecision) -> Void) {
+    private func promptAndResume(flow: NEFilterFlow, conn: Connection, observe: @escaping (FlowDecision) -> Void,
+                                 notBefore: DispatchTime? = nil) {
         guard let data = try? JSONEncoder().encode(conn) else {
             observe(.unfiltered)
-            resumeFlow(flow, with: NEFilterNewFlowVerdict.allow()); return
+            resume(flow, with: NEFilterNewFlowVerdict.allow(), notBefore: notBefore); return
         }
         var settled = false
         let lock = NSLock()
@@ -636,7 +750,8 @@ final class FilterDataProvider: NEFilterDataProvider {
             lock.lock(); defer { lock.unlock() }
             guard let self, !settled else { return }
             settled = true
-            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
+            self.resume(flow, with: self.reportingLateDestination(verdict, for: flow, port: conn.remotePort, destinationKnown: destinationKnown),
+                        notBefore: notBefore)
             observe(decision)
         }
 
@@ -716,9 +831,9 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Flow -> Connection
 
-    /// The flow as a connection, and the app version shown with it. Both come
-    /// from one cache lookup, so a flow pays for one kernel code-hash call.
-    private func connection(from flow: NEFilterSocketFlow) -> (Connection, version: String?, signatureChecked: Bool) {
+    /// The flow as a connection, and what is known of its app's identity. Both
+    /// come from one cache lookup, so a flow pays for one kernel code-hash call.
+    private func connection(from flow: NEFilterSocketFlow) -> (Connection, identity: FlowIdentity) {
         let (host, port) = remoteAddress(of: flow)
         let destination = FlowDestination.resolve(endpointHost: host, remoteHostname: flow.remoteHostname)
         if let rejected = destination.rejectedHostname {
@@ -729,22 +844,29 @@ final class FilterDataProvider: NEFilterDataProvider {
         let pid = flow.sourceAppAuditToken.flatMap(auditTokenToPID) ?? 0
         let path = pid > 0 ? pathForPID(pid) : ""
         let name = path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
-        let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path,
+        let identity = bundleIdentifierCache.cachedIdentity(forExecutablePath: path,
                                                             auditToken: flow.sourceAppAuditToken)
         let connection = Connection(
             pid: Int32(pid),
             processName: name,
             processPath: path,
-            processBundleId: metadata?.bundleIdentifier,
-            processTeamId: metadata?.bundleIdentifier == nil ? nil : metadata?.team,
-            claimedBundleId: metadata?.claimedBundleIdentifier,
             remoteHost: remoteHost,
             remoteIP: remoteIP,
             remotePort: port,
             direction: flow.direction == .outbound ? .outgoing : .incoming,
             status: .pending
         )
-        return (connection, metadata?.version, metadata?.signatureChecked ?? false)
+        return (Self.connection(connection, with: identity.metadata), identity)
+    }
+
+    /// The connection with the bundle identity from `metadata`, replacing
+    /// whatever it carried.
+    private static func connection(_ conn: Connection, with metadata: AppBundleMetadata?) -> Connection {
+        var conn = conn
+        conn.processBundleId = metadata?.bundleIdentifier
+        conn.processTeamId = metadata?.bundleIdentifier == nil ? nil : metadata?.team
+        conn.claimedBundleId = metadata?.claimedBundleIdentifier
+        return conn
     }
 
     /// `remoteEndpoint` is deprecated and reports the unspecified address
@@ -1087,6 +1209,9 @@ struct AppBundleMetadata: Sendable {
     var signatureChecked = false
 }
 
+/// What the cache knew of a flow's app when it was asked.
+typealias FlowIdentity = (metadata: AppBundleMetadata?, pending: Bool)
+
 /// The outcome of one Info.plist read. `.read(nil)` is a real answer (the plist
 /// names neither an identifier nor a version); `.failed` means nothing is known.
 enum AppBundleMetadataRead: Sendable {
@@ -1143,6 +1268,13 @@ final class BundleIdentifierCache: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private var evictionOrder: [String] = []
     private var pending: Set<String> = []
+    /// Flows paused until the identity of their path is known (#197), woken
+    /// when that path's resolve finishes. Each one also has its own deadline
+    /// in the provider, so a resolve that never comes cannot hold a flow.
+    /// A wait that ends at its deadline takes its entry back out, so a
+    /// resolve that never finishes holds only the waits still running.
+    private var waiters: [String: [UInt64: @Sendable () -> Void]] = [:]
+    private var nextWaiterID: UInt64 = 0
     /// Set once the kernel failed to give a flow's code hash, so that is
     /// logged once instead of every allow quietly turning into an alert.
     private var codeHashFailureLogged = false
@@ -1152,7 +1284,7 @@ final class BundleIdentifierCache: @unchecked Sendable {
     /// type `os_unfair_lock_s` gives no such guarantee, and a lock that moves
     /// is not a lock.
     private let lock: UnsafeMutablePointer<os_unfair_lock_s>
-    private let resolveQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.bundleid", qos: .utility)
+    private let resolveQueue = DispatchQueue(label: "io.isaaclins.freesnitch.netext.bundleid", qos: .userInitiated)
     private let read: @Sendable (String) -> AppBundleMetadataRead
     private let identify: @Sendable (String, Data?) -> CodeSigningIdentity.Resolution
     private let codeHash: @Sendable (Data?) -> CDHash?
@@ -1217,7 +1349,17 @@ final class BundleIdentifierCache: @unchecked Sendable {
     /// The signed bundle identifier of the flow's own code, and the plist's
     /// version and claimed identifier for its path.
     func cachedMetadata(forExecutablePath path: String, auditToken: Data? = nil) -> AppBundleMetadata? {
-        guard !path.isEmpty else { return nil }
+        cachedIdentity(forExecutablePath: path, auditToken: auditToken).metadata
+    }
+
+    /// `cachedMetadata`, plus whether the answer is still missing something a
+    /// resolve already under way will supply (#197): the first read of an
+    /// app's Info.plist, or the first signature check of the code this flow
+    /// runs. A check that already failed, code whose hash the kernel would not
+    /// give, an executable outside an .app and a resolve that could not be
+    /// scheduled are not pending: waiting would not change the answer.
+    func cachedIdentity(forExecutablePath path: String, auditToken: Data? = nil) -> (metadata: AppBundleMetadata?, pending: Bool) {
+        guard !path.isEmpty else { return (nil, false) }
         let hash = codeHash(auditToken)
         let now = clock()
         os_unfair_lock_lock(lock)
@@ -1228,6 +1370,8 @@ final class BundleIdentifierCache: @unchecked Sendable {
         let checkDue = hash != nil && known == nil && retryDue
         let shouldRefresh = !pending.contains(path) && pending.count < capacity && (plistDue || checkDue)
         if shouldRefresh { pending.insert(path) }
+        let unanswered = entry == nil || (hash != nil && known == nil && entry?.unreadableHash != hash)
+        let inFlight = unanswered && pending.contains(path)
         let reportHashFailure = auditToken != nil && hash == nil && !codeHashFailureLogged
         if reportHashFailure { codeHashFailureLogged = true }
         os_unfair_lock_unlock(lock)
@@ -1243,7 +1387,81 @@ final class BundleIdentifierCache: @unchecked Sendable {
         }
         var answer = Self.metadata(known ?? nil, entry?.plist)
         answer?.signatureChecked = known != nil
-        return answer
+        // Only an app bundle ever gets a bundle identity; anything else is
+        // answered nil whatever the resolve finds.
+        return (answer, inFlight && path.range(of: ".app/") != nil)
+    }
+
+    /// Runs `action` once the resolve under way for `path` has finished, on
+    /// the resolve queue, and returns the registration's id (for
+    /// `forgetWaiter`); returns nil at once when none is under way, so the
+    /// caller can use the answer it has now.
+    private func whenResolved(_ path: String, _ action: @escaping @Sendable () -> Void) -> UInt64? {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        guard pending.contains(path) else { return nil }
+        nextWaiterID &+= 1
+        waiters[path, default: [:]][nextWaiterID] = action
+        return nextWaiterID
+    }
+
+    private func forgetWaiter(_ id: UInt64, path: String) {
+        os_unfair_lock_lock(lock)
+        waiters[path]?.removeValue(forKey: id)
+        if waiters[path]?.isEmpty == true { waiters.removeValue(forKey: path) }
+        os_unfair_lock_unlock(lock)
+    }
+
+    /// Calls `done` once, on `queue`, with the identity of the flow's app as
+    /// soon as nothing about it is pending any more, or after `timeout` with
+    /// whatever is known then (`timedOut` true only if something was still
+    /// pending). Never blocks a thread: each finished resolve for `path` looks
+    /// again, since the one that finished may have been started by another
+    /// flow at the same path without this flow's code (#197).
+    func whenIdentityKnown(forExecutablePath path: String, auditToken: Data?, timeout: TimeInterval,
+                           queue: DispatchQueue, _ done: @escaping (FlowIdentity, _ timedOut: Bool) -> Void) {
+        let wait = IdentityWait(deadline: .now() + timeout)
+        let finish: (Bool) -> Void = { [weak self, weak wait] timedOut in
+            guard let wait, !wait.settled else { return }
+            wait.settled = true
+            wait.check = nil
+            if let id = wait.registered { self?.forgetWaiter(id, path: path) }
+            let identity: FlowIdentity = self?.cachedIdentity(forExecutablePath: path, auditToken: auditToken)
+                ?? (metadata: nil, pending: false)
+            done(identity, timedOut && identity.pending)
+        }
+        wait.check = { [weak self, weak wait] in
+            guard let wait, !wait.settled else { return }
+            wait.registered = nil
+            guard let self else { return finish(false) }
+            // A resolve can finish between the look and the registration, and
+            // the one that finished may not have checked this flow's code. The
+            // next look then starts the check this flow needs, so look again
+            // rather than deciding early; every round means a resolve finished.
+            while DispatchTime.now() < wait.deadline,
+                  self.cachedIdentity(forExecutablePath: path, auditToken: auditToken).pending {
+                if let id = self.whenResolved(path, { [weak wait] in queue.async { wait?.check?() } }) {
+                    wait.registered = id
+                    return
+                }
+            }
+            finish(DispatchTime.now() >= wait.deadline)
+        }
+        // The deadline holds the only strong reference: the wait lives until
+        // it, and a resolve that finishes later finds nothing to wake.
+        queue.asyncAfter(deadline: wait.deadline) { finish(true); _ = wait }
+        queue.async { wait.check?() }
+    }
+
+    /// One flow's wait for its identity. Touched only on its caller's serial
+    /// queue.
+    private final class IdentityWait: @unchecked Sendable {
+        let deadline: DispatchTime
+        var settled = false
+        var check: (() -> Void)?
+        /// The cache's waiter entry while one is registered.
+        var registered: UInt64?
+        init(deadline: DispatchTime) { self.deadline = deadline }
     }
 
     /// Background only.
@@ -1310,7 +1528,9 @@ final class BundleIdentifierCache: @unchecked Sendable {
             }
         }
         insertLocked(path, entry: entry)
+        let woken = waiters.removeValue(forKey: path)?.values.map { $0 } ?? []
         os_unfair_lock_unlock(lock)
+        for action in woken { action() }
 
         // Log outside the lock: once when a path's code starts failing its
         // signature check, and once when a plist starts failing or recovers.
@@ -1395,6 +1615,13 @@ final class BundleIdentifierCache: @unchecked Sendable {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
         return entries.count
+    }
+
+    /// Test seam: how many paused flows are registered to be woken.
+    var waiterCount: Int {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        return waiters.values.reduce(0) { $0 + $1.count }
     }
 
     /// Test seam: block until the reads scheduled so far have finished.

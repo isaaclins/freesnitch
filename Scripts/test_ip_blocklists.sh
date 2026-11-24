@@ -808,6 +808,187 @@ struct IPBlocklistHarness {
         checks.expect(store.allBlocklists().allSatisfy { $0.url != IPBlocklistCatalog.defaults[0].url },
                       "an address feed must never appear in the domain blocklist table")
 
+        // 7b. The supported controls (#209): a feed turned on through the
+        // helper's report path ends up in the pf table, and a download that
+        // began before a newer toggle can neither undo that toggle nor publish
+        // its older set after the newer one.
+        let report = manager.ipFeedsReport(enforcementEnabled: true, resolverAddresses: ["9.9.9.9"])
+        checks.expect(report.feeds.count == IPBlocklistCatalog.defaults.count,
+                      "the report must list every feed, got \(report.feeds.count)")
+        checks.expect(report.status.enabledFeedCount == 1 && report.status.blockingEntryCount == 3,
+                      "the report must say one feed blocks 3 entries, got \(report.status)")
+        checks.expect(manager.ipFeedsReport(enforcementEnabled: false).status.blockingEntryCount == 0,
+                      "with enforcement off the report must say the feeds block nothing")
+        checks.expect(report.feed(named: IPBlocklistCatalog.defaults[0].name.uppercased())?.id.uuidString == feedID,
+                      "a feed must be found by its name, ignoring case")
+        checks.expect(report.feed(named: feedID.lowercased())?.id.uuidString == feedID,
+                      "a feed must be found by its id, ignoring case")
+        checks.expect(report.feed(named: "no such feed") == nil, "an unknown feed name must find nothing")
+        let refused = manager.ipFeedsReport(enforcementEnabled: true, addressTableRefused: true)
+        checks.expect(refused.addressTableRefused && refused.status.blockingEntryCount == 0,
+                      "when pf refused the address table the report must say the feeds block nothing")
+        checks.expect(!manager.ipFeedsReport(enforcementEnabled: false, addressTableRefused: true).addressTableRefused,
+                      "with enforcement off a refused table is not the reason nothing is blocked")
+        if let encoded = try? FreeSnitchWireCodec.encode(report),
+           let decoded = try? FreeSnitchWireCodec.decode(IPFeedsReport.self, from: encoded) {
+            checks.expect(decoded == report, "the report must survive the XPC encoding unchanged")
+        } else {
+            checks.expect(false, "the report must encode and decode for XPC")
+        }
+
+        let pf7b = PFManager()
+        var publishedAnchor = ""
+        var publishedSets: [IPBlocklistSet] = []
+        manager.onIPBlocklistUpdate = { set, _ in
+            publishedSets.append(set)
+            publishedAnchor = pf7b.renderAnchor(rules: [], ipBlocklist: set, resolverAddresses: ["9.9.9.9"])
+        }
+        let secondID = IPBlocklistCatalog.defaults[1].id.uuidString
+        checks.expect(manager.setIPFeedEnabled(idString: secondID.lowercased(), enabled: false),
+                      "a feed id must be accepted in any letter case")
+
+        final class Gate: @unchecked Sendable {
+            let lock = NSLock()
+            var started = false
+            var released = false
+            func markStarted() { lock.lock(); started = true; lock.unlock() }
+            func isStarted() -> Bool { lock.lock(); defer { lock.unlock() }; return started }
+            func release() { lock.lock(); released = true; lock.unlock() }
+            func isReleased() -> Bool { lock.lock(); defer { lock.unlock() }; return released }
+        }
+        /// Waits for a signal from the other side, but never forever: a
+        /// regression where a download never starts fails the harness
+        /// instead of hanging it.
+        @Sendable func waitFor(_ what: String, _ condition: @escaping @Sendable () -> Bool) async {
+            let deadline = Date().addingTimeInterval(30)
+            while !condition() {
+                if Date() > deadline {
+                    FileHandle.standardError.write(Data("ip blocklist harness: FAIL: gave up waiting for \(what)\n".utf8))
+                    exit(1)
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+        }
+        let gate = Gate()
+        let slowFirstFeed = IPBlocklistCatalog.defaults[0].id
+        manager.ipFeedFetcher = { feed in
+            if feed.id == slowFirstFeed && !gate.isStarted() {
+                gate.markStarted()
+                await waitFor("the slow download to be released") { gate.isReleased() }
+                return .body("198.51.100.0/24\n")
+            }
+            return feed.id == slowFirstFeed ? .body("203.0.113.0/24\n") : .body("192.0.2.0/24\n")
+        }
+        let slow = Task { await manager.refreshIPBlocklists() }
+        await waitFor("the slow download to start") { gate.isStarted() }
+        checks.expect(manager.setIPFeedEnabled(idString: secondID, enabled: true),
+                      "turning the second feed on must succeed while a download is running")
+        await manager.refreshIPBlocklists()
+        gate.release()
+        _ = await slow.value
+        checks.expect(publishedSets.count == 1,
+                      "only the newer refresh may publish, got \(publishedSets.count) publishes")
+        checks.expect(manager.ipFeeds().first(where: { $0.id.uuidString == secondID })?.enabled == true,
+                      "a download that began before a toggle must not undo it")
+        checks.expect(BlocklistManager(store: store).ipFeeds().first(where: { $0.id.uuidString == secondID })?.enabled == true,
+                      "the toggle must still be stored after the older download finished")
+        let current = manager.currentIPBlocklist()
+        checks.expect(current.contains("192.0.2.7") && current.contains("203.0.113.7") && !current.contains("198.51.100.7"),
+                      "the matcher must hold the newer refresh's set, not the older one's")
+        checks.expect(publishedAnchor.contains("192.0.2.0/24") && publishedAnchor.contains("203.0.113.0/24"),
+                      "an enabled feed's entries must reach the pf table")
+        checks.expect(!publishedAnchor.contains("198.51.100.0/24"),
+                      "the older download's entries must not reach the pf table")
+
+        checks.expect(manager.ipFeeds().first(where: { $0.id.uuidString == secondID })?.loadedEntryCount == 1,
+                      "a loaded feed must record how many of its entries are enforced")
+
+        // #493: a refresh that starts while a toggle's own download runs
+        // overtakes it. The toggle must still come back with counts from a
+        // download that started after it, not from before.
+        let thirdFeed = IPBlocklistCatalog.defaults[2]
+        final class Counter: @unchecked Sendable {
+            let lock = NSLock()
+            var value = 0
+            func bump() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
+            func read() -> Int { lock.lock(); defer { lock.unlock() }; return value }
+        }
+        let thirdFetches = Counter()
+        let toggleGate = Gate()
+        let overtakerGate = Gate()
+        let toggleDownloadReturned = Gate()
+        manager.ipFeedFetcher = { feed in
+            if feed.id == thirdFeed.id {
+                let call = thirdFetches.bump()
+                let gate: Gate? = call == 1 ? toggleGate : (call == 2 ? overtakerGate : nil)
+                if let gate {
+                    gate.markStarted()
+                    await waitFor("download \(call) to be released") { gate.isReleased() }
+                }
+                if call == 1 { toggleDownloadReturned.markStarted() }
+                return .body("198.18.0.0/15\n100.24.0.0/16\n")
+            }
+            return feed.id == slowFirstFeed ? .body("203.0.113.0/24\n") : .body("192.0.2.0/24\n")
+        }
+        // The toggle's download starts, then a newer refresh starts and is
+        // still downloading when the toggle's download finishes and is
+        // dropped. The toggle must answer only once that newer refresh, which
+        // already carries the change, is published, and must not download
+        // again: two switches flipped together used to keep cancelling each
+        // other's downloads that way.
+        let toggle = Task { () -> IPBlocklistFeed? in
+            let ok = await manager.setIPFeedEnabledAndRefresh(idString: thirdFeed.id.uuidString, enabled: true)
+            checks.expect(ok, "a toggle overtaken by another refresh must still succeed")
+            return manager.ipFeedsReport(enforcementEnabled: true).feeds.first(where: { $0.id == thirdFeed.id })
+        }
+        await waitFor("the toggle's download to start") { toggleGate.isStarted() }
+        let overtaker = Task { await manager.refreshIPBlocklists() }
+        await waitFor("the newer refresh's download to start") { overtakerGate.isStarted() }
+        toggleGate.release()
+        await waitFor("the toggle's download to finish") { toggleDownloadReturned.isStarted() }
+        for _ in 0..<50 { await Task.yield() }
+        overtakerGate.release()
+        let afterToggle = await toggle.value
+        checks.expect(afterToggle?.enabled == true && afterToggle?.lastUpdated != nil && afterToggle?.entryCount == 1,
+                      "the toggle's answer must carry the counts of a download after it, got \(String(describing: afterToggle))")
+        checks.expect(await overtaker.value, "the newer refresh that carries the toggle must publish")
+        checks.expect(thirdFetches.read() == 2,
+                      "an overtaken toggle must wait for the newer refresh, not download again, got \(thirdFetches.read()) downloads")
+        checks.expect(publishedAnchor.contains("100.24.0.0/16"), "the toggled feed's entries must reach the pf table")
+        checks.expect(!publishedAnchor.contains("198.18.0.0/15"), "a proxy fake-IP range must never reach the pf table")
+        checks.expect(await manager.setIPFeedEnabledAndRefresh(idString: thirdFeed.id.uuidString, enabled: false),
+                      "turning the third feed off must succeed")
+        checks.expect(!(await manager.setIPFeedEnabledAndRefresh(idString: UUID().uuidString, enabled: true)),
+                      "a toggle of an unknown feed must fail without refreshing")
+
+        // #492: a feed whose tail went over the range limit still blocks its
+        // head, and must not be described as blocking nothing.
+        var partial = IPBlocklistCatalog.defaults[0]
+        partial.enabled = true
+        partial.entryCount = 500_000
+        partial.loadedEntryCount = 200_000
+        partial.lastError = "combined IP blocklist range limit reached; feed tail was not loaded"
+        checks.expect(partial.isPartlyLoaded, "a feed cut off at the limit must count as partly loaded")
+        partial.loadedEntryCount = 0
+        checks.expect(!partial.isPartlyLoaded, "a feed that loaded nothing must not count as partly loaded")
+        partial.loadedEntryCount = 500_000
+        partial.lastError = nil
+        checks.expect(!partial.isPartlyLoaded, "a fully loaded feed must not count as partly loaded")
+        let storedBefore = #"[{"id":"5B3B2F52-1F3C-4C2E-9E1E-2C0E0B6A0001","name":"x","url":"https://x","enabled":true,"entryCount":3,"rejectedCount":0}]"#
+        checks.expect((try? JSONDecoder().decode([IPBlocklistFeed].self, from: Data(storedBefore.utf8)))?.first?.loadedEntryCount == nil,
+                      "feeds stored before the loaded count existed must still decode")
+
+        checks.expect(manager.setIPFeedEnabled(idString: secondID, enabled: false),
+                      "turning the second feed off must succeed")
+        await manager.refreshIPBlocklists()
+        checks.expect(!publishedAnchor.contains("192.0.2.0/24") && publishedAnchor.contains("203.0.113.0/24"),
+                      "turning a feed off must take its entries out of the pf table")
+        checks.expect(manager.setIPFeedEnabled(idString: feedID, enabled: false),
+                      "turning the last feed off must succeed")
+        await manager.refreshIPBlocklists()
+        checks.expect(manager.currentIPBlocklist().isEmpty && !publishedAnchor.contains("203.0.113.0/24"),
+                      "with every feed off nothing may be left in the pf table")
+
         // 8. Size and time. A feed of this size is ordinary for this data.
         // Wall-clock limits only apply in the opt-in benchmark (issue #356):
         // timing depends on the machine's load, not on the code.

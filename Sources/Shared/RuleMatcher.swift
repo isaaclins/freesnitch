@@ -353,10 +353,16 @@ fileprivate struct PreparedRule: Sendable {
         return matches(connection: connection, address: address, trustingClaimedBundleId: true)
     }
 
+    /// True when everything but the bundle id matches, so the flow's bundle
+    /// identity alone decides whether this rule applies (#197).
+    func matchesApartFromBundleId(connection: Connection, address: PreparedConnectionAddress) -> Bool {
+        matches(connection: connection, address: address, trustingClaimedBundleId: false, checkingBundleId: false)
+    }
+
     private func matches(connection: Connection, address: PreparedConnectionAddress,
-                         trustingClaimedBundleId: Bool) -> Bool {
+                         trustingClaimedBundleId: Bool, checkingBundleId: Bool = true) -> Bool {
         if let direction, direction != connection.direction { return false }
-        if let processBundleId,
+        if checkingBundleId, let processBundleId,
            !bundleIdMatches(processBundleId, team: processTeamId, connection,
                             trustingClaimed: trustingClaimedBundleId) { return false }
         if let processPath, !processPathCovers(processPath, connection.processPath) { return false }
@@ -488,6 +494,30 @@ public struct RuleMatcher: Sendable {
         case .silentAllow: return (askFloor ? .ask : .allow, skipped, nil)
         case .silentDeny: return (.deny, skipped, nil)
         }
+    }
+
+    /// Whether a rule that names a bundle id could decide this flow, depending
+    /// only on the flow's bundle identity: such a rule matches everything else
+    /// about it and comes before any rule without a bundle id that already
+    /// matches it (#197). False means the verdict is the same whatever the
+    /// flow's bundle identity turns out to be, so there is nothing to wait for.
+    public func bundleRuleMightDecide(for c: Connection, prepared: PreparedRuleSet) -> Bool {
+        let now = Date()
+        let address = PreparedConnectionAddress(
+            c.remoteIP,
+            host: c.remoteHost,
+            needsIPv4: prepared.needsIPv4,
+            needsIPv6: prepared.needsIPv6
+        )
+        for r in prepared.compiled {
+            if let exp = r.expiresAt, exp < now { continue }
+            if r.processBundleId != nil {
+                if r.matchesApartFromBundleId(connection: c, address: address) { return true }
+            } else if r.matches(connection: c, address: address) {
+                return false
+            }
+        }
+        return false
     }
 
     public func matches(rule r: Rule, connection c: Connection) -> Bool {

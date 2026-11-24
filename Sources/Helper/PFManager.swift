@@ -5,6 +5,7 @@ final class PFManager: @unchecked Sendable {
     static let anchorName = "puresnitch"
     private let anchorPath: String
     private let pfctl: String
+    private let pfConfPath: String
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.pf")
     private var loaded = false
 
@@ -18,6 +19,10 @@ final class PFManager: @unchecked Sendable {
 
     private let stateLock = NSLock()
     private var ipBlocklist: IPBlocklistSet = .empty
+    /// True after pf refused the anchor with the address table in it and the
+    /// anchor was loaded without it, so the feeds are blocking nothing even
+    /// though enforcement is on (#209).
+    private var ipBlocklistRefused = false
     private var resolverAddresses: [String] = []
     private var lastRules: [Rule] = []
 
@@ -33,9 +38,11 @@ final class PFManager: @unchecked Sendable {
 
     /// The paths are parameters only so a harness can point them at a scratch
     /// file and a stub; the helper always uses the defaults.
-    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl") {
+    init(anchorPath: String = "/etc/pf.anchors/puresnitch", pfctl: String = "/sbin/pfctl",
+         pfConfPath: String = "/etc/pf.conf") {
         self.anchorPath = anchorPath
         self.pfctl = pfctl
+        self.pfConfPath = pfConfPath
     }
 
     /// Loads the anchor with `rules`, the policy in force right now. Loading
@@ -114,6 +121,12 @@ final class PFManager: @unchecked Sendable {
 
     var isLoaded: Bool { loaded }
 
+    var isIPBlocklistRefused: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return ipBlocklistRefused
+    }
+
     /// The rules the anchor renders the next time it is written.
     var currentRules: [Rule] {
         stateLock.lock()
@@ -171,9 +184,13 @@ final class PFManager: @unchecked Sendable {
         try writeAnchorFile(rules: rules, includeIPBlocklist: true)
         do {
             try loadAnchor()
+            stateLock.lock()
+            ipBlocklistRefused = false
+            stateLock.unlock()
         } catch {
             stateLock.lock()
             let hadBlocklist = !ipBlocklist.isEmpty
+            if hadBlocklist { ipBlocklistRefused = true }
             stateLock.unlock()
             guard hadBlocklist else { throw error }
             onWarning?(
@@ -552,20 +569,140 @@ final class PFManager: @unchecked Sendable {
         onWarning?(message)
     }
 
+    /// Makes pf.conf attach the anchor to packet processing and load it from
+    /// the anchor file at boot. Only active directives count: a comment such
+    /// as `# anchor "puresnitch"`, or an attach without its load, used to be
+    /// taken as both, so FreeSnitch loaded its rules into an anchor no packet
+    /// ever passed through (issue #206). Only the missing directives are
+    /// added, at the end, and the user's own lines are left as they are.
     private func ensureMainPFConfReferencesAnchor() throws {
-        let path = "/etc/pf.conf"
-        guard let original = try? String(contentsOfFile: path, encoding: .utf8) else { return }
-        if original.contains("anchor \"puresnitch\"") { return }
-        var lines = original.components(separatedBy: "\n")
-        if !lines.contains(where: { $0.contains("anchor \"puresnitch\"") }) {
-            lines.append("anchor \"puresnitch\"")
-            lines.append("load anchor \"puresnitch\" from \"/etc/pf.anchors/puresnitch\"")
-        }
-        let backup = path + ".puresnitch.bak"
+        guard let original = try? String(contentsOfFile: pfConfPath, encoding: .utf8) else { return }
+        guard let updated = PFManager.pfConfAttachingAnchor(original, anchorPath: anchorPath) else { return }
+        let backup = pfConfPath + ".puresnitch.bak"
         if !FileManager.default.fileExists(atPath: backup) {
             try? original.write(toFile: backup, atomically: true, encoding: .utf8)
         }
-        try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        try updated.write(toFile: pfConfPath, atomically: true, encoding: .utf8)
+    }
+
+    /// `text` with an active `anchor "puresnitch"` and an active
+    /// `load anchor "puresnitch" from "<anchorPath>"` appended where they are
+    /// missing, or nil when both are already there. Only a top-level attach
+    /// for all traffic counts: one limited by options such as `on lo0`
+    /// leaves the rest of the traffic outside the anchor.
+    static func pfConfAttachingAnchor(_ text: String, anchorPath: String) -> String? {
+        let directives = pfConfDirectives(text)
+        let attached = directives.contains { $0 == ["anchor", anchorName] || $0 == ["anchor", anchorName, "all"] }
+        let loaded = directives.contains { $0 == ["load", "anchor", anchorName, "from", anchorPath] }
+        if attached && loaded { return nil }
+        var updated = text
+        if !updated.isEmpty && !updated.hasSuffix("\n") { updated += "\n" }
+        // A last line ending in a backslash continues onto the next line, so
+        // the attach would become part of it (a comment, say). An empty line
+        // ends it first.
+        if updated.hasSuffix("\\\n") { updated += "\n" }
+        if !attached { updated += "anchor \"\(anchorName)\"\n" }
+        if !loaded { updated += "load anchor \"\(anchorName)\" from \"\(anchorPath)\"\n" }
+        return updated
+    }
+
+    /// The words of each active top-level line of a pf.conf, read the way
+    /// pfctl's lexer reads it: a backslash before a line end joins the two
+    /// lines with nothing between them, `#` outside quotes starts a comment
+    /// that runs to the end of the (joined) line, a quoted string is one word
+    /// without its quotes and may run over several lines, and lines inside an
+    /// inline anchor's `{ }` block are not top level.
+    static func pfConfDirectives(_ text: String) -> [[String]] {
+        let chars = Array(text.unicodeScalars)
+        var directives: [[String]] = []
+        var words: [String] = []
+        var word = ""
+        var inWord = false
+        var quote: Unicode.Scalar?
+        var inComment = false
+        var depth = 0
+        var startDepth = 0
+
+        func endWord() {
+            if inWord { words.append(word) }
+            word = ""
+            inWord = false
+        }
+        func endLine() {
+            endWord()
+            if !words.isEmpty && startDepth == 0 { directives.append(words) }
+            words = []
+            startDepth = depth
+        }
+
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            let next: Unicode.Scalar? = i + 1 < chars.count ? chars[i + 1] : nil
+            let lineEndAfter = next == "\n"
+
+            if let q = quote {
+                // Inside quotes: a backslash before a line end joins the
+                // lines, one before the quote keeps it, and a bare line end
+                // is dropped.
+                if c == "\\" && lineEndAfter { i += 2; continue }
+                if c == "\\" && next == q { word.unicodeScalars.append(q); i += 2; continue }
+                i += 1
+                if c == q {
+                    // A quoted string is a word of its own.
+                    quote = nil
+                    endWord()
+                } else if c != "\n" {
+                    word.unicodeScalars.append(c)
+                }
+                continue
+            }
+
+            // Outside quotes a backslash pairs with the next character: before
+            // a line end it joins the lines, before anything else it stands
+            // for that character. So `\\` followed by a line end ends the line.
+            var ch = c
+            if c == "\\" {
+                if lineEndAfter { i += 2; continue }
+                if let next { ch = next; i += 2 } else { i += 1 }
+            } else {
+                i += 1
+            }
+
+            if inComment {
+                if ch == "\n" { inComment = false; endLine() }
+                continue
+            }
+            switch ch {
+            case "\n":
+                endLine()
+            case "#":
+                endWord()
+                inComment = true
+            case "\"" where !inWord, "'" where !inWord:
+                // A quote only opens a string at the start of a word; inside
+                // an unquoted word pfctl keeps it as a plain character.
+                quote = ch
+                inWord = true
+            case " ", "\t", "\r":
+                endWord()
+            case "{":
+                endWord()
+                depth += 1
+            case "}":
+                endWord()
+                depth = max(0, depth - 1)
+            case "(", ")", "<", ">", "!", "=", "/", ",":
+                // pfctl ends an unquoted word at these and reads them apart.
+                endWord()
+                words.append(String(ch))
+            default:
+                word.unicodeScalars.append(ch)
+                inWord = true
+            }
+        }
+        endLine()
+        return directives
     }
 
     @discardableResult

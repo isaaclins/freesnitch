@@ -716,7 +716,7 @@ fi
 # A verdict must never wait on the filesystem. The bundle identifier comes from
 # a bounded in-memory cache, and the Info.plist read happens on a background
 # queue, so a cold page cache or a slow volume cannot become filter latency.
-require_text "$FILTER" "let metadata = bundleIdentifierCache.cachedMetadata(forExecutablePath: path," \
+require_text "$FILTER" "let identity = bundleIdentifierCache.cachedIdentity(forExecutablePath: path," \
   "the verdict path no longer answers bundle identifiers from the bounded cache"
 require_text "$FILTER" "capacity: Int = 512" \
   "the bundle identifier cache capacity is not explicit and bounded"
@@ -725,7 +725,7 @@ require_text "$FILTER" "resolveQueue.async" \
 require_text "$FILTER" "private let lock: UnsafeMutablePointer<os_unfair_lock_s>" \
   "the bundle identifier cache does not hold its lock at a stable address"
 connection_body="$(awk '
-  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, version: String\?, signatureChecked: Bool\)/ {
+  /private func connection\(from flow: NEFilterSocketFlow\) -> \(Connection, identity: FlowIdentity\)/ {
     active = 1
     depth = 0
   }
@@ -741,6 +741,21 @@ connection_body="$(awk '
 if grep -Eq 'Data\(contentsOf:|PropertyListSerialization|SecStaticCode|SecCodeCopy' <<<"$connection_body"; then
   fail "the verdict path reads an Info.plist or checks a signature synchronously"
 fi
+
+# A flow whose bundle identity is still being read waits for it, paused, when
+# a bundle id rule could decide it (#197), but never on a thread and never
+# without a deadline: past it the flow is decided as if it had not waited, so
+# a stuck read can only delay a first flow, never hold it or block it.
+require_text "$FILTER" "if identity.pending, matcher.bundleRuleMightDecide(for: conn, prepared: policy.prepared) {" \
+  "the first flow of an app is decided before its bundle identity is known"
+require_text "$FILTER" "private let identityWait: TimeInterval = 2" \
+  "the wait for a flow's bundle identity has no explicit short bound"
+require_text "$FILTER" "queue.asyncAfter(deadline: wait.deadline) { finish(true); _ = wait }" \
+  "the wait for a flow's bundle identity has no deadline that ends it"
+require_text "$FILTER" "case .now(let verdict): self.resume(context.flow, with: verdict, notBefore: earliest)" \
+  "a flow paused for its bundle identity is never resumed"
+require_text "$FILTER" "promptAndResume(flow: flow, conn: conn, observe: observe, notBefore: notBefore)" \
+  "a flow that waited for its identity and is then asked about can be resumed before its floor"
 
 # A rule's bundle id comes from the process's code signature, never from an
 # unsigned Info.plist anyone can write next to a binary (#351).
@@ -1535,6 +1550,22 @@ require_text "$DNS_PROXY" "let policy = policySnapshot()" \
   "the DNS query path does not decide from a single policy snapshot"
 require_text "$DNS_PROXY" "func applyPolicy(mode" \
   "DNSProxy has no combined mode-and-rules transition"
+# The DNS proxy serves this Mac only (#205). Its listeners are pinned to the
+# loopback addresses and every accepted connection is checked for a loopback
+# peer; a listener created on a bare port binds every interface and turns the
+# Mac into an open DoH forwarder for its network.
+require_text "$DNS_PROXY" "base.requiredLocalEndpoint = .hostPort(host: host, port: port)" \
+  "the DNS proxy listeners are not pinned to a loopback address"
+require_text "$DNS_PROXY" "static let loopbackHosts: [NWEndpoint.Host] = [.ipv4(.loopback), .ipv6(.loopback)]" \
+  "the DNS proxy binds something other than 127.0.0.1 and ::1"
+if grep -Eq 'NWListener\(using:.*, on:' "$DNS_PROXY"; then
+  fail "the DNS proxy creates a listener on a bare port, which binds every interface"
+fi
+for path in UDP TCP; do
+  if ! text_within_block "$DNS_PROXY" "private func handle${path}[(]" 'guard Self.isLoopbackPeer(conn.endpoint) else'; then
+    fail "the DNS proxy ${path} path does not refuse non-loopback peers"
+  fi
+done
 if grep -Fq 'didSet { preparedRules' "$DNS_PROXY"; then
   fail "DNSProxy still rebuilds its prepared rules in a didSet, which tears the pairing"
 fi
@@ -1739,4 +1770,4 @@ grep -Fq -- '"-F", "all"' <<<"$unload_body" \
 grep -Eq 'removeItem|"-d"' <<<"$unload_body" \
   && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, a DNS proxy reachable only over loopback, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'

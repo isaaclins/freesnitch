@@ -70,7 +70,8 @@ public enum PendingAlertError: LocalizedError, Equatable {
     }
 }
 
-/// The remember scopes the GUI alert offers, in CLI spelling.
+/// The remember scopes a command line answer can pick. They only partly match
+/// the alert panel's scopes (see `PendingAlertRuleFactory`).
 public enum PendingAlertScope: String, Codable, Sendable, CaseIterable {
     case process
     case domain
@@ -456,9 +457,10 @@ public struct PendingAlertListing: Codable, Sendable {
     }
 }
 
-/// Turns an answered alert into the rule the user asked to remember. The
-/// helper owns this so a CLI answer stores exactly the same shape of rule the
-/// GUI alert panel stores.
+/// Turns a command line answer into the rule it asked to remember, using the
+/// CLI's own scopes (process, domain, ip and port). The alert panel's scopes
+/// only partly overlap: it has no port-only rule, and the CLI has no
+/// address-and-port rule.
 public enum PendingAlertRuleFactory {
     /// The scope the GUI would pick: the name when one is known, the address
     /// otherwise. Never a rule that matches nothing.
@@ -757,5 +759,21 @@ public final class PendingAlertRegistry: @unchecked Sendable {
         case .answered(let answerer): return .alreadyAnswered(by: answerer, at: recorded.at)
         case .expired: return .expired(at: recorded.at)
         }
+    }
+}
+
+extension Connection {
+    /// What a remembered "This host" answer keys on: the name when the flow
+    /// carries a real one, the address otherwise. The extension puts the
+    /// address in `remoteHost` when a flow has no name, so testing that field
+    /// for emptiness stored a numeric address as a hostname rule (#224). Such
+    /// a rule is an address rule, and it has to keep matching that address
+    /// when a later flow to it also carries a name.
+    public var rememberedHostDestination: (host: String?, ip: String?) {
+        let kind = remoteHost.isEmpty ? nil : PFHostValidator.kind(for: remoteHost)
+        if !remoteHost.isEmpty, kind != .ip, kind != .cidr {
+            return (remoteHost, nil)
+        }
+        return (nil, remoteIP.isEmpty ? remoteHost : remoteIP)
     }
 }

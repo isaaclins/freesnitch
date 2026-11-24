@@ -1138,6 +1138,202 @@
         }
       }
     },
+    "%lld entries, %lld refused, updated %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, отклонено: %#@r@, обновлено %3$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg запись"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  }
+                }
+              }
+            },
+            "r" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, %#@r@ refused, updated %3$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entry"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entries"
+                    }
+                  }
+                }
+              }
+            },
+            "r" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld entries, updated %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, обновлено %2$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg запись"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@e@, updated %2$@"
+          },
+          "substitutions" : {
+            "e" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entry"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entries"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld in this range" : {
       "localizations" : {
         "ru" : {
@@ -3813,6 +4009,16 @@
         }
       }
     },
+    "Blocks connections to the addresses and ranges a feed lists, for every app, while enforcement is on. A feed that can't be downloaded blocks nothing. Loopback, DHCP, private and shared ranges and your DNS servers are never blocked." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Блокирует соединения с адресами и диапазонами из источника для всех приложений, пока включено применение правил. Источник, который не удалось скачать, ничего не блокирует. Loopback, DHCP, частные и общие диапазоны и ваши DNS-серверы никогда не блокируются."
+          }
+        }
+      }
+    },
     "Bundle ID" : {
       "localizations" : {
         "ru" : {
@@ -5010,6 +5216,16 @@
         }
       }
     },
+    "Downloading…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачивание…"
+          }
+        }
+      }
+    },
     "Draft a rule for the selected app and this address. Nothing is enforced until you accept it." : {
       "localizations" : {
         "ru" : {
@@ -5837,6 +6053,16 @@
         }
       }
     },
+    "FreeSnitch lost its connection to the network extension. Send Rules Again, quit and reopen FreeSnitch, or turn the filter off and on to get rule changes and alerts back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch потерял связь с сетевым расширением. Нажмите «Отправить правила снова», закройте и снова откройте FreeSnitch или выключите и включите фильтр, чтобы изменения правил и запросы снова работали."
+          }
+        }
+      }
+    },
     "FreeSnitch needs approval to filter traffic" : {
       "localizations" : {
         "ru" : {
@@ -6065,6 +6291,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "IP-адрес"
+          }
+        }
+      }
+    },
+    "IP address blocklists" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Списки блокировки IP-адресов"
           }
         }
       }
@@ -6540,6 +6776,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Загрузить ещё предложения"
+          }
+        }
+      }
+    },
+    "Loading…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка…"
           }
         }
       }
@@ -7492,6 +7738,16 @@
         }
       }
     },
+    "Not downloaded yet." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё не скачан."
+          }
+        }
+      }
+    },
     "Not filtered" : {
       "localizations" : {
         "ru" : {
@@ -7518,6 +7774,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пока неизвестно"
+          }
+        }
+      }
+    },
+    "Not loaded, so it blocks nothing: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не загружен, поэтому ничего не блокирует: %@"
           }
         }
       }
@@ -7688,6 +7954,78 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "По одному имени в строке. Они остаются в списке при каждом обновлении."
+          }
+        }
+      }
+    },
+    "Only %lld of %lld entries fit under the address limit and block." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Под лимит адресов уместились и блокируют только %1$lld из %#@total@."
+          },
+          "substitutions" : {
+            "total" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записи"
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg записей"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only %1$lld of %#@total@ fit under the address limit and block."
+          },
+          "substitutions" : {
+            "total" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entry"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg entries"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -10155,6 +10493,16 @@
         }
       }
     },
+    "The feeds live in the privileged helper, so they can be changed once the helper is connected." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Источники настраиваются в привилегированной службе, поэтому их можно изменить после подключения службы."
+          }
+        }
+      }
+    },
     "The file contains no rules, so nothing was changed." : {
       "localizations" : {
         "ru" : {
@@ -10283,6 +10631,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Режим фильтрации. В режиме запросов FreeSnitch спрашивает о новых соединениях."
+          }
+        }
+      }
+    },
+    "The firewall refused the address table, so the feeds are blocking nothing. Your own rules still apply." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Брандмауэр отклонил таблицу адресов, поэтому источники ничего не блокируют. Ваши собственные правила по-прежнему действуют."
           }
         }
       }
@@ -11475,6 +11833,16 @@
         }
       }
     },
+    "The running helper is too old to manage IP feeds. Run `%@`, then retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запущенная служба слишком старая, чтобы управлять IP-источниками. Выполните `%@` и повторите попытку."
+          }
+        }
+      }
+    },
     "The running helper is too old to manage profiles. Run `%@`, then retry." : {
       "localizations" : {
         "ru" : {
@@ -11769,6 +12137,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "DNS-сервер этого Mac — FreeSnitch: он фильтрует DNS-запросы, а остальные пересылает по HTTPS. %@"
+          }
+        }
+      }
+    },
+    "This Mac's DNS servers include %@, an address of this Mac itself. The FreeSnitch DNS proxy only answers on 127.0.0.1, so lookups sent there get no answer unless another DNS app answers. To use FreeSnitch, turn enforcement on and set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Среди DNS-серверов этого Mac есть %@ — адрес самого этого Mac. DNS-прокси FreeSnitch отвечает только на 127.0.0.1, поэтому запросы туда остаются без ответа, если там не отвечает другое DNS-приложение. Чтобы использовать FreeSnitch, включите фильтрацию и укажите DNS-сервер 127.0.0.1 в меню «Системные настройки» > «Сеть» > ваша сеть > «Подробнее» > «DNS»."
           }
         }
       }
@@ -12332,6 +12710,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выключение сетевого фильтра"
+          }
+        }
+      }
+    },
+    "Turning off…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключение…"
           }
         }
       }

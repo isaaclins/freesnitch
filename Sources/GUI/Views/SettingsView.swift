@@ -206,6 +206,7 @@ struct SettingsView: View {
                     Text(EnforcementControl.explanation)
                         .font(.caption).foregroundColor(.secondary)
                 }
+                IPFeedsSection()
                 Section("Mode") {
                     Picker("Default mode", selection: Binding(get: { state.mode }, set: { state.setMode($0) })) {
                         ForEach(AppMode.allCases, id: \.self) { mode in
@@ -246,13 +247,17 @@ struct SettingsView: View {
     /// upstream above, when the network's DNS server is this Mac. Without
     /// saying so, a saved upstream read as broken: the Mac kept asking the
     /// resolver it already had (#142).
-    /// The proxy listens on every interface, so a DNS server set to one of
-    /// this Mac's own addresses reaches it as well as loopback does.
+    /// The proxy answers on 127.0.0.1 and ::1 only (#205), so only a DNS
+    /// server set to one of those reaches it.
     private var routesThroughProxy: Bool {
-        let own = Self.ownAddresses()
-        return systemResolvers.contains { server in
-            server == "::1" || server.hasPrefix("127.") || own.contains(server)
-        }
+        systemResolvers.contains(where: DNSProxyAddress.reachesProxy)
+    }
+
+    /// A DNS server set to one of this Mac's own network addresses. Before
+    /// #205 that reached the proxy; it no longer does, so it is named here
+    /// rather than reported as working.
+    private var ownNetworkResolvers: [String] {
+        DNSProxyAddress.ownNetworkResolvers(systemResolvers, own: Self.ownAddresses())
     }
 
     private static func ownAddresses() -> Set<String> {
@@ -281,6 +286,11 @@ struct SettingsView: View {
         if !state.dnsProxyEnabled, routesThroughProxy {
             return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
                     String(localized: "This Mac's DNS server is set to this Mac, but the FreeSnitch DNS proxy is not running. Unless another DNS app answers there, names cannot be looked up. Turn enforcement on, or set the DNS server back in System Settings > Network."))
+        }
+        if !routesThroughProxy, !ownNetworkResolvers.isEmpty {
+            let servers = ownNetworkResolvers.joined(separator: ", ")
+            return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
+                    String(localized: "This Mac's DNS servers include \(servers), an address of this Mac itself. The FreeSnitch DNS proxy only answers on 127.0.0.1, so lookups sent there get no answer unless another DNS app answers. To use FreeSnitch, turn enforcement on and set the DNS server to 127.0.0.1 in System Settings > Network > your network > Details > DNS."))
         }
         guard state.enforcementEnabled else {
             return (String(localized: "No", comment: "Whether this Mac uses the DNS proxy"),
@@ -448,7 +458,7 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 // Network Settings can't take DNS back from a VPN that
                 // brings its own, so the button would lead nowhere (#424).
-                if state.dnsProxyEnabled != routesThroughProxy,
+                if state.dnsProxyEnabled != routesThroughProxy || (!routesThroughProxy && !ownNetworkResolvers.isEmpty),
                    routesThroughProxy || VPNStatus.dnsOwner(network.vpns) == nil {
                     Button("Open Network Settings…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {

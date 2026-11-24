@@ -35,6 +35,12 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
     public var onSnapshot: ((Data) -> SharedRuleBridge.SnapshotStatus)?
     /// Extension side: supplies the current status during registration.
     public var snapshotStatus: (() -> SharedRuleBridge.SnapshotStatus)?
+    /// App side: the connection made by `register` was interrupted or
+    /// invalidated, so the extension can no longer reach the app and rules no
+    /// longer reach the extension until the app registers again (#212). Not
+    /// called for a connection a newer `register` already replaced. Runs on
+    /// an XPC queue.
+    public var onAppConnectionLost: (() -> Void)?
 
     private override init() { super.init() }
 
@@ -165,13 +171,21 @@ public final class IPCConnection: NSObject, @unchecked Sendable {
         newConnection.exportedObject = delegate
         newConnection.remoteObjectInterface = NSXPCInterface(with: ProviderCommunication.self)
         newConnection.invalidationHandler = { [weak self, weak newConnection] in
-            self?.clearCurrentConnection(newConnection)
+            if self?.clearCurrentConnection(newConnection) == true { self?.onAppConnectionLost?() }
             finish(false, Self.unavailableStatus(String(localized: "Network extension rejected or invalidated the GUI XPC peer.")))
         }
         newConnection.interruptionHandler = { [weak self, weak newConnection] in
-            self?.clearCurrentConnection(newConnection)
+            // The extension process went away (its filter was restarted, or
+            // macOS replaced it). Nothing reconnects this one by itself, so it
+            // is closed; its invalidation no longer counts as a second loss.
+            if self?.clearCurrentConnection(newConnection) == true { self?.onAppConnectionLost?() }
+            newConnection?.invalidate()
         }
-        setCurrentConnection(newConnection)
+        // A connection from an earlier registration is closed, so the old
+        // extension process is not left holding it. It is no longer current,
+        // so its handlers do not report a lost link.
+        let previous = replaceCurrentConnection(with: newConnection)
+        previous?.invalidate()
         newConnection.resume()
 
         guard let proxy = newConnection.remoteObjectProxyWithErrorHandler({ error in
@@ -227,11 +241,26 @@ extension IPCConnection: NSXPCListenerDelegate {
         connectionLock.unlock()
     }
 
-    private func clearCurrentConnection(_ connection: NSXPCConnection?) {
-        guard let connection else { return }
+    /// App side: whether a connection made by `register` is still current.
+    public var isAppConnected: Bool { connectionSnapshot() != nil }
+
+    private func replaceCurrentConnection(with connection: NSXPCConnection) -> NSXPCConnection? {
         connectionLock.lock()
-        if currentConnection === connection { currentConnection = nil }
-        connectionLock.unlock()
+        defer { connectionLock.unlock() }
+        let previous = currentConnection
+        currentConnection = connection
+        return previous === connection ? nil : previous
+    }
+
+    /// Whether `connection` was the current one and is now cleared.
+    @discardableResult
+    private func clearCurrentConnection(_ connection: NSXPCConnection?) -> Bool {
+        guard let connection else { return false }
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        guard currentConnection === connection else { return false }
+        currentConnection = nil
+        return true
     }
 }
 

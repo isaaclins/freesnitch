@@ -1054,6 +1054,72 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
+    /// The IP and CIDR feeds and what they block now (#209). A helper too old
+    /// to answer says so rather than showing an empty list.
+    func listIPFeeds(completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void) {
+        ipFeedsCall(timeout: 15, completion: completion) { proxy, reply in
+            guard proxy.listIPFeeds != nil else { return false }
+            proxy.listIPFeeds?(reply: reply)
+            return true
+        }
+    }
+
+    /// Turns one feed on or off. The helper downloads the enabled feeds and
+    /// hands the new set to pf before it answers.
+    func setIPFeedEnabled(_ id: UUID, enabled: Bool,
+                          completion: @MainActor @escaping (IPFeedsReport?, String?) -> Void) {
+        // The helper downloads every enabled feed before it answers, and one
+        // feed may take up to its 30-second request timeout.
+        ipFeedsCall(timeout: 120, completion: completion) { proxy, reply in
+            guard proxy.setIPFeedEnabled != nil else { return false }
+            proxy.setIPFeedEnabled?(idString: id.uuidString, enabled: enabled, reply: reply)
+            return true
+        }
+    }
+
+    /// A helper that takes the request and never answers must not leave the
+    /// switch disabled on "Downloading…": the first of the answer, the
+    /// transport error and the timeout wins, and the others are dropped.
+    private func ipFeedsCall(timeout: TimeInterval,
+                             completion done: @MainActor @escaping (IPFeedsReport?, String?) -> Void,
+                             _ invoke: (HelperProtocol, @escaping (Data, String?) -> Void) -> Bool) {
+        var finished = false
+        let completion: @MainActor (IPFeedsReport?, String?) -> Void = { report, error in
+            guard !finished else { return }
+            finished = true
+            done(report, error)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+            MainActor.assumeIsolated {
+                completion(nil, String(localized: "The helper did not answer within \(Int(timeout)) seconds."))
+            }
+        }
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            Task { @MainActor in
+                completion(nil, String(localized: "Could not reach the privileged helper: \(error.sentence)"))
+            }
+        }) as? HelperProtocol else {
+            completion(nil, String(localized: "The FreeSnitch helper is not connected."))
+            return
+        }
+        let sent = invoke(proxy) { data, error in
+            Task { @MainActor in
+                if let error {
+                    completion(nil, error)
+                    return
+                }
+                guard let report = try? FreeSnitchWireCodec.decode(IPFeedsReport.self, from: data) else {
+                    completion(nil, String(localized: "The helper's answer could not be read."))
+                    return
+                }
+                completion(report, nil)
+            }
+        }
+        if !sent {
+            completion(nil, String(localized: "The running helper is too old to manage IP feeds. Run `\(AppConstants.helperKickstartCommand)`, then retry."))
+        }
+    }
+
     /// Enforcement only counts once the helper says it took. The UI stays in a
     /// pending state until then, and a refusal, a transport failure or a helper
     /// that never answers puts the toggle back where reality is, with the

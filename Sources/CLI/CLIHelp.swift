@@ -32,6 +32,7 @@ enum CLIHelp {
         case ["rules", "export"]: return rulesExport
         case ["blocklists"]: return blocklists
         case ["blocklist"]: return blocklist
+        case ["ip-feeds"], ["ip-feed"]: return ipFeeds
         case ["doh"]: return doh
         case ["enforcement"]: return enforcement
         case ["pf"]: return pf
@@ -95,6 +96,8 @@ enum CLIHelp {
     Other controls:
       blocklists [refresh]            List or refresh all blocklists.
       blocklist <id> <on|off>         Toggle one blocklist.
+      ip-feeds                        List the IP and CIDR feeds.
+      ip-feed <id|name> <on|off>      Toggle one IP or CIDR feed.
       doh <url>                       Alias for settings doh.
       enforcement <on|off>            Toggle enforcement. `off` needs --yes.
       pf <install|uninstall>          `uninstall` needs --yes.
@@ -306,6 +309,21 @@ enum CLIHelp {
     Usage: freesnitch blocklist <id> <on|off> [--json]
 
     Enables or disables one blocklist. Find IDs with `freesnitch blocklists`.
+    """
+
+    private static let ipFeeds = """
+    Usage: freesnitch ip-feeds [--json]
+          freesnitch ip-feed <id|name> <on|off> [--json]
+
+    Lists the IP and CIDR feeds with ID, enabled state, entry count and last
+    update, and says how many addresses they block right now. `ip-feed` turns
+    one feed on or off; the helper downloads the enabled feeds again before it
+    answers. Every feed ships off.
+
+    IP feeds are enforced in the pf firewall, for every app, and only while
+    enforcement is on. A feed that cannot be downloaded blocks nothing.
+    Loopback, DHCP, private and shared ranges, and your DNS servers are never
+    blocked, whatever a feed lists.
     """
 
     private static let doh = """
