@@ -85,7 +85,10 @@ struct IPFeedsSection: View {
         return String(localized: "\(feed.entryCount) entries, updated \(when)")
     }
 
-    private func load() {
+    /// `keepingFailure` is for the reload after a failed toggle: the reload
+    /// puts the switch back where the helper has it, and the reason the
+    /// toggle failed has to stay on screen beside it.
+    private func load(keepingFailure: Bool = false) {
         guard state.helperConnected else { return }
         if DemoMode.isOn {
             if report == nil { report = Self.demoReport(enforcing: state.enforcementEnabled) }
@@ -93,7 +96,11 @@ struct IPFeedsSection: View {
         }
         state.helper.listIPFeeds { value, error in
             if let value { report = value }
-            failure = error
+            if let error {
+                failure = error
+            } else if !keepingFailure {
+                failure = nil
+            }
         }
     }
 
@@ -119,7 +126,7 @@ struct IPFeedsSection: View {
                 report = value
             } else {
                 failure = error
-                load()
+                load(keepingFailure: true)
             }
         }
     }
