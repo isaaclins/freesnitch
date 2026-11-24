@@ -45,9 +45,35 @@ final class BlocklistManager: @unchecked Sendable {
         self.store = store
     }
 
-    func refresh() async {
+    /// What one download round did. A list whose source could not be read
+    /// is named here, so a caller never reports a partial refresh as done.
+    struct DomainRefreshResult: Sendable, Equatable {
+        /// Enabled lists whose download failed. Their last saved entries are
+        /// still what blocks for them.
+        var failedLists: [String]
+
+        var isComplete: Bool { failedLists.isEmpty }
+
+        /// One sentence for the app and the command-line tool, or nil when
+        /// every enabled list downloaded.
+        var failureMessage: String? {
+            guard !failedLists.isEmpty else { return nil }
+            let names = failedLists.sorted().joined(separator: ", ")
+            return failedLists.count == 1
+                ? "Could not download \(names). Its last saved entries are still blocked."
+                : "Could not download \(names). Their last saved entries are still blocked."
+        }
+    }
+
+    /// Test seam. When set, domain lists are read through this instead of the
+    /// network; `nil` means the download failed.
+    var domainListFetcher: (@Sendable (BlocklistInfo) async -> Set<String>?)?
+
+    @discardableResult
+    func refresh() async -> DomainRefreshResult {
         let lists = store.allBlocklists().filter { $0.enabled }
         var merged: Set<String> = []
+        var failed: [String] = []
         await withTaskGroup(of: (BlocklistInfo, Set<String>?).self) { group in
             for list in lists {
                 group.addTask { (list, await self.fetch(list)) }
@@ -55,8 +81,18 @@ final class BlocklistManager: @unchecked Sendable {
             for await (list, downloaded) in group {
                 // A list that failed to download must not be recorded as a
                 // successful empty one, or Settings reports "0 entries,
-                // updated just now" for a source that is simply gone.
-                guard var set = downloaded else { continue }
+                // updated just now" for a source that is simply gone. Nor may
+                // it stop blocking: an outage or a helper restart while the
+                // source is unreachable would otherwise silently drop every
+                // name it carried (#252). What is stored for it, hand edits
+                // included, keeps blocking until a download succeeds.
+                guard var set = downloaded else {
+                    failed.append(list.name)
+                    merged.formUnion(storedEntries(of: list))
+                    PSLog.error(PSLog.dns,
+                                "blocklist \(list.name) was not refreshed; its saved entries stay in effect")
+                    continue
+                }
                 // Hand edits are reapplied after every download, which is the
                 // whole reason they are stored apart from the entries (#97).
                 let edits = store.blocklistEdits(id: list.id)
@@ -81,6 +117,7 @@ final class BlocklistManager: @unchecked Sendable {
         }
         queue.sync { self.domains = merged }
         onUpdate?(merged.count)
+        return DomainRefreshResult(failedLists: failed)
     }
 
     /// Rebuilds the matching set from what is already stored, without touching
@@ -90,24 +127,32 @@ final class BlocklistManager: @unchecked Sendable {
     func rebuildFromStore() {
         var merged: Set<String> = []
         for list in store.allBlocklists() where list.enabled {
-            var offset = 0
-            while true {
-                let page = store.blocklistEntries(blocklistID: list.id,
-                                                  search: "",
-                                                  offset: offset,
-                                                  limit: BlocklistEntryQuery.maximumLimit)
-                merged.formUnion(page.entries)
-                offset += page.entries.count
-                if page.entries.isEmpty || offset >= page.total { break }
-            }
+            merged.formUnion(storedEntries(of: list))
         }
         queue.sync { self.domains = merged }
         onUpdate?(merged.count)
     }
 
+    /// Everything stored for one list, read in bounded pages.
+    private func storedEntries(of list: BlocklistInfo) -> Set<String> {
+        var entries: Set<String> = []
+        var offset = 0
+        while true {
+            let page = store.blocklistEntries(blocklistID: list.id,
+                                              search: "",
+                                              offset: offset,
+                                              limit: BlocklistEntryQuery.maximumLimit)
+            entries.formUnion(page.entries)
+            offset += page.entries.count
+            if page.entries.isEmpty || offset >= page.total { break }
+        }
+        return entries
+    }
+
     /// `nil` means the download failed; an empty set means the source really
     /// carried no entries.
     private func fetch(_ list: BlocklistInfo) async -> Set<String>? {
+        if let domainListFetcher { return await domainListFetcher(list) }
         // A hand-written list has no source. It has not failed to download;
         // there is nothing to download, and its entries are its edits (#97).
         if list.url.trimmingCharacters(in: .whitespaces).isEmpty { return [] }

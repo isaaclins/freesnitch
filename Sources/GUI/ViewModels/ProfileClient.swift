@@ -273,7 +273,12 @@ final class ProfileClient: ObservableObject {
         refreshTransport { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.blocklistRefresh = .failed(message ?? String(localized: "The helper did not say why the download failed."))
+                let reason = message ?? String(localized: "The helper did not say why the download failed.")
+                // Some lists may still have downloaded (#252), so their new
+                // counts are read before the failure is shown.
+                self.send(.snapshot) { [weak self] _, _ in
+                    self?.blocklistRefresh = .failed(reason)
+                }
                 return
             }
             // The counts come from the helper's own snapshot afterwards, never
