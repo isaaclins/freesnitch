@@ -72,3 +72,21 @@ public enum BlocklistDomain {
         normaliseAll(text.split(whereSeparator: { $0 == "\n" || $0 == "," || $0 == " " }).map(String.init))
     }
 }
+
+extension BlocklistDomain {
+    /// The rule "Allow Anyway" adds for one name on a list: an ordinary allow
+    /// rule with a high priority, in every profile, that says in its notes
+    /// where it came from. The DNS proxy lets a name through its blocklist
+    /// when a rule like this decides the lookup (#217).
+    public static func allowAnywayRule(for domain: String, listName: String) -> Rule {
+        Rule(processName: nil,
+             remoteHost: domain,
+             direction: .outgoing,
+             action: .allow,
+             scope: .domain,
+             priority: 90,
+             profile: Profile.alwaysName,
+             notes: "Allowed despite \(listName).",
+             enabled: true)
+    }
+}

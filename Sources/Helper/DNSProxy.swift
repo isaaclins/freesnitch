@@ -16,6 +16,9 @@ struct DNSPolicy: Sendable {
     /// inside the value is what makes one prepared set correspond to exactly
     /// one rule snapshot: there is no window in which the two disagree.
     let preparedRules: PreparedRuleSet
+    /// The enabled allow rules that name a host, prepared the same way. A
+    /// lookup one of them covers passes the blocklist (#217).
+    let blocklistOverrides: PreparedRuleSet
     let blocklist: Set<String>
     let dohURL: String
 
@@ -26,6 +29,7 @@ struct DNSPolicy: Sendable {
         self.mode = mode
         self.rules = rules
         self.preparedRules = PreparedRuleSet(rules: rules)
+        self.blocklistOverrides = DNSPolicy.blocklistOverrides(in: rules)
         self.blocklist = blocklist
         self.dohURL = dohURL
     }
@@ -35,28 +39,30 @@ struct DNSPolicy: Sendable {
     private init(mode: AppMode,
                  rules: [Rule],
                  preparedRules: PreparedRuleSet,
+                 blocklistOverrides: PreparedRuleSet,
                  blocklist: Set<String>,
                  dohURL: String) {
         self.mode = mode
         self.rules = rules
         self.preparedRules = preparedRules
+        self.blocklistOverrides = blocklistOverrides
         self.blocklist = blocklist
         self.dohURL = dohURL
     }
 
     func replacingMode(_ newMode: AppMode) -> DNSPolicy {
         DNSPolicy(mode: newMode, rules: rules, preparedRules: preparedRules,
-                  blocklist: blocklist, dohURL: dohURL)
+                  blocklistOverrides: blocklistOverrides, blocklist: blocklist, dohURL: dohURL)
     }
 
     func replacingBlocklist(_ newBlocklist: Set<String>) -> DNSPolicy {
         DNSPolicy(mode: mode, rules: rules, preparedRules: preparedRules,
-                  blocklist: newBlocklist, dohURL: dohURL)
+                  blocklistOverrides: blocklistOverrides, blocklist: newBlocklist, dohURL: dohURL)
     }
 
     func replacingDoHURL(_ newDoHURL: String) -> DNSPolicy {
         DNSPolicy(mode: mode, rules: rules, preparedRules: preparedRules,
-                  blocklist: blocklist, dohURL: newDoHURL)
+                  blocklistOverrides: blocklistOverrides, blocklist: blocklist, dohURL: newDoHURL)
     }
 
     func replacingRules(_ newRules: [Rule]) -> DNSPolicy {
@@ -65,6 +71,53 @@ struct DNSPolicy: Sendable {
 
     func replacing(mode newMode: AppMode, rules newRules: [Rule]) -> DNSPolicy {
         DNSPolicy(mode: newMode, rules: newRules, blocklist: blocklist, dohURL: dohURL)
+    }
+
+    /// What this policy does with a lookup for `domain`: `.deny` answers
+    /// NXDOMAIN, `.ask` waits for the user, `.allow` forwards it.
+    ///
+    /// A deny rule stands. A name on an enabled blocklist is then refused,
+    /// even where the rules or Alert mode would ask, unless an enabled allow
+    /// rule that names a host covering it exists. That is the rule "Allow
+    /// Anyway" writes (#217): the user saying this one name is fine despite
+    /// the list. It counts even when a broader allow came first and decided
+    /// the lookup, since that one says nothing about the list. An allow with
+    /// no host, one that names an app, or the default mode never switches a
+    /// list off, so every other name on the list stays blocked.
+    func verdict(forName domain: String, matcher: RuleMatcher = RuleMatcher()) -> RuleAction {
+        let stub = Connection(pid: 0, processName: "", processPath: "", remoteHost: domain,
+                              direction: .outgoing, status: .pending)
+        let action = matcher.decision(for: stub, prepared: preparedRules, defaultMode: mode)
+        if action == .deny { return .deny }
+        if Self.isBlocklisted(domain, in: blocklist),
+           matcher.explainedDecision(for: stub, prepared: blocklistOverrides,
+                                     defaultMode: .silentDeny).matchedRuleID == nil {
+            return .deny
+        }
+        return action
+    }
+
+    private static func blocklistOverrides(in rules: [Rule]) -> PreparedRuleSet {
+        // A rule that names an app speaks for that app only. DNS lookups
+        // reach the proxy without one, and a rule naming an app just by its
+        // name matches any process, so it must not open the name for all.
+        func blank(_ value: String?) -> Bool { (value ?? "").isEmpty }
+        return PreparedRuleSet(rules: rules.filter { rule in
+            rule.enabled && rule.action == .allow && !blank(rule.remoteHost)
+                && blank(rule.processName) && blank(rule.processPath) && blank(rule.processBundleId)
+        })
+    }
+
+    /// True when `domain`, or a parent domain of it, is on the blocklist.
+    static func isBlocklisted(_ domain: String, in blocklist: Set<String>) -> Bool {
+        if blocklist.contains(domain) { return true }
+        var parts = domain.split(separator: ".")
+        while parts.count >= 2 {
+            let candidate = parts.joined(separator: ".")
+            if blocklist.contains(candidate) { return true }
+            parts.removeFirst()
+        }
+        return false
     }
 }
 
@@ -342,14 +395,13 @@ final class DNSProxy: @unchecked Sendable {
             reply(nil); return
         }
         let domain = q.name.lowercased()
-        let connStub = Connection(pid: 0, processName: "", processPath: "", remoteHost: domain, direction: .outgoing, status: .pending)
         // One snapshot decides this query from here on, including the resolver
         // it is eventually forwarded to. A policy change that lands mid query
         // applies to the next query, never to half of this one.
         let policy = policySnapshot()
-        let action = matcher.decision(for: connStub, prepared: policy.preparedRules, defaultMode: policy.mode)
+        let action = policy.verdict(forName: domain, matcher: matcher)
 
-        if action == .deny || isBlocklisted(domain, in: policy.blocklist) {
+        if action == .deny {
             stats.incrBlocked()
             onBlock?(domain, nil)
             if let resp = DNSWire.nxResponse(for: payload) { reply(resp) } else { reply(nil) }
@@ -397,17 +449,6 @@ final class DNSProxy: @unchecked Sendable {
         }
 
         forwardDoH(payload: payload, domain: domain, resolver: policy.dohURL, reply: reply)
-    }
-
-    private func isBlocklisted(_ domain: String, in blocklist: Set<String>) -> Bool {
-        if blocklist.contains(domain) { return true }
-        var parts = domain.split(separator: ".")
-        while parts.count >= 2 {
-            let candidate = parts.joined(separator: ".")
-            if blocklist.contains(candidate) { return true }
-            parts.removeFirst()
-        }
-        return false
     }
 
     private func forwardDoH(payload: Data, domain: String, resolver: String, reply: @escaping (Data?) -> Void) {
