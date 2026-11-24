@@ -127,6 +127,18 @@ struct Verify {
                       "a failed flush at helper start left the rules in the anchor file")
         try FileManager.default.removeItem(atPath: env["PF_STUB_FAIL"]!)
 
+        // At helper start a failed flush alone is not an error: loading the
+        // empty rule set still empties the kernel anchor (#211).
+        try reset()
+        try "-a puresnitch -F all\n".write(toFile: env["PF_STUB_FAIL_ARGS"]!, atomically: true, encoding: .utf8)
+        var flushOnlyError: Error?
+        do { try PFManager(anchorPath: anchor, pfctl: stub).clearLeftoverAnchor() } catch { flushOnlyError = error }
+        try "".write(toFile: env["PF_STUB_FAIL_ARGS"]!, atomically: true, encoding: .utf8)
+        checks.expect(flushOnlyError == nil,
+                      "a helper start reported an error although the empty load cleared the anchor")
+        checks.expect(pfctlCalls().contains("-a puresnitch -f /dev/null"),
+                      "a helper start with a failed flush did not load the empty rule set")
+
         // Turning enforcement off with the kernel anchor stuck (#211). The
         // scratch pf.conf already names the anchor, so install() leaves it
         // alone and only the stub pfctl is called.

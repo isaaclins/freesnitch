@@ -978,7 +978,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             } catch {
                 _ = try? pf.uninstall()
                 dns.stop()
-                reply(false, "\(error)")
+                reply(false, error.localizedDescription)
             }
         } else {
             dns.stop()
@@ -1089,7 +1089,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             recordPFError(error)
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
