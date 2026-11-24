@@ -381,7 +381,7 @@ struct PendingAlertHarness {
             equal(populated.capacity, PendingAlertLimits.capacity, "the listing reports the bound")
         }
 
-        // MARK: remembered decisions with the default scope produce the rule the app's "This host" stores
+        // MARK: remembered decisions produce the rule for the asked scope (the default matches the app's "This host")
         do {
             let named = descriptor()
             let unnamed = descriptor(host: "", ip: "203.0.113.55")
