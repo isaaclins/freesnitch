@@ -665,7 +665,7 @@ final class PFManager: @unchecked Sendable {
             case "#":
                 endWord()
                 inComment = true
-            case "\"", "'" where !inWord:
+            case "\"" where !inWord, "'" where !inWord:
                 // A quote only opens a string at the start of a word; inside
                 // an unquoted word pfctl keeps it as a plain character.
                 quote = ch

@@ -104,7 +104,7 @@ struct Verify {
         expectAttached("a last comment ending in a backslash, no newline", apple + "# trailing \\")
         // Text inside a quoted macro value is not a directive, even over lines.
         expectAttached("both lines inside a multi-line macro",
-                       apple + "notes = \"\n\(attach)\n\(load)\n\"\n")
+                       apple + "notes = \"\nanchor 'puresnitch'\nload anchor 'puresnitch' from '/etc/pf.anchors/puresnitch'\n\"\n")
         // Lines inside another anchor's inline block are not top level.
         expectAttached("an attach nested in another anchor's block",
                        apple + "anchor \"other\" {\n  \(attach)\n}\n" + load + "\n")
@@ -127,6 +127,27 @@ struct Verify {
         expectAttached("the pf.conf macOS ships", apple)
         expectAttached("an empty pf.conf", "")
         expectAttached("no newline at the end", "anchor \"com.apple/*\"")
+
+        // Exact output for the cases where pf reads no puresnitch attach, so
+        // a parser that wrongly sees one can't pass by its own count.
+        func expectAppended(_ name: String, _ before: String, _ added: String) {
+            let after = PFManager.pfConfAttachingAnchor(before, anchorPath: anchorPath)
+            checks.expect(after == before + added, "\(name): expected exactly the added lines, got \(after ?? "no edit")")
+        }
+        expectAppended("a quote inside an unquoted name (exact)",
+                       apple + "anchor pure\"snitch\"\n" + load + "\n", attach + "\n")
+        expectAppended("a single quote inside an unquoted name (exact)",
+                       apple + "anchor pure'snitch'\n" + load + "\n", attach + "\n")
+        expectAppended("a quoted string followed by more letters (exact)",
+                       apple + "anchor \"pure\"snitch\n" + load + "\n", attach + "\n")
+        expectAppended("an attach nested in another anchor's block (exact)",
+                       apple + "anchor \"other\" {\n  \(attach)\n}\n" + load + "\n", attach + "\n")
+        expectAppended("an attach limited to one interface (exact)",
+                       apple + "anchor \"puresnitch\" on lo0\n" + load + "\n", attach + "\n")
+        expectAppended("a comment ending in an escaped backslash before a block (exact)",
+                       apple + "# note \\\\\nanchor \"other\" {\n  \(attach)\n}\n" + load + "\n", attach + "\n")
+        checks.expect(PFManager.pfConfDirectives("anchor pure\"snitch\"\n") == [["anchor", "pure\"snitch\""]],
+                      "a quote inside an unquoted word is not kept as a plain character")
 
         let after = PFManager.pfConfAttachingAnchor(apple + "# \(attach)\n", anchorPath: anchorPath) ?? ""
         checks.expect(after == apple + "# \(attach)\n" + attach + "\n" + load + "\n",
