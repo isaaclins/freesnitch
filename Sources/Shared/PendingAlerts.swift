@@ -456,9 +456,9 @@ public struct PendingAlertListing: Codable, Sendable {
     }
 }
 
-/// Turns an answered alert into the rule the user asked to remember. The
-/// helper owns this so a CLI answer stores exactly the same shape of rule the
-/// GUI alert panel stores.
+/// Turns an answered alert into the rule requested by a command line answer,
+/// using the CLI's own scopes (process, domain, ip and port). The alert panel
+/// offers different scopes, so these are not the panel's rules.
 public enum PendingAlertRuleFactory {
     /// The scope the GUI would pick: the name when one is known, the address
     /// otherwise. Never a rule that matches nothing.
