@@ -152,7 +152,7 @@ Alert mode can show a decision window for a new connection, with Allow or Deny, 
 Built-in DoH client with example upstreams for Cloudflare, Quad9, and Google, plus support for a custom DoH endpoint. When Enforcement is enabled, the helper can run a local DNS proxy on `127.0.0.1:53` and filter queries sent to that proxy before forwarding allowed queries over DoH.
 
 ### Blocklist Library
-Ships with 1Hosts Lite, OISD Small, StevenBlack, HaGeZi Multi Light, URLhaus, Anti-PopAds, Peter Lowe, and AdGuard DNS sources. When Enforcement is enabled, the helper's local DNS proxy filters DNS names against enabled lists. Blocklists do not stop connections to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.
+Ships with 1Hosts Lite, OISD Small, StevenBlack, HaGeZi Multi Light, URLhaus, Anti-PopAds, Peter Lowe, and AdGuard DNS sources. When Enforcement is enabled, the helper's local DNS proxy filters DNS names against enabled lists. To let one listed name through, choose Allow Anyway on its entry: that adds an allow rule for that exact name, and an enabled allow rule that names a host and no app lets the names it covers past every list. Blocklists do not stop connections to hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.
 
 ### Packet-Level Blocking
 When Enforcement is enabled, a `puresnitch` anchor in `pfctl` provides IP, CIDR, and port blocking at the kernel. These rules apply regardless of which process initiated the connection.
@@ -160,7 +160,7 @@ When Enforcement is enabled, a `puresnitch` anchor in `pfctl` provides IP, CIDR,
 ### Profiles
 A profile is a place and how strict you are there: a default strictness, a selection of deny blocklists, the networks that select it, and a few rules that only apply there. The helper seeds `default`, `home`, `public-wifi`, and `lockdown`.
 
-Rules layer exactly twice: the `Always` set plus the active profile's own rules. New rules default to `Always`, and the rule editor's `Applies to` control is where that changes. Deny blocklists stack without limit, because anything any list blocks is blocked and order cannot matter. Creating a profile copies nothing: it inherits every `Always` rule immediately.
+Rules layer exactly twice: the `Always` set plus the active profile's own rules. New rules default to `Always`, and the rule editor's `Applies to` control is where that changes. Deny blocklists stack without limit, because anything any list blocks is blocked, unless an allow rule for that host says otherwise, and order cannot matter. Creating a profile copies nothing: it inherits every `Always` rule immediately.
 
 A network is recognised by the MAC address of its default gateway. FreeSnitch never reads the Wi-Fi network name and never asks for Location Services. A network only ever selects a profile after you bind it with "use this here"; an unknown network changes nothing.
 
