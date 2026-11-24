@@ -36,6 +36,7 @@ PROJECT_SPEC="$ROOT/project.yml"
 HELPER="$ROOT/Sources/Helper/HelperService.swift"
 DNS_PROXY="$ROOT/Sources/Helper/DNSProxy.swift"
 APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
+ALERT_RULE="$ROOT/Sources/Shared/AlertRememberedRule.swift"
 SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
 MODELS="$ROOT/Sources/Shared/Models.swift"
@@ -1239,11 +1240,15 @@ require_text "$APP_STATE" "filterSnapshotPersistenceHandler?(snapshot)" \
 # the scoped value rather than directly, and the old single check no longer
 # described the code. Both halves are asserted instead: the destination is put
 # into the scoped value, and the scoped value is what the rule is built with.
-require_text "$APP_STATE" "scopedIP = ruleIP" \
+# The rule is built in Shared so its harness runs the real code (#223), and
+# the GUI must store exactly that rule.
+require_text "$APP_STATE" "alert.connection.rememberedRule(scope:" \
+  "the remembered alert rule is not the one Connection.rememberedRule builds"
+require_text "$ALERT_RULE" "scopedIP = ruleIP" \
   "the remembered alert rule does not carry the remote address into its scope, so an IP-only decision would match every destination"
-require_text "$APP_STATE" "remoteIP: scopedIP" \
+require_text "$ALERT_RULE" "remoteIP: scopedIP" \
   "the remembered alert rule is not built with the scoped remote address, so an IP-only decision would match every destination"
-require_text "$APP_STATE" "remoteHost: scopedHost" \
+require_text "$ALERT_RULE" "remoteHost: scopedHost" \
   "the remembered alert rule is not built with the scoped remote host, so a domain decision would match every destination"
 # The one privileged action the GUI may take on its own behalf must stay one
 # fixed command. If a later change ever assembles this script from a variable,
@@ -1397,9 +1402,9 @@ fi
 if rg -A10 'private func disableFilter' "$SYSEXT_MANAGER" | read_all_then rg -q 'removeFromPreferences'; then
   fail "disabling enforcement removes the filter configuration, which would force the user to approve it again"
 fi
-require_text "$APP_STATE" "hasDestination" \
+require_text "$ALERT_RULE" "hasDestination" \
   "the remembered alert rule is not guarded against an empty destination"
-if rg -n "remoteHost: alert\\.connection\\.remoteHost," "$APP_STATE" >/dev/null; then
+if rg -n "remoteHost: (alert\\.connection\\.)?remoteHost," "$APP_STATE" "$ALERT_RULE" >/dev/null; then
   fail "the remembered alert rule passes the raw connection host, which is empty for an address-only destination"
 fi
 if rg -n "SharedRuleBridge\\.Snapshot\\(" "$ROOT/Sources/GUI" >/dev/null; then

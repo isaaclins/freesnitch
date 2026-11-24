@@ -742,23 +742,9 @@ final class AppState: ObservableObject {
         return String(localized: "First time this app has contacted this destination. You have allowed it to reach \(count) other places in retained history.")
     }
 
-    /// How much of the connection a remembered answer should cover. The dialog
-    /// offered these three and the rule ignored all of them, so "This address
-    /// and port" quietly granted the same permanent host-wide rule as
-    /// "Anywhere" (#129).
-    enum RememberScope: String, CaseIterable, Identifiable {
-        case anywhere
-        case thisHost
-        case thisAddressAndPort
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .anywhere: return String(localized: "Anywhere")
-            case .thisHost: return String(localized: "This host")
-            case .thisAddressAndPort: return String(localized: "This address and port")
-            }
-        }
-    }
+    /// How much of the connection a remembered answer should cover, in
+    /// Shared so the rule it makes can be tested (#129, #223).
+    typealias RememberScope = AlertRememberScope
 
     /// How long a remembered answer lasts. Every option here is one the helper
     /// can actually deliver: the matcher drops a rule once `expiresAt` passes,
@@ -796,79 +782,24 @@ final class AppState: ObservableObject {
         // this one is told the app already answered instead of appearing to
         // decide a flow that is already decided.
         withdrawPendingAlertFromHelper(alert.id)
-        // A rule keyed on the unspecified address matches nothing, so it would
-        // never stop the next prompt. Answer the flow, remember nothing.
-        let host = alert.connection.remoteHost.isEmpty ? alert.connection.remoteIP : alert.connection.remoteHost
-        let isUnspecified = host.isEmpty || host == "0.0.0.0" || host == "::"
-        // The destination has to travel INTO the rule, not merely into this
-        // check. A rule carrying an empty host and no address loses both
-        // destination tests in the matcher, because each is an `if let`, and
-        // silently becomes "this process, anywhere": an allow would grant far
-        // more than the user approved. See issue #64.
-        // A numeric address in the name field is an address, not a name
-        // (#224): the rule stores it as one.
-        let (ruleHost, ruleIP) = alert.connection.rememberedHostDestination
-        let usesAddress = ruleHost == nil
-        let hasDestination = !(ruleHost ?? ruleIP ?? "").isEmpty
-        // "Anywhere" is the one scope with no destination, and it is only safe
-        // because the user asked for it by name. It still needs something to
-        // key on, so without a process identity it narrows to the host rather
-        // than becoming a rule that matches every flow on the Mac.
-        let processIdentity = !(alert.connection.processBundleId ?? "").isEmpty
-            || !(alert.connection.processPath.isEmpty)
-        var effectiveScope = (scope == .anywhere && !processIdentity) ? .thisHost : scope
-        // Pinning to an address needs an address. Without one, the honest
-        // narrowing is the host, not a rule keyed on a bare port number.
-        if effectiveScope == .thisAddressAndPort && alert.connection.remoteIP.isEmpty {
-            effectiveScope = .thisHost
+        guard remember else { return }
+        let expiresAt = duration.interval.map { Date().addingTimeInterval($0) }
+        guard let rule = alert.connection.rememberedRule(scope: scope, allow: allow,
+                                                         profile: activeProfile, expiresAt: expiresAt) else {
+            // The dialog does not offer "This address and port" without both,
+            // so this only catches an answer that arrives anyway (#223).
+            if scope == .thisAddressAndPort {
+                appendLog(level: "info", message: String(localized: "This connection has no address and port to remember, so the answer applied to this connection only."))
+            }
+            return
         }
-        let needsDestination = effectiveScope != .anywhere
-        if remember && (!needsDestination || (!isUnspecified && hasDestination)) {
-            let expiresAt = duration.interval.map { Date().addingTimeInterval($0) }
-            var scopedHost: String?
-            var scopedIP: String?
-            var scopedPort: Int?
-            var ruleScope: RuleScope
-            switch effectiveScope {
-            case .anywhere:
-                ruleScope = .process
-            case .thisHost:
-                scopedHost = ruleHost
-                scopedIP = ruleIP
-                ruleScope = usesAddress ? .ip : .domain
-            case .thisAddressAndPort:
-                scopedIP = alert.connection.remoteIP
-                // ICMP and flows without a known port carry 0, which is no
-                // port to scope to (#218): the rule covers the address.
-                scopedPort = alert.connection.remotePort > 0 ? alert.connection.remotePort : nil
-                ruleScope = .ip
+        helper.addRule(rule) { [weak self] ok, message in
+            guard let self else { return }
+            guard ok else {
+                self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(message ?? String(localized: "unknown error"))"))
+                return
             }
-            let rule = Rule(
-                processBundleId: alert.connection.processBundleId,
-                processTeamId: alert.connection.processTeamId,
-                processPath: alert.connection.processPath,
-                processName: alert.connection.processName,
-                remoteHost: scopedHost,
-                remoteIP: scopedIP,
-                remotePort: scopedPort,
-                direction: alert.connection.direction,
-                action: allow ? .allow : .deny,
-                scope: ruleScope,
-                priority: 100,
-                profile: activeProfile,
-                groupName: nil,
-                notes: "Created from alert",
-                temporary: expiresAt != nil,
-                expiresAt: expiresAt
-            )
-            helper.addRule(rule) { [weak self] ok, message in
-                guard let self else { return }
-                guard ok else {
-                    self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(message ?? String(localized: "unknown error"))"))
-                    return
-                }
-                self.refreshRules()
-            }
+            self.refreshRules()
         }
     }
 

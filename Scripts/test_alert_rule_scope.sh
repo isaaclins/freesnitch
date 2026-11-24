@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regression harness for #64 and #224.
+# Regression harness for #64, #223 and #224.
 #
 # A remembered alert decision for a destination with no host name must produce
 # a rule that matches ONLY that address. The failure this guards against is
@@ -118,12 +118,100 @@ check(ipOnlyIP.remoteHost == nil && ipOnlyIP.remoteIP == "203.0.113.10",
 
 // And the guard that stops it being created at all.
 let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
-check(source.contains("scopedIP = ruleIP") && source.contains("remoteIP: scopedIP"),
-      "AppState carries the remote address into the remembered rule")
-check(source.contains("hasDestination"),
-      "AppState refuses to store a remembered rule with an empty destination")
-check(source.contains("rememberedHostDestination"),
-      "AppState picks the remembered destination with the shared helper")
+check(remembered(approved, .thisHost).map { $0.remoteIP == approved.remoteIP } == true,
+      "the remembered rule carries the remote address")
+check(remembered(connection(host: "", ip: ""), .thisHost) == nil,
+      "a remembered rule with an empty destination is never stored")
+
+// #223: "This address and port" needs both. A flow macOS reports with port 0
+// (ICMP, or no port known) must not get it, because the rule it saved had no
+// port and so covered the address on every port.
+func flow(ip: String, port: Int) -> Connection {
+    Connection(pid: 501, processName: "Demo",
+               processPath: "/Applications/Demo.app/Contents/MacOS/Demo",
+               processBundleId: "com.example.demo",
+               remoteHost: "", remoteIP: ip, remotePort: port, direction: .outgoing)
+}
+// `rememberedRule` is what AppState.resolveAlert stores, so these run the real
+// rule building rather than a copy of it.
+func remembered(_ c: Connection, _ scope: AlertRememberScope, allow: Bool = false) -> Rule? {
+    c.rememberedRule(scope: scope, allow: allow, profile: Profile.alwaysName, expiresAt: nil)
+}
+
+let withPort = flow(ip: "203.0.113.10", port: 443)
+let portZero = flow(ip: "203.0.113.10", port: 0)
+check(withPort.availableRememberScopes == [.anywhere, .thisHost, .thisAddressAndPort],
+      "an address with a real port is offered all three scopes")
+check(portZero.availableRememberScopes == [.anywhere, .thisHost],
+      "an address with port 0 is NOT offered address and port")
+check(!flow(ip: "203.0.113.10", port: 70000).availableRememberScopes.contains(.thisAddressAndPort),
+      "a port outside 1...65535 is NOT offered address and port")
+check(!flow(ip: "", port: 443).availableRememberScopes.contains(.thisAddressAndPort),
+      "a port without an address is NOT offered address and port")
+check(["0.0.0.0", "::", "::0", "0:0:0:0:0:0:0:0"].allSatisfy { !flow(ip: $0, port: 443).availableRememberScopes.contains(.thisAddressAndPort) },
+      "the unspecified address, in any spelling, is NOT offered address and port")
+
+// Port 0: no rule at all, where the old code saved the address with no port.
+check(remembered(portZero, .thisAddressAndPort) == nil,
+      "answering address and port for an alert with port 0 remembers nothing")
+check(remembered(portZero, .thisAddressAndPort, allow: true) == nil,
+      "the same holds for an allow")
+let wideDeny = Rule(processBundleId: withPort.processBundleId,
+                    processPath: withPort.processPath,
+                    processName: withPort.processName,
+                    remoteIP: withPort.remoteIP,
+                    remotePort: nil,
+                    direction: .outgoing, action: .deny, scope: .ip, priority: 100)
+check(matcher.decision(for: withPort, rules: [wideDeny], defaultMode: .alert) == .deny,
+      "a remembered address rule with no port really does deny every port, which is why port 0 must never produce one")
+// A host-named flow with port 0 and an address: address and port has nothing
+// to pin either, and it must not widen to the host.
+let namedPortZero = Connection(pid: 501, processName: "Demo",
+                               processPath: "/Applications/Demo.app/Contents/MacOS/Demo",
+                               processBundleId: "com.example.demo",
+                               remoteHost: "example.com", remoteIP: "203.0.113.10", remotePort: 0, direction: .outgoing)
+check(remembered(namedPortZero, .thisAddressAndPort) == nil,
+      "a named flow with port 0 does not widen address and port to the host")
+
+// With a real pair, the rule is pinned to that address and port.
+if let pinnedDeny = remembered(withPort, .thisAddressAndPort) {
+    check(pinnedDeny.remoteIP == "203.0.113.10" && pinnedDeny.remotePort == 443 && pinnedDeny.remoteHost == nil,
+          "an address-and-port answer stores that address and port")
+    check(matcher.decision(for: withPort, rules: [pinnedDeny], defaultMode: .alert) == .deny,
+          "an address-and-port deny blocks the port it was made for")
+    check(matcher.decision(for: flow(ip: "203.0.113.10", port: 8443), rules: [pinnedDeny], defaultMode: .alert) != .deny,
+          "an address-and-port deny does NOT block the same address on another port")
+    check(matcher.decision(for: flow(ip: "203.0.113.11", port: 443), rules: [pinnedDeny], defaultMode: .alert) != .deny,
+          "an address-and-port deny does NOT block another address on the same port")
+} else {
+    check(false, "an address with a real port produces an address-and-port rule")
+}
+
+// The other scopes keep their meaning.
+check(remembered(portZero, .thisHost).map { $0.remoteIP == "203.0.113.10" && $0.remotePort == nil && $0.scope == .ip } == true,
+      "This host for an address-only flow stores that address")
+check(remembered(namedPortZero, .thisHost).map { $0.remoteHost == "example.com" && $0.remoteIP == nil && $0.scope == .domain } == true,
+      "This host for a named flow stores the name")
+check(remembered(withPort, .anywhere).map { $0.remoteHost == nil && $0.remoteIP == nil && $0.scope == .process } == true,
+      "Anywhere stores the app with no destination")
+let noApp = Connection(pid: 1, processName: "", processPath: "", remoteHost: "", remoteIP: "203.0.113.10", remotePort: 443, direction: .outgoing)
+check(remembered(noApp, .anywhere).map { $0.remoteIP == "203.0.113.10" } == true,
+      "Anywhere without an app identity narrows to the host")
+check(remembered(flow(ip: "0.0.0.0", port: 443), .thisHost) == nil && remembered(flow(ip: "::", port: 443), .thisHost) == nil,
+      "an unspecified destination remembers nothing")
+
+// The GUI is wired to it: AppState stores what rememberedRule returns and the
+// dialog offers only availableRememberScopes.
+check(source.contains("alert.connection.rememberedRule(scope: scope"),
+      "AppState stores the rule rememberedRule builds")
+let view = try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)
+check(view.contains("ForEach(availableScopes)") && view.contains("alert.connection.availableRememberScopes")
+        && view.contains("scope: effectiveScope"),
+      "the alert only offers and answers with the scopes the connection can have")
+check(remembered(numericFlow, .thisHost).map { $0.remoteHost == nil && $0.remoteIP == "203.0.113.10" && $0.scope == .ip } == true,
+      "the real This host answer for an address-only flow stores an address rule (#224)")
+check(remembered(namedLater, .thisHost).map { $0.remoteHost == "api.example.com" && $0.remoteIP == nil && $0.scope == .domain } == true,
+      "the real This host answer for a named flow stores the name (#224)")
 
 if failures > 0 {
     print("alert rule scope verification: FAILED (\(failures))")
@@ -142,4 +230,4 @@ xcrun swiftc -O \
     "$WORK/main.swift" "${SHARED[@]}" \
     -lsqlite3
 
-"$WORK/harness" "$ROOT/Sources/GUI/ViewModels/AppState.swift"
+"$WORK/harness" "$ROOT/Sources/GUI/ViewModels/AppState.swift" "$ROOT/Sources/GUI/Views/ConnectionAlert.swift"

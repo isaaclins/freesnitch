@@ -40,6 +40,21 @@ struct ConnectionAlertView: View {
         }
     }
 
+    /// The scopes this connection can really be remembered at. Without a
+    /// known address and port, "This address and port" would save a rule for
+    /// the address on every port (#223), so it is not offered.
+    private var availableScopes: [AppState.RememberScope] {
+        alert.connection.availableRememberScopes
+    }
+
+    /// The choice as this alert can have it. The view is reused for the next
+    /// alert in the queue, so a choice made for one with a port can still be
+    /// set when the next has none: it reads as "This host" then, in the
+    /// picker, the summary and the answer alike, from the first frame.
+    private var effectiveScope: AppState.RememberScope {
+        availableScopes.contains(scope) ? scope : .thisHost
+    }
+
     /// What the answer will actually create, in the same words the Rules table
     /// uses, so the two can be recognised as the same thing.
     private var ruleSummary: String {
@@ -55,7 +70,7 @@ struct ConnectionAlertView: View {
         }
         // One sentence per scope, because the destination's grammar changes
         // with it in other languages; only the duration is a fragment.
-        switch scope {
+        switch effectiveScope {
         case .anywhere:
             return String(localized: "Creates a rule for \(name) reaching any destination, \(howLong).")
         case .thisHost:
@@ -136,8 +151,8 @@ struct ConnectionAlertView: View {
             // hand-stacked rows never quite manage.
             Form {
                 Toggle("Remember this decision", isOn: $remember)
-                Picker("Applies to", selection: $scope) {
-                    ForEach(AppState.RememberScope.allCases) { s in Text(s.title).tag(s) }
+                Picker("Applies to", selection: Binding(get: { effectiveScope }, set: { scope = $0 })) {
+                    ForEach(availableScopes) { s in Text(s.title).tag(s) }
                 }.disabled(!remember)
                 Picker("Expires", selection: $duration) {
                     ForEach(AppState.RememberDuration.allCases) { d in Text(d.title).tag(d) }
@@ -163,9 +178,9 @@ struct ConnectionAlertView: View {
                 // were the only two of their kind on the system: macOS says
                 // "which one is the default" with the accent fill, and says
                 // everything else with the words on the button.
-                Button("Deny") { state.resolveAlert(alert, allow: false, remember: remember, scope: scope, duration: duration) }
+                Button("Deny") { state.resolveAlert(alert, allow: false, remember: remember, scope: effectiveScope, duration: duration) }
                     .keyboardShortcut(.cancelAction)
-                Button("Allow") { state.resolveAlert(alert, allow: true, remember: remember, scope: scope, duration: duration) }
+                Button("Allow") { state.resolveAlert(alert, allow: true, remember: remember, scope: effectiveScope, duration: duration) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }
@@ -254,5 +269,16 @@ struct AlertWindowContent: View {
         // padding plus a title bar while the gap on the left was the padding
         // alone, and the panel was that much taller than it needed to be.
         .ignoresSafeArea()
+    }
+}
+
+extension AlertRememberScope: Identifiable {
+    public var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .anywhere: return String(localized: "Anywhere")
+        case .thisHost: return String(localized: "This host")
+        case .thisAddressAndPort: return String(localized: "This address and port")
+        }
     }
 }

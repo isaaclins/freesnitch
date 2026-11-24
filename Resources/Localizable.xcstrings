@@ -12243,6 +12243,16 @@
         }
       }
     },
+    "This connection has no address and port to remember, so the answer applied to this connection only." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У этого подключения нет адреса и порта, которые можно запомнить, поэтому ответ применён только к этому подключению."
+          }
+        }
+      }
+    },
     "This copy of FreeSnitch does not include a supported Network Extension. Traffic monitoring can continue, but the firewall is not filtering connections." : {
       "localizations" : {
         "ru" : {
