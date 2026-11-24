@@ -13,6 +13,8 @@
 #   3. A refresh during a full outage keeps everything and names every list.
 #   4. Once the source answers again, the new download replaces the saved
 #      names, so a failure never keeps a name blocked after a good download.
+#      Resetting hand edits removes hand-added names from the saved copy, so a
+#      failed download after a reset does not keep them blocking.
 #   5. A list that never downloaded and fails adds nothing to the set.
 set -euo pipefail
 
@@ -120,6 +122,17 @@ struct Verify {
         expect(published.isSuperset(of: ["a-new.example", "hand.example", "b.example"]),
                "the new download and the hand edit must be blocked")
         expect(store.blocklist(id: alpha.id)?.entryCount == 2, "the recovered list must count its new entries")
+
+        // 4b. Resetting the hand edits, then a failed download, must not keep
+        // the hand-added name blocking.
+        try? store.clearBlocklistEdits(id: alpha.id)
+        answers.set("Alpha", nil)
+        result = await m.refresh()
+        expect(result.failedLists == ["Alpha"], "the reset list's failed download must be named")
+        expect(!published.contains("hand.example"), "a hand-added name must stop blocking once its edits are reset")
+        expect(published.contains("a-new.example"), "the reset list's downloaded names must still block when its source is down")
+        answers.set("Alpha", ["a-new.example"])
+        _ = await m.refresh()
 
         // 5. A list that never downloaded adds nothing when it fails.
         guard (try? store.addCustomBlocklist(name: "Gamma", url: "https://example.com/gamma.txt", profileName: profile)) != nil else {

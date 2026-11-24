@@ -1172,7 +1172,17 @@ public final class RuleStore: @unchecked Sendable {
     /// source says again.
     public func clearBlocklistEdits(id: UUID) throws {
         guard blocklist(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
+        let added = blocklistEdits(id: id).added
         try setSetting(Self.blocklistEditsKey(id), "")
+        // A download that fails keeps blocking what is saved for the list
+        // (#252). Names the user added by hand must not stay in that saved
+        // copy once the edits are gone, or they would keep blocking until the
+        // source answers again. A name that was also on the source is dropped
+        // too until then, which only ever blocks less.
+        if !added.isEmpty {
+            try deleteBlocklistEntries(id: id, domains: added)
+            _ = try recountBlocklist(id: id)
+        }
     }
 
     public func blocklist(id: UUID) -> BlocklistInfo? {
