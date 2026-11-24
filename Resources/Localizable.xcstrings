@@ -6053,6 +6053,16 @@
         }
       }
     },
+    "FreeSnitch lost its connection to the network extension. Send Rules Again, quit and reopen FreeSnitch, or turn the filter off and on to get rule changes and alerts back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch потерял связь с сетевым расширением. Нажмите «Отправить правила снова», закройте и снова откройте FreeSnitch или выключите и включите фильтр, чтобы изменения правил и запросы снова работали."
+          }
+        }
+      }
+    },
     "FreeSnitch needs approval to filter traffic" : {
       "localizations" : {
         "ru" : {

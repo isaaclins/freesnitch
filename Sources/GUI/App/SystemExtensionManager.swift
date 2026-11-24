@@ -122,6 +122,16 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// policy it will not let the helper replace (#70).
     private var snapshotRecovery = FilterRestartRecovery()
     private var filterRestartInFlight = false
+    /// Bounded, spaced attempts to register with the extension again after
+    /// the link dropped, for example when a filter restart replaced the
+    /// extension process (#212).
+    private var ipcReconnect = ExtensionReconnect()
+    /// Bumped by every registration and every reset, so a late answer or a
+    /// scheduled attempt from before it is ignored.
+    private var ipcRegistration = 0
+    /// "Extension IPC unavailable." was logged for the current outage, so the
+    /// spaced retries do not repeat it.
+    private var ipcUnavailableLogged = false
 
     init(state: AppState, demo: Bool = DemoMode.isOn) {
         self.state = state
@@ -129,7 +139,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         self.filterPreferences = FilterPreferencesLine(closed: demo)
         super.init()
         state.filterSnapshotStatusHandler = { [weak self] snapshotStatus in
-            self?.recordSnapshotStatus(snapshotStatus)
+            self?.recordSnapshotStatus(snapshotStatus, delivered: true)
         }
         state.filterSnapshotPersistenceHandler = { [weak self] snapshot in
             self?.requestPersistedSnapshot(snapshot)
@@ -144,6 +154,12 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         NotificationCenter.default.addObserver(forName: .NEFilterConfigurationDidChange,
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.refreshFilterOffState() }
+        }
+        // The link to the extension drops when its filter is restarted or
+        // macOS replaces its process. Register again, or rule changes and
+        // alerts stop until the app is relaunched (#212).
+        IPCConnection.shared.onAppConnectionLost = { [weak self] in
+            Task { @MainActor [weak self] in self?.extensionLinkLost() }
         }
         // The filter may have been left off. Read it once at launch, so a
         // failure before the first save cycle's load (an encode over the size
@@ -657,6 +673,7 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 // Deliberately does NOT touch `helperConnected`: the
                                 // content filter and privileged helper are separate.
                                 self.state?.appendLog(level: "info", message: String(localized: "Per-process firewall active."))
+                                self.ipcReconnect.reset()
                                 self.registerIPC()
                             }
                         }
@@ -842,6 +859,10 @@ final class SystemExtensionManager: NSObject, ObservableObject {
     /// then (#335). A build without the extension stays "unsupported".
     private func showNotFiltering() {
         filterConfigurationActive = false
+        // Nothing to reconnect to while nothing filters.
+        ipcRegistration &+= 1
+        ipcReconnect.reset()
+        ipcUnavailableLogged = false
         abandonedTurnOnShown = false
         if status != .unsupported { status = .idle }
     }
@@ -853,18 +874,65 @@ final class SystemExtensionManager: NSObject, ObservableObject {
 
     private func registerIPC() {
         guard let state else { return }
+        // This registration supersedes any attempt still scheduled.
+        ipcRegistration &+= 1
+        ipcReconnect.attemptStarted()
+        let registration = ipcRegistration
         let bridge = AppCommunicationBridge(state: state)
         self.bridge = bridge
         IPCConnection.shared.register(delegate: bridge) { [weak self] ok, remoteStatus in
             DispatchQueue.main.async {
-                guard let self else { return }
-                state.appendLog(level: ok ? "info" : "error",
-                                message: ok ? String(localized: "Connected to network extension.") : String(localized: "Extension IPC unavailable."))
-                self.recordSnapshotStatus(remoteStatus)
+                // A newer registration, or the filter being turned off, made
+                // this answer moot: its "unavailable" must not overwrite the
+                // newer link's status or schedule another attempt.
+                guard let self, registration == self.ipcRegistration else { return }
+                if ok {
+                    self.ipcUnavailableLogged = false
+                    state.appendLog(level: "info", message: String(localized: "Connected to network extension."))
+                } else if !self.ipcUnavailableLogged {
+                    // Logged once per outage, not for every spaced retry.
+                    self.ipcUnavailableLogged = true
+                    state.appendLog(level: "error", message: String(localized: "Extension IPC unavailable."))
+                }
+                // A new extension may answer "ready" here from its saved boot
+                // rules. That is not proof the live rules get through, so it
+                // does not return the reconnect budget.
+                self.recordSnapshotStatus(remoteStatus, delivered: false)
                 // The extension starts with no in-memory snapshot, so hand the
                 // current one over as soon as the link is up, not only after a
                 // later rule or mode change.
-                if ok { state.syncSharedRules() }
+                if ok {
+                    state.syncSharedRules()
+                } else {
+                    self.extensionLinkLost()
+                }
+            }
+        }
+    }
+
+    /// The link to the extension dropped, or an attempt to restore it failed.
+    /// While the filter is on, try again a bounded number of times, spaced
+    /// out; a new extension process may not be listening yet (#212).
+    private func extensionLinkLost() {
+        guard !demo, hasEmbeddedExtension, filterConfigurationActive else { return }
+        switch ipcReconnect.linkLost() {
+        case .alreadyScheduled, .gaveUp:
+            return
+        case .exhausted:
+            // Shown in the banner, whose Send Rules Again tries again; it
+            // goes away once rules get through.
+            state?.recordFilterRecovery(String(localized: "FreeSnitch lost its connection to the network extension. Send Rules Again, quit and reopen FreeSnitch, or turn the filter off and on to get rule changes and alerts back."))
+            os_log("FreeSnitch lost its connection to the network extension and stopped trying to reconnect.",
+                   log: log, type: .error)
+        case .retry(let delay):
+            let registration = ipcRegistration
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, registration == self.ipcRegistration else { return }
+                guard self.filterConfigurationActive else {
+                    self.ipcReconnect.reset()
+                    return
+                }
+                self.registerIPC()
             }
         }
     }
@@ -939,10 +1007,14 @@ final class SystemExtensionManager: NSObject, ObservableObject {
                                 self.recordFilterDiagnostic(state: "installed-enabled",
                                                             detail: "The content filter was restarted to clear a rejected policy snapshot.")
                                 done()
-                                // The restarted provider holds no policy, so
-                                // the helper's snapshot is delivered again
-                                // through the ordinary authoritative path.
-                                self.state?.syncSharedRules()
+                                // The restarted provider holds no policy and
+                                // may be a new process that the old link no
+                                // longer reaches (#212). Register again: once
+                                // the extension takes it, the helper's
+                                // snapshot is delivered through the ordinary
+                                // authoritative path.
+                                self.ipcReconnect.reset()
+                                self.registerIPC()
                             }
                         }
                     }
@@ -964,13 +1036,31 @@ final class SystemExtensionManager: NSObject, ObservableObject {
         done()
     }
 
-    private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus) {
+    /// `delivered` is true for the extension's answer to rules the app just
+    /// sent, false for the status it reports when the app registers.
+    private func recordSnapshotStatus(_ snapshotStatus: SharedRuleBridge.SnapshotStatus, delivered: Bool) {
         self.snapshotStatus = snapshotStatus
         if snapshotStatus.isReady {
-            snapshotRecovery.noteHealthy()
-            state?.recordFilterRecovery(nil)
+            // Only the answer to rules the app sent proves the live rules got
+            // through. After a filter restart the new extension answers the
+            // registration with "ready" from its saved boot rules; counting
+            // that would hand back the restart limit (#70) and the reconnect
+            // budget before the live rules were accepted (#212).
+            if delivered {
+                snapshotRecovery.noteHealthy()
+                ipcReconnect.policyDelivered()
+                state?.recordFilterRecovery(nil)
+            }
         } else {
             recoverFromSnapshotRejection(snapshotStatus)
+            // Rules sent while the reconnect attempts are used up (Send Rules
+            // Again, or a rule change) start a new, equally bounded round of
+            // attempts instead of failing on a link that is gone.
+            if delivered, ipcReconnect.hasGivenUp, filterConfigurationActive,
+               !IPCConnection.shared.isAppConnected {
+                ipcReconnect.reset()
+                registerIPC()
+            }
         }
         if !snapshotStatus.isReady,
            persistenceCycle.abandonEnableIfIdle() {
