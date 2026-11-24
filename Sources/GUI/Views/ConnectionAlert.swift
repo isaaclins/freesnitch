@@ -44,9 +44,7 @@ struct ConnectionAlertView: View {
     /// known address and port, "This address and port" would save a rule for
     /// the address on every port (#223), so it is not offered.
     private var availableScopes: [AppState.RememberScope] {
-        AppState.RememberScope.allCases.filter {
-            $0 != .thisAddressAndPort || alert.connection.pinnedAddressAndPort != nil
-        }
+        alert.connection.availableRememberScopes
     }
 
     /// The choice as this alert can have it. The view is reused for the next
@@ -271,5 +269,16 @@ struct AlertWindowContent: View {
         // padding plus a title bar while the gap on the left was the padding
         // alone, and the panel was that much taller than it needed to be.
         .ignoresSafeArea()
+    }
+}
+
+extension AlertRememberScope: Identifiable {
+    public var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .anywhere: return String(localized: "Anywhere")
+        case .thisHost: return String(localized: "This host")
+        case .thisAddressAndPort: return String(localized: "This address and port")
+        }
     }
 }

@@ -82,10 +82,10 @@ check(matcher.matches(rule: broken, connection: unrelated),
 
 // And the guard that stops it being created at all.
 let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
-check(source.contains("scopedIP = ruleIP") && source.contains("remoteIP: scopedIP"),
-      "AppState carries the remote address into the remembered rule")
-check(source.contains("hasDestination"),
-      "AppState refuses to store a remembered rule with an empty destination")
+check(remembered(approved, .thisHost).map { $0.remoteIP == approved.remoteIP } == true,
+      "the remembered rule carries the remote address")
+check(remembered(connection(host: "", ip: ""), .thisHost) == nil,
+      "a remembered rule with an empty destination is never stored")
 
 // #223: "This address and port" needs both. A flow macOS reports with port 0
 // (ICMP, or no port known) must not get it, because the rule it saved had no
@@ -96,34 +96,30 @@ func flow(ip: String, port: Int) -> Connection {
                processBundleId: "com.example.demo",
                remoteHost: "", remoteIP: ip, remotePort: port, direction: .outgoing)
 }
-// The pair `pinnedAddressAndPort` gives is what AppState writes into the rule,
-// so the rule below is built from it exactly as resolveAlert builds it.
-func addressAndPortRule(for c: Connection, action: RuleAction) -> Rule? {
-    guard let pin = c.pinnedAddressAndPort else { return nil }
-    return Rule(processBundleId: c.processBundleId,
-                processPath: c.processPath,
-                processName: c.processName,
-                remoteIP: pin.ip,
-                remotePort: pin.port,
-                direction: c.direction, action: action, scope: .ip, priority: 100)
+// `rememberedRule` is what AppState.resolveAlert stores, so these run the real
+// rule building rather than a copy of it.
+func remembered(_ c: Connection, _ scope: AlertRememberScope, allow: Bool = false) -> Rule? {
+    c.rememberedRule(scope: scope, allow: allow, profile: Profile.alwaysName, expiresAt: nil)
 }
 
 let withPort = flow(ip: "203.0.113.10", port: 443)
-check(withPort.pinnedAddressAndPort?.ip == "203.0.113.10" && withPort.pinnedAddressAndPort?.port == 443,
-      "an address with a real port can be remembered as that address and port")
-check(flow(ip: "203.0.113.10", port: 0).pinnedAddressAndPort == nil,
-      "an address with port 0 is NOT offered as address and port")
-check(flow(ip: "203.0.113.10", port: 70000).pinnedAddressAndPort == nil,
-      "a port outside 1...65535 is NOT offered as address and port")
-check(flow(ip: "", port: 443).pinnedAddressAndPort == nil,
-      "a port without an address is NOT offered as address and port")
-check(flow(ip: "0.0.0.0", port: 443).pinnedAddressAndPort == nil && flow(ip: "::", port: 443).pinnedAddressAndPort == nil,
-      "the unspecified address is NOT offered as address and port")
+let portZero = flow(ip: "203.0.113.10", port: 0)
+check(withPort.availableRememberScopes == [.anywhere, .thisHost, .thisAddressAndPort],
+      "an address with a real port is offered all three scopes")
+check(portZero.availableRememberScopes == [.anywhere, .thisHost],
+      "an address with port 0 is NOT offered address and port")
+check(!flow(ip: "203.0.113.10", port: 70000).availableRememberScopes.contains(.thisAddressAndPort),
+      "a port outside 1...65535 is NOT offered address and port")
+check(!flow(ip: "", port: 443).availableRememberScopes.contains(.thisAddressAndPort),
+      "a port without an address is NOT offered address and port")
+check(["0.0.0.0", "::", "::0", "0:0:0:0:0:0:0:0"].allSatisfy { !flow(ip: $0, port: 443).availableRememberScopes.contains(.thisAddressAndPort) },
+      "the unspecified address, in any spelling, is NOT offered address and port")
 
-// Port 0: no rule at all, rather than what the old code saved (the address
-// with no port, which denies every port the alert never showed).
-check(addressAndPortRule(for: flow(ip: "203.0.113.10", port: 0), action: .deny) == nil,
-      "an alert with port 0 produces no address-and-port rule")
+// Port 0: no rule at all, where the old code saved the address with no port.
+check(remembered(portZero, .thisAddressAndPort) == nil,
+      "answering address and port for an alert with port 0 remembers nothing")
+check(remembered(portZero, .thisAddressAndPort, allow: true) == nil,
+      "the same holds for an allow")
 let wideDeny = Rule(processBundleId: withPort.processBundleId,
                     processPath: withPort.processPath,
                     processName: withPort.processName,
@@ -132,9 +128,19 @@ let wideDeny = Rule(processBundleId: withPort.processBundleId,
                     direction: .outgoing, action: .deny, scope: .ip, priority: 100)
 check(matcher.decision(for: withPort, rules: [wideDeny], defaultMode: .alert) == .deny,
       "a remembered address rule with no port really does deny every port, which is why port 0 must never produce one")
+// A host-named flow with port 0 and an address: address and port has nothing
+// to pin either, and it must not widen to the host.
+let namedPortZero = Connection(pid: 501, processName: "Demo",
+                               processPath: "/Applications/Demo.app/Contents/MacOS/Demo",
+                               processBundleId: "com.example.demo",
+                               remoteHost: "example.com", remoteIP: "203.0.113.10", remotePort: 0, direction: .outgoing)
+check(remembered(namedPortZero, .thisAddressAndPort) == nil,
+      "a named flow with port 0 does not widen address and port to the host")
 
-// With a real pair, the rule is pinned to that port and nothing wider.
-if let pinnedDeny = addressAndPortRule(for: withPort, action: .deny) {
+// With a real pair, the rule is pinned to that address and port.
+if let pinnedDeny = remembered(withPort, .thisAddressAndPort) {
+    check(pinnedDeny.remoteIP == "203.0.113.10" && pinnedDeny.remotePort == 443 && pinnedDeny.remoteHost == nil,
+          "an address-and-port answer stores that address and port")
     check(matcher.decision(for: withPort, rules: [pinnedDeny], defaultMode: .alert) == .deny,
           "an address-and-port deny blocks the port it was made for")
     check(matcher.decision(for: flow(ip: "203.0.113.10", port: 8443), rules: [pinnedDeny], defaultMode: .alert) != .deny,
@@ -145,16 +151,27 @@ if let pinnedDeny = addressAndPortRule(for: withPort, action: .deny) {
     check(false, "an address with a real port produces an address-and-port rule")
 }
 
-// The GUI is wired to the same pair: AppState and the dialog both use it.
-check(source.contains("effectiveScope == .thisAddressAndPort && pinned == nil")
-        && source.contains("scopedIP = pinned?.ip") && source.contains("scopedPort = pinned?.port"),
-      "AppState writes exactly the pinned pair and remembers nothing without one")
-check(!source.contains("remotePort > 0 ? alert.connection.remotePort : nil"),
-      "AppState no longer saves an address-and-port answer without its port")
+// The other scopes keep their meaning.
+check(remembered(portZero, .thisHost).map { $0.remoteIP == "203.0.113.10" && $0.remotePort == nil && $0.scope == .ip } == true,
+      "This host for an address-only flow stores that address")
+check(remembered(namedPortZero, .thisHost).map { $0.remoteHost == "example.com" && $0.remoteIP == nil && $0.scope == .domain } == true,
+      "This host for a named flow stores the name")
+check(remembered(withPort, .anywhere).map { $0.remoteHost == nil && $0.remoteIP == nil && $0.scope == .process } == true,
+      "Anywhere stores the app with no destination")
+let noApp = Connection(pid: 1, processName: "", processPath: "", remoteHost: "", remoteIP: "203.0.113.10", remotePort: 443, direction: .outgoing)
+check(remembered(noApp, .anywhere).map { $0.remoteIP == "203.0.113.10" } == true,
+      "Anywhere without an app identity narrows to the host")
+check(remembered(flow(ip: "0.0.0.0", port: 443), .thisHost) == nil && remembered(flow(ip: "::", port: 443), .thisHost) == nil,
+      "an unspecified destination remembers nothing")
+
+// The GUI is wired to it: AppState stores what rememberedRule returns and the
+// dialog offers only availableRememberScopes.
+check(source.contains("alert.connection.rememberedRule(scope: scope"),
+      "AppState stores the rule rememberedRule builds")
 let view = try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)
-check(view.contains("ForEach(availableScopes)") && view.contains("alert.connection.pinnedAddressAndPort != nil")
+check(view.contains("ForEach(availableScopes)") && view.contains("alert.connection.availableRememberScopes")
         && view.contains("scope: effectiveScope"),
-      "the alert only offers and answers with address and port when the connection has both")
+      "the alert only offers and answers with the scopes the connection can have")
 
 if failures > 0 {
     print("alert rule scope verification: FAILED (\(failures))")

@@ -539,16 +539,3 @@ public struct AppConstants {
         return dir
     }
 }
-
-extension Connection {
-    /// The address and port a rule can be pinned to, when the connection has
-    /// both. ICMP and flows macOS reports without a port carry 0, and a rule
-    /// saved with no port covers the address on every port (#223): the alert
-    /// must not offer "address and port" then, and nothing is saved for it.
-    public var pinnedAddressAndPort: (ip: String, port: Int)? {
-        let ip = remoteIP.trimmingCharacters(in: .whitespaces)
-        guard !ip.isEmpty, ip != "0.0.0.0", ip != "::" else { return nil }
-        guard remotePort > 0 && remotePort <= 65535 else { return nil }
-        return (ip, remotePort)
-    }
-}
