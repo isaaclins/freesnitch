@@ -505,6 +505,7 @@ public struct RuleMatcher: Sendable {
         let now = Date()
         let address = PreparedConnectionAddress(
             c.remoteIP,
+            host: c.remoteHost,
             needsIPv4: prepared.needsIPv4,
             needsIPv6: prepared.needsIPv6
         )
