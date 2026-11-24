@@ -616,6 +616,15 @@ require_text "$APP_STATE" "guard finishAlert(id: alert.id, allow: allow, remembe
   "the app answers each alert exactly once"
 require_text "$APP_STATE" "PendingAlertRegistry.defaultDecision" \
   "the app applies the fail-open default when the registry cannot queue an alert"
+# A repeat of a question already on screen is allowed without asking, so it is
+# counted on that question and logged when the question closes (#245). Without
+# these it went through with no record at all.
+require_text "$APP_STATE" "pendingAlerts[waitingIndex].repeatsAllowed += 1" \
+  "a repeat of a waiting question is counted on that question"
+require_text "$APP_STATE" "recordRepeatsAllowed(while: alert)" \
+  "closing a question logs the repeats it let through"
+require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" "alert.repeatsAllowed" \
+  "the alert shows how many repeats were let through while it waited"
 # Each way of failing to answer keeps its own code, so a script can tell them
 # apart instead of parsing prose.
 for code in alert_already_answered alert_expired alert_not_found alert_rule_not_stored; do
