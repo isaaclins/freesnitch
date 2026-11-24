@@ -415,7 +415,10 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     /// The rules' verdict for a connection whose identity is as known as it
     /// will get. Records the flow and counts the rule that decided it.
-    private func decide(_ conn: Connection, identity: FlowIdentity, context: VerdictContext) -> PlannedVerdict {
+    /// `notBefore` is for a flow already paused: any resume, the user's answer
+    /// included, waits until then (see `decideOnceIdentityKnown`).
+    private func decide(_ conn: Connection, identity: FlowIdentity, context: VerdictContext,
+                        notBefore: DispatchTime? = nil) -> PlannedVerdict {
         let observedAt = context.observedAt
         let version = identity.metadata?.version
         let observe: (FlowDecision) -> Void = { [weak self] decision in
@@ -448,7 +451,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             observe(.blocked)
             return .now(reportingLateDestination(.drop(), for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
         case .ask:
-            promptAndResume(flow: flow, conn: conn, observe: observe)
+            promptAndResume(flow: flow, conn: conn, observe: observe, notBefore: notBefore)
             return .asking
         }
     }
@@ -474,13 +477,9 @@ final class FilterDataProvider: NEFilterDataProvider {
                                                 timeout: identityWait, queue: workQueue) { [weak self] identity, timedOut in
             guard let self else { return }
             if timedOut { self.noteIdentityWaitTimedOut(conn) }
-            switch self.decide(Self.connection(conn, with: identity.metadata), identity: identity, context: context) {
-            case .now(let verdict):
-                if DispatchTime.now() >= earliest {
-                    self.resumeFlow(context.flow, with: verdict)
-                } else {
-                    self.workQueue.asyncAfter(deadline: earliest) { self.resumeFlow(context.flow, with: verdict) }
-                }
+            switch self.decide(Self.connection(conn, with: identity.metadata), identity: identity, context: context,
+                               notBefore: earliest) {
+            case .now(let verdict): self.resume(context.flow, with: verdict, notBefore: earliest)
             case .asking: break
             }
         }
@@ -488,6 +487,15 @@ final class FilterDataProvider: NEFilterDataProvider {
 
     /// See `decideOnceIdentityKnown`.
     private let resumeFloor: TimeInterval = 0.02
+
+    /// Resumes a paused flow, but not before `notBefore` when one is given.
+    private func resume(_ flow: NEFilterFlow, with verdict: NEFilterNewFlowVerdict, notBefore: DispatchTime?) {
+        guard let notBefore, DispatchTime.now() < notBefore else {
+            resumeFlow(flow, with: verdict)
+            return
+        }
+        workQueue.asyncAfter(deadline: notBefore) { [weak self] in self?.resumeFlow(flow, with: verdict) }
+    }
 
     /// Only touched on `workQueue`.
     private var identityWaitTimeoutLogged = false
@@ -729,10 +737,11 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// `observe` is called once, with what the flow finally got: the user's
     /// answer, or `.unfiltered` when it was let through because nobody could
     /// answer (#447). A pending flow is never recorded as decided.
-    private func promptAndResume(flow: NEFilterFlow, conn: Connection, observe: @escaping (FlowDecision) -> Void) {
+    private func promptAndResume(flow: NEFilterFlow, conn: Connection, observe: @escaping (FlowDecision) -> Void,
+                                 notBefore: DispatchTime? = nil) {
         guard let data = try? JSONEncoder().encode(conn) else {
             observe(.unfiltered)
-            resumeFlow(flow, with: NEFilterNewFlowVerdict.allow()); return
+            resume(flow, with: NEFilterNewFlowVerdict.allow(), notBefore: notBefore); return
         }
         var settled = false
         let lock = NSLock()
@@ -741,7 +750,8 @@ final class FilterDataProvider: NEFilterDataProvider {
             lock.lock(); defer { lock.unlock() }
             guard let self, !settled else { return }
             settled = true
-            self.resumeFlow(flow, with: self.reportingLateDestination(verdict, for: flow, port: conn.remotePort, destinationKnown: destinationKnown))
+            self.resume(flow, with: self.reportingLateDestination(verdict, for: flow, port: conn.remotePort, destinationKnown: destinationKnown),
+                        notBefore: notBefore)
             observe(decision)
         }
 
