@@ -221,29 +221,6 @@ final class AppState: ObservableObject {
         let live = status.pfctlActive && status.dnsProxyActive
         guard live != enforcementEnabled else { return }
         setEnforcementFlagWithoutApplying(live)
-        if live {
-            enforcementFailure = nil
-        } else if status.pfctlActive {
-            // The helper didn't stand enforcement down: its DNS proxy lost a
-            // listener (#490). Say so, instead of a toggle that turns itself
-            // off for no visible reason. Turning it on again restarts it.
-            enforcementFailure = Self.dnsProxyStoppedMessage(port: status.dnsProxyPort)
-        }
-    }
-
-    static func dnsProxyStoppedMessage(port: Int) -> String {
-        String(localized: "The DNS proxy stopped listening on 127.0.0.1 port \(String(port)). Turn enforcement on again to restart it.")
-    }
-
-    /// Demo only: what Settings shows after the DNS proxy stopped while pf
-    /// stayed loaded, without saving the preference.
-    func showDemoDNSProxyStopped() {
-        suppressEnforcementSideEffect = true
-        enforcementEnabled = false
-        suppressEnforcementSideEffect = false
-        pfctlEnabled = true
-        dnsProxyEnabled = false
-        enforcementFailure = Self.dnsProxyStoppedMessage(port: dnsProxyPort)
     }
 
     enum Prefs {
