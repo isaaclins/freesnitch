@@ -15,7 +15,11 @@
 #     fails later in its state handler, and the helper's handler then stops
 #     the proxy reporting itself running for 127.0.0.1 (UDP and TCP) but not
 #     for ::1 (issue #490), checked on the handler alone and on a real
-#     DNSProxy started on a squatted high port, never on port 53.
+#     DNSProxy started on a squatted high port, never on port 53,
+#   - overlapping start() and stop() calls from many queues at once end with
+#     exactly one set of listeners: after concurrent starts the proxy runs and
+#     answers, and after the final stop every 127.0.0.1 and ::1 port is free
+#     again, so no start left a set behind that nothing cancels (issue #501).
 #
 # A runner with no non-loopback IPv4 or IPv6 address skips the LAN half and
 # says so; the loopback and peer checks still run.
@@ -381,6 +385,78 @@ struct Main {
             } catch { checks.expect(false, "restart on the freed port threw: \(error)") }
             proxy.stop()
             checks.expect(!proxy.running, "stop clears running")
+        }
+
+        print("overlapping start and stop calls (#501)")
+        /// True when nothing holds `proto` on host:port anymore: a squatter
+        /// without address reuse can bind it. Retries briefly, because a
+        /// cancelled listener lets go of its socket on its own queue.
+        func isFree(_ proto: String, _ host: NWEndpoint.Host, _ port: NWEndpoint.Port) -> Bool {
+            let deadline = DispatchTime.now() + 3
+            repeat {
+                if let l = squat(proto, host, port) { _ = release(l); return true }
+                Thread.sleep(forTimeInterval: 0.05)
+            } while DispatchTime.now() < deadline
+            return false
+        }
+        func allFree(_ port: NWEndpoint.Port) -> Bool {
+            DNSProxy.loopbackHosts.allSatisfy { host in ["udp", "tcp"].allSatisfy { isFree($0, host, port) } }
+        }
+        let callers = 32
+        for round in 1...5 {
+            // A random port can collide with a socket of something else on
+            // this Mac, which would look like a failed start. Take one that
+            // is free on every address first.
+            var racePort = freePort()
+            for _ in 0..<20 where !allFree(racePort) { racePort = freePort() }
+            let proxy = DNSProxy()
+            // Every caller starts at the same moment on its own queue.
+            let gate = DispatchGroup(); gate.enter()
+            let done = DispatchGroup()
+            let errLock = NSLock(); var errors: [String] = []
+            for i in 0..<callers {
+                done.enter()
+                DispatchQueue(label: "start-\(i)").async {
+                    gate.wait()
+                    do { try proxy.start(port: racePort.rawValue) } catch {
+                        errLock.lock(); errors.append("\(error)"); errLock.unlock()
+                    }
+                    done.leave()
+                }
+            }
+            gate.leave(); done.wait()
+            checks.expect(errors.isEmpty, "round \(round): \(callers) overlapping starts did not throw \(errors.first ?? "")")
+            checks.expect(proxy.running && !settles(proxy, to: false, within: 0.5),
+                          "round \(round): after \(callers) overlapping starts the proxy is running")
+            // One stop must free every port: a second set left behind by an
+            // unserialized start would still hold them.
+            proxy.stop()
+            checks.expect(!proxy.running, "round \(round): stop after overlapping starts clears running")
+            checks.expect(allFree(racePort), "round \(round): stop after overlapping starts frees every port")
+
+            // Starts and stops mixed, then one final stop: nothing may stay bound.
+            let mixGate = DispatchGroup(); mixGate.enter()
+            let mixDone = DispatchGroup()
+            for i in 0..<callers {
+                mixDone.enter()
+                DispatchQueue(label: "mix-\(i)").async {
+                    mixGate.wait()
+                    if i % 2 == 0 { try? proxy.start(port: racePort.rawValue) } else { proxy.stop() }
+                    mixDone.leave()
+                }
+            }
+            mixGate.leave(); mixDone.wait()
+            proxy.stop()
+            checks.expect(!proxy.running && allFree(racePort),
+                          "round \(round): overlapping starts and stops then one stop leave nothing bound")
+            // And the proxy still starts cleanly on that port afterwards.
+            do {
+                try proxy.start(port: racePort.rawValue)
+                checks.expect(proxy.running && !settles(proxy, to: false, within: 0.5),
+                              "round \(round): the proxy starts again after the race")
+            } catch { checks.expect(false, "round \(round): start after the race threw: \(error)") }
+            proxy.stop()
+            checks.expect(allFree(racePort), "round \(round): final stop frees every port")
         }
 
         if checks.failures > 0 {
