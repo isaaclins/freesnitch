@@ -699,16 +699,7 @@ struct RulesManagerView: View {
     /// through the same path every other rule is created through, and it says
     /// in its notes where it came from.
     private func allowDespiteBlocklist(_ domain: String, from blocklist: BlocklistInfo) {
-        let rule = Rule(processName: nil,
-                        remoteHost: domain,
-                        direction: .outgoing,
-                        action: .allow,
-                        scope: .domain,
-                        priority: 90,
-                        profile: Profile.alwaysName,
-                        notes: "Allowed despite \(blocklist.name).",
-                        enabled: true)
-        addRule(rule)
+        addRule(BlocklistDomain.allowAnywayRule(for: domain, listName: blocklist.name))
     }
 
     /// A real `Table`, which brings sortable and resizable column headers,
