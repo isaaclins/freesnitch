@@ -67,6 +67,16 @@ STUB
 printf 'systemextensionsctl %s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
   list)
+    if [[ "${FAKE_LIST_FAILS:-0}" == "1" ]]; then
+      printf 'Error Domain=OSSystemExtensionErrorDomain Code=1 "unknown error"\n' >&2
+      exit 1
+    fi
+    # Exit 0 but no listing: an answer that says nothing about the extension.
+    [[ "${FAKE_LIST_EMPTY:-0}" == "1" ]] && exit 0
+    if [[ "${FAKE_LIST_GARBLED:-0}" == "1" ]]; then
+      printf 'XPC connection interrupted\n'
+      exit 0
+    fi
     printf '1 extension(s)\n'
     if [[ "${FAKE_EXT_PRESENT:-0}" == "1" ]]; then
       printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tbundleID (version)\tname\t[state]\n*\t*\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\tFreeSnitch\t[activated enabled]\n'
@@ -80,7 +90,6 @@ case "${1:-}" in
     if [[ "${FAKE_EXT_DISABLED:-0}" == "1" ]]; then
       printf -- '--- com.apple.system_extension.network_extension\n\t\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\tFreeSnitch\t[activated disabled]\n'
     fi
-    [[ "${FAKE_LIST_FAILS:-0}" == "1" ]] && exit 1
     exit 0
     ;;
   uninstall)
@@ -155,6 +164,8 @@ run_uninstall() {
     FAKE_EXT_PRESENT="${FAKE_EXT_PRESENT:-0}" \
     FAKE_EXT_STOPPED="${FAKE_EXT_STOPPED:-0}" \
     FAKE_LIST_FAILS="${FAKE_LIST_FAILS:-0}" \
+    FAKE_LIST_EMPTY="${FAKE_LIST_EMPTY:-0}" \
+    FAKE_LIST_GARBLED="${FAKE_LIST_GARBLED:-0}" \
     FAKE_EXT_VALIDATING="${FAKE_EXT_VALIDATING:-0}" \
     FAKE_EXT_DISABLED="${FAKE_EXT_DISABLED:-0}" \
     FAKE_HELPER_RUNNING="${FAKE_HELPER_RUNNING:-0}" \
@@ -290,12 +301,55 @@ test_stopped_extension_record() {
   (( RUN_STATUS != 0 )) || fail "the uninstall went on while the extension was in another state"
   [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed while the extension was in another state"
 
-  root="$(make_fake_root list-fails)"
+  unset FAKE_SIP FAKE_HELPER_RUNNING
+}
+
+# A query that fails, or answers without a listing, is "unknown", never
+# "absent": the script prints what came back and stops before touching pf or
+# removing anything (#260).
+expect_unknown_state_stops() {
+  local name="$1" detail="$2" root="$WORK/$1/root"
+  (( RUN_STATUS != 0 )) || fail "$name: the uninstall went on although the extension state could not be read"
+  expect_contains "$RUN_OUTPUT" "could not read the system extension state" "$name: unknown-state message"
+  expect_contains "$RUN_OUTPUT" "$detail" "$name: the query failure is shown"
+  expect_absent "$RUN_OUTPUT" "still holds a record" "$name: an unknown state must not be reported as a record"
+  expect_absent "$RUN_OUTPUT" "is not running any more" "$name: an unknown state must not be reported as gone"
+  expect_absent "$RUN_OUTPUT" "Removed " "$name: nothing may be removed"
+  [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "$name: the app was removed"
+  [[ -d "$root/Library/Application Support/FreeSnitch/Insights" ]] || fail "$name: Insights was removed"
+  grep -q '^pfctl ' "$WORK/$name/stub.log" && fail "$name: pf was flushed before the extension state was known"
+  grep -q 'block drop' "$root/etc/pf.anchors/puresnitch" || fail "$name: the anchor file was changed"
+  return 0
+}
+
+test_unknown_extension_state() {
+  export FAKE_SIP=enabled FAKE_HELPER_RUNNING=0
+
+  make_fake_root list-fails >/dev/null
   export FAKE_LIST_FAILS=1
   run_uninstall list-fails --yes
-  unset FAKE_LIST_FAILS FAKE_SIP FAKE_HELPER_RUNNING
-  (( RUN_STATUS != 0 )) || fail "the uninstall went on although the extension list could not be read"
-  [[ -d "$root/Applications/FreeSnitch.app" ]] || fail "the app was removed although the extension list could not be read"
+  unset FAKE_LIST_FAILS
+  expect_unknown_state_stops list-fails "failed with exit status 1"
+  expect_contains "$RUN_OUTPUT" "OSSystemExtensionErrorDomain" "list-fails: the tool's own error text is shown"
+
+  make_fake_root list-empty >/dev/null
+  export FAKE_LIST_EMPTY=1
+  run_uninstall list-empty --yes
+  unset FAKE_LIST_EMPTY
+  expect_unknown_state_stops list-empty "did not return an extension listing (no output)"
+
+  make_fake_root list-garbled >/dev/null
+  export FAKE_LIST_GARBLED=1
+  run_uninstall list-garbled --yes
+  unset FAKE_LIST_GARBLED
+  expect_unknown_state_stops list-garbled "did not return an extension listing"
+
+  # A real listing with no extensions at all is a clear "absent".
+  local root; root="$(make_fake_root list-none)"
+  run_uninstall list-none --yes
+  unset FAKE_SIP FAKE_HELPER_RUNNING
+  (( RUN_STATUS == 0 )) || fail "a real listing without the extension held the uninstall up: $RUN_OUTPUT"
+  expect_contains "$RUN_OUTPUT" "is not running any more" "absent-state message"
 }
 
 # pf.conf loads the anchor file at boot, so after an uninstall it must hold no
@@ -406,6 +460,7 @@ test_refuses_unexpected_path
 test_refuses_while_helper_runs
 test_sip_refusal_is_honest
 test_stopped_extension_record
+test_unknown_extension_state
 test_flushes_only_named_anchor
 test_refuses_symlinked_anchor
 test_command_link
