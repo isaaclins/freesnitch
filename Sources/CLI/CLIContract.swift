@@ -73,6 +73,23 @@ struct CLIEnvelope<T: Encodable>: Encodable {
     let data: T?
     let error: CLIErrorPayload?
 
+    private enum CodingKeys: String, CodingKey {
+        case schema, command, ok, exitCode, data, error
+    }
+
+    /// Written by hand so `data` and `error` are always present: the field that
+    /// does not apply is an explicit JSON null, as docs/CLI.md promises.
+    /// Synthesized encoding would leave a nil optional out entirely.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schema, forKey: .schema)
+        try container.encode(command, forKey: .command)
+        try container.encode(ok, forKey: .ok)
+        try container.encode(exitCode, forKey: .exitCode)
+        if let data { try container.encode(data, forKey: .data) } else { try container.encodeNil(forKey: .data) }
+        if let error { try container.encode(error, forKey: .error) } else { try container.encodeNil(forKey: .error) }
+    }
+
     static func success(command: String, data: T, exitCode: CLIExitCode = .success) -> Self {
         Self(schema: Self.schema, command: command, ok: exitCode == .success, exitCode: exitCode.rawValue, data: data, error: nil)
     }
