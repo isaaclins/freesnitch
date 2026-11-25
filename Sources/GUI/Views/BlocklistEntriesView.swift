@@ -59,18 +59,7 @@ struct BlocklistEntriesView: View {
         // count and time, so the same page is asked for again. Removing a name
         // changed neither the list nor the search, so the removed name stayed
         // on screen with the old total (#220).
-        .onChange(of: ContentVersion(blocklist)) { _ in load(resettingOffset: false) }
-    }
-
-    /// What changes when the names on a list change, and nothing else.
-    private struct ContentVersion: Equatable {
-        let entryCount: Int
-        let lastUpdated: Date?
-
-        init(_ blocklist: BlocklistInfo) {
-            entryCount = blocklist.entryCount
-            lastUpdated = blocklist.lastUpdated
-        }
+        .onChange(of: BlocklistEntryPaging.ContentVersion(blocklist)) { _ in load(resettingOffset: false) }
     }
 
     @ViewBuilder
@@ -257,13 +246,14 @@ struct BlocklistEntriesView: View {
         // Removing the only name on the last page leaves an offset past the
         // end of the list. That page is asked for again one page back instead
         // of showing "No entries" for a list that still has some.
-        if let result, result.entries.isEmpty, result.total > 0 {
-            let lastPage = (result.total - 1) / Self.pageSize * Self.pageSize
-            if lastPage < offset {
-                offset = lastPage
-                load(resettingOffset: false, query: search)
-                return
-            }
+        if let result,
+           let retry = BlocklistEntryPaging.offsetToRetry(emptyPage: result.entries,
+                                                          total: result.total,
+                                                          offset: offset,
+                                                          pageSize: Self.pageSize) {
+            offset = retry
+            load(resettingOffset: false, query: search)
+            return
         }
         errorMessage = nil
         page = result
