@@ -253,9 +253,10 @@ read_extension_state() {
     return 0
   fi
   # A real listing always starts its report with "N extension(s)", even when
-  # there are none. Without it, an empty or garbled answer would read as
-  # "not listed".
-  if ! grep -Eq '^[0-9]+ extension\(s\)$' <<<"$listing"; then
+  # there are none ("0 extension(s)" on macOS 27). Without it, an empty or
+  # garbled answer would read as "not listed". Surrounding whitespace is
+  # tolerated so a formatting change alone cannot block every uninstall.
+  if ! grep -Eq '^[[:space:]]*[0-9]+[[:space:]]+extension\(s\)[[:space:]]*$' <<<"$listing"; then
     EXTENSION_QUERY_ERROR="'$SYSTEMEXTENSIONSCTL list' did not return an extension listing"
     if [[ -n "$errors" ]]; then
       EXTENSION_QUERY_ERROR+=": $errors"

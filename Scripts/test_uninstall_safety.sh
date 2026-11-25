@@ -77,6 +77,11 @@ case "${1:-}" in
       printf 'XPC connection interrupted\n'
       exit 0
     fi
+    if [[ "${FAKE_LIST_NONE:-0}" == "1" ]]; then
+      # What a Mac with no system extensions prints, byte for byte.
+      printf '0 extension(s)\n'
+      exit 0
+    fi
     printf '1 extension(s)\n'
     if [[ "${FAKE_EXT_PRESENT:-0}" == "1" ]]; then
       printf -- '--- com.apple.system_extension.network_extension\nenabled\tactive\tteamID\tbundleID (version)\tname\t[state]\n*\t*\tBHAF4L4726\tio.isaaclins.freesnitch.netext (0.3.1/26)\tFreeSnitch\t[activated enabled]\n'
@@ -165,6 +170,7 @@ run_uninstall() {
     FAKE_EXT_STOPPED="${FAKE_EXT_STOPPED:-0}" \
     FAKE_LIST_FAILS="${FAKE_LIST_FAILS:-0}" \
     FAKE_LIST_EMPTY="${FAKE_LIST_EMPTY:-0}" \
+    FAKE_LIST_NONE="${FAKE_LIST_NONE:-0}" \
     FAKE_LIST_GARBLED="${FAKE_LIST_GARBLED:-0}" \
     FAKE_EXT_VALIDATING="${FAKE_EXT_VALIDATING:-0}" \
     FAKE_EXT_DISABLED="${FAKE_EXT_DISABLED:-0}" \
@@ -346,8 +352,9 @@ test_unknown_extension_state() {
 
   # A real listing with no extensions at all is a clear "absent".
   local root; root="$(make_fake_root list-none)"
+  export FAKE_LIST_NONE=1
   run_uninstall list-none --yes
-  unset FAKE_SIP FAKE_HELPER_RUNNING
+  unset FAKE_LIST_NONE FAKE_SIP FAKE_HELPER_RUNNING
   (( RUN_STATUS == 0 )) || fail "a real listing without the extension held the uninstall up: $RUN_OUTPUT"
   expect_contains "$RUN_OUTPUT" "is not running any more" "absent-state message"
 }
