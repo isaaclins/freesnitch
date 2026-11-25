@@ -267,9 +267,13 @@ public final class ProfileCoordinator: @unchecked Sendable {
                 setPending(nil)
                 return true
             }
+            // Store errors are whole sentences; the notice and the log put the
+            // reason mid-sentence, so its closing period would double up.
+            var problem = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            while problem.hasSuffix(".") { problem.removeLast() }
             let failure = PendingNetworkSwitch(gatewayMAC: mac,
                                                profileName: profileName,
-                                               problem: error.localizedDescription)
+                                               problem: problem)
             lock.lock()
             // The user picked a profile while this attempt ran: their choice
             // stands, nothing is pending, and nothing should retry. Checked

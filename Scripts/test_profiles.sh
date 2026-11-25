@@ -525,6 +525,8 @@ expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi",
        "a failed automatic switch left nothing pending: \(String(describing: retryCoordinator.pendingNetworkSwitch))")
 expect(retryCoordinator.pendingNetworkSwitch?.gatewayMAC == "12:34:56:78:9a:bc", "the pending switch names the wrong gateway")
 expect(!(retryCoordinator.pendingNetworkSwitch?.problem.isEmpty ?? true), "the pending switch does not say what failed")
+expect(!(retryCoordinator.pendingNetworkSwitch?.problem.hasSuffix(".") ?? true),
+       "the reason ends in a period, which doubles up mid-sentence")
 let failingSnapshot = try retryService.snapshot()
 expect(failingSnapshot.pendingNetworkSwitch?.profileName == "public-wifi",
        "the Profiles screen is not told that the automatic switch failed")
