@@ -61,11 +61,71 @@ fail() {
   exit 1
 }
 
+# A Swift file with its comments blanked out, line for line, so a check that
+# needs a piece of code is not satisfied by the same text left in a comment
+# (#236), and a brace in a comment does not move a block's end. `//` and
+# nested `/* */` comments are removed; string literals, including `"""`
+# strings and the strings inside `\( )` interpolation, are kept as they are,
+# so a URL such as "https://..." is not cut at its `//`.
+swift_code() {
+  awk '
+    {
+      line = $0
+      n = length(line)
+      out = ""
+      i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        c2 = substr(line, i, 2)
+        c3 = substr(line, i, 3)
+        if (block > 0) {
+          if (c2 == "/*") { block++; out = out "  "; i += 2; continue }
+          if (c2 == "*/") { block--; out = out "  "; i += 2; continue }
+          out = out " "; i++; continue
+        }
+        if (inner) {
+          if (c == "\\") { out = out c2; i += 2; continue }
+          if (c == "\"") inner = 0
+          out = out c; i++; continue
+        }
+        if (interp > 0) {
+          if (c == "\"") { inner = 1; out = out c; i++; continue }
+          if (c == "(") interp++
+          if (c == ")") interp--
+          out = out c; i++; continue
+        }
+        if (str || multi) {
+          if (c2 == "\\(") { interp = 1; out = out c2; i += 2; continue }
+          if (c == "\\") { out = out c2; i += 2; continue }
+          if (multi && c3 == "\"\"\"") { multi = 0; out = out c3; i += 3; continue }
+          if (str && c == "\"") str = 0
+          out = out c; i++; continue
+        }
+        if (c2 == "//") break
+        if (c2 == "/*") { block = 1; out = out "  "; i += 2; continue }
+        if (c3 == "\"\"\"") { multi = 1; out = out c3; i += 3; continue }
+        if (c == "\"") str = 1
+        out = out c; i++
+      }
+      # A single-line string never runs past its line; resetting keeps one
+      # unbalanced quote from swallowing the rest of the file.
+      str = 0; interp = 0; inner = 0
+      print out
+    }
+  ' "$1"
+}
+
+# Swift files are read without their comments: a requirement met only by a
+# comment is not met.
 require_text() {
   local file="$1"
   local text="$2"
   local message="$3"
-  grep -Fq -- "$text" "$file" || fail "$message"
+  if [[ "$file" == *.swift ]]; then
+    grep -Fq -- "$text" <<<"$(swift_code "$file")" || fail "$message"
+  else
+    grep -Fq -- "$text" "$file" || fail "$message"
+  fi
 }
 
 [[ -f "$FILTER" ]] || fail "missing $FILTER"
@@ -142,7 +202,7 @@ swift_function_body() {
       depth += opens - closes
       if (depth == 0) exit
     }
-  ' "$1"
+  ' <<<"$(swift_code "$1")"
 }
 
 grep -Fq 'if net.contains(":") { return ipv6CidrContains(' <<<"$cidr_body" \
@@ -952,7 +1012,9 @@ fi
 # Each fail-open check is scoped to its own brace block. A window of N lines
 # would let one block borrow another block's allow verdict and hide a
 # fail-closed regression, so the block is delimited by brace depth instead.
-# Same idea, for any literal that has to appear inside one brace block.
+# Same idea, for any literal that has to appear inside one brace block. All of
+# these read the code without its comments (swift_code), so the literal has to
+# be live code, not a leftover in a comment.
 text_within_block() {
   local file="$1"
   local start_regex="$2"
@@ -977,7 +1039,7 @@ text_within_block() {
       if (opened && depth <= 0) active = 0
     }
     END { exit(found ? 0 : 1) }
-  ' "$file"
+  ' <<<"$(swift_code "$file")"
 }
 
 # Persisted helper settings must be restored together. Restoring the mode but
@@ -1012,7 +1074,7 @@ allow_within_block() {
       if (depth <= 0) active = 0
     }
     END { exit(found ? 0 : 1) }
-  ' "$file"
+  ' <<<"$(swift_code "$file")"
 }
 
 if ! allow_within_block "$FILTER" 'if !asked[[:space:]]*\{'; then
