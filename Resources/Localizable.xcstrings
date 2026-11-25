@@ -5963,6 +5963,16 @@
         }
       }
     },
+    "FreeSnitch could not switch to this network's profile: %@. It keeps trying, and %@ stays active until it works." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось переключиться на профиль этой сети: %@. Попытки продолжаются, а %@ остаётся активным, пока это не получится."
+          }
+        }
+      }
+    },
     "FreeSnitch could not switch to %@ on this network: %@. It keeps trying, and %@ stays active until it works." : {
       "localizations" : {
         "ru" : {

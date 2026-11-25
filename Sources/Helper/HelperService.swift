@@ -251,9 +251,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         coordinator.onPendingNetworkSwitchChanged = { [weak self] pending in
             _ = self?.broadcast { client in
                 if let pending {
+                    let target = pending.profileName.isEmpty
+                        ? "this network's profile" : "the profile \(pending.profileName)"
                     client.notifyLog(
                         level: "error",
-                        message: "Could not switch to the profile \(pending.profileName) on this network: "
+                        message: "Could not switch to \(target) on this network: "
                             + "\(pending.problem). FreeSnitch keeps trying.")
                 }
                 client.notifyLog(level: "info", message: AppConstants.profileNetworkSwitchStateChangedLogMessage)

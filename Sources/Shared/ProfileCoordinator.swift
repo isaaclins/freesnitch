@@ -244,15 +244,17 @@ public final class ProfileCoordinator: @unchecked Sendable {
 
     /// The watcher's entry point. A failed switch is logged, kept as pending
     /// for the Profiles screen, and reported as not handled, so the watcher
-    /// delivers the same gateway again on its next poll until it works.
+    /// delivers the same gateway again on its next poll until it works. Only
+    /// a binding that is really gone, or a pick by the user, ends a retry.
     @discardableResult
     public func applyObservedGatewayMAC(_ rawMAC: String?) -> Bool {
         let mac = rawMAC.flatMap(GatewayMAC.normalized) ?? ""
         lock.lock()
         let generation = userChoiceGeneration
         lock.unlock()
+        var boundProfile: String?
         do {
-            let result = try handleGatewayMACChange(rawMAC)
+            let result = try applyNetworkChange(rawMAC, boundProfile: &boundProfile)
             if pendingNetworkSwitch != nil {
                 if let result {
                     PSLog.notice(PSLog.helper,
@@ -262,14 +264,6 @@ public final class ProfileCoordinator: @unchecked Sendable {
             }
             return true
         } catch {
-            guard let profileName = store.networkBinding(forGatewayMAC: mac)?.profileName else {
-                // The binding went away meanwhile: nothing is owed any more.
-                setPending(nil)
-                return true
-            }
-            let failure = PendingNetworkSwitch(gatewayMAC: mac,
-                                               profileName: profileName,
-                                               problem: error.localizedDescription)
             lock.lock()
             // The user picked a profile while this attempt ran: their choice
             // stands, nothing is pending, and nothing should retry. Checked
@@ -278,13 +272,21 @@ public final class ProfileCoordinator: @unchecked Sendable {
                 lock.unlock()
                 return true
             }
+            // When even the binding could not be read, the profile is the
+            // one this gateway was already owed, if it is known.
+            let known = pending?.gatewayMAC == mac ? pending?.profileName : nil
+            let failure = PendingNetworkSwitch(gatewayMAC: mac,
+                                               profileName: boundProfile ?? known ?? "",
+                                               problem: error.localizedDescription)
             let changed = pending != failure
             pending = failure
             let handler = pendingHandler
             lock.unlock()
             if changed {
+                let target = failure.profileName.isEmpty
+                    ? "this network's profile" : "the profile \(failure.profileName)"
                 PSLog.error(PSLog.helper,
-                            "Could not switch to the profile \(profileName) for gateway \(mac): "
+                            "Could not switch to \(target) for gateway \(mac): "
                             + "\(failure.problem). Retrying on every gateway check until it works.")
                 handler?(failure)
             }
@@ -305,11 +307,20 @@ public final class ProfileCoordinator: @unchecked Sendable {
     /// new network can never silently impose a profile the user never chose.
     @discardableResult
     public func handleGatewayMACChange(_ rawMAC: String?) throws -> SwitchResult? {
+        var boundProfile: String?
+        return try applyNetworkChange(rawMAC, boundProfile: &boundProfile)
+    }
+
+    /// Sets `boundProfile` as soon as the binding is known, so a caller whose
+    /// switch then fails still knows which profile it was for. A binding that
+    /// cannot be read throws: it is not the same as no binding.
+    private func applyNetworkChange(_ rawMAC: String?, boundProfile: inout String?) throws -> SwitchResult? {
         let mac = rawMAC.flatMap(GatewayMAC.normalized)
         lock.lock()
         lastObservedGatewayMAC = mac
         lock.unlock()
-        guard let mac, let binding = store.networkBinding(forGatewayMAC: mac) else { return nil }
+        guard let mac, let binding = try store.lookUpNetworkBinding(forGatewayMAC: mac) else { return nil }
+        boundProfile = binding.profileName
         guard binding.profileName != store.activeProfileName() else { return nil }
         return try activate(profileName: binding.profileName, reason: .network)
     }

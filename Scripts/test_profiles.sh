@@ -553,6 +553,60 @@ _ = retryWatcher.refresh()
 expect(retrySwitches == 1, "a later poll switched again after the retry succeeded")
 pass("the next poll on the same gateway retries the switch until the bound profile is active")
 
+// #519: a binding that can't be read is not a binding that is gone. Replayed
+// by renaming the bindings table from another connection, so the store's own
+// lookup really fails while public-wifi is still owed to this gateway.
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+holdWriteLock()
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi", "the switch did not fail under the write lock")
+releaseWriteLock()
+func renameBindings(_ from: String, _ to: String) {
+    var other: OpaquePointer?
+    expect(sqlite3_open(retryPath, &other) == SQLITE_OK, "could not open a second connection")
+    expect(sqlite3_exec(other, "ALTER TABLE \(from) RENAME TO \(to);", nil, nil, nil) == SQLITE_OK,
+           "could not rename the bindings table")
+    sqlite3_close(other)
+}
+renameBindings("profile_network_bindings", "bindings_hidden")
+let eventsBeforeLookupFailure = pendingEvents.count
+_ = retryWatcher.refresh()
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a failed binding lookup switched profile")
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi",
+       "a failed binding lookup dropped the pending switch: \(String(describing: retryCoordinator.pendingNetworkSwitch))")
+expect(pendingEvents.count == eventsBeforeLookupFailure + 1,
+       "the lookup failure was reported \(pendingEvents.count - eventsBeforeLookupFailure) times instead of once")
+renameBindings("bindings_hidden", "profile_network_bindings")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "public-wifi", "the switch was not retried once the binding could be read")
+expect(retryCoordinator.pendingNetworkSwitch == nil, "the pending switch stayed after it succeeded")
+pass("a binding that can't be read keeps the switch pending and retried, it is not taken as removed")
+
+// A binding really removed while its switch is failing ends the retry.
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+holdWriteLock()
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi", "the switch did not fail under the write lock")
+expect(sqlite3_exec(writeLock, "DELETE FROM profile_network_bindings WHERE gateway_mac='12:34:56:78:9a:bc';", nil, nil, nil) == SQLITE_OK,
+       "could not remove the binding")
+sqlite3_exec(writeLock, "COMMIT;", nil, nil, nil)
+sqlite3_close(writeLock)
+writeLock = nil
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch == nil, "a removed binding left its switch pending")
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a removed binding still switched profile")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a later poll switched for a removed binding")
+_ = try retryCoordinator.bindNetwork(gatewayMAC: "12:34:56:78:9a:bc", toProfile: "public-wifi")
+pass("a binding removed while its switch is failing ends the retry")
+
 // The user's own choice in the meantime wins over the retry.
 holdWriteLock()
 retryProvider.set("12:34:56:78:9a:bd")

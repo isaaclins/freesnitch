@@ -97,7 +97,9 @@ struct ProfilesSettingsView: View {
         if let pending = profileClient.snapshot?.pendingNetworkSwitch {
             // The network's profile is not in force even though the user
             // chose it for this network, so this is said where they look (#269).
-            noticeText(String(localized: "FreeSnitch could not switch to \(pending.profileName) on this network: \(pending.problem). It keeps trying, and \(profileClient.activeProfileName) stays active until it works."),
+            noticeText(pending.profileName.isEmpty
+                       ? String(localized: "FreeSnitch could not switch to this network's profile: \(pending.problem). It keeps trying, and \(profileClient.activeProfileName) stays active until it works.")
+                       : String(localized: "FreeSnitch could not switch to \(pending.profileName) on this network: \(pending.problem). It keeps trying, and \(profileClient.activeProfileName) stays active until it works."),
                        tint: .orange)
         }
         if let message = profileClient.errorMessage {

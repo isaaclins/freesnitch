@@ -1368,8 +1368,15 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     public func networkBinding(forGatewayMAC rawMAC: String) -> ProfileNetworkBinding? {
+        try? lookUpNetworkBinding(forGatewayMAC: rawMAC)
+    }
+
+    /// The same lookup, but a failed read throws instead of looking like a
+    /// network with no binding. Automatic switching needs the difference: a
+    /// read that failed must be retried, a removed binding must not (#519).
+    public func lookUpNetworkBinding(forGatewayMAC rawMAC: String) throws -> ProfileNetworkBinding? {
         guard let canonical = GatewayMAC.normalized(rawMAC) else { return nil }
-        return queue.sync { networkBindingLocked(gatewayMAC: canonical) }
+        return try queue.sync { try networkBindingLocked(gatewayMAC: canonical) }
     }
 
     public func allNetworkBindings() -> [ProfileNetworkBinding] {
@@ -1609,12 +1616,20 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
-    private func networkBindingLocked(gatewayMAC: String) -> ProfileNetworkBinding? {
+    private func networkBindingLocked(gatewayMAC: String) throws -> ProfileNetworkBinding? {
         var stmt: OpaquePointer?
         defer { if stmt != nil { sqlite3_finalize(stmt) } }
-        guard sqlite3_prepare_v2(db, "SELECT id,profile_name,gateway_mac,created_at FROM profile_network_bindings WHERE gateway_mac=? LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, "SELECT id,profile_name,gateway_mac,created_at FROM profile_network_bindings WHERE gateway_mac=? LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "RuleStore", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+        }
         sqlite3_bind_text(stmt, 1, gatewayMAC, -1, SQLITE_TRANSIENT)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        let step = sqlite3_step(stmt)
+        if step == SQLITE_DONE { return nil }
+        guard step == SQLITE_ROW else {
+            throw NSError(domain: "RuleStore", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+        }
         return ProfileNetworkBinding(
             id: UUID(uuidString: text(stmt, 0)) ?? UUID(),
             profileName: text(stmt, 1),
