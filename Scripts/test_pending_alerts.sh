@@ -534,29 +534,29 @@ struct PendingAlertHarness {
         do {
             // Replays the report: A is asked, B queues behind it ten seconds
             // later, nobody answers either.
-            let start = Date(timeIntervalSince1970: 1_800_000_000)
+            let start = ContinuousClock.now
             let a = UUID(), b = UUID()
             var deadlines = PendingAlertDeadlines()
             deadlines.start(a, at: start)
-            deadlines.start(b, at: start.addingTimeInterval(10))
-            check(deadlines.due(at: start.addingTimeInterval(PendingAlertLimits.maxLifetime - 0.5)).isEmpty,
+            deadlines.start(b, at: start.advanced(by: .seconds(10)))
+            check(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.maxLifetime - 0.5))).isEmpty,
                   "a question is still answerable just before its window ends")
-            let firstDue = deadlines.due(at: start.addingTimeInterval(PendingAlertLimits.maxLifetime))
+            let firstDue = deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.maxLifetime)))
             equal(firstDue, [a], "the unanswered question is due when its window ends, and only that one")
             check(PendingAlertLimits.maxLifetime < PendingAlertLimits.flowAskTimeout,
                   "it is closed before the extension lets its flow through, so the app's allow is the reply the flow gets")
             deadlines.end(a)
-            check(deadlines.due(at: start.addingTimeInterval(PendingAlertLimits.maxLifetime + 9)).isEmpty,
+            check(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.maxLifetime + 9))).isEmpty,
                   "the question queued behind it stays answerable for its own full window")
-            equal(deadlines.due(at: start.addingTimeInterval(PendingAlertLimits.flowAskTimeout + 10)), [b],
+            equal(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.flowAskTimeout + 10))), [b],
                   "the queued question closes the same way once its own window ends")
 
             // An answered question never closes itself afterwards.
             let c = UUID(), d = UUID()
             deadlines.start(c, at: start)
-            deadlines.start(d, at: start.addingTimeInterval(1))
+            deadlines.start(d, at: start.advanced(by: .seconds(1)))
             deadlines.end(c)
-            equal(deadlines.due(at: start.addingTimeInterval(PendingAlertLimits.flowAskTimeout * 2)), [d, b],
+            equal(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.flowAskTimeout * 2))), [d, b],
                   "an answered question is never closed again, and several due ones come oldest first")
             deadlines.end(b); deadlines.end(d)
             equal(deadlines.count, 0, "nothing is kept once every question has closed")
@@ -663,7 +663,7 @@ require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" "alert.repeatsAllow
 # registry's own, which is asserted above to end before the flow budget.
 require_text "$APP_STATE" "scheduleAlertTimeout(alert.id)" \
   "every question the app asks gets its own answer deadline"
-require_text "$APP_STATE" "alertDeadlines.start(id, at: Date())" \
+require_text "$APP_STATE" "alertDeadlines.start(id, at: .now)" \
   "the app keeps its answer deadlines in the type the harness replays"
 require_text "$APP_STATE" "for id in alertDeadlines.due(at: now) {" \
   "the app closes exactly the questions whose deadline has passed"

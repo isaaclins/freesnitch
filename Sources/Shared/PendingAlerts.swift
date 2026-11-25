@@ -136,36 +136,29 @@ public struct PendingAlertRemember: Codable, Sendable, Equatable {
     }
 }
 
-/// When each question the app is showing stops being answerable (#225).
-///
-/// The extension lets an unanswered flow through after its own ask timeout. A
-/// question still on screen after that offers a Deny that can no longer stop
-/// anything and holds up every question queued behind it, so the app closes
-/// each question once its window here has passed, with the fail-open allow.
-/// The window is the registry's `maxLifetime`, which ends before the flow
-/// budget, so the app's reply is the one the flow actually gets.
+/// When each question on screen stops being answerable (#225). An unanswered
+/// question is closed with the fail-open allow once its window, the registry's
+/// `maxLifetime`, has passed: before the extension's own timeout, so the app's
+/// reply is the one the flow gets and the next question comes up. Continuous
+/// clock, so a change of the wall clock cannot keep a question open.
 public struct PendingAlertDeadlines: Sendable {
-    private var deadlines: [UUID: Date] = [:]
+    private var deadlines: [UUID: ContinuousClock.Instant] = [:]
 
     public init() {}
 
     public var count: Int { deadlines.count }
 
-    /// Starts the window of a question the app has just put up.
-    public mutating func start(_ id: UUID, at now: Date) {
-        deadlines[id] = now.addingTimeInterval(PendingAlertLimits.maxLifetime)
+    public mutating func start(_ id: UUID, at now: ContinuousClock.Instant) {
+        deadlines[id] = now.advanced(by: .seconds(PendingAlertLimits.maxLifetime))
     }
 
-    /// Ends the window of a question that was answered or closed.
     public mutating func end(_ id: UUID) {
         deadlines[id] = nil
     }
 
     /// The questions whose window has passed, oldest deadline first.
-    public func due(at now: Date) -> [UUID] {
-        deadlines.filter { $0.value <= now }
-            .sorted { $0.value < $1.value }
-            .map(\.key)
+    public func due(at now: ContinuousClock.Instant) -> [UUID] {
+        deadlines.filter { $0.value <= now }.sorted { $0.value < $1.value }.map(\.key)
     }
 }
 

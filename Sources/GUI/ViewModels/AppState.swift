@@ -667,18 +667,15 @@ final class AppState: ObservableObject {
     /// When each question on screen stops being answerable (#225).
     private var alertDeadlines = PendingAlertDeadlines()
 
-    /// Closes a question nobody answered before its flow runs out of time, so
-    /// the window never offers a Deny that can no longer stop anything and the
-    /// next question comes up while it can still be answered (#225).
     private func scheduleAlertTimeout(_ id: UUID) {
-        alertDeadlines.start(id, at: Date())
+        alertDeadlines.start(id, at: .now)
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(PendingAlertLimits.maxLifetime))
-            self?.expireDueAlerts(now: Date())
+            self?.expireDueAlerts(now: .now)
         }
     }
 
-    private func expireDueAlerts(now: Date) {
+    private func expireDueAlerts(now: ContinuousClock.Instant) {
         for id in alertDeadlines.due(at: now) {
             expireUnansweredAlert(id: id)
         }

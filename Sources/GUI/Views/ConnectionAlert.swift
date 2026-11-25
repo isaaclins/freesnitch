@@ -212,9 +212,7 @@ struct ConnectionAlertView: View {
         .onChange(of: alert.id) { _ in holdAnswersBriefly() }
     }
 
-    /// The pause is short enough not to get in the way of answering the next
-    /// question, and long enough for a click already on its way to land on
-    /// disabled buttons. Only the latest change turns them back on.
+    /// Only the latest change turns the buttons back on.
     private func holdAnswersBriefly() {
         let token = UUID()
         answerableToken = token
