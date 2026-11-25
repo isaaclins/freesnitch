@@ -175,13 +175,16 @@ final class HelperClient: NSObject, ObservableObject {
             try service.unregister()
             return nil
         } catch {
-            // An error is not proof the helper is still there: a helper that
-            // was never registered (#409) makes unregister fail too. Only a
-            // registration macOS still reports counts as left behind (#215).
-            switch Self.lifecycleStatus(for: service.status) {
-            case .notRegistered, .notFound: return nil
-            default: return HelperRecovery.registrationErrorDetails(error)
+            let details = HelperRecovery.registrationErrorDetails(error)
+            let statusAfter = Self.lifecycleStatus(for: service.status)
+            let left = UninstallEnding.helperLeftBehind(
+                unregisterError: details,
+                stillListed: statusAfter != .notRegistered && statusAfter != .notFound)
+            if left == nil {
+                // Kept in the log, so the error doesn't vanish without a trace.
+                state?.appendLog(level: "info", message: String(localized: "Unregistering the helper reported an error, but macOS no longer lists it: \(details)"))
             }
+            return left
         }
     }
 

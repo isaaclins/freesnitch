@@ -5643,12 +5643,12 @@
         }
       }
     },
-    "Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and empty the Trash." : {
+    "Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and delete it from the Trash." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Всё остальное удалено, и FreeSnitch ничего не фильтрует. Чтобы удалить службу, откройте «Объекты входа и расширения» в Системных настройках и выключите FreeSnitch в разделе «Разрешить в фоне». Затем закройте FreeSnitch и очистите Корзину."
+            "value" : "Всё остальное удалено, и FreeSnitch ничего не фильтрует. Чтобы удалить службу, откройте «Объекты входа и расширения» в Системных настройках и выключите FreeSnitch в разделе «Разрешить в фоне». Затем закройте FreeSnitch и удалите его из Корзины."
           }
         }
       }
@@ -7646,6 +7646,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "В этой сети не виден MAC-адрес шлюза: %@"
+          }
+        }
+      }
+    },
+    "Unregistering the helper reported an error, but macOS no longer lists it: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмена регистрации службы вернула ошибку, но macOS её больше не показывает: %@"
           }
         }
       }

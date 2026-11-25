@@ -31,6 +31,15 @@ check(UninstallEnding.after(helperProblem: nil, extensionPendingReboot: true) ==
 check(UninstallEnding.after(helperProblem: nil, extensionPendingReboot: false) == .quit,
       "everything removed: the app quits")
 
+// The unregister error itself is only trusted while macOS still lists the
+// helper: one that was never registered (#409) also makes unregister fail.
+check(UninstallEnding.helperLeftBehind(unregisterError: refused, stillListed: true) == refused,
+      "unregister failed and macOS still lists the helper: it is reported as left behind")
+check(UninstallEnding.helperLeftBehind(unregisterError: refused, stillListed: false) == nil,
+      "unregister failed but macOS no longer lists the helper: nothing is reported as left")
+check(UninstallEnding.helperLeftBehind(unregisterError: nil, stillListed: true) == nil,
+      "unregister succeeded: nothing is reported as left")
+
 exit(failures == 0 ? 0 : 1)
 SWIFT
 

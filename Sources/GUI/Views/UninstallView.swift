@@ -358,7 +358,7 @@ struct UninstallFlowSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .helperLeft(let reason):
             failureHeadline(String(localized: "FreeSnitch couldn’t remove its background helper"))
-            Text("Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and empty the Trash.")
+            Text("Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and delete it from the Trash.")
                 .fixedSize(horizontal: false, vertical: true)
             if systemExtension.uninstallState == .pendingReboot {
                 Text("macOS finishes removing the network filter the next time you restart.")
@@ -379,16 +379,19 @@ struct UninstallFlowSheet: View {
             stepRow(String(localized: "Removing the helper and firewall rules"),
                     done: flow.phase == .movingToTrash && flow.helperProblem == nil,
                     active: flow.phase == .removingHelper,
+                    warning: flow.helperProblem != nil,
                     note: flow.phase == .removingHelper ? String(localized: "Enter your password when macOS asks.") : nil)
             stepRow(String(localized: "Moving FreeSnitch to the Trash"), done: false,
                     active: flow.phase == .movingToTrash, note: nil)
         }
     }
 
-    private func stepRow(_ title: String, done: Bool, active: Bool, note: String?) -> some View {
+    private func stepRow(_ title: String, done: Bool, active: Bool, warning: Bool = false, note: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Group {
-                if done {
+                if warning {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(Color(nsColor: .systemOrange))
+                } else if done {
                     Image(systemName: "checkmark.circle.fill").foregroundColor(Color(nsColor: .systemGreen))
                 } else if active {
                     ProgressView().controlSize(.small)
@@ -398,7 +401,7 @@ struct UninstallFlowSheet: View {
             }
             .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).foregroundColor(done || active ? .primary : .secondary)
+                Text(title).foregroundColor(done || active || warning ? .primary : .secondary)
                 if let note {
                     Text(note).font(.caption).foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

@@ -20,6 +20,16 @@ enum UninstallEnding: Equatable {
     /// macOS. Carries what macOS said.
     case helperLeft(String)
 
+    /// Whether a failed unregister really left the helper behind. An error is
+    /// not proof by itself: a helper that was never registered (#409) makes
+    /// unregister fail too. Only a registration macOS still lists counts,
+    /// otherwise the ending would send people to remove a helper that isn't
+    /// there. Returns what macOS said when it is left behind.
+    static func helperLeftBehind(unregisterError: String?, stillListed: Bool) -> String? {
+        guard let unregisterError, stillListed else { return nil }
+        return unregisterError
+    }
+
     static func after(helperProblem: String?, extensionPendingReboot: Bool) -> UninstallEnding {
         if let helperProblem { return .helperLeft(helperProblem) }
         return extensionPendingReboot ? .doneUntilRestart : .quit
