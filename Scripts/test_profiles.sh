@@ -396,6 +396,19 @@ do {
         expect(after.lastUpdated == recordedAt, "switching a list overwrote its last download time")
         expect(after.enabled == enabled, "switching a list for the active profile did not reach the list itself")
     }
+    // The switch belongs to the active profile, so a round trip through
+    // another profile brings it back instead of resetting it.
+    try store.setBlocklistEnabled(id: listID, profileName: active, enabled: true)
+    let elsewhere = store.allProfiles().first { $0.name != active }!.name
+    try store.setBlocklistEnabled(id: listID, profileName: elsewhere, enabled: false)
+    _ = try coordinator.activate(profileName: elsewhere, reason: .user)
+    expect(store.allBlocklists().first { $0.id == listID }!.enabled == false,
+           "another profile's selection did not apply after switching to it")
+    _ = try coordinator.activate(profileName: active, reason: .user)
+    let back = store.allBlocklists().first { $0.id == listID }!
+    expect(back.enabled, "a profile round trip reset a list that was switched on")
+    expect(back.entryCount == 4242 && back.lastUpdated == recordedAt,
+           "a profile round trip changed a list's last download count or time")
 }
 pass("switching a list keeps its last download count and time")
 
