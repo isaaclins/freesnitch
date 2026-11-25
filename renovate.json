@@ -5,10 +5,10 @@
   ],
   "packageRules": [
     {
-      "description": "CI stays on macos-15: the macos-26 runner pool keeps running out of capacity. Xcode 26 is selected on the runner instead (see .github/workflows/build.yml).",
+      "description": "Keep CI off macos-26 while that runner pool keeps running out of capacity (#563). Xcode 26 is selected on the runner instead. Drop this rule once macos-26 runs reliably.",
       "matchDatasources": ["github-runners"],
       "matchPackageNames": ["macos"],
-      "enabled": false
+      "allowedVersions": "<26"
     }
   ]
 }
