@@ -1,0 +1,64 @@
+name: App icon
+
+# The Icon Composer app icon (Resources/AppIcon.icon) only compiles with
+# Xcode 26 on a macOS 26 host; on macOS 15 Xcode's asset compiler crashes.
+# The main CI build runs on macos-15 and leaves the icon out, so this
+# workflow builds the monitor flavour with it on macos-26. It runs only when
+# a change can affect the icon, so the rest of CI never waits on the
+# macos-26 runner pool, which keeps running out of capacity.
+on:
+  push:
+    branches: [main]
+    paths:
+      - Resources/AppIcon.icon/**
+      - Resources/Assets.xcassets/**
+      - project.yml
+  pull_request:
+    paths:
+      - Resources/AppIcon.icon/**
+      - Resources/Assets.xcassets/**
+      - project.yml
+  workflow_dispatch:
+
+concurrency:
+  group: app-icon-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  icon-build:
+    name: Build with the Icon Composer app icon
+    runs-on: macos-26
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Select Xcode
+        uses: ./.github/actions/select-xcode
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate monitor project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build monitor app with the Icon Composer icon
+        run: |
+          xcodebuild \
+            -project FreeSnitch.xcodeproj \
+            -scheme FreeSnitch \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/monitor \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            PROVISIONING_PROFILE_SPECIFIER='' \
+            build
+
+      - name: Verify the compiled icon
+        run: |
+          RES=build/monitor/Build/Products/Release/FreeSnitch.app/Contents/Resources
+          test -f "$RES/Assets.car"
+          test -f "$RES/AppIcon.icns"
+          echo 'Icon Composer icon compiled into Assets.car, AppIcon.icns written.'

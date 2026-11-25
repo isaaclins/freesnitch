@@ -323,24 +323,6 @@ public struct ProfileSwitchNotice: Codable, Hashable, Sendable {
     }
 }
 
-/// An automatic switch that failed and is still being retried: the network's
-/// bound profile is not active yet (#269).
-public struct PendingNetworkSwitch: Codable, Hashable, Sendable {
-    public var gatewayMAC: String
-    public var profileName: String
-    public var problem: String
-
-    public init(gatewayMAC: String, profileName: String, problem: String) {
-        self.gatewayMAC = gatewayMAC
-        self.profileName = profileName
-        // Store errors are whole sentences, but the notice and the log put the
-        // reason mid-sentence, where its closing period would double up.
-        var reason = problem.trimmingCharacters(in: .whitespacesAndNewlines)
-        while reason.hasSuffix(".") { reason.removeLast() }
-        self.problem = reason
-    }
-}
-
 /// One authoritative policy assembled from exactly two rule layers: Always and
 /// the selected profile. Blocklists are deny-only sets and may be accumulated
 /// independently without adding another allow layer.

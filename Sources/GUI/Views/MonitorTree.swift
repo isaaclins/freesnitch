@@ -636,6 +636,30 @@ enum MonitorRuleDraft {
     }
 }
 
+/// What the decision index is built from. Equal inputs build an equal index,
+/// so the monitor rebuilds the index only when this changes.
+///
+/// It compares whole rules, not a few fields of them: moving a rule to another
+/// profile keeps its id, action and switch (#227), and editing a rule in Rules
+/// can change any field. The row's buttons save the copy the index holds, so a
+/// stale copy would write the old profile or the old fields back. Only the hit
+/// count and last-used time are left out: they change as traffic flows, are
+/// never shown or saved by the row, and would rebuild the index on every hit.
+struct MonitorDecisionInputs: Equatable {
+    let profile: String
+    private let rules: [Rule]
+
+    init(rules: [Rule], profile: String) {
+        self.profile = profile
+        self.rules = rules.map { rule in
+            var policy = rule
+            policy.hitCount = 0
+            policy.lastUsedAt = nil
+            return policy
+        }
+    }
+}
+
 /// The rules that already exist for rows of this tree, keyed by row.
 ///
 /// Built once per helper snapshot rather than searched per row, so a few

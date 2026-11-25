@@ -9,6 +9,12 @@ struct ConnectionAlertView: View {
     /// used to be decoration (#129).
     @State private var scope: AppState.RememberScope = .thisHost
     @State private var duration: AppState.RememberDuration = .forever
+    /// Off for a moment after the question on screen is replaced by the next
+    /// one. A question nobody answered closes by itself (#225), so the next
+    /// one can appear under a click or a Return meant for it, and that must
+    /// not answer a different app's question.
+    @State private var answerable = true
+    @State private var answerableToken = UUID()
 
     /// What today has looked like, as a sentence rather than a colon label
     /// with two counts glued to it (#118).
@@ -199,9 +205,22 @@ struct ConnectionAlertView: View {
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }
+            .disabled(!answerable)
         }
         .padding(20)
         .frame(width: 440)
+        .onChange(of: alert.id) { _ in holdAnswersBriefly() }
+    }
+
+    /// Only the latest change turns the buttons back on.
+    private func holdAnswersBriefly() {
+        let token = UUID()
+        answerableToken = token
+        answerable = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(750))
+            if answerableToken == token { answerable = true }
+        }
     }
 
     private var processName: String {

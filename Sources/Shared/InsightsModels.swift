@@ -38,6 +38,14 @@ public enum InsightsLimits {
     public static let rawRetention: TimeInterval = 14 * 24 * 60 * 60
     public static let rollupRetentionDays = 365
     public static let maxDNSMappingLifetime: TimeInterval = 7 * 24 * 60 * 60
+    /// The most the Insights database file may take on disk (#228). The age
+    /// limits above keep 14 days of raw events and a year of rollups, but
+    /// nothing bounded how much a busy Mac records inside those windows.
+    /// SQLite refuses to grow the file past this, and the store drops its
+    /// oldest history once it is nine tenths full, so recording keeps going.
+    public static let maxDatabaseBytes: Int64 = 512 * 1024 * 1024
+    /// The write-ahead log is cut back to this after each checkpoint.
+    public static let maxJournalBytes: Int64 = 32 * 1024 * 1024
 
     /// Read-side bounds. A year of rollups must never be materialised at once,
     /// so every query carries a page size and the store refuses anything above

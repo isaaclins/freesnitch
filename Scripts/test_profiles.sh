@@ -235,8 +235,11 @@ let freshOwn = (try! store.allRules(profile: fresh.name))
 let freshLayer = try store.layeredRules(profileName: fresh.name)
 let alwaysRules = (try! store.allRules(profile: Profile.alwaysName))
 expect(freshOwn.isEmpty, "creating a profile copied \(freshOwn.count) rules into it")
-expect(freshLayer.map(\.id).sorted(by: { $0.uuidString < $1.uuidString })
-        == alwaysRules.map(\.id).sorted(by: { $0.uuidString < $1.uuidString }),
+// Split into typed steps: as one expression the type checker can run out
+// of time on a slower machine.
+let freshLayerIDs: [String] = freshLayer.map { $0.id.uuidString }.sorted()
+let alwaysRuleIDs: [String] = alwaysRules.map { $0.id.uuidString }.sorted()
+expect(freshLayerIDs == alwaysRuleIDs,
        "a fresh profile does not inherit exactly the Always rules")
 pass("a fresh profile inherits every Always rule immediately, without copying one")
 
@@ -575,14 +578,30 @@ expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi",
        "a failed automatic switch left nothing pending: \(String(describing: retryCoordinator.pendingNetworkSwitch))")
 expect(retryCoordinator.pendingNetworkSwitch?.gatewayMAC == "12:34:56:78:9a:bc", "the pending switch names the wrong gateway")
 expect(!(retryCoordinator.pendingNetworkSwitch?.problem.isEmpty ?? true), "the pending switch does not say what failed")
-let sentenceReason = RuleStore.StoreError.profileNotFound("public-wifi").localizedDescription
-expect(sentenceReason.hasSuffix("."), "the sample store error no longer ends in a period: \(sentenceReason)")
-let trimmed = PendingNetworkSwitch(gatewayMAC: "12:34:56:78:9a:bc", profileName: "public-wifi", problem: sentenceReason)
-expect(!trimmed.problem.hasSuffix(".") && sentenceReason.hasPrefix(trimmed.problem),
-       "a store error's closing period stays in the reason and doubles up mid-sentence: \(trimmed.problem)")
+// The helper sends a code, not English text, so the app can word it (#520):
+// a write blocked by another connection is "busy", whatever SQLite says.
+expect(retryCoordinator.pendingNetworkSwitch?.reason == .databaseBusy,
+       "a write blocked by another connection was not sent as a busy database: \(String(describing: retryCoordinator.pendingNetworkSwitch?.reason))")
+expect(ProfileProblem(RuleStore.StoreError.profileNotFound("public-wifi")) == .profileNotFound("public-wifi"),
+       "a missing profile was not sent as its own code")
+// A rule read that fails mid-switch has its own code, and every SQLite error
+// from the store carries its result code, so busy is told by code, not text.
+expect(ProfileProblem(RuleStore.StoreError.policyReadFailed("disk I/O error.")) == .rulesUnreadable("disk I/O error"),
+       "a failed rule read was not sent as its own code")
+expect(ProfileProblem(NSError(domain: RuleStore.errorDomain, code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "database is locked",
+                                         RuleStore.sqliteResultCodeKey: 517])) == .databaseBusy,
+       "an extended SQLITE_BUSY code was not read as a busy database")
+let sentenceReason = ProfileProblem(NSError(domain: "Elsewhere", code: 1,
+                                            userInfo: [NSLocalizedDescriptionKey: "Something went wrong."]))
+expect(sentenceReason == .other("Something went wrong"),
+       "an error's closing period stays in the reason and doubles up mid-sentence: \(sentenceReason)")
 let failingSnapshot = try retryService.snapshot()
 expect(failingSnapshot.pendingNetworkSwitch?.profileName == "public-wifi",
        "the Profiles screen is not told that the automatic switch failed")
+let wireSnapshot = try JSONDecoder().decode(ProfileSnapshot.self, from: JSONEncoder().encode(failingSnapshot))
+expect(wireSnapshot.pendingNetworkSwitch?.reason == .databaseBusy,
+       "the reason code does not survive the trip from the helper to the app")
 let roundTrip = try ProfileTransportBoundary.decodeResponse(ProfileTransportBoundary.encodeResponse(failingSnapshot))
 expect(roundTrip.pendingNetworkSwitch == failingSnapshot.pendingNetworkSwitch,
        "the pending switch does not survive the trip to the app")
@@ -726,10 +745,11 @@ struct BrokenGatewayProvider: GatewayMACProviding {
 let brokenWatcher = GatewayMACWatcher(provider: BrokenGatewayProvider(), queue: retryQueue)
 let brokenCoordinator = ProfileCoordinator(store: retryStore, watcher: brokenWatcher)
 expect(brokenCoordinator.refreshGatewayMAC() == nil, "a failed read produced a gateway MAC")
-expect(brokenCoordinator.gatewayReadProblem?.contains("route") == true,
+expect(brokenCoordinator.gatewayReadProblem == .toolExitStatus(tool: "route", status: 1),
        "a failed gateway read gave no reason: \(String(describing: brokenCoordinator.gatewayReadProblem))")
 let brokenSnapshot = try ProfileCommandService(store: retryStore, coordinator: brokenCoordinator).snapshot()
-expect(brokenSnapshot.gatewayReadProblem != nil, "the Profiles screen is not told why there is no gateway")
+expect(brokenSnapshot.gatewayReadProblem == .toolExitStatus(tool: "route", status: 1),
+       "the Profiles screen is not told why there is no gateway")
 expect(retryWatcher.lastReadProblem == nil, "a successful read reported a problem")
 pass("a failed gateway read carries its reason to the Profiles screen")
 
