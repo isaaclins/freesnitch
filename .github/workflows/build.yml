@@ -31,7 +31,7 @@ jobs:
 
   harness:
     name: Test harnesses (group ${{ matrix.group }} of 4)
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -42,6 +42,27 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      # macos-15 instead of macos-26: the Apple silicon macos-26 pool runs out
+      # of capacity and leaves every job queued, while macos-15 gets a runner
+      # right away. The app targets macOS 13, so the runner's OS doesn't
+      # matter, but the toolchain does: the Icon Composer icon only compiles
+      # with Xcode 26, and the harnesses should use the compiler the release
+      # uses. The image defaults to an older Xcode, so pick the newest
+      # released one and stop if it is older than 26.
+      - name: Select the newest released Xcode
+        run: |
+          xcode=$(find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' \
+            | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)
+          if [ -z "$xcode" ]; then echo '::error::No released Xcode found on this runner.'; exit 1; fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swiftc --version
+          major=$(xcodebuild -version | awk 'NR == 1 { split($2, v, "."); print v[1] }')
+          if [ "$major" -lt 26 ]; then
+            echo "::error::Newest Xcode on this runner is $xcode; FreeSnitch needs Xcode 26 or newer."
+            exit 1
+          fi
 
       # Several harnesses filter with ripgrep. Install it explicitly rather
       # than rely on the runner image: without it one harness would hide its
@@ -102,10 +123,25 @@ jobs:
 
   monitor-build:
     name: Build monitor flavour
-    runs-on: macos-26
+    runs-on: macos-15
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      # Same toolchain choice as the harness jobs above.
+      - name: Select the newest released Xcode
+        run: |
+          xcode=$(find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' \
+            | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)
+          if [ -z "$xcode" ]; then echo '::error::No released Xcode found on this runner.'; exit 1; fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swiftc --version
+          major=$(xcodebuild -version | awk 'NR == 1 { split($2, v, "."); print v[1] }')
+          if [ "$major" -lt 26 ]; then
+            echo "::error::Newest Xcode on this runner is $xcode; FreeSnitch needs Xcode 26 or newer."
+            exit 1
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen

@@ -2,5 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "CI stays on macos-15: the macos-26 runner pool keeps running out of capacity. Xcode 26 is selected on the runner instead (see .github/workflows/build.yml).",
+      "matchDatasources": ["github-runners"],
+      "matchPackageNames": ["macos"],
+      "enabled": false
+    }
   ]
 }
