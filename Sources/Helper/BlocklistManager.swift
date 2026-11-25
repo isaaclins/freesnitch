@@ -197,8 +197,12 @@ final class BlocklistManager: @unchecked Sendable {
                 // Only the download's own fields are written, never `enabled`:
                 // with downloads on a schedule (#491) the user may switch the
                 // list off while one runs, and a stale copy would switch it
-                // back on. A list deleted meanwhile is left alone.
-                guard (try? self.store.recordBlocklistDownload(id: list.id, entryCount: set.count, at: Date())) == true else {
+                // back on.
+                // A list deleted meanwhile, or whose address changed while
+                // this downloaded the old one, keeps nothing of this download.
+                guard (try? self.store.recordBlocklistDownload(id: list.id, fromURL: list.url,
+                                                               entryCount: set.count, at: Date())) == true else {
+                    downloadedSets[list.id] = nil
                     continue
                 }
                 // Kept per list, on disk, so the GUI can ask what is on a list
@@ -335,6 +339,10 @@ final class BlocklistManager: @unchecked Sendable {
                   }) else { return nil }
             feeds[index].enabled = enabled
             ipFeedsCache = feeds
+            // A feed just switched on starts with a fresh backoff: its first
+            // failed download is retried after an hour, not after however
+            // long the other feeds have been failing (#491).
+            if enabled { feedSchedule.failuresInARow = 0 }
             // Whatever refresh is in flight was planned without this change.
             ipRefreshGeneration += 1
             return feeds

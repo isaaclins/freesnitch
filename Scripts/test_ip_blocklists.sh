@@ -1238,6 +1238,38 @@ struct IPBlocklistHarness {
                       "an older clean download that was dropped must not push the retry out to a day")
         checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "the retry must restore the feed")
 
+        // A feed switched on while the others have been failing for a while
+        // starts with a fresh backoff: an hour, not the inherited wait.
+        serve(nil)
+        for _ in 0..<5 {
+            advance(BlocklistManager.scheduledRefreshInterval)
+            await scheduled.refreshIfDue()
+        }
+        checks.expect(BlocklistManager.scheduledWait(afterFailuresInARow: 5) > BlocklistManager.failedRefreshRetryInterval,
+                      "five failures in a row must have backed the feeds off past an hour")
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: true),
+                      "switching a feed on during a long outage must succeed")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "a feed switched on during a long outage must be retried after an hour")
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: false),
+                      "switching the second feed off again must succeed")
+
+        // A list whose address changes while its old address downloads keeps
+        // nothing of that download.
+        let movingList = store.allBlocklists().first(where: { $0.enabled })!
+        scheduled.domainListFetcher = { list in
+            _ = try? store.updateBlocklistURL(id: list.id, url: "https://lists.example.org/moved.txt")
+            return ["oldsource.example"]
+        }
+        await scheduled.refreshAll()
+        checks.expect(!scheduled.domains.contains("oldsource.example"),
+                      "a download of a list's old address must not block anything once the address changed")
+        _ = try? store.updateBlocklistURL(id: movingList.id, url: movingList.url)
+        scheduled.domainListFetcher = { _ in ["ads.example"] }
+        await scheduled.refreshAll()
+
         // A clock set back is treated as due, not as "wait until it catches up".
         advance(-7 * BlocklistManager.scheduledRefreshInterval)
         checks.expect(await scheduled.refreshIfDue(), "a clock set back must not stall the schedule")
