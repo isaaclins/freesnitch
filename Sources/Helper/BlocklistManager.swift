@@ -338,7 +338,13 @@ final class BlocklistManager: @unchecked Sendable {
     static func parse(_ text: String, maxEntries: Int) -> Set<String>? {
         var out: Set<String> = []
         out.reserveCapacity(min(50_000, maxEntries))
-        for raw in text.split(separator: "\n") {
+        // One line at a time: `split` would first build an array of every
+        // line, which for a body of tiny lines costs many times the body.
+        var next = text.startIndex
+        while next < text.endIndex {
+            let end = text[next...].firstIndex(of: "\n") ?? text.endIndex
+            let raw = text[next..<end]
+            next = end < text.endIndex ? text.index(after: end) : end
             let line = raw.trimmingCharacters(in: .whitespaces)
             // "[Adblock Plus]" heads every Adblock-syntax list.
             if line.isEmpty || line.hasPrefix("#") || line.hasPrefix("!") || line.hasPrefix("[") { continue }

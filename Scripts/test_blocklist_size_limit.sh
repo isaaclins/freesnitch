@@ -68,10 +68,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/plain")
                 self.send_header("Content-Length", str(4 * 1024 * 1024 * 1024))
                 self.end_headers()
-                self.wfile.write(b"0.0.0.0 declared.example\n")
-                self.wfile.flush()
-                # Holds the connection the way a slow huge download would.
-                import time; time.sleep(30)
+                # Keeps trickling, the way a slow huge download would, so
+                # only the announced length can end this early.
+                import time
+                for _ in range(120):
+                    self.wfile.write(b"0.0.0.0 declared.example\n")
+                    self.wfile.flush()
+                    time.sleep(0.25)
                 return
             if self.path == "/many.txt":
                 count = int(sys.argv[2])
@@ -87,6 +90,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def handle_error(self, request, client_address):
+        # The helper hangs up on oversized bodies on purpose.
+        pass
 
 with Server(("127.0.0.1", 0), Handler) as httpd:
     with open(sys.argv[1], "w") as f:
@@ -164,15 +171,18 @@ struct Verify {
 
         // 3 to 5. Announced too large, too many names, and a good neighbour.
         try? store.setBlocklistEnabled(id: alpha.id, profileName: profile, enabled: false)
+        // Timed on its own, so only this download is measured.
         _ = add("Declared", "declared.txt")
+        let declaredStart = Date()
+        result = await manager.refresh()
+        expect(result.failedLists == ["Declared"], "a list announced too large must fail, got \(result.failedLists)")
+        expect(Date().timeIntervalSince(declaredStart) < 10,
+               "a body announced larger than the ceiling must be refused without reading it")
         _ = add("Many", "many.txt")
         _ = add("Neighbour", "neighbour.txt")
-        let declaredStart = Date()
         result = await manager.refresh()
         expect(Set(result.failedLists) == ["Declared", "Many"],
                "an oversized or overfull list must fail, got \(result.failedLists)")
-        expect(Date().timeIntervalSince(declaredStart) < 25,
-               "a body announced larger than the ceiling must be refused without reading it")
         expect(manager.domains.contains("neighbour.example"), "a good list next to refused ones must still load")
         expect(!manager.domains.contains("n0.x") && !manager.domains.contains("declared.example"),
                "nothing from a refused list may be blocked, not even its first part")
