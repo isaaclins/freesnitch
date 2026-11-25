@@ -41,8 +41,100 @@ final class BlocklistManager: @unchecked Sendable {
     /// network, so feed handling can be exercised deterministically.
     var ipFeedFetcher: (@Sendable (IPBlocklistFeed) async -> IPFeedFetchResult)?
 
+    /// How long the helper waits before downloading every enabled list and
+    /// address feed again (#491). Without this a helper that runs for weeks
+    /// keeps whatever it fetched at start.
+    static let scheduledRefreshInterval: TimeInterval = 24 * 60 * 60
+    /// How soon a scheduled download that failed is tried again. A failed feed
+    /// enforces nothing (fail open), so waiting a whole day to recover from a
+    /// network that was briefly down would leave the user unprotected for it.
+    /// The wait doubles with every failure in a row, up to the normal day, so
+    /// one source that is gone for good does not make the helper download
+    /// everything every hour. Domain lists and address feeds keep their own
+    /// count, so a dead domain list never stretches a feed's retry.
+    static let failedRefreshRetryInterval: TimeInterval = 60 * 60
+
+    /// Test seam for the schedule, so it can be exercised without waiting.
+    var clock: @Sendable () -> Date = { Date() }
+
+    private struct DownloadSchedule {
+        var last: Date?
+        var failuresInARow = 0
+        var running = false
+
+        func isDue(at now: Date) -> Bool {
+            guard !running else { return false }
+            guard let last else { return true }
+            let elapsed = now.timeIntervalSince(last)
+            // A clock set back makes `elapsed` negative; that is treated as
+            // due rather than as "wait until the clock catches up".
+            return elapsed < 0 || elapsed >= BlocklistManager.scheduledWait(afterFailuresInARow: failuresInARow)
+        }
+
+        mutating func finish(at now: Date, succeeded: Bool) {
+            last = now
+            failuresInARow = succeeded ? 0 : failuresInARow + 1
+            running = false
+        }
+    }
+    private var domainSchedule = DownloadSchedule()
+    private var feedSchedule = DownloadSchedule()
+
+    static func scheduledWait(afterFailuresInARow failures: Int) -> TimeInterval {
+        guard failures > 0 else { return scheduledRefreshInterval }
+        let doubled = failedRefreshRetryInterval * pow(2, Double(min(failures - 1, 16)))
+        return min(doubled, scheduledRefreshInterval)
+    }
+
     init(store: RuleStore) {
         self.store = store
+    }
+
+    /// Downloads the domain lists and the address feeds side by side. This is
+    /// what "Refresh Lists", `freesnitch blocklists refresh` and a profile's
+    /// blocklist change all mean: both kinds of list (#491). The answer is the
+    /// domain lists' result; a feed's failure is shown on the feed itself.
+    @discardableResult
+    func refreshAll() async -> DomainRefreshResult {
+        await refresh(domains: true, feeds: true).domains ?? DomainRefreshResult(failedLists: [])
+    }
+
+    /// Downloads whichever kind is due: a day after its last clean download,
+    /// an hour after a first failure and twice as long after each further
+    /// one, never longer than a day. Meant to be called on a short tick;
+    /// wall-clock time is compared rather than a timer relied on, because a
+    /// timer does not count while the Mac sleeps. Returns whether anything
+    /// was downloaded.
+    @discardableResult
+    func refreshIfDue() async -> Bool {
+        let now = clock()
+        // Checked and claimed in one step, so two ticks can't both start.
+        let (domainsDue, feedsDue): (Bool, Bool) = queue.sync {
+            let due = (domainSchedule.isDue(at: now), feedSchedule.isDue(at: now))
+            if due.0 { domainSchedule.running = true }
+            if due.1 { feedSchedule.running = true }
+            return due
+        }
+        guard domainsDue || feedsDue else { return false }
+        await refresh(domains: domainsDue, feeds: feedsDue)
+        return true
+    }
+
+    @discardableResult
+    private func refresh(domains: Bool, feeds: Bool) async -> (domains: DomainRefreshResult?, feedsRead: Bool) {
+        queue.sync {
+            if domains { domainSchedule.running = true }
+            if feeds { feedSchedule.running = true }
+        }
+        async let domainResult: DomainRefreshResult? = domains ? refresh() : nil
+        async let feedsRead = feeds ? downloadIPFeeds().allRead : true
+        let (domainDone, feedsDone) = await (domainResult, feedsRead)
+        let finished = clock()
+        queue.sync {
+            if domains { domainSchedule.finish(at: finished, succeeded: domainDone?.isComplete ?? true) }
+            if feeds { feedSchedule.finish(at: finished, succeeded: feedsDone) }
+        }
+        return (domainDone, feedsDone)
     }
 
     /// What one download round did. A list whose source could not be read
@@ -72,7 +164,7 @@ final class BlocklistManager: @unchecked Sendable {
     @discardableResult
     func refresh() async -> DomainRefreshResult {
         let lists = store.allBlocklists().filter { $0.enabled }
-        var merged: Set<String> = []
+        var downloadedSets: [UUID: Set<String>] = [:]
         var failed: [String] = []
         await withTaskGroup(of: (BlocklistInfo, Set<String>?).self) { group in
             for list in lists {
@@ -88,7 +180,6 @@ final class BlocklistManager: @unchecked Sendable {
                 // included, keeps blocking until a download succeeds.
                 guard var set = downloaded else {
                     failed.append(list.name)
-                    merged.formUnion(storedEntries(of: list))
                     PSLog.error(PSLog.dns,
                                 "blocklist \(list.name) was not refreshed; its saved entries stay in effect")
                     continue
@@ -98,11 +189,14 @@ final class BlocklistManager: @unchecked Sendable {
                 let edits = store.blocklistEdits(id: list.id)
                 set.formUnion(edits.added)
                 set.subtract(edits.removed)
-                merged.formUnion(set)
-                var updated = list
-                updated.entryCount = set.count
-                updated.lastUpdated = Date()
-                try? self.store.updateBlocklist(updated)
+                downloadedSets[list.id] = set
+                // Only the download's own fields are written, never `enabled`:
+                // with downloads on a schedule (#491) the user may switch the
+                // list off while one runs, and a stale copy would switch it
+                // back on. A list deleted meanwhile is left alone.
+                guard (try? self.store.recordBlocklistDownload(id: list.id, entryCount: set.count, at: Date())) == true else {
+                    continue
+                }
                 // Kept per list, on disk, so the GUI can ask what is on a list
                 // without anyone holding one in memory (#79). A failure here
                 // costs the browsable copy, never the blocking itself, which
@@ -114,6 +208,13 @@ final class BlocklistManager: @unchecked Sendable {
                                 "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
                 }
             }
+        }
+        // Built from the lists that are on now, for the same reason. A list
+        // that failed, or was switched on during the download, blocks from
+        // its saved copy until its own download lands.
+        var merged: Set<String> = []
+        for list in store.allBlocklists() where list.enabled {
+            merged.formUnion(downloadedSets[list.id] ?? storedEntries(of: list))
         }
         queue.sync { self.domains = merged }
         onUpdate?(merged.count)
@@ -260,6 +361,13 @@ final class BlocklistManager: @unchecked Sendable {
     /// its result was dropped rather than published.
     @discardableResult
     func refreshIPBlocklists() async -> Bool {
+        await downloadIPFeeds().published
+    }
+
+    /// The feed download itself. Besides whether its result was published, it
+    /// says whether every enabled feed could be read, which the download
+    /// schedule backs off on (#491) even when a toggle overtook it.
+    private func downloadIPFeeds() async -> (published: Bool, allRead: Bool) {
         _ = ipFeeds()
         let (generation, snapshot): (Int, [IPBlocklistFeed]) = queue.sync {
             ipRefreshGeneration += 1
@@ -268,9 +376,10 @@ final class BlocklistManager: @unchecked Sendable {
         var feeds = snapshot
         let enabled = feeds.enumerated().filter { $0.element.enabled }
         guard !enabled.isEmpty else {
-            return applyIPEntries([], to: feeds, generation: generation)
+            return (applyIPEntries([], to: feeds, generation: generation), true)
         }
 
+        var allRead = true
         var bodies: [Int: IPFeedFetchResult] = [:]
         await withTaskGroup(of: (Int, IPFeedFetchResult).self) { group in
             for (index, feed) in enabled {
@@ -303,17 +412,19 @@ final class BlocklistManager: @unchecked Sendable {
                         : "combined IP blocklist range limit reached; feed tail was not loaded"
                 }
             case .some(.failure(let reason)):
+                allRead = false
                 feeds[index].lastError = reason
                 feeds[index].loadedEntryCount = 0
                 PSLog.error(PSLog.pf, "IP blocklist \(feeds[index].name) unavailable: \(reason); it is enforcing nothing")
             case .none:
+                allRead = false
                 feeds[index].lastError = "feed was not read"
                 feeds[index].loadedEntryCount = 0
                 PSLog.error(PSLog.pf, "IP blocklist \(feeds[index].name) was not read; it is enforcing nothing")
             }
         }
 
-        return applyIPEntries(entries, to: feeds, generation: generation)
+        return (applyIPEntries(entries, to: feeds, generation: generation), allRead)
     }
 
     /// A toggle, then a refresh, returning once a refresh that started after

@@ -177,6 +177,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let listener: NSXPCListener
     private let insightsMaintenanceQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-maintenance", qos: .utility)
     private var insightsMaintenanceTimer: DispatchSourceTimer?
+    private let blocklistScheduleQueue = DispatchQueue(label: "io.isaaclins.freesnitch.blocklist-schedule", qos: .utility)
+    private var blocklistScheduleTimer: DispatchSourceTimer?
     private let insightsObservationQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-observations", qos: .utility)
     private let insightsObservationSlots = DispatchSemaphore(value: 64)
     private let insightsDNSQueue = DispatchQueue(label: "io.isaaclins.freesnitch.insights-dns", qos: .utility)
@@ -311,10 +313,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         profiles.onBlocklistsChanged = { [weak self] in
             guard let self else { return }
-            Task {
-                await self.blocklists.refresh()
-                await self.blocklists.refreshIPBlocklists()
-            }
+            Task { await self.blocklists.refreshAll() }
         }
         // A hand edit is already stored. What it needs is the matching set
         // rebuilt from what is on disk, not another round of downloads (#97).
@@ -374,8 +373,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         listener.resume()
         netmon.start()
         startInsightsMaintenance()
-        Task { await blocklists.refresh() }
-        Task { await blocklists.refreshIPBlocklists() }
+        startBlocklistSchedule()
         // Only a binding the user created can ever switch the active profile.
         profileCoordinator.startWatchingNetworks()
     }
@@ -430,6 +428,23 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         guard let host = URL(string: upstream)?.host,
               PFHostValidator.kind(for: host) != .hostname else { return [] }
         return [host]
+    }
+
+    /// Downloads every enabled list and address feed now, then again once a
+    /// day while the helper runs (#491). The hourly tick only asks whether a
+    /// download is due, so a Mac that slept through the day catches up within
+    /// an hour of waking, and one that failed tries again an hour later.
+    private func startBlocklistSchedule() {
+        guard blocklistScheduleTimer == nil else { return }
+        Task { await blocklists.refreshIfDue() }
+        let timer = DispatchSource.makeTimerSource(queue: blocklistScheduleQueue)
+        timer.schedule(deadline: .now() + 60 * 60, repeating: 60 * 60)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { await self.blocklists.refreshIfDue() }
+        }
+        blocklistScheduleTimer = timer
+        timer.resume()
     }
 
     private func startInsightsMaintenance() {
@@ -1090,7 +1105,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             // A list that could not be downloaded keeps blocking what was
             // saved for it, but the caller hears about it instead of a plain
             // success (#252).
-            let result = await self.blocklists.refresh()
+            let result = await self.blocklists.refreshAll()
             reply(result.isComplete, result.failureMessage)
         }
     }
