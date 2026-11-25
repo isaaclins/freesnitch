@@ -255,6 +255,23 @@ final class InsightsStore: @unchecked Sendable {
             }
             return true
         }
+        // Only the newest batch and DNS answers newer than its first event
+        // are left. Never refuse every write over them: the oldest answers go
+        // first, then the newest batch itself.
+        if oldestDNS != nil {
+            try executeLocked("""
+                DELETE FROM dns_mappings WHERE rowid IN
+                    (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
+                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
+            return true
+        }
+        if oldestAnyRaw != nil {
+            try executeLocked("""
+                DELETE FROM flow_observations WHERE rowid IN
+                    (SELECT rowid FROM flow_observations ORDER BY observed_at LIMIT ?);
+                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
+            return true
+        }
         return false
     }
 

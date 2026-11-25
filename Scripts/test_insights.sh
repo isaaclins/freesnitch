@@ -828,6 +828,37 @@ struct InsightsHarness {
             check(false, "a store filled by one day keeps recording: \(error)")
         }
 
+        // A DNS flood after a single batch, with nothing older to trim: the
+        // answers newer than that batch still make room, so the store never
+        // refuses every write at its ceiling.
+        let lateDNSSupport = root.appendingPathComponent("Late DNS Support")
+        try! FileManager.default.createDirectory(at: lateDNSSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let lateDNSPath = lateDNSSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            let lateCeiling: Int64 = 512 * 1024
+            let late = try InsightsStore(path: lateDNSPath, expectedUID: getuid(), maxDatabaseBytes: lateCeiling)
+            let lateNow = Date()
+            try late.record(floodBatch(0, at: lateNow.addingTimeInterval(-120)))
+            var refused = 0
+            for index in 0..<80 {
+                let at = lateNow.addingTimeInterval(-Double(80 - index) / 10)
+                do {
+                    try late.recordDNSMappings((0..<InsightsLimits.maxDNSMappingCount).map { row in
+                        DNSMapping(domain: "late-\(index)-\(row).dns-flood.example", ip: "203.0.113.\(row % 250)",
+                                   observedAt: at, expiresAt: at.addingTimeInterval(300))
+                    })
+                } catch { refused += 1 }
+            }
+            equal(refused, 0, "a DNS flood after a single batch keeps landing")
+            check(fileBytes(lateDNSPath) <= lateCeiling, "a DNS flood after a single batch stays under the ceiling")
+            try late.record(floodBatch(1, at: lateNow))
+            equal(count(lateDNSPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-1-%';"),
+                  InsightsLimits.maxBatchCount, "a connection batch after that DNS flood is recorded")
+        } catch {
+            check(false, "a DNS flood after a single batch keeps recording: \(error)")
+        }
+
         // A store from before #228 that is over the ceiling, has no free
         // pages and lacks the indexes this change adds must still open,
         // record and be compacted.
