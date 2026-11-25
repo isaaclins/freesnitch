@@ -797,6 +797,44 @@ struct InsightsHarness {
             check(false, "an oversized store opens, records and compacts: \(error)")
         }
 
+        // A store from before #228 that is over the ceiling, has no free
+        // pages and lacks the indexes this change adds must still open,
+        // record and be compacted.
+        let fullSupport = root.appendingPathComponent("Full Support")
+        try! FileManager.default.createDirectory(at: fullSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let fullPath = fullSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            do {
+                let unbounded = try InsightsStore(path: fullPath, expectedUID: getuid())
+                for index in 0..<30 {
+                    try unbounded.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 30) * 3600)))
+                }
+            }
+            var raw: OpaquePointer?
+            check(sqlite3_open(fullPath, &raw) == SQLITE_OK, "the pre-#228 store can be opened directly")
+            check(sqlite3_exec(raw, """
+                DROP INDEX IF EXISTS idx_insights_dns_observed_at;
+                DROP INDEX IF EXISTS idx_insights_versioned_rollup_day;
+                VACUUM;
+                PRAGMA wal_checkpoint(TRUNCATE);
+                """, nil, nil, nil) == SQLITE_OK, "the new indexes were removed and the free pages compacted away")
+            sqlite3_close(raw)
+            equal(count(fullPath, "PRAGMA freelist_count;"), 0, "the pre-#228 store has no free pages")
+            let fullCeiling: Int64 = 1024 * 1024
+            check(fileBytes(fullPath) > fullCeiling, "the pre-#228 store is over the new ceiling")
+            let reopened = try InsightsStore(path: fullPath, expectedUID: getuid(), maxDatabaseBytes: fullCeiling)
+            equal(count(fullPath, "SELECT COUNT(*) FROM sqlite_master WHERE name='idx_insights_dns_observed_at';"), 1,
+                  "the full, oversized store opens and gains the new indexes")
+            try reopened.record(floodBatch(90, at: now))
+            equal(count(fullPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-90-%';"),
+                  InsightsLimits.maxBatchCount, "the full, oversized store keeps recording")
+            try reopened.prune(now: now)
+            check(fileBytes(fullPath) <= fullCeiling, "the full, oversized store is compacted under its ceiling")
+        } catch {
+            check(false, "a full, oversized store from before #228 opens: \(error)")
+        }
+
         // MARK: a store from before #447 gains the columns and keeps its rows unknown
         let legacySupport = root.appendingPathComponent("Legacy Support")
         try! FileManager.default.createDirectory(at: legacySupport.appendingPathComponent("Insights"),

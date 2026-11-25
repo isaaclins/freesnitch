@@ -208,9 +208,15 @@ final class InsightsStore: @unchecked Sendable {
             return true
         }
         if let oldestDay {
+            // At most a slice per table, so a day with very many rollups is
+            // spread over several passes like the raw events.
             for table in ["daily_rollups", "versioned_rollups"] {
-                try executeLocked("DELETE FROM \(table) WHERE utc_day <= ?;") { statement in
+                try executeLocked("""
+                    DELETE FROM \(table) WHERE rowid IN
+                        (SELECT rowid FROM \(table) WHERE utc_day <= ? LIMIT ?);
+                    """) { statement in
                     try self.bindText(statement, index: 1, value: oldestDay)
+                    try self.bindInt(statement, index: 2, value: self.trimSliceRows)
                 }
             }
             return true
@@ -338,7 +344,6 @@ final class InsightsStore: @unchecked Sendable {
             if !existingFiles.contains(path) { try secureNewPath(path, mode: 0o600) }
             try execLocked("PRAGMA journal_mode=WAL;")
             try execLocked("PRAGMA synchronous=NORMAL;")
-            try applyPageLimitLocked()
             try execLocked("""
                 CREATE TABLE IF NOT EXISTS flow_observations (
                     id TEXT PRIMARY KEY,
@@ -413,6 +418,10 @@ final class InsightsStore: @unchecked Sendable {
             for column in ["allowed_count", "blocked_count", "unfiltered_count"] {
                 try addColumnIfMissingLocked(table: "daily_rollups", column: column)
             }
+            // Only after the schema and its migrations: on a store that grew
+            // past the ceiling before #228, SQLite pins the limit at the
+            // current size, and new indexes would then have no room.
+            try applyPageLimitLocked()
             try verifyDatabaseFilesLocked()
         } catch {
             sqlite3_close(handle)
