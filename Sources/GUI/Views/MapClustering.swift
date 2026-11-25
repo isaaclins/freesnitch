@@ -108,6 +108,33 @@ enum MapClusterEngine {
     /// worth drawing.
     static let maxInputConnections = 6000
 
+    /// A value that changes whenever anything `build` reads from the
+    /// connections changes, so the view knows when to ask for a new pass
+    /// without keeping and comparing the whole array. It used to cover only
+    /// the count and the byte total, so one endpoint replaced by another with
+    /// the same traffic left the old pin and arc on the map (#230). Every
+    /// field below feeds a node's place, title, detail, apps or intensity;
+    /// order is hashed too because it breaks ties when input is bounded.
+    static func inputFingerprint(_ connections: [Connection]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(connections.count)
+        for connection in connections {
+            hasher.combine(connection.id)
+            hasher.combine(connection.latitude)
+            hasher.combine(connection.longitude)
+            hasher.combine(connection.countryCode)
+            hasher.combine(connection.country)
+            hasher.combine(connection.city)
+            hasher.combine(connection.remoteHost)
+            hasher.combine(connection.remoteIP)
+            hasher.combine(connection.processName)
+            hasher.combine(connection.bytesIn)
+            hasher.combine(connection.bytesOut)
+            hasher.combine(connection.lastSeen)
+        }
+        return hasher.finalize()
+    }
+
     static func build(connections: [Connection], request: MapClusterRequest) -> MapClusterResult {
         let input = boundedInput(connections)
         var tier = request.tier
