@@ -1310,12 +1310,20 @@ final class InsightsViewModel: ObservableObject {
         }
     }
 
+    /// The offset of the "load more" request still waiting for its answer. A
+    /// second click for the same page would come back with nothing new and
+    /// hide the button before the end (#231).
+    private var findingsPageInFlight: Int?
+
     private func loadFindings(offset: Int) {
+        if offset > 0 && findingsPageInFlight == offset { return }
         guard let helper = state?.helper, let request = query(.findings, offset: offset) else { return }
         isLoading = true
+        findingsPageInFlight = offset
         helper.insightsReport(request) { [weak self] report, error in
             guard let self else { return }
             self.isLoading = false
+            if self.findingsPageInFlight == offset { self.findingsPageInFlight = nil }
             guard let report else { self.errorMessage = error; return }
             self.source = report.source
             // A helper from before #231 ignored the offset and sent the first
