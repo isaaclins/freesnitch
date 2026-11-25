@@ -466,7 +466,10 @@ final class DNSProxy: @unchecked Sendable {
 
     private func forwardDoH(payload: Data, domain: String, resolver: String, reply: @escaping (Data?) -> Void) {
         stats.incrAllowed()
-        guard let url = URL(string: resolver) else { reply(nil); return }
+        guard let url = URL(string: resolver) else {
+            PSLog.error(PSLog.dns, "doh upstream failed: the resolver address does not parse")
+            reply(DNSWire.servFailResponse(for: payload)); return
+        }
         var req = URLRequest(url: url, timeoutInterval: 5)
         req.httpMethod = "POST"
         req.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")

@@ -11,7 +11,8 @@
 #   - HTTP 503 with an HTML error page, HTTP 200 with an HTML page, HTTP 200
 #     with an empty body, HTTP 200 with a DNS reply to another name, and a
 #     resolver that is not listening all come back as SERVFAIL carrying the
-#     client's ID and question, never as the error page's bytes,
+#     client's ID and question, never as the error page's bytes, and so
+#     does a resolver address that does not parse,
 #   - none of those reach onResolve,
 #   - a good answer is passed through unchanged and reported to onResolve,
 #   - a good answer that carries ID 0 comes back with the client's ID.
@@ -47,6 +48,20 @@ func freePort() -> UInt16 {
     _ = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) } }
     _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
     return UInt16(bigEndian: addr.sin_port)
+}
+
+/// Whether something already holds 127.0.0.1:`port` for this socket type.
+func isBound(_ port: UInt16, _ type: Int32) -> Bool {
+    let fd = socket(AF_INET, type, 0)
+    defer { close(fd) }
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    addr.sin_port = port.bigEndian
+    let rc = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+    }
+    return rc != 0 && errno == EADDRINUSE
 }
 
 func query(id: UInt16, name: String, type: UInt16 = 1) -> Data {
@@ -159,7 +174,13 @@ struct Verify {
         let proxyPort = freePort()
         try proxy.start(port: proxyPort)
         defer { proxy.stop() }
-        Thread.sleep(forTimeInterval: 0.3)
+        // Listeners bind asynchronously. Wait until both 127.0.0.1 sockets
+        // are taken, so no query goes out before the proxy can receive it.
+        let readyBy = Date().addingTimeInterval(10)
+        while !(isBound(proxyPort, SOCK_DGRAM) && isBound(proxyPort, SOCK_STREAM)) && Date() < readyBy {
+            usleep(10_000)
+        }
+        checks.expect(isBound(proxyPort, SOCK_DGRAM) && isBound(proxyPort, SOCK_STREAM), "the proxy is listening on 127.0.0.1")
         let deadPort = freePort()
 
         var nextID: UInt16 = 0x1200
@@ -169,6 +190,12 @@ struct Verify {
             proxy.dohURL = "http://\(host):\(port ?? doh.port)\(path)"
             let q = query(id: nextID, name: name)
             return (q, exchange(q, port: proxyPort, tcp: tcp))
+        }
+        func askURL(_ url: String) -> (Data, Data?) {
+            nextID &+= 1
+            proxy.dohURL = url
+            let q = query(id: nextID, name: "case\(nextID).example")
+            return (q, exchange(q, port: proxyPort, tcp: false))
         }
         func wasResolved(_ q: Data) -> Bool {
             let name = DNSWire.firstQuestion(q)!.name
@@ -183,9 +210,10 @@ struct Verify {
             ("/empty", "HTTP 200 with an empty body", nil, false),
             ("/otherq", "HTTP 200 with a DNS reply to another name", nil, false),
             ("/dns-query", "a resolver that is not listening", deadPort, false),
+            ("", "a resolver address that does not parse", nil, false),
         ]
         for (path, what, port, tcp) in failures {
-            let (q, reply) = ask(path, port: port, tcp: tcp)
+            let (q, reply) = path.isEmpty ? askURL("http://[not a url") : ask(path, port: port, tcp: tcp)
             guard let reply else { checks.expect(false, "\(what): the client got no reply"); continue }
             checks.expect(reply.count >= 12 && rcode(reply) == 2 && reply[2] & 0x80 != 0,
                           "\(what): the client gets SERVFAIL")
