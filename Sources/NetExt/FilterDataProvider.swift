@@ -820,7 +820,8 @@ final class FilterDataProvider: NEFilterDataProvider {
         if DHCPTraffic.isAddressConfiguration(transportProtocol: flow.socketProtocol,
                                               localPort: localPort(of: flow),
                                               remotePort: conn.remotePort,
-                                              remoteIP: conn.remoteIP) { return true }
+                                              remoteIP: conn.remoteIP,
+                                              senderIsRoot: flow.sourceAppAuditToken.flatMap(auditTokenEUID).map { $0 == 0 }) { return true }
         guard conn.remotePort == 53, snapshotOrigin == .boot else { return false }
         let lookup = conn.remoteIP.isEmpty ? FlowDestination.unspecifiedLookupToken : conn.remoteIP
         return resolverBypass.allowsDNS(to: lookup)
@@ -907,6 +908,15 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         let legacy = flow.localEndpoint as? NWHostEndpoint
         return Int(legacy?.port ?? "0") ?? 0
+    }
+
+    /// The effective user id in an audit token (val.1), read the same way as
+    /// the pid below.
+    private func auditTokenEUID(_ data: Data) -> UInt32? {
+        guard data.count >= MemoryLayout<audit_token_t>.size else { return nil }
+        var token = audit_token_t()
+        _ = withUnsafeMutableBytes(of: &token) { data.copyBytes(to: $0, count: $0.count) }
+        return token.val.1
     }
 
     private func auditTokenToPID(_ data: Data) -> Int? {

@@ -10,9 +10,11 @@ import Foundation
 /// configuration is UDP between two well-known ports on both ends: a DHCP
 /// client sends from 68 to 67 and hears back on 68, a DHCPv6 client from 546
 /// to 547, and servers and relay agents use the same pairs (RFC 2131 section
-/// 4.1, RFC 8415 section 7.2). Binding a port below 1024 takes root, so an
-/// ordinary app talking to some service on one of these port numbers comes
-/// from an ephemeral local port and keeps its rules.
+/// 4.1, RFC 8415 section 7.2). An ordinary app talking to some service on one
+/// of these port numbers comes from an ephemeral local port and keeps its
+/// rules. Since macOS 10.14 any process may bind a port below 1024, so the
+/// port pair alone is not proof either: it only counts when the app the flow
+/// belongs to runs as root, as the system's DHCP client (configd) does.
 public enum DHCPTraffic {
     public static let ipv4Ports: Set<Int> = [67, 68]
     public static let ipv6Ports: Set<Int> = [546, 547]
@@ -24,16 +26,23 @@ public enum DHCPTraffic {
     public static let ipv6ServerDiscovery: Set<String> = ["ff02::1:2", "ff05::1:3"]
 
     /// `transportProtocol` is the IP protocol number (IPPROTO_UDP is 17).
+    /// `senderIsRoot` is whether the flow's app runs with effective user id 0,
+    /// or nil when the flow carries no audit token to tell: that keeps the
+    /// port-pair answer, since a process cannot drop its own token, and the
+    /// Mac must never lose its address over a missing one.
+    ///
     /// When the flow's local port is not known (0), only a send to a DHCP
     /// server port on the discovery broadcast or multicast address counts:
     /// a client that reads as unbound must still get an address, and those
     /// destinations never leave the local network (link or site scope), so
     /// no app reaches a service on the internet through them.
     public static func isAddressConfiguration(transportProtocol: Int32, localPort: Int,
-                                              remotePort: Int, remoteIP: String) -> Bool {
+                                              remotePort: Int, remoteIP: String,
+                                              senderIsRoot: Bool?) -> Bool {
         guard transportProtocol == Int32(IPPROTO_UDP) else { return false }
-        if ipv4Ports.contains(localPort) && ipv4Ports.contains(remotePort) { return true }
-        if ipv6Ports.contains(localPort) && ipv6Ports.contains(remotePort) { return true }
+        let pairsUp = (ipv4Ports.contains(localPort) && ipv4Ports.contains(remotePort))
+            || (ipv6Ports.contains(localPort) && ipv6Ports.contains(remotePort))
+        if pairsUp { return senderIsRoot != false }
         guard localPort == 0 else { return false }
         let address = remoteIP.lowercased()
         return (remotePort == 67 && ipv4ServerDiscovery.contains(address))

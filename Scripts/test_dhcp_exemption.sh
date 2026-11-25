@@ -4,10 +4,11 @@
 #
 # An app's deny used to be skipped for any connection whose destination port
 # was 67, 68, 546 or 547, over TCP or UDP, to any address. Now only UDP
-# between the DHCP ports on both ends is exempt, so a DHCP client (which binds
-# 68 or 546, a privileged port) keeps working while an app reaching some
-# service on one of those port numbers from an ephemeral port follows its
-# rules. Compiled from the real shared source the extension uses.
+# between the DHCP ports on both ends, from an app running as root (the
+# system's DHCP client, configd), is exempt: any process may bind a low port
+# since macOS 10.14, so the ports alone prove nothing. A DHCP client keeps
+# working while an app reaching some service on one of those port numbers
+# follows its rules. Compiled from the real shared source the extension uses.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,8 +32,9 @@ struct Verify {
     static let udp = Int32(IPPROTO_UDP)
     static let tcp = Int32(IPPROTO_TCP)
 
-    static func exempt(_ proto: Int32, local: Int, remote: Int, ip: String = "203.0.113.9") -> Bool {
-        DHCPTraffic.isAddressConfiguration(transportProtocol: proto, localPort: local, remotePort: remote, remoteIP: ip)
+    static func exempt(_ proto: Int32, local: Int, remote: Int, ip: String = "203.0.113.9", root: Bool? = true) -> Bool {
+        DHCPTraffic.isAddressConfiguration(transportProtocol: proto, localPort: local, remotePort: remote,
+                                           remoteIP: ip, senderIsRoot: root)
     }
 
     static func main() {
@@ -52,6 +54,15 @@ struct Verify {
             check(!exempt(tcp, local: port == 67 || port == 68 ? 68 : 546, remote: port),
                   "TCP between DHCP ports to \(port) is not address configuration")
         }
+        // An app that binds a DHCP port itself (allowed for any user since
+        // macOS 10.14) is not the system's DHCP client and keeps its rules.
+        for (local, remote) in [(67, 67), (68, 67), (67, 68), (546, 547), (547, 547)] {
+            check(!exempt(udp, local: local, remote: remote, root: false),
+                  "a non-root app sending UDP \(local) -> \(remote) to an internet host is not exempt")
+        }
+        // No audit token to tell who sent it: the port pair still counts, so a
+        // missing token never takes the Mac's address away.
+        check(exempt(udp, local: 68, remote: 67, root: nil), "a DHCP pair with no audit token stays exempt")
         // Mixing the v4 and v6 port families is neither protocol.
         check(!exempt(udp, local: 68, remote: 547), "a DHCP client port to a DHCPv6 server port is not exempt")
         check(!exempt(udp, local: 546, remote: 67), "a DHCPv6 client port to a DHCP server port is not exempt")
