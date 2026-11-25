@@ -472,17 +472,43 @@ final class DNSProxy: @unchecked Sendable {
         req.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")
         req.setValue("application/dns-message", forHTTPHeaderField: "Accept")
         req.httpBody = payload
-        let task = URLSession.shared.dataTask(with: req) { data, _, _ in
-            if let data = data {
-                if let ips = DNSWire.extractAnswers(data) {
+        let task = URLSession.shared.dataTask(with: req) { data, response, error in
+            switch Self.upstreamAnswer(data: data, response: response, error: error, query: payload) {
+            case .answer(let answer):
+                if let ips = DNSWire.extractAnswers(answer) {
                     self.onResolve?(domain, ips)
                 }
-                reply(data)
-            } else {
-                reply(nil)
+                reply(answer)
+            case .failed(let reason):
+                // The resolver could not answer. The client gets SERVFAIL,
+                // the standard "upstream failed" reply, at once instead of an
+                // HTTP error page parsed as DNS or a wait for its own timeout.
+                PSLog.error(PSLog.dns, "doh upstream failed: \(reason)")
+                reply(DNSWire.servFailResponse(for: payload))
             }
         }
         task.resume()
+    }
+
+    enum UpstreamAnswer: Equatable {
+        case answer(Data)
+        case failed(String)
+    }
+
+    /// What a DoH exchange gave back for `query`. Only a 2xx HTTP response
+    /// whose body is a DNS reply to the same question counts as an answer
+    /// (RFC 8484 section 4.2.1). Anything else, an HTTP 503 error page
+    /// included, is an upstream failure and never reaches the client as DNS
+    /// bytes (#210).
+    static func upstreamAnswer(data: Data?, response: URLResponse?, error: Error?, query: Data) -> UpstreamAnswer {
+        if let error { return .failed("\(error.localizedDescription)") }
+        guard let http = response as? HTTPURLResponse else { return .failed("no HTTP response") }
+        guard (200..<300).contains(http.statusCode) else { return .failed("HTTP \(http.statusCode)") }
+        guard let data, !data.isEmpty else { return .failed("HTTP \(http.statusCode) with an empty body") }
+        guard let answer = DNSWire.validatedResponse(data, for: query) else {
+            return .failed("HTTP \(http.statusCode) body of \(data.count) bytes is not a DNS reply to the query")
+        }
+        return .answer(answer)
     }
 }
 
@@ -557,6 +583,61 @@ enum DNSWire {
         resp[6] = 0; resp[7] = 0
         resp[8] = 0; resp[9] = 0
         resp[10] = 0; resp[11] = 0
+        return resp
+    }
+
+    /// SERVFAIL for `query`: the header with QR and RA set, the client's
+    /// RD bit and opcode kept, and its question echoed back so the stub can
+    /// match the reply. Records after the question are dropped.
+    static func servFailResponse(for query: Data) -> Data? {
+        let query = Data(query)
+        guard query.count >= 12 else { return nil }
+        var resp = Data(query.prefix(12))
+        resp[2] = 0x80 | (query[2] & 0x79)  // QR=1, opcode and RD kept, AA/TC clear
+        resp[3] = 0x82                      // RA=1, RCODE=2 SERVFAIL
+        resp[6] = 0; resp[7] = 0
+        resp[8] = 0; resp[9] = 0
+        resp[10] = 0; resp[11] = 0
+        if let end = questionEnd(query) {
+            resp.append(query.subdata(in: 12..<end))
+            resp[4] = 0; resp[5] = 1
+        } else {
+            resp[4] = 0; resp[5] = 0
+        }
+        return resp
+    }
+
+    /// End offset of the first question in `data`, if it parses.
+    private static func questionEnd(_ data: Data) -> Int? {
+        guard data.count > 12, let (_, end) = readName(data, from: 12), end + 4 <= data.count else { return nil }
+        return end + 4
+    }
+
+    /// `body` if it is a DNS reply to `query`: a full header with QR set,
+    /// the query's opcode and, when it carries a question, the query's name
+    /// (any case), type and class. The ID is set to the query's, since RFC
+    /// 8484 lets a client send ID 0 and some resolvers answer with 0. Nil for
+    /// anything else, such as an HTML or text error page.
+    static func validatedResponse(_ body: Data, for query: Data) -> Data? {
+        // Copies start at index 0, which the readers below assume.
+        var resp = Data(body)
+        let query = Data(query)
+        guard resp.count >= 12, query.count >= 12 else { return nil }
+        guard resp[2] & 0x80 != 0 else { return nil }                  // QR: a response
+        guard resp[2] & 0x78 == query[2] & 0x78 else { return nil }    // same opcode
+        let qdcount = Int(UInt16(resp[4]) << 8 | UInt16(resp[5]))
+        if qdcount > 0 {
+            guard let asked = firstQuestion(query), let got = firstQuestion(resp) else { return nil }
+            guard got.name.lowercased() == asked.name.lowercased(),
+                  got.type == asked.type, got.cls == asked.cls else { return nil }
+        } else {
+            // Only an error reply may leave the question out (FORMERR,
+            // SERVFAIL, NOTIMP, REFUSED); an answer without one is not to
+            // this query.
+            guard resp[3] & 0x0f != 0 else { return nil }
+        }
+        resp[0] = query[0]
+        resp[1] = query[1]
         return resp
     }
 
