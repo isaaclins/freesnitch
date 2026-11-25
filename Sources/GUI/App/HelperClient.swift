@@ -1258,6 +1258,11 @@ final class HelperEventReceiver: NSObject, HelperClientProtocol {
                 self.state?.syncSharedRules()
                 ProfileClient.shared.refresh()
             }
+            // An automatic switch failed or recovered (#269): only the
+            // profile view needs to catch up, no rule changed.
+            if message == AppConstants.profileNetworkSwitchStateChangedLogMessage {
+                ProfileClient.shared.refresh()
+            }
             // Rules learned their app's signing team (#364): the extension
             // needs the policy that carries it.
             if message == AppConstants.ruleSigningTeamsLearnedLogMessage {

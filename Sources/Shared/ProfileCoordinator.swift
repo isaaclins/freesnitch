@@ -41,7 +41,9 @@ public final class ProfileCoordinator: @unchecked Sendable {
     private let lock = NSLock()
     private var undoTarget: String?
     private var switchHandler: ((SwitchResult) -> Void)?
+    private var pendingHandler: ((PendingNetworkSwitch?) -> Void)?
     private var lastObservedGatewayMAC: String?
+    private var pending: PendingNetworkSwitch?
 
     public init(store: RuleStore, watcher: GatewayMACWatcher = GatewayMACWatcher()) {
         self.store = store
@@ -61,6 +63,34 @@ public final class ProfileCoordinator: @unchecked Sendable {
             switchHandler = newValue
             lock.unlock()
         }
+    }
+
+    /// Called when an automatic switch fails, when the failure changes, and
+    /// when it clears. Not called again for every retry of the same failure.
+    public var onPendingNetworkSwitchChanged: ((PendingNetworkSwitch?) -> Void)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return pendingHandler
+        }
+        set {
+            lock.lock()
+            pendingHandler = newValue
+            lock.unlock()
+        }
+    }
+
+    /// The automatic switch this network is still owed, because activating
+    /// its bound profile failed. Nil when nothing is outstanding (#269).
+    public var pendingNetworkSwitch: PendingNetworkSwitch? {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending
+    }
+
+    /// Why the gateway could not be read, when it could not.
+    public var gatewayReadProblem: String? {
+        watcher.lastReadProblem
     }
 
     public var activeProfileName: String {
@@ -138,6 +168,12 @@ public final class ProfileCoordinator: @unchecked Sendable {
                                   policy: policy,
                                   previousProfile: changed ? previousName : nil)
         handler?(result)
+        // The user's own choice outranks a retry of an automatic switch that
+        // had failed: retrying it later would undo what they just picked.
+        if reason != .network, pendingNetworkSwitch != nil {
+            watcher.dropUndeliveredChange()
+            setPending(nil)
+        }
         return result
     }
 
@@ -187,8 +223,8 @@ public final class ProfileCoordinator: @unchecked Sendable {
     /// observed gateway MAC already has a user-created binding.
     public func startWatchingNetworks(every interval: TimeInterval = 5) {
         watcher.onChange = { [weak self] mac in
-            guard let self else { return }
-            _ = try? self.handleGatewayMACChange(mac)
+            guard let self else { return true }
+            return self.applyObservedGatewayMAC(mac)
         }
         watcher.start(every: interval)
     }
@@ -196,6 +232,46 @@ public final class ProfileCoordinator: @unchecked Sendable {
     public func stopWatchingNetworks() {
         watcher.stop()
         watcher.onChange = nil
+    }
+
+    /// The watcher's entry point. A failed switch is logged, kept as pending
+    /// for the Profiles screen, and reported as not handled, so the watcher
+    /// delivers the same gateway again on its next poll until it works.
+    @discardableResult
+    public func applyObservedGatewayMAC(_ rawMAC: String?) -> Bool {
+        do {
+            let result = try handleGatewayMACChange(rawMAC)
+            if let previous = pendingNetworkSwitch {
+                if let result {
+                    PSLog.notice(PSLog.helper,
+                                 "The profile \(result.notice.activeProfile) is now active for gateway \(previous.gatewayMAC).")
+                }
+                setPending(nil)
+            }
+            return true
+        } catch {
+            let mac = rawMAC.flatMap(GatewayMAC.normalized) ?? ""
+            let profileName = store.networkBinding(forGatewayMAC: mac)?.profileName ?? ""
+            let failure = PendingNetworkSwitch(gatewayMAC: mac,
+                                               profileName: profileName,
+                                               problem: error.localizedDescription)
+            if failure != pendingNetworkSwitch {
+                PSLog.error(PSLog.helper,
+                            "Could not switch to the profile \(profileName) for gateway \(mac): "
+                            + "\(failure.problem). Retrying on every gateway check until it works.")
+            }
+            setPending(failure)
+            return false
+        }
+    }
+
+    private func setPending(_ value: PendingNetworkSwitch?) {
+        lock.lock()
+        let changed = pending != value
+        pending = value
+        let handler = pendingHandler
+        lock.unlock()
+        if changed { handler?(value) }
     }
 
     /// Applies a network change. Returns nil when the gateway is unknown, so a

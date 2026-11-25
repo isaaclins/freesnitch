@@ -246,6 +246,19 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 client.notifyLog(level: "error", message: message)
             }
         }
+        // A failed automatic switch reaches the log and the Profiles screen
+        // once, and its retries stay quiet until the failure changes (#269).
+        coordinator.onPendingNetworkSwitchChanged = { [weak self] pending in
+            _ = self?.broadcast { client in
+                if let pending {
+                    client.notifyLog(
+                        level: "error",
+                        message: "Could not switch to the profile \(pending.profileName) on this network: "
+                            + "\(pending.problem). FreeSnitch keeps trying.")
+                }
+                client.notifyLog(level: "info", message: AppConstants.profileNetworkSwitchStateChangedLogMessage)
+            }
+        }
 
         if session.persisted {
             PSLog.info(PSLog.helper,

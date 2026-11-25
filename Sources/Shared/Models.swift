@@ -323,6 +323,20 @@ public struct ProfileSwitchNotice: Codable, Hashable, Sendable {
     }
 }
 
+/// An automatic switch that failed and is still being retried: the network's
+/// bound profile is not active yet (#269).
+public struct PendingNetworkSwitch: Codable, Hashable, Sendable {
+    public var gatewayMAC: String
+    public var profileName: String
+    public var problem: String
+
+    public init(gatewayMAC: String, profileName: String, problem: String) {
+        self.gatewayMAC = gatewayMAC
+        self.profileName = profileName
+        self.problem = problem
+    }
+}
+
 /// One authoritative policy assembled from exactly two rule layers: Always and
 /// the selected profile. Blocklists are deny-only sets and may be accumulated
 /// independently without adding another allow layer.
@@ -518,6 +532,9 @@ public struct AppConstants {
     /// Sent when rules learned the team that signs their app (#364), so the
     /// GUI hands the extension the policy that carries it.
     public static let ruleSigningTeamsLearnedLogMessage = "Rules learned the signing team of their app; resynchronizing."
+    /// Sent when an automatic profile switch fails or stops failing (#269), so
+    /// the GUI shows the current state of it without waiting for a refresh.
+    public static let profileNetworkSwitchStateChangedLogMessage = "Automatic profile switch state changed; resynchronizing."
 
     public static let helperKickstartCommand =
         "sudo launchctl kickstart -k system/io.isaaclins.freesnitch.helper"
