@@ -369,15 +369,31 @@ final class AppState: ObservableObject {
     /// Delete History. The known destinations are forgotten before the helper
     /// is asked, and fetched again from the emptied history as soon as it
     /// answers, so no connection in between is allowed as known (#229).
+    ///
+    /// If the helper never answers (the connection dropped), the delete ends
+    /// after `contactDeleteTimeout` anyway, so known destinations don't stay
+    /// switched off until the app is relaunched.
     func purgeInsightsHistory(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        let id = UUID()
+        runningContactDeletes.insert(id)
         contactCache.beginDelete()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.contactDeleteTimeout)
+            self?.finishContactDelete(id)
+        }
         helper.purgeInsights { [weak self] ok, message in
-            if let self {
-                self.contactCache.endDelete()
-                self.refreshContactClassifier()
-            }
+            self?.finishContactDelete(id)
             completion(ok, message)
         }
+    }
+
+    private static let contactDeleteTimeout: UInt64 = 60 * 1_000_000_000
+    private var runningContactDeletes: Set<UUID> = []
+
+    private func finishContactDelete(_ id: UUID) {
+        guard runningContactDeletes.remove(id) != nil else { return }
+        contactCache.endDelete()
+        refreshContactClassifier()
     }
 
     /// Refreshes the display cache and synchronizes the extension from one

@@ -55,8 +55,12 @@ if grep -q 'helper.purgeInsights' "$INSIGHTS_VIEW"; then
 fi
 app_body="$(awk '/func purgeInsightsHistory\(/{on=1} on{print} on&&/^    }$/{exit}' "$APPSTATE")"
 grep -q 'contactCache.beginDelete()' <<<"$app_body" || fail "the app does not forget known destinations when the delete starts"
-grep -q 'contactCache.endDelete()' <<<"$app_body" || fail "the app does not drop answers asked for during the delete"
-grep -q 'refreshContactClassifier()' <<<"$app_body" || fail "the app does not fetch the emptied list after the purge"
+grep -q 'finishContactDelete(id)' <<<"$app_body" || fail "the app does not end the delete when the helper answers"
+grep -q 'contactDeleteTimeout' <<<"$app_body" || fail "a delete the helper never answers keeps known destinations off until relaunch"
+finish_body="$(awk '/private func finishContactDelete\(/{on=1} on{print} on&&/^    }$/{exit}' "$APPSTATE")"
+grep -q 'runningContactDeletes.remove(id) != nil' <<<"$finish_body" || fail "a delete can be ended twice (reply after the timeout)"
+grep -q 'contactCache.endDelete()' <<<"$finish_body" || fail "the app does not drop answers asked for during the delete"
+grep -q 'refreshContactClassifier()' <<<"$finish_body" || fail "the app does not fetch the emptied list after the delete"
 if grep -qE 'contactClassifier[[:space:]]*=' "$APPSTATE"; then
   fail "the contact classifier is set outside the cache, which can bring a stale list back"
 fi
