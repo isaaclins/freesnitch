@@ -16,6 +16,9 @@ final class InsightsStore: @unchecked Sendable {
     let path: String
     /// The hard ceiling on the database file (#228). Injected only by tests.
     let maxDatabaseBytes: Int64
+    /// How often a write hit the ceiling and was retried after trimming.
+    /// Read by tests only; touched on `queue`.
+    private(set) var fullRetryCount = 0
 
     init(path: String = InsightsStore.defaultPath, expectedUID: uid_t = 0,
          maxDatabaseBytes: Int64 = InsightsLimits.maxDatabaseBytes) throws {
@@ -84,6 +87,7 @@ final class InsightsStore: @unchecked Sendable {
                 _ = try? executeLocked("ROLLBACK;")
                 guard full, !retried else { throw error }
                 retried = true
+                fullRetryCount += 1
                 try trimToBudgetLocked(force: true)
                 continue
             }
@@ -171,6 +175,22 @@ final class InsightsStore: @unchecked Sendable {
                                   UNION ALL SELECT MIN(utc_day) FROM versioned_rollups);
             """) { statement in oldestDay = self.columnText(statement, index: 0) }
 
+        var oldestDNS: Double?
+        try queryLocked("SELECT MIN(observed_at) FROM dns_mappings;") { statement in
+            if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestDNS = sqlite3_column_double(statement, 0) }
+        }
+
+        // DNS answers older than every event and every rollup day go first,
+        // so a flood of lookups never costs older connection history.
+        if let oldestDNS,
+           oldestRaw.map({ oldestDNS < $0 }) ?? true,
+           oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestDNS)) < $0 }) ?? true {
+            try executeLocked("""
+                DELETE FROM dns_mappings WHERE rowid IN
+                    (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
+                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
+            return true
+        }
         if let oldestRaw,
            oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestRaw)) <= $0 }) ?? true {
             // A slice of the oldest raw events. Everything at the cut's
@@ -195,12 +215,7 @@ final class InsightsStore: @unchecked Sendable {
             }
             return true
         }
-        // Only DNS answers are left.
-        try executeLocked("""
-            DELETE FROM dns_mappings WHERE rowid IN
-                (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
-            """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
-        return db.map { sqlite3_changes($0) > 0 } ?? false
+        return false
     }
 
     /// Rows dropped per pass: a few thousand at the real ceiling (about a
@@ -352,6 +367,7 @@ final class InsightsStore: @unchecked Sendable {
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_domain ON dns_mappings(domain);
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_expiry ON dns_mappings(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_insights_dns_ip ON dns_mappings(ip);
+                CREATE INDEX IF NOT EXISTS idx_insights_dns_observed_at ON dns_mappings(observed_at);
                 CREATE INDEX IF NOT EXISTS idx_insights_destination ON flow_observations(remote_host, remote_ip);
                 CREATE TABLE IF NOT EXISTS versioned_rollups (
                     app_identity TEXT NOT NULL,
@@ -362,6 +378,9 @@ final class InsightsStore: @unchecked Sendable {
                     PRIMARY KEY(app_identity, app_version, destination_key, utc_day)
                 );
                 CREATE INDEX IF NOT EXISTS idx_insights_versioned_rollup_app ON versioned_rollups(app_identity, app_version);
+                -- Trimming to the size ceiling (#228) finds and deletes the
+                -- oldest DNS answers and rollup days without scanning.
+                CREATE INDEX IF NOT EXISTS idx_insights_versioned_rollup_day ON versioned_rollups(utc_day);
                 CREATE TABLE IF NOT EXISTS daily_rollups (
                     app_identity TEXT NOT NULL,
                     destination_key TEXT NOT NULL,

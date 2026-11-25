@@ -674,9 +674,10 @@ struct InsightsHarness {
                   sqlite3_step(statement) == SQLITE_ROW else { return -1 }
             return Int(sqlite3_column_int64(statement, 0))
         }
-        func floodBatch(_ index: Int, at date: Date, rows: Int = InsightsLimits.maxBatchCount) -> [FlowObservation] {
+        func floodBatch(_ index: Int, at date: Date, rows: Int = InsightsLimits.maxBatchCount,
+                        path: String = "/Applications/Flood.app") -> [FlowObservation] {
             (0..<rows).map { row in
-                observation(app: "Flood", bundle: "com.example.flood", path: "/Applications/Flood.app",
+                observation(app: "Flood", bundle: "com.example.flood", path: path,
                             host: "host-\(index)-\(row).flood.example", ip: "198.51.\(index % 250).\(row % 250)",
                             at: date, decision: .allowed)
             }
@@ -712,26 +713,58 @@ struct InsightsHarness {
         } catch {
             check(false, "a store with a ceiling keeps recording: \(error)")
         }
-        // Batches bigger than a tenth of the ceiling reach the hard limit
-        // inside a write; the store makes room and the batch still lands.
+        // Batches bigger than a tenth of the ceiling (long process paths make
+        // each one about a sixth of it) reach the hard limit inside a write;
+        // the store makes room and the batch still lands.
         let tightSupport = root.appendingPathComponent("Tight Support")
         try! FileManager.default.createDirectory(at: tightSupport, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o755])
         let tightPath = tightSupport.appendingPathComponent("Insights/insights.sqlite").path
-        let tightCeiling: Int64 = 1024 * 1024
+        let tightCeiling: Int64 = 4 * 1024 * 1024
+        let longPath = "/Applications/" + String(repeating: "Flood/", count: 400) + "Flood.app"
         do {
             let tight = try InsightsStore(path: tightPath, expectedUID: getuid(), maxDatabaseBytes: tightCeiling)
             var refused = 0
             for index in 0..<40 {
-                do { try tight.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 39) * 8 * 3600))) }
+                do { try tight.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 39) * 8 * 3600),
+                                                 path: longPath)) }
                 catch { refused += 1 }
             }
             equal(refused, 0, "a write that hits the hard limit makes room and lands")
+            check(tight.fullRetryCount > 0, "the hard limit was actually reached and a write was retried after trimming")
             check(fileBytes(tightPath) <= tightCeiling, "the hard limit holds the file at its ceiling")
             equal(count(tightPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-39-%';"),
                   InsightsLimits.maxBatchCount, "the batch that hit the hard limit was recorded in full")
         } catch {
             check(false, "a store at its hard limit keeps recording: \(error)")
+        }
+        // A flood of DNS answers is trimmed oldest first like everything
+        // else: a connection newer than the oldest answers is kept.
+        let dnsSupport = root.appendingPathComponent("DNS Flood Support")
+        try! FileManager.default.createDirectory(at: dnsSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let dnsPath = dnsSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            let flooded = try InsightsStore(path: dnsPath, expectedUID: getuid(), maxDatabaseBytes: 1024 * 1024)
+            for index in 0..<60 {
+                if index == 58 {
+                    try flooded.record([observation(app: "Kept", bundle: "com.example.kept", path: "/Applications/Kept.app",
+                                                    host: "kept.example", ip: "192.0.2.81",
+                                                    at: now.addingTimeInterval(-day + Double(index) * 60))])
+                }
+                let at = now.addingTimeInterval(-day + Double(index) * 60)
+                try flooded.recordDNSMappings((0..<InsightsLimits.maxDNSMappingCount).map { row in
+                    DNSMapping(domain: "random-\(index)-\(row).dns-flood.example", ip: "203.0.113.\(row % 250)",
+                               observedAt: at, expiresAt: at.addingTimeInterval(300))
+                })
+            }
+            check(fileBytes(dnsPath) <= 1024 * 1024, "a DNS flood stays under the ceiling")
+            equal(count(dnsPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host = 'kept.example';"), 1,
+                  "a connection survives while older DNS answers are left to trim")
+            check(count(dnsPath, "SELECT COUNT(*) FROM dns_mappings WHERE domain LIKE 'random-0-%';") == 0,
+                  "the oldest DNS answers are the ones that went")
+        } catch {
+            check(false, "a DNS flood is trimmed: \(error)")
         }
         // A store that grew past the ceiling before it existed stops growing
         // at once and is compacted under it by the next maintenance run.
