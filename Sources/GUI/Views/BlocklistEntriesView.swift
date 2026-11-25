@@ -53,6 +53,11 @@ struct BlocklistEntriesView: View {
         // reading the property here queried one keystroke behind what the
         // field showed (#96).
         .onChange(of: searchText) { newValue in load(resettingOffset: true, query: newValue) }
+        // The names on the list changed: one was removed here, some were added
+        // in the editor, or the list was downloaded again. Removing a name
+        // changed neither the list nor the search, so the removed name stayed
+        // on screen with the old total (#220).
+        .onChange(of: BlocklistEntryPaging.ContentVersion(blocklist)) { _ in load(resettingOffset: false) }
     }
 
     @ViewBuilder
@@ -216,9 +221,7 @@ struct BlocklistEntriesView: View {
                                                 offset: offset,
                                                 limit: Self.pageSize) {
             isLoading = false
-            errorMessage = nil
-            page = demo
-            onCountChange?(demo.total)
+            show(demo, search: search)
             return
         }
         let request = BlocklistEntryQuery(blocklistID: blocklist.id,
@@ -233,10 +236,23 @@ struct BlocklistEntriesView: View {
                 page = nil
                 return
             }
-            errorMessage = nil
-            page = result
-            onCountChange?(result?.total ?? 0)
+            show(result, search: search)
         }
+    }
+
+    private func show(_ result: BlocklistEntryPage?, search: String) {
+        if let result,
+           let retry = BlocklistEntryPaging.offsetToRetry(result, offset: offset, pageSize: Self.pageSize) {
+            offset = retry
+            load(resettingOffset: false, query: search)
+            return
+        }
+        errorMessage = nil
+        page = result
+        if let selected = selection, !(result?.entries.contains(selected) ?? false) {
+            selection = nil
+        }
+        onCountChange?(result?.total ?? 0)
     }
 }
 
@@ -250,7 +266,7 @@ enum BlocklistEntriesDemo {
                      offset: Int,
                      limit: Int) -> BlocklistEntryPage? {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return nil }
-        let all = entries(for: blocklist)
+        let all = entries(for: blocklist).filter { !(removed[blocklist.id]?.names.contains($0) ?? false) }
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matching = needle.isEmpty ? all : all.filter { $0.contains(needle) }
         let start = min(max(0, offset), matching.count)
@@ -260,13 +276,24 @@ enum BlocklistEntriesDemo {
                                   offset: start)
     }
 
+    /// Names taken off a list in demo mode, and the list's count before the
+    /// first one. The names are generated from that count, so a removal drops
+    /// the name the user picked instead of whichever sorted last.
+    private static var removed: [UUID: (seeded: Int, names: Set<String>)] = [:]
+
+    static func remove(_ domains: [String], from blocklist: BlocklistInfo) {
+        guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return }
+        removed[blocklist.id, default: (blocklist.entryCount, [])].names.formUnion(domains)
+    }
+
     private static func entries(for blocklist: BlocklistInfo) -> [String] {
+        let count = removed[blocklist.id]?.seeded ?? blocklist.entryCount
         let stems = ["ads", "track", "metrics", "telemetry", "pixel", "beacon", "analytics", "collect"]
         let domains = ["doubleclick.net", "adnxs.com", "criteo.com", "scorecardresearch.com",
                        "adsrvr.org", "taboola.com", "outbrain.com", "branch.io"]
         // Every name distinct, the way a real list is: a generator that
         // repeats itself makes the pane look broken rather than full.
-        return (0..<blocklist.entryCount).map { i in
+        return (0..<count).map { i in
             "\(stems[i % stems.count])\(i).\(domains[i % domains.count])"
         }
         .sorted()

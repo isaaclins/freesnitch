@@ -31,7 +31,9 @@ jobs:
 
   harness:
     name: Test harnesses (group ${{ matrix.group }} of 4)
-    runs-on: macos-26
+    # macos-15, not macos-26: see .github/actions/select-xcode. The same
+    # Xcode 26 toolchain and SDK are selected there.
+    runs-on: macos-15
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -42,6 +44,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Select Xcode
+        uses: ./.github/actions/select-xcode
 
       # Several harnesses filter with ripgrep. Install it explicitly rather
       # than rely on the runner image: without it one harness would hide its
@@ -102,10 +107,18 @@ jobs:
 
   monitor-build:
     name: Build monitor flavour
-    runs-on: macos-26
+    # macos-15, not macos-26: see .github/actions/select-xcode. Xcode 26
+    # crashes compiling the Icon Composer icon (Resources/AppIcon.icon) on a
+    # macOS 15 host, so this build leaves it out and uses AppIcon.appiconset,
+    # exactly like a build with an Xcode older than 26. app-icon.yml builds
+    # with the Icon Composer icon on macos-26 whenever a change can affect it.
+    runs-on: macos-15
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Select Xcode
+        uses: ./.github/actions/select-xcode
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -126,6 +139,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
             PROVISIONING_PROFILE_SPECIFIER='' \
+            EXCLUDED_SOURCE_FILE_NAMES=AppIcon.icon \
             build
 
       - name: Verify monitor bundle has no restricted entitlements

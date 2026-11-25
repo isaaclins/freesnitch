@@ -25,21 +25,21 @@ public enum GatewayMACReadError: Error, LocalizedError, Equatable, Sendable {
     case noRoute
     case noMACForGateway(String)
 
-    public var errorDescription: String? {
+    /// The code the helper sends on, or nil for `noRoute`, which is no
+    /// gateway rather than a failure.
+    public var problem: ProfileProblem? {
         switch self {
-        case .launchFailed(let tool, let reason):
-            return String(localized: "\(tool) could not be started: \(reason)")
-        case .exitStatus(let tool, let status):
-            return String(localized: "\(tool) exited with status \(Int(status))")
-        case .outputTooLarge(let tool, let maximum):
-            return String(localized: "\(tool) wrote more than \(maximum) bytes")
-        case .unreadableOutput(let tool):
-            return String(localized: "\(tool) wrote output that is not text")
-        case .noRoute:
-            return "no default route"
-        case .noMACForGateway(let gateway):
-            return String(localized: "no hardware address is known for the gateway \(gateway)")
+        case .launchFailed(let tool, let reason): return .toolLaunchFailed(tool: tool, detail: reason)
+        case .exitStatus(let tool, let status): return .toolExitStatus(tool: tool, status: status)
+        case .outputTooLarge(let tool, let maximum): return .toolOutputTooLarge(tool: tool, maximum: maximum)
+        case .unreadableOutput(let tool): return .toolOutputNotText(tool: tool)
+        case .noRoute: return nil
+        case .noMACForGateway(let gateway): return .noMACForGateway(gateway)
         }
+    }
+
+    public var errorDescription: String? {
+        problem?.message ?? "no default route"
     }
 }
 
@@ -160,7 +160,7 @@ public final class GatewayMACWatcher: @unchecked Sendable {
     private var lastMAC: String?
     private var undelivered = false
     private var delivering = false
-    private var readProblem: String?
+    private var readProblem: ProfileProblem?
     private var handler: ChangeHandler?
 
     public init(
@@ -208,7 +208,7 @@ public final class GatewayMACWatcher: @unchecked Sendable {
 
     /// Why the last read gave no gateway MAC, or nil when it gave one or the
     /// network simply has none to give.
-    public var lastReadProblem: String? {
+    public var lastReadProblem: ProfileProblem? {
         lock.lock()
         defer { lock.unlock() }
         return readProblem
@@ -229,21 +229,21 @@ public final class GatewayMACWatcher: @unchecked Sendable {
     /// not it changed, which makes an explicit UI refresh easy to test.
     @discardableResult
     public func refresh() -> String? {
-        var problem: String?
+        var problem: ProfileProblem?
         var expected = false
         let raw: String?
         do {
             raw = try provider.readGatewayMAC()
         } catch {
             raw = nil
-            problem = error.localizedDescription
+            problem = ProfileProblem(error)
             // Every join starts with the gateway missing from the ARP table
             // for a moment: worth a note, not an error.
             if case GatewayMACReadError.noMACForGateway = error { expected = true }
         }
         let current = raw.flatMap(GatewayMAC.normalized)
         if raw != nil, current == nil {
-            problem = String(localized: "the gateway's hardware address is not in a recognised form")
+            problem = .unrecognisedGatewayMAC
         }
         let callback: ChangeHandler?
         lock.lock()
@@ -265,9 +265,9 @@ public final class GatewayMACWatcher: @unchecked Sendable {
 
         if problemChanged {
             if let problem, expected {
-                PSLog.info(PSLog.helper, "The default gateway has no hardware address yet: \(problem)")
+                PSLog.info(PSLog.helper, "The default gateway has no hardware address yet: \(problem.message)")
             } else if let problem {
-                PSLog.error(PSLog.helper, "The default gateway could not be read: \(problem)")
+                PSLog.error(PSLog.helper, "The default gateway could not be read: \(problem.message)")
             } else {
                 PSLog.info(PSLog.helper, "The default gateway can be read again.")
             }

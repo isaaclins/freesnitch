@@ -579,6 +579,8 @@ final class AppState: ObservableObject {
         /// Repeats of a question that was already on screen, logged once when
         /// that question closes (#245).
         case sameQuestionOnScreen(Int)
+        /// A question nobody answered before its flow ran out of time (#225).
+        case unanswered
     }
 
     private func recordSilentAllow(_ c: Connection, because reason: SilentAllowReason) {
@@ -593,6 +595,8 @@ final class AppState: ObservableObject {
             message = String(localized: "Allowed \(name) to reach \(destination) without asking, because \(waiting) questions were already waiting.")
         case .sameQuestionOnScreen(let count):
             message = String(localized: "Allowed \(name) to reach \(destination) \(count) more times without asking, because the same question was already on screen.")
+        case .unanswered:
+            message = String(localized: "Allowed \(name) to reach \(destination), because nobody answered the question in time.")
         }
         appendLog(level: "warning", message: message)
     }
@@ -659,6 +663,34 @@ final class AppState: ObservableObject {
         let alert = PendingAlert(connection: c, reply: reply)
         pendingAlerts.append(alert)
         registerPendingAlertWithHelper(alert)
+        scheduleAlertTimeout(alert.id)
+    }
+
+    /// When each question on screen stops being answerable (#225).
+    private var alertDeadlines = PendingAlertDeadlines()
+
+    private func scheduleAlertTimeout(_ id: UUID) {
+        alertDeadlines.start(id, at: .now)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PendingAlertLimits.maxLifetime))
+            self?.expireDueAlerts(now: .now)
+        }
+    }
+
+    private func expireDueAlerts(now: ContinuousClock.Instant) {
+        for id in alertDeadlines.due(at: now) {
+            expireUnansweredAlert(id: id)
+        }
+    }
+
+    private func expireUnansweredAlert(id: UUID) {
+        alertDeadlines.end(id)
+        guard let alert = pendingAlerts.first(where: { $0.id == id }) else { return }
+        // Nobody decided, so the flow is recorded as not filtered, like every
+        // other connection this app lets through without an answer (#447).
+        unansweredAlerts.note(alert.connection.id)
+        guard finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false) else { return }
+        recordSilentAllow(alert.connection, because: .unanswered)
     }
 
     /// Publishes the alert this app is already showing to the helper's bounded
@@ -721,9 +753,12 @@ final class AppState: ObservableObject {
                 unansweredAlerts.note(alert.connection.id)
             }
             finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false)
-        case .withdrawn, .expired:
-            // Answered here, or no longer answerable from outside. The flow
-            // still resumes on the extension's own timeout.
+        case .expired:
+            // Nobody answered in time, from here or from the command line.
+            // Usually the app's own timeout has already closed it (#225).
+            expireUnansweredAlert(id: id)
+        case .withdrawn:
+            // Answered here.
             break
         }
     }
@@ -745,6 +780,7 @@ final class AppState: ObservableObject {
     private func finishAlert(id: UUID, allow: Bool, remember: Bool) -> Bool {
         guard let index = pendingAlerts.firstIndex(where: { $0.id == id }) else { return false }
         let alert = pendingAlerts.remove(at: index)
+        alertDeadlines.end(id)
         alert.reply(allow, remember)
         // The repeats it let through while it waited, as one line in the same
         // log as the other silent allows: one per question rather than one per
