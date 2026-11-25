@@ -203,11 +203,14 @@ final class AppState: ObservableObject {
         enforcementFailure = message
     }
 
-    /// Enforcement as the helper reports it: the pf anchor is loaded and the
-    /// DNS proxy is listening. This is what the toggle shows, so a helper that
-    /// was restarted, or that stood enforcement down on its own, corrects the
-    /// GUI instead of being contradicted by it. Answers that arrive while a
-    /// change is in flight are stale by definition and are dropped.
+    /// Enforcement as the helper reports it: the pf anchor is loaded or the
+    /// DNS proxy is listening, so either one can still block. This is what the
+    /// toggle shows, so a helper that was restarted, or that stood enforcement
+    /// down on its own, corrects the GUI instead of being contradicted by it.
+    /// A turn-off that could not empty the pf anchor keeps the anchor loaded
+    /// with the DNS proxy stopped; requiring both made the toggle read off
+    /// while the old rules could still block (issue #211). Answers that arrive
+    /// while a change is in flight are stale by definition and are dropped.
     func adoptHelperEnforcement(_ status: HelperStatus?) {
         guard let status else { return }
         // The two component states are reported whatever the toggle is doing.
@@ -218,7 +221,7 @@ final class AppState: ObservableObject {
         dnsProxyPort = status.dnsProxyPort
         pfctlFailure = status.pfctlError
         guard !enforcementChangePending else { return }
-        let live = status.pfctlActive && status.dnsProxyActive
+        let live = status.enforcementActive
         guard live != enforcementEnabled else { return }
         setEnforcementFlagWithoutApplying(live)
     }

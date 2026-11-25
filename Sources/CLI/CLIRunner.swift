@@ -524,7 +524,7 @@ final class CLIRunner {
             let helper = CLIHelperClient()
             let status = try await helper.prepare()
             let report = helperReport(status)
-            return CommandResult(data: report, human: "Enforcement: \(humanBool(status.pfctlActive || status.dnsProxyActive)).")
+            return CommandResult(data: report, human: "Enforcement: \(humanBool(status.enforcementActive)).")
         case .mode(let mode): return try await setMode(mode)
         case .doh(let url): return try await setDoH(url)
         case .dnsStatus:
@@ -715,7 +715,7 @@ final class CLIRunner {
         StatusReport(version: helperStatus.version,
                      mode: canonicalMode(helperStatus.mode),
                      modeLabel: modeLabel(helperStatus.mode),
-                     enforcement: helperStatus.pfctlActive || helperStatus.dnsProxyActive,
+                     enforcement: helperStatus.enforcementActive,
                      dohUpstream: dohUpstream,
                      helper: helperReport(helperStatus),
                      extensionStatus: extensionReport)

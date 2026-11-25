@@ -976,9 +976,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 try dns.start(port: AppConstants.dnsProxyPort)
                 reply(true, nil)
             } catch {
-                _ = try? pf.uninstall()
+                // A rollback that cannot empty the anchor leaves pf on, so it
+                // is recorded like a failed turn-off (issue #211).
+                do { try pf.uninstall() } catch let rollbackError { recordPFError(rollbackError) }
                 dns.stop()
-                reply(false, "\(error)")
+                reply(false, error.localizedDescription)
             }
         } else {
             dns.stop()
@@ -987,8 +989,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 clearPFError()
                 reply(true, nil)
             } catch {
+                // The old rules may still be in pf, so this is not "off":
+                // keep the error in status and tell the caller (issue #211).
                 recordPFError(error)
-                reply(false, "\(error)")
+                reply(false, error.localizedDescription)
             }
         }
     }
@@ -1126,7 +1130,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             recordPFError(error)
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
@@ -1138,7 +1142,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             recordPFError(error)
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
@@ -1150,7 +1154,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(true, nil)
         } catch {
             recordPFError(error)
-            reply(false, "\(error)")
+            reply(false, error.localizedDescription)
         }
     }
 
