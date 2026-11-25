@@ -14,7 +14,8 @@
 #     turns the answer into NXDOMAIN, in Silent Allow and in Silent Deny,
 #   - "Allow Anyway" for the target lets it through again,
 #   - a deny rule naming the target refuses it; one for another port, one
-#     for one app, a disabled one and one behind an allow for the target don't,
+#     for one app, a disabled one and one behind an allow or ask rule for the
+#     target don't,
 #   - allowing the looked-up name by rule does not switch the list off for
 #     its target, and an allow with no host never does,
 #   - the block is counted and reported with the target that caused it.
@@ -183,6 +184,8 @@ struct Verify {
         let denyEdge = Rule(remoteHost: "*.akamaiedge.net", action: .deny, priority: 50)
         check(lookup(.silentAllow, [], [Rule(remoteHost: target, action: .allow, priority: 100), denyEdge]) == .passed,
               "an allow for the target ahead of a broader deny lets it through")
+        check(lookup(.silentAllow, [], [Rule(remoteHost: target, action: .ask, priority: 100), denyEdge]) == .passed,
+              "an ask rule for the target ahead of a broader deny lets it through without a second question")
         check(lookup(.silentAllow, [], [Rule(remoteHost: target, action: .allow, priority: 100), denyTarget]) == .nxdomain,
               "an allow for the last target does not excuse a denied step before it")
 

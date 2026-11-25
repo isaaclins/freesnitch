@@ -19,8 +19,7 @@ struct DNSPolicy: Sendable {
     /// The enabled allow rules that name a host, prepared the same way. A
     /// lookup one of them covers passes the blocklist (#217).
     let blocklistOverrides: PreparedRuleSet
-    /// The enabled rules, allow and deny, that name a host and no app, in
-    /// their usual order. They decide what a CNAME target in an answer means
+    /// The enabled rules that name a host and no app, in their usual order. They decide what a CNAME target in an answer means
     /// (#283).
     let hostRules: PreparedRuleSet
     let blocklist: Set<String>
@@ -110,9 +109,16 @@ struct DNSPolicy: Sendable {
     /// is judged as if it had been looked up by name: it is refused when it
     /// is on an enabled blocklist and no allow rule naming a host covers it
     /// (the rule "Allow Anyway" writes), or when a deny rule that names a
-    /// host covers it. The mode and rules with no host never refuse a target:
-    /// the user allowed the name they looked up, and only a list or a rule
-    /// that names the target says anything about where it points.
+    /// host covers it first. The mode and rules with no host never refuse a
+    /// target: the user allowed the name they looked up, and only a list or a
+    /// rule that names the target says anything about where it points. An
+    /// allow or ask rule for the target ahead of a broader deny shields it,
+    /// and the lookup is not asked about a second time.
+    ///
+    /// Deny rules that name an app are left out on purpose, although a direct
+    /// lookup of the target is refused by them today (rules naming an app by
+    /// name match any process there). The answer goes to every app, and a
+    /// rule for one app must not refuse it for all.
     func refusesAliasTarget(_ target: String, matcher: RuleMatcher = RuleMatcher()) -> Bool {
         let name = target.lowercased()
         let stub = Connection(pid: 0, processName: "", processPath: "", remoteHost: name,
@@ -144,7 +150,7 @@ struct DNSPolicy: Sendable {
     }
 
     private static func hostRules(in rules: [Rule]) -> PreparedRuleSet {
-        PreparedRuleSet(rules: rules.filter { $0.action != .ask && namesHostForEveryone($0) })
+        PreparedRuleSet(rules: rules.filter(namesHostForEveryone))
     }
 
     /// True when `domain`, or a parent domain of it, is on the blocklist.
