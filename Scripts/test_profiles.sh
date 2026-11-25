@@ -363,6 +363,28 @@ expectThrows("an oversized profile request") {
 }
 pass("the profile command surface is bounded, refuses unknown profiles and refreshes deny sets")
 
+// MARK: - switching a list writes only its on/off state (#528)
+//
+// A download records its entry count and time while the switch is in flight.
+// The switch must not write back an older copy of the list over them.
+do {
+    let listID = stacked.first!
+    let active = store.activeProfileName()
+    var downloaded = store.allBlocklists().first { $0.id == listID }!
+    let recordedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    downloaded.lastUpdated = recordedAt
+    downloaded.entryCount = 4242
+    try store.updateBlocklist(downloaded)
+    for enabled in [false, true, false] {
+        try store.setBlocklistEnabled(id: listID, profileName: active, enabled: enabled)
+        let after = store.allBlocklists().first { $0.id == listID }!
+        expect(after.entryCount == 4242, "switching a list overwrote its entry count with \(after.entryCount)")
+        expect(after.lastUpdated == recordedAt, "switching a list overwrote its last download time")
+        expect(after.enabled == enabled, "switching a list for the active profile did not reach the list itself")
+    }
+}
+pass("switching a list keeps its last download count and time")
+
 // MARK: - a profile change is a new policy generation (#438)
 //
 // The extension enforces (session, generation) order and refuses a snapshot
