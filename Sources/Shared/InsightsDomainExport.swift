@@ -153,7 +153,8 @@ public struct InsightsDomainExport: Sendable {
 
     private struct DomainEntry: Encodable {
         let domain: String
-        let ip: String?
+        /// Every address the name was reached at, so one name is one entry.
+        let ips: [String]
         let connections: Int
         let lastSeen: String?
     }
@@ -180,13 +181,7 @@ public struct InsightsDomainExport: Sendable {
                     name: app.summary.displayName,
                     bundleId: app.summary.processBundleId,
                     path: app.summary.processPath,
-                    domains: app.destinations.compactMap { destination in
-                        destination.resolvedDomain.map {
-                            DomainEntry(domain: $0, ip: destination.remoteIP,
-                                        connections: destination.connectionCount,
-                                        lastSeen: destination.lastSeen.map(Self.timestamp))
-                        }
-                    },
+                    domains: Self.domainEntries(app.destinations),
                     addressesWithoutName: app.destinations.compactMap { destination in
                         guard destination.resolvedDomain == nil else { return nil }
                         return AddressEntry(ip: destination.remoteIP ?? destination.destinationKey,
@@ -197,6 +192,28 @@ public struct InsightsDomainExport: Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(document)
+    }
+
+    /// One entry per name. The store can hold the same name more than once for
+    /// an app (asked for by name, and reached at several mapped addresses), and
+    /// an allowlist wants each name once.
+    private static func domainEntries(_ destinations: [InsightsDestinationSummary]) -> [DomainEntry] {
+        var order: [String] = []
+        var merged: [String: (ips: [String], connections: Int, lastSeen: Date?)] = [:]
+        for destination in destinations {
+            guard let domain = destination.resolvedDomain else { continue }
+            var entry = merged[domain] ?? (ips: [], connections: 0, lastSeen: nil)
+            if merged[domain] == nil { order.append(domain) }
+            if let ip = destination.remoteIP, !entry.ips.contains(ip) { entry.ips.append(ip) }
+            entry.connections += destination.connectionCount
+            if let seen = destination.lastSeen, entry.lastSeen.map({ seen > $0 }) ?? true { entry.lastSeen = seen }
+            merged[domain] = entry
+        }
+        return order.map { domain in
+            let entry = merged[domain]!
+            return DomainEntry(domain: domain, ips: entry.ips, connections: entry.connections,
+                               lastSeen: entry.lastSeen.map(timestamp))
+        }
     }
 
     static func timestamp(_ date: Date) -> String {

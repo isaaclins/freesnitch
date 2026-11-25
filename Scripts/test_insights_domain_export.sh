@@ -179,6 +179,58 @@ struct DomainExportHarness {
         check(!allDomains.contains { $0.first?.isNumber == true && $0.contains(".") && Int($0.split(separator: ".").last ?? "") != nil },
               "no address is passed off as a domain")
 
+        // The same name reached at two addresses is one JSON entry with both.
+        let twice = InsightsDomainExport(
+            generatedAt: now, rangeStart: now, rangeEnd: now, source: .rawEvents, complete: true,
+            apps: [InsightsDomainExport.App(
+                summary: InsightsAppSummary(appIdentity: "a", displayName: "A", processBundleId: "a", processPath: "/a",
+                                            destinationCount: 2, connectionCount: 5, bytesIn: 0, bytesOut: 0, lastSeen: now),
+                destinations: [
+                    InsightsDestinationSummary(appIdentity: "a", destinationKey: "cdn.example", resolvedDomain: "cdn.example",
+                                               remoteIP: "192.0.2.1", connectionCount: 2, bytesIn: 0, bytesOut: 0,
+                                               otherAppCount: 0, lastSeen: now.addingTimeInterval(-60)),
+                    InsightsDestinationSummary(appIdentity: "a", destinationKey: "192.0.2.2", resolvedDomain: "cdn.example",
+                                               remoteIP: "192.0.2.2", connectionCount: 3, bytesIn: 0, bytesOut: 0,
+                                               otherAppCount: 0, lastSeen: now)
+                ])])
+        let twiceJSON = (try? JSONSerialization.jsonObject(with: try! twice.json())) as? [String: Any]
+        let twiceDomains = ((twiceJSON?["apps"] as? [[String: Any]])?.first?["domains"] as? [[String: Any]]) ?? []
+        check(twiceDomains.count == 1, "a name reached at two addresses is one JSON entry (got \(twiceDomains.count))")
+        check(twiceDomains.first?["ips"] as? [String] == ["192.0.2.1", "192.0.2.2"], "that entry lists both addresses")
+        check(twiceDomains.first?["connections"] as? Int == 5, "that entry adds up the connections")
+        check(twiceDomains.first?["lastSeen"] as? String == InsightsDomainExport.timestamp(now), "that entry keeps the latest time")
+
+        // A store larger than the paging limit is exported as far as it goes
+        // and marked incomplete, never passed off as the whole list.
+        var endless = 0
+        let capped = await InsightsDomainExport.collect(since: now.addingTimeInterval(-86_400), until: now,
+                                                        pageSize: InsightsLimits.maxQueryPageSize) { query in
+            if query.kind == .destinations {
+                return (InsightsReport(kind: .destinations, rangeStart: query.since, rangeEnd: query.until,
+                                       source: .rawEvents, recordingEnabled: true, limit: query.limit,
+                                       offset: query.offset, hasMore: false), nil)
+            }
+            if let error = (try? query.validate()) == nil ? "refused offset \(query.offset)" : nil { return (nil, error) }
+            let rows = (0..<query.limit).map { index -> InsightsAppSummary in
+                endless += 1
+                return InsightsAppSummary(appIdentity: "app\(query.offset + index)", displayName: "App", processBundleId: nil,
+                                          processPath: "/bin/app", destinationCount: 0, connectionCount: 1,
+                                          bytesIn: 0, bytesOut: 0, lastSeen: now)
+            }
+            return (InsightsReport(kind: .apps, rangeStart: query.since, rangeEnd: query.until, source: .rawEvents,
+                                   recordingEnabled: true, limit: query.limit, offset: query.offset, hasMore: true,
+                                   apps: rows), nil)
+        }
+        switch capped {
+        case .success(let export):
+            check(!export.complete, "a store past the paging limit is marked incomplete")
+            check(export.apps.count > InsightsLimits.maxQueryOffset, "it still exports everything it could page through")
+            let cappedJSON = (try? JSONSerialization.jsonObject(with: try! export.json())) as? [String: Any]
+            check(cappedJSON?["complete"] as? Bool == false, "the JSON file says it is incomplete")
+        case .failure(let failure):
+            check(false, "a store past the paging limit still exports: \(failure.message)")
+        }
+
         // A helper that fails mid-way fails the export instead of writing half.
         var calls = 0
         let broken = await InsightsDomainExport.collect(since: now.addingTimeInterval(-86_400), until: now,

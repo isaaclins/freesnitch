@@ -116,7 +116,6 @@ struct InsightsView: View {
                     Image(systemName: "square.and.arrow.up")
                 }
             }
-            .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .disabled(model.isExporting)
