@@ -126,6 +126,36 @@ let valid = Rule(processBundleId: "com.example.App",
 try! RuleTransportBoundary.validate(rule: valid)
 pass("valid bounded fields and address syntax accepted")
 
+// #202: the store keeps priority and hit count as Int32, so values outside
+// it are refused at the boundary instead of trapping the helper.
+func expectInvalidInteger(_ field: String, _ mutate: (inout Rule) -> Void) {
+    var rule = valid
+    mutate(&rule)
+    do {
+        try RuleTransportBoundary.validate(rules: [valid, rule])
+        fail("\(field) outside Int32 was accepted")
+    } catch let error as RuleTransportBoundary.ValidationError {
+        guard case .invalidField(let actual, _) = error, actual == field else {
+            fail("\(field) returned the wrong error: \(error.localizedDescription)")
+        }
+        pass("\(field) out of range rejected: \(error.localizedDescription)")
+    } catch {
+        fail("\(field) returned an unexpected error: \(error.localizedDescription)")
+    }
+}
+expectInvalidInteger("priority") { $0.priority = Int(Int32.max) + 1 }
+expectInvalidInteger("priority") { $0.priority = Int(Int32.min) - 1 }
+expectInvalidInteger("hitCount") { $0.hitCount = Int(Int32.max) + 1 }
+expectInvalidInteger("hitCount") { $0.hitCount = -1 }
+var edges = valid
+edges.priority = Int(Int32.max)
+edges.hitCount = Int(Int32.max)
+try! RuleTransportBoundary.validate(rule: edges)
+edges.priority = Int(Int32.min)
+edges.hitCount = 0
+try! RuleTransportBoundary.validate(rule: edges)
+pass("priority and hit count at the Int32 edges accepted")
+
 let ordinaryRules = Array(repeating: valid, count: 217)
 let ordinaryData = try! RuleTransportBoundary.encodeRuleBatch(ordinaryRules)
 try! RuleTransportBoundary.validateRuleBatchBytes(ordinaryData)

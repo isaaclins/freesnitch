@@ -90,6 +90,20 @@ for symbol in NSRegularExpression 'Regex<' range\(of: options:\ .regularExpressi
 done
 pass "no regex is used by any profile source"
 
+# 6. The helper's blocklist switch (`freesnitch blocklist ID on|off`) writes
+#    only the on/off state for the active profile and then refreshes domain
+#    lists and IP feeds together. Writing back the whole list as it was read
+#    overwrote a download's newer entry count and time (#528).
+enable_body="$(awk '/func enableBlocklist\(/{f=1} f{print} f&&/^    }$/{exit}' "$ROOT/Sources/Helper/HelperService.swift")"
+[[ -n "$enable_body" ]] || fail "the helper no longer has enableBlocklist"
+grep -Fq 'store.setBlocklistEnabled(' <<<"$enable_body" \
+  || fail "the helper's blocklist switch no longer writes only the on/off state"
+grep -Fq 'store.updateBlocklist(' <<<"$enable_body" \
+  && fail "the helper's blocklist switch writes back the whole list again"
+grep -Fq 'blocklists.refreshAll()' <<<"$enable_body" \
+  || fail "the helper's blocklist switch no longer refreshes domain lists and IP feeds together"
+pass "the helper's blocklist switch writes only on/off and refreshes every feed"
+
 compile_harness() {
   local dir="$TMP/harness"
   local source="$dir/main.swift"
@@ -363,6 +377,42 @@ expectThrows("an oversized profile request") {
     try ProfileTransportBoundary.validateRequestBytes(Data(repeating: 0, count: ProfileTransportBoundary.maximumRequestBytes + 1))
 }
 pass("the profile command surface is bounded, refuses unknown profiles and refreshes deny sets")
+
+// MARK: - switching a list writes only its on/off state (#528)
+//
+// The switch writes only the on/off state, so a download's entry count and
+// time can never be replaced by an older copy of the list. The source check
+// near the top of this script guards that the helper uses this call.
+do {
+    let listID = stacked.first!
+    let active = store.activeProfileName()
+    var downloaded = store.allBlocklists().first { $0.id == listID }!
+    let recordedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    downloaded.lastUpdated = recordedAt
+    downloaded.entryCount = 4242
+    try store.updateBlocklist(downloaded)
+    for enabled in [false, true, false] {
+        try store.setBlocklistEnabled(id: listID, profileName: active, enabled: enabled)
+        let after = store.allBlocklists().first { $0.id == listID }!
+        expect(after.entryCount == 4242, "switching a list overwrote its entry count with \(after.entryCount)")
+        expect(after.lastUpdated == recordedAt, "switching a list overwrote its last download time")
+        expect(after.enabled == enabled, "switching a list for the active profile did not reach the list itself")
+    }
+    // The switch belongs to the active profile, so a round trip through
+    // another profile brings it back instead of resetting it.
+    try store.setBlocklistEnabled(id: listID, profileName: active, enabled: true)
+    let elsewhere = store.allProfiles().first { $0.name != active }!.name
+    try store.setBlocklistEnabled(id: listID, profileName: elsewhere, enabled: false)
+    _ = try coordinator.activate(profileName: elsewhere, reason: .user)
+    expect(store.allBlocklists().first { $0.id == listID }!.enabled == false,
+           "another profile's selection did not apply after switching to it")
+    _ = try coordinator.activate(profileName: active, reason: .user)
+    let back = store.allBlocklists().first { $0.id == listID }!
+    expect(back.enabled, "a profile round trip reset a list that was switched on")
+    expect(back.entryCount == 4242 && back.lastUpdated == recordedAt,
+           "a profile round trip changed a list's last download count or time")
+}
+pass("switching a list keeps its last download count and time")
 
 // MARK: - a profile change is a new policy generation (#438)
 //

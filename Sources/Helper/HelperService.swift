@@ -1101,14 +1101,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
-        let lists = store.allBlocklists()
-        guard let target = lists.first(where: { $0.id.uuidString == idString }) else {
+        guard let id = UUID(uuidString: idString),
+              store.allBlocklists().contains(where: { $0.id == id }) else {
             reply(false, "blocklist not found"); return
         }
-        var updated = target
-        updated.enabled = enabled
-        do { try store.updateBlocklist(updated); reply(true, nil) } catch { reply(false, "\(error)") }
-        Task { await self.blocklists.refresh() }
+        // Only the on/off state is written, for the active profile, the same
+        // way the app's switch does it. Writing back the whole list as it was
+        // read could overwrite a download's newer entry count and time, and
+        // the profile sync would undo a direct write to the global column
+        // (#528).
+        do {
+            try store.setBlocklistEnabled(id: id, profileName: store.activeProfileName(), enabled: enabled)
+        } catch {
+            reply(false, "\(error)"); return
+        }
+        reply(true, nil)
+        Task { await self.blocklists.refreshAll() }
     }
 
     func listBlocklists(reply: @escaping (Data) -> Void) {
@@ -1599,17 +1607,28 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func purgeInsights(reply: @escaping (Bool, String?) -> Void) {
-        guard let insights else {
-            reply(false, "insights store is unavailable")
-            return
+        // Both copies go: the Insights store, and the saved connection list in
+        // the policy database, which records every connection whether or not
+        // Insights recording is on (#294). The second runs even when the
+        // first fails, so one failure never leaves more behind than it has to.
+        var failures: [String] = []
+        if let insights {
+            do {
+                try insights.purge()
+            } catch {
+                PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
+                failures.append(error.localizedDescription)
+            }
+        } else {
+            failures.append("insights store is unavailable")
         }
         do {
-            try insights.purge()
-            reply(true, nil)
+            try store.purgeConnections()
         } catch {
-            PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
-            reply(false, error.localizedDescription)
+            PSLog.error(PSLog.helper, "connection history purge failed: \(error.localizedDescription)")
+            failures.append(error.localizedDescription)
         }
+        reply(failures.isEmpty, failures.isEmpty ? nil : failures.joined(separator: "; "))
     }
 
     /// The request is bounded and its content validated, because it is an

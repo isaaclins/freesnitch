@@ -198,23 +198,26 @@ final class BlocklistManager: @unchecked Sendable {
                 // with downloads on a schedule (#491) the user may switch the
                 // list off while one runs, and a stale copy would switch it
                 // back on.
-                // A list deleted meanwhile, or whose address changed while
-                // this downloaded the old one, keeps nothing of this download.
-                guard (try? self.store.recordBlocklistDownload(id: list.id, fromURL: list.url,
-                                                               entryCount: set.count, at: Date())) == true else {
+                // Kept per list, on disk, so the GUI can ask what is on a list
+                // without anyone holding one in memory (#79). A list deleted
+                // meanwhile, or whose address changed while this downloaded
+                // the old one, keeps nothing of this download; the check and
+                // the write are one transaction so no change can slip between
+                // them (#529). A download that could not be stored counts as
+                // failed: the list is named, blocks from its saved copy and
+                // is retried on the failure schedule.
+                do {
+                    guard try self.store.storeBlocklistDownload(id: list.id, fromURL: list.url,
+                                                                domains: Array(set), at: Date()) else {
+                        continue
+                    }
+                } catch {
+                    failed.append(list.name)
+                    PSLog.error(PSLog.helper,
+                                "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
                     continue
                 }
                 downloaded[list.id] = (list.url, source)
-                // Kept per list, on disk, so the GUI can ask what is on a list
-                // without anyone holding one in memory (#79). A failure here
-                // costs the browsable copy, never the blocking itself, which
-                // works off the merged set below.
-                do {
-                    try self.store.replaceBlocklistEntries(blocklistID: list.id, domains: Array(set))
-                } catch {
-                    PSLog.error(PSLog.helper,
-                                "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
-                }
             }
         }
         // Built from the lists as they are now, for the same reason: only
@@ -271,6 +274,17 @@ final class BlocklistManager: @unchecked Sendable {
         return entries
     }
 
+    /// Ceilings for one domain list download. A list larger than either is
+    /// a failed download: its saved entries keep blocking, nothing new is
+    /// kept from it, and the refresh names it as failed (#208). Both sit
+    /// several times above the largest lists people use (HaGeZi Threat
+    /// Intelligence in hosts format: about 27 MB and 1.03 million names in
+    /// November 2026), so they only stop a broken or hostile source.
+    enum DomainListLimits {
+        static let maxBytes = 128 * 1024 * 1024
+        static let maxEntries = 3_000_000
+    }
+
     /// `nil` means the download failed; an empty set means the source really
     /// carried no entries.
     private func fetch(_ list: BlocklistInfo) async -> Set<String>? {
@@ -282,25 +296,58 @@ final class BlocklistManager: @unchecked Sendable {
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue("FreeSnitch/0.1", forHTTPHeaderField: "User-Agent")
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            // `data(for:)` holds the whole response before anything here can
+            // look at its size, so a huge or endless body would grow the
+            // helper without bound. Reading the bytes lets the download stop
+            // at the ceiling instead (#208).
+            let (bytes, response) = try await URLSession.shared.bytes(for: req)
             // Without this check an error page parses into junk "domains":
             // GitHub's 404 body alone yields an entry called "Found".
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 PSLog.error(PSLog.dns, "blocklist \(list.name) returned HTTP \(http.statusCode)")
                 return nil
             }
+            let limit = DomainListLimits.maxBytes
+            if response.expectedContentLength > Int64(limit) {
+                PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(limit) byte limit; not loaded")
+                return nil
+            }
+            var data = Data()
+            data.reserveCapacity(min(limit, 1 * 1024 * 1024))
+            for try await byte in bytes {
+                guard data.count < limit else {
+                    PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(limit) byte limit; not loaded")
+                    return nil
+                }
+                data.append(byte)
+            }
             guard let text = String(data: data, encoding: .utf8) else { return nil }
-            return parse(text)
+            data = Data()
+            guard let names = BlocklistManager.parse(text, maxEntries: DomainListLimits.maxEntries) else {
+                PSLog.error(PSLog.dns,
+                            "blocklist \(list.name) has more than \(DomainListLimits.maxEntries) names; not loaded")
+                return nil
+            }
+            return names
         } catch {
             PSLog.error(PSLog.dns, "blocklist fetch failed: \(list.name) - \(error)")
             return nil
         }
     }
 
-    private func parse(_ text: String) -> Set<String> {
+    /// The names on a list, or `nil` once more than `maxEntries` distinct
+    /// names turn up: a list cut at the ceiling would silently block only
+    /// part of what it says, so it is refused whole.
+    static func parse(_ text: String, maxEntries: Int) -> Set<String>? {
         var out: Set<String> = []
-        out.reserveCapacity(50_000)
-        for raw in text.split(separator: "\n") {
+        out.reserveCapacity(min(50_000, maxEntries))
+        // One line at a time: `split` would first build an array of every
+        // line, which for a body of tiny lines costs many times the body.
+        var next = text.startIndex
+        while next < text.endIndex {
+            let end = text[next...].firstIndex(of: "\n") ?? text.endIndex
+            let raw = text[next..<end]
+            next = end < text.endIndex ? text.index(after: end) : end
             let line = raw.trimmingCharacters(in: .whitespaces)
             // "[Adblock Plus]" heads every Adblock-syntax list.
             if line.isEmpty || line.hasPrefix("#") || line.hasPrefix("!") || line.hasPrefix("[") { continue }
@@ -319,6 +366,7 @@ final class BlocklistManager: @unchecked Sendable {
             if host == "localhost" || host == "0.0.0.0" || host == "broadcasthost" { continue }
             if host.isEmpty { continue }
             out.insert(host)
+            if out.count > maxEntries { return nil }
         }
         return out
     }

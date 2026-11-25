@@ -570,6 +570,10 @@ verify_app_bundle() {
     die "system extension is missing the Network Extension entitlement"
   grep -Fq 'content-filter-provider-systemextension' "$netext_entitlements" || \
     die "system extension is missing content-filter-provider-systemextension"
+  # Without it the sandbox refuses the signature of every app outside the
+  # system folders and bundle-id allow rules stop matching them (#398).
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.files.absolute-path.read-only:0' "$netext_entitlements" 2>/dev/null)" == "/" ]] || \
+    die "system extension is missing its read-only file exception for code signatures"
   grep -Fq "$TEAM_ID.$APP_BUNDLE_ID" "$helper_entitlements" || \
     die "helper entitlement has the wrong application identifier"
 

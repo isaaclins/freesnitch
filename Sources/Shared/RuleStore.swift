@@ -745,7 +745,9 @@ public final class RuleStore: @unchecked Sendable {
             sqlite3_bind_text(stmt, 8, r.direction.rawValue, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 9, r.action.rawValue, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 10, r.scope.rawValue, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_int(stmt, 11, Int32(r.priority))
+            // The transport and import validators reject a priority outside
+            // Int32 (#202); clamping keeps a missed path from trapping the helper.
+            sqlite3_bind_int(stmt, 11, Int32(clamping: r.priority))
             sqlite3_bind_text(stmt, 12, r.profile, -1, SQLITE_TRANSIENT)
             bindOpt(stmt, 13, r.groupName)
             bindOpt(stmt, 14, r.notes)
@@ -1002,31 +1004,36 @@ public final class RuleStore: @unchecked Sendable {
         try queue.sync {
             try execLocked("BEGIN IMMEDIATE;")
             do {
-                try executeLocked("DELETE FROM blocklist_entries WHERE blocklist_id=?;") { stmt in
-                    sqlite3_bind_text(stmt, 1, blocklistID.uuidString, -1, SQLITE_TRANSIENT)
-                }
-                var stmt: OpaquePointer?
-                defer { if stmt != nil { sqlite3_finalize(stmt) } }
-                let sql = "INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);"
-                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                    throw NSError(domain: "RuleStore", code: 3,
-                                  userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
-                }
-                let id = blocklistID.uuidString
-                for domain in domains {
-                    sqlite3_reset(stmt)
-                    sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
-                    let rc = sqlite3_step(stmt)
-                    if rc != SQLITE_DONE && rc != SQLITE_ROW {
-                        throw NSError(domain: "RuleStore", code: 4,
-                                      userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
-                    }
-                }
+                try replaceBlocklistEntriesLocked(blocklistID: blocklistID, domains: domains)
                 try execLocked("COMMIT;")
             } catch {
                 try? execLocked("ROLLBACK;")
                 throw error
+            }
+        }
+    }
+
+    /// Caller holds `queue` and has opened a transaction.
+    private func replaceBlocklistEntriesLocked(blocklistID: UUID, domains: [String]) throws {
+        try executeLocked("DELETE FROM blocklist_entries WHERE blocklist_id=?;") { stmt in
+            sqlite3_bind_text(stmt, 1, blocklistID.uuidString, -1, SQLITE_TRANSIENT)
+        }
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        let sql = "INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "RuleStore", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+        }
+        let id = blocklistID.uuidString
+        for domain in domains {
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
+            let rc = sqlite3_step(stmt)
+            if rc != SQLITE_DONE && rc != SQLITE_ROW {
+                throw NSError(domain: "RuleStore", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
             }
         }
     }
@@ -1183,23 +1190,38 @@ public final class RuleStore: @unchecked Sendable {
         } catch {
             throw StoreError.invalidBlocklistURL(error.localizedDescription)
         }
-        let (updated, changed): (BlocklistInfo, Bool) = try queue.sync {
+        return try queue.sync {
             guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
-            let changed = current.url != url
-            try executeLocked("UPDATE blocklists SET url=? WHERE id=?;") { stmt in
-                sqlite3_bind_text(stmt, 1, url, -1, SQLITE_TRANSIENT)
-                sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+            guard current.url != url else { return current }
+            let handAdded = blocklistEditsLocked(id: id).added
+            // What was saved came from the old source. A failed download keeps
+            // blocking what is saved (#252), so the old names must go now or
+            // they would keep blocking under a source that never listed them.
+            // The hand edits stay: they belong to the list, not to its source.
+            // One transaction with the address change, so a download landing
+            // in between can never pair either source's names with the other
+            // address (#529).
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                try executeLocked("UPDATE blocklists SET url=? WHERE id=?;") { stmt in
+                    sqlite3_bind_text(stmt, 1, url, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try replaceBlocklistEntriesLocked(blocklistID: id, domains: handAdded)
+                let count = Set(handAdded).count
+                try executeLocked("UPDATE blocklists SET entry_count=? WHERE id=?;") { stmt in
+                    sqlite3_bind_int(stmt, 1, Int32(count))
+                    sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try execLocked("COMMIT;")
+                current.url = url
+                current.entryCount = count
+                return current
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
             }
-            current.url = url
-            return (current, changed)
         }
-        guard changed else { return updated }
-        // What was saved came from the old source. A failed download keeps
-        // blocking what is saved (#252), so the old names must go now or they
-        // would keep blocking under a source that never listed them. The hand
-        // edits stay: they belong to the list, not to its source.
-        try replaceBlocklistEntries(blocklistID: id, domains: blocklistEdits(id: id).added)
-        return try recountBlocklist(id: id, markUpdated: false)
     }
 
     // MARK: - Hand edits to a blocklist (#97)
@@ -1207,7 +1229,11 @@ public final class RuleStore: @unchecked Sendable {
     /// What the user changed about this list, on top of whatever its source
     /// says. Stored beside the list, so a refresh cannot quietly discard it.
     public func blocklistEdits(id: UUID) -> BlocklistEdits {
-        guard let raw = getSetting(Self.blocklistEditsKey(id)),
+        queue.sync { blocklistEditsLocked(id: id) }
+    }
+
+    private func blocklistEditsLocked(id: UUID) -> BlocklistEdits {
+        guard let raw = getSettingLocked(Self.blocklistEditsKey(id)),
               let data = raw.data(using: .utf8),
               let edits = try? JSONDecoder().decode(BlocklistEdits.self, from: data) else {
             return BlocklistEdits()
@@ -1433,20 +1459,34 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
-    /// Records a finished download without touching whether the list is on.
+    /// Stores a finished download without touching whether the list is on.
     /// A download takes seconds; the user may switch the list in that time,
-    /// and only they decide that (#491). Returns false for a list that no
-    /// longer exists or whose address is no longer the one downloaded.
+    /// and only they decide that (#491). The address check, the count and
+    /// time, and the names are one transaction: an address changed between
+    /// a separate check and write would get the old source's names (#529).
+    /// Returns false, and stores nothing, for a list that no longer exists or
+    /// whose address is no longer the one downloaded.
     @discardableResult
-    public func recordBlocklistDownload(id: UUID, fromURL url: String, entryCount: Int, at date: Date) throws -> Bool {
+    public func storeBlocklistDownload(id: UUID, fromURL url: String, domains: [String], at date: Date) throws -> Bool {
         try queue.sync {
-            guard let current = blocklistLocked(id: id), current.url == url else { return false }
-            try executeLocked("UPDATE blocklists SET last_updated=?, entry_count=? WHERE id=?;") { stmt in
-                sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
-                sqlite3_bind_int(stmt, 2, Int32(entryCount))
-                sqlite3_bind_text(stmt, 3, id.uuidString, -1, SQLITE_TRANSIENT)
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                guard let current = blocklistLocked(id: id), current.url == url else {
+                    try execLocked("ROLLBACK;")
+                    return false
+                }
+                try executeLocked("UPDATE blocklists SET last_updated=?, entry_count=? WHERE id=?;") { stmt in
+                    sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
+                    sqlite3_bind_int(stmt, 2, Int32(domains.count))
+                    sqlite3_bind_text(stmt, 3, id.uuidString, -1, SQLITE_TRANSIENT)
+                }
+                try replaceBlocklistEntriesLocked(blocklistID: id, domains: domains)
+                try execLocked("COMMIT;")
+                return true
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
             }
-            return true
         }
     }
 
@@ -1538,6 +1578,40 @@ public final class RuleStore: @unchecked Sendable {
             if let v = c.longitude { sqlite3_bind_double(stmt, 18, v) } else { sqlite3_bind_null(stmt, 18) }
             sqlite3_bind_double(stmt, 19, c.firstSeen.timeIntervalSince1970)
             sqlite3_bind_double(stmt, 20, c.lastSeen.timeIntervalSince1970)
+        }
+    }
+
+    /// Deletes every saved connection row, for Delete History in Insights.
+    ///
+    /// The live connection list is kept here, next to the rules, and Delete
+    /// History used to clear only the Insights store, so this copy survived a
+    /// purge that promised to remove every recorded connection (#294).
+    /// `secure_delete` overwrites the freed pages instead of leaving the old
+    /// rows readable in them, and the checkpoint folds the write-ahead log
+    /// back into the database and empties it, so the old rows are not left
+    /// there either. Rules, profiles and blocklists are not touched.
+    public func purgeConnections() throws {
+        try queue.sync {
+            // The setting is put back afterwards, whatever this SQLite build
+            // started with, so only this delete pays for the overwriting.
+            var stmt: OpaquePointer?
+            var previous: Int32 = 0
+            if sqlite3_prepare_v2(db, "PRAGMA secure_delete;", -1, &stmt, nil) == SQLITE_OK,
+               sqlite3_step(stmt) == SQLITE_ROW {
+                previous = sqlite3_column_int(stmt, 0)
+            }
+            sqlite3_finalize(stmt)
+            try execLocked("PRAGMA secure_delete=1;")
+            defer { try? execLocked("PRAGMA secure_delete=\(previous);") }
+            try execLocked("DELETE FROM connections;")
+            var logFrames: Int32 = 0
+            var checkpointed: Int32 = 0
+            let rc = sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, &logFrames, &checkpointed)
+            guard rc == SQLITE_OK else {
+                throw NSError(domain: "RuleStore", code: 5, userInfo: [
+                    NSLocalizedDescriptionKey: "connection history was deleted, but the write-ahead log could not be emptied: \(String(cString: sqlite3_errmsg(db)))"
+                ])
+            }
         }
     }
 

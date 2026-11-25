@@ -214,6 +214,16 @@ public enum RuleExportCodec {
             if let port = rule.remotePort, !(1...65535).contains(port) {
                 throw RuleExportError.invalidRule(id: id, reason: "remote port \(port) is outside 1 through 65535")
             }
+            if !RuleTransportBoundary.priorityRange.contains(rule.priority) {
+                let range = RuleTransportBoundary.priorityRange
+                throw RuleExportError.invalidRule(
+                    id: id, reason: "priority \(rule.priority) is outside \(range.lowerBound) through \(range.upperBound)")
+            }
+            if !RuleTransportBoundary.hitCountRange.contains(rule.hitCount) {
+                throw RuleExportError.invalidRule(
+                    id: id,
+                    reason: "hit count \(rule.hitCount) is outside 0 through \(RuleTransportBoundary.hitCountRange.upperBound)")
+            }
             if rule.profile.isEmpty {
                 throw RuleExportError.invalidRule(id: id, reason: "the profile name is empty")
             }

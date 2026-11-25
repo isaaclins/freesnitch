@@ -4365,6 +4365,16 @@
         }
       }
     },
+    "Collecting the domains for the export" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбор доменов для экспорта"
+          }
+        }
+      }
+    },
     "Command Line" : {
       "localizations" : {
         "ru" : {
@@ -4745,6 +4755,16 @@
         }
       }
     },
+    "Could not export the domains: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось экспортировать домены: %@"
+          }
+        }
+      }
+    },
     "Could not export the rules" : {
       "localizations" : {
         "ru" : {
@@ -4851,6 +4871,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось снова зарегистрировать службу из %@; она продолжает работать из копии в ~/Applications: %@"
+          }
+        }
+      }
+    },
+    "Could not remove %@ from %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось удалить %@ из %@"
           }
         }
       }
@@ -5643,6 +5673,16 @@
         }
       }
     },
+    "Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and delete it from the Trash." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всё остальное удалено, и FreeSnitch ничего не фильтрует. Чтобы удалить службу, откройте «Объекты входа и расширения» в Системных настройках и выключите FreeSnitch в разделе «Разрешить в фоне». Затем закройте FreeSnitch и удалите его из Корзины."
+          }
+        }
+      }
+    },
     "Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish." : {
       "localizations" : {
         "ru" : {
@@ -5673,6 +5713,36 @@
         }
       }
     },
+    "Export domains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспорт доменов"
+          }
+        }
+      }
+    },
+    "Export Domains as CSV…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспортировать домены в CSV…"
+          }
+        }
+      }
+    },
+    "Export Domains as JSON…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспортировать домены в JSON…"
+          }
+        }
+      }
+    },
     "Export rules" : {
       "localizations" : {
         "ru" : {
@@ -5689,6 +5759,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Экспортировать правила в документ %@, который может импортировать CLI."
+          }
+        }
+      }
+    },
+    "Export the domains each app reached in this range" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспортировать домены, к которым обращалось каждое приложение за этот период"
           }
         }
       }
@@ -6103,6 +6183,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "FreeSnitch не удалось переместиться в Корзину"
+          }
+        }
+      }
+    },
+    "FreeSnitch couldn’t remove its background helper" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось удалить свою фоновую службу"
           }
         }
       }
@@ -6784,6 +6874,16 @@
         }
       }
     },
+    "Its background helper is also still there. Open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and drag it from Applications to the Trash." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Его фоновая служба тоже осталась. Откройте «Объекты входа и расширения» в Системных настройках и выключите FreeSnitch в разделе «Разрешить в фоне». Затем закройте FreeSnitch и перетащите его из папки «Программы» в Корзину."
+          }
+        }
+      }
+    },
     "Its rules, blocklist choices and network bindings move with the name." : {
       "localizations" : {
         "ru" : {
@@ -6894,12 +6994,22 @@
         }
       }
     },
-    "Leave empty to use the system resolver" : {
+    "Repairing…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Оставьте пустым, чтобы использовать системный DNS"
+            "value" : "Восстановление…"
+          }
+        }
+      }
+    },
+    "The resolver’s HTTPS address (required)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTPS-адрес DNS-резолвера (обязательно)"
           }
         }
       }
@@ -7630,12 +7740,22 @@
         }
       }
     },
-    "Repairing…" : {
+    "Unregistering the helper reported an error, but macOS no longer lists it: %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Восстановление…"
+            "value" : "Отмена регистрации службы вернула ошибку, но macOS её больше не показывает: %@"
+          }
+        }
+      }
+    },
+    "macOS finishes removing the network filter the next time you restart." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS завершит удаление сетевого фильтра при следующей перезагрузке."
           }
         }
       }
@@ -8078,6 +8198,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сообщать не о чем. Здесь появляются отклоненные изменения и соединения, разрешенные без запроса."
+          }
+        }
+      }
+    },
+    "Nothing was recorded in this range, so there is nothing to export." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "За этот период ничего не записано, экспортировать нечего."
           }
         }
       }
@@ -9771,6 +9901,26 @@
         }
       }
     },
+    "Saved the domains to %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Домены сохранены в %@."
+          }
+        }
+      }
+    },
+    "Saved the domains to %@. This range holds too much history for one file, so some apps or destinations are missing. Choose a shorter range for a complete list." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Домены сохранены в %@. За этот период истории слишком много для одного файла, поэтому часть приложений или адресатов отсутствует. Для полного списка выберите период короче."
+          }
+        }
+      }
+    },
     "SMAppService cannot manage the helper on this macOS version." : {
       "localizations" : {
         "ru" : {
@@ -10875,6 +11025,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Служба не ответила на импорт в течение 30 секунд. Импорт мог всё же завершиться, поэтому проверьте список правил перед повторным импортом. Если ничего не изменилось, возможно, служба устаревшей версии. Выполните `%@`, затем повторите попытку."
+          }
+        }
+      }
+    },
+    "The helper did not answer the Insights query." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба не ответила на запрос Аналитики."
           }
         }
       }
@@ -12315,12 +12475,12 @@
         }
       }
     },
-    "They are kept, so they come back if you install FreeSnitch again." : {
+    "They are kept, so they come back if you install FreeSnitch again. So is the record of every connection FreeSnitch has seen, unless you delete history in Insights first." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Они сохраняются и вернутся, если вы снова установите FreeSnitch."
+            "value" : "Они сохраняются и вернутся, если вы снова установите FreeSnitch. Запись всех соединений, которые видел FreeSnitch, тоже сохраняется, если сначала не удалить историю в Insights."
           }
         }
       }
