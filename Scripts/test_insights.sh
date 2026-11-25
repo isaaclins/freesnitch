@@ -800,6 +800,65 @@ struct InsightsHarness {
             check(false, "an oversized store opens, records and compacts: \(error)")
         }
 
+        // When one UTC day alone fills the budget, the trim after a write
+        // must not take the batch that was just written (#579). Every batch
+        // here is on the same day, noon UTC yesterday, whatever time the
+        // harness runs (today's noon can still be in the future).
+        let oneDaySupport = root.appendingPathComponent("One Day Support")
+        try! FileManager.default.createDirectory(at: oneDaySupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let oneDayPath = oneDaySupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(identifier: "UTC")!
+            let noon = utc.date(bySettingHour: 12, minute: 0, second: 0, of: now.addingTimeInterval(-24 * 3600))!
+            let oneDayCeiling: Int64 = 1024 * 1024
+            let oneDay = try InsightsStore(path: oneDayPath, expectedUID: getuid(), maxDatabaseBytes: oneDayCeiling)
+            var lost: [Int] = []
+            for index in 0..<40 {
+                try oneDay.record(floodBatch(index, at: noon.addingTimeInterval(Double(index))))
+                if count(oneDayPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-\(index)-%';")
+                    != InsightsLimits.maxBatchCount { lost.append(index) }
+            }
+            check(count(oneDayPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-0-%';") == 0,
+                  "a store filled by one day was trimmed")
+            equal(lost, [], "every batch written into a store filled by one day is kept by the trim that follows it")
+            check(fileBytes(oneDayPath) <= oneDayCeiling, "a store filled by one day stays under its ceiling")
+        } catch {
+            check(false, "a store filled by one day keeps recording: \(error)")
+        }
+
+        // A DNS flood after a single batch, with nothing older to trim: the
+        // answers newer than that batch still make room, so the store never
+        // refuses every write at its ceiling.
+        let lateDNSSupport = root.appendingPathComponent("Late DNS Support")
+        try! FileManager.default.createDirectory(at: lateDNSSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let lateDNSPath = lateDNSSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            let lateCeiling: Int64 = 512 * 1024
+            let late = try InsightsStore(path: lateDNSPath, expectedUID: getuid(), maxDatabaseBytes: lateCeiling)
+            let lateNow = Date()
+            try late.record(floodBatch(0, at: lateNow.addingTimeInterval(-120)))
+            var refused = 0
+            for index in 0..<80 {
+                let at = lateNow.addingTimeInterval(-Double(80 - index) / 10)
+                do {
+                    try late.recordDNSMappings((0..<InsightsLimits.maxDNSMappingCount).map { row in
+                        DNSMapping(domain: "late-\(index)-\(row).dns-flood.example", ip: "203.0.113.\(row % 250)",
+                                   observedAt: at, expiresAt: at.addingTimeInterval(300))
+                    })
+                } catch { refused += 1 }
+            }
+            equal(refused, 0, "a DNS flood after a single batch keeps landing")
+            check(fileBytes(lateDNSPath) <= lateCeiling, "a DNS flood after a single batch stays under the ceiling")
+            try late.record(floodBatch(1, at: lateNow))
+            equal(count(lateDNSPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-1-%';"),
+                  InsightsLimits.maxBatchCount, "a connection batch after that DNS flood is recorded")
+        } catch {
+            check(false, "a DNS flood after a single batch keeps recording: \(error)")
+        }
+
         // A store from before #228 that is over the ceiling, has no free
         // pages and lacks the indexes this change adds must still open,
         // record and be compacted.

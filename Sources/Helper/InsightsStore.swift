@@ -134,7 +134,9 @@ final class InsightsStore: @unchecked Sendable {
     /// Drops the oldest history until the rows fit in three quarters of the
     /// ceiling. Nothing runs while they fit in nine tenths, unless `force`.
     /// Oldest goes first, whatever table it is in: a day's raw events go
-    /// before that day's rollup, which keeps the day's totals. The DNS names
+    /// before that day's rollup, which keeps the day's totals. The one
+    /// exception is the batch just written: it is kept even past older
+    /// rollups, so a store that had to trim still records (#579). The DNS names
     /// learned before the cut go with the raw events they explained. Signing
     /// teams and settings are never trimmed: they are one small row per app,
     /// and a team dropped here would let another team's process claim an
@@ -175,10 +177,29 @@ final class InsightsStore: @unchecked Sendable {
     private static let trimSlicesPerTransaction = 64
 
     /// Deletes the oldest slice of history. Returns false when nothing is left.
+    ///
+    /// The newest batch of raw events is never trimmed (#579). Once a single
+    /// day fills the budget, the oldest raw events are that day's, and "raw
+    /// before its day's rollup" would otherwise delete the batch that was just
+    /// written, so recording would keep going and the last 14 days would show
+    /// nothing new. Past that point the day's rollups go instead.
     private func trimOldestLocked() throws -> Bool {
-        var oldestRaw: Double?
+        // Raw events at or after this time are the newest batch and stay.
+        var keepFrom: Double?
+        try queryLocked("SELECT observed_at FROM flow_observations ORDER BY observed_at DESC LIMIT 1 OFFSET ?;",
+                        bind: { statement in try self.bindInt(statement, index: 1, value: Int32(InsightsLimits.maxBatchCount - 1)) }) { statement in
+            keepFrom = sqlite3_column_double(statement, 0)
+        }
+        var oldestAnyRaw: Double?
         try queryLocked("SELECT MIN(observed_at) FROM flow_observations;") { statement in
-            if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestRaw = sqlite3_column_double(statement, 0) }
+            if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestAnyRaw = sqlite3_column_double(statement, 0) }
+        }
+        var oldestRaw: Double?
+        if let keepFrom {
+            try queryLocked("SELECT MIN(observed_at) FROM flow_observations WHERE observed_at < ?;",
+                            bind: { statement in try self.bindDouble(statement, index: 1, value: keepFrom) }) { statement in
+                if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestRaw = sqlite3_column_double(statement, 0) }
+            }
         }
         var oldestDay: String?
         try queryLocked("""
@@ -193,9 +214,10 @@ final class InsightsStore: @unchecked Sendable {
 
         // DNS answers older than every event go first, and like raw events
         // they go before the rollup of their own day, so a flood of lookups
-        // never costs newer connection history.
+        // never costs newer connection history. Compared with every raw
+        // event, so the answers that name the newest batch stay with it.
         if let oldestDNS,
-           oldestRaw.map({ oldestDNS < $0 }) ?? true,
+           oldestAnyRaw.map({ oldestDNS < $0 }) ?? true,
            oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestDNS)) <= $0 }) ?? true {
             try executeLocked("""
                 DELETE FROM dns_mappings WHERE rowid IN
@@ -212,6 +234,8 @@ final class InsightsStore: @unchecked Sendable {
                             bind: { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows - 1) }) { statement in
                 cut = sqlite3_column_double(statement, 0)
             }
+            // Never into the newest batch: stop just before it.
+            if let keepFrom, cut >= keepFrom { cut = keepFrom.nextDown }
             for table in ["flow_observations", "dns_mappings"] {
                 try executeLocked("DELETE FROM \(table) WHERE observed_at <= ?;") { statement in
                     try self.bindDouble(statement, index: 1, value: cut)
@@ -231,6 +255,23 @@ final class InsightsStore: @unchecked Sendable {
                     try self.bindInt(statement, index: 2, value: self.trimSliceRows)
                 }
             }
+            return true
+        }
+        // Only the newest batch and DNS answers newer than its first event
+        // are left. Never refuse every write over them: the oldest answers go
+        // first, then the newest batch itself.
+        if oldestDNS != nil {
+            try executeLocked("""
+                DELETE FROM dns_mappings WHERE rowid IN
+                    (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
+                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
+            return true
+        }
+        if oldestAnyRaw != nil {
+            try executeLocked("""
+                DELETE FROM flow_observations WHERE rowid IN
+                    (SELECT rowid FROM flow_observations ORDER BY observed_at LIMIT ?);
+                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
             return true
         }
         return false
