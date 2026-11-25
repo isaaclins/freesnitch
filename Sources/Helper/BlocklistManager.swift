@@ -203,14 +203,16 @@ final class BlocklistManager: @unchecked Sendable {
                 // meanwhile, or whose address changed while this downloaded
                 // the old one, keeps nothing of this download; the check and
                 // the write are one transaction so no change can slip between
-                // them (#529). If storing fails, the list blocks from its
-                // saved copy until the next download, as a failed one does.
+                // them (#529). A download that could not be stored counts as
+                // failed: the list is named, blocks from its saved copy and
+                // is retried on the failure schedule.
                 do {
                     guard try self.store.storeBlocklistDownload(id: list.id, fromURL: list.url,
                                                                 domains: Array(set), at: Date()) else {
                         continue
                     }
                 } catch {
+                    failed.append(list.name)
                     PSLog.error(PSLog.helper,
                                 "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
                     continue

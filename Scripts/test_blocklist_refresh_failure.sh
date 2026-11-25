@@ -20,7 +20,8 @@
 #   6. A download is stored only under the address it came from (#529): the
 #      address check, the count and time, and the names are one transaction,
 #      so an address change racing a finished download can never leave the
-#      old source's names saved under the new address.
+#      old source's names saved under the new address. A download that
+#      cannot be stored counts as failed and keeps the saved copy blocking.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,6 +33,7 @@ TARGET="arm64-apple-macos13.0"
 
 cat > "$TMP/verify.swift" <<'SWIFT'
 import Foundation
+import SQLite3
 
 final class Answers: @unchecked Sendable {
     private let lock = NSLock()
@@ -191,6 +193,27 @@ struct Verify {
         let trials = 3000
         let leaked = raceLeaks(store, id: delta.id, oldURL: oldURL, newURL: newURL, trials: trials)
         expect(leaked == 0, "the old address's names were saved under the new address in \(leaked) of \(trials) races")
+
+        // A download that cannot be stored is a failed one: named, retried,
+        // and the saved copy keeps blocking. Another connection holding the
+        // write lock makes the store's transaction fail at once.
+        _ = try? store.storeBlocklistDownload(id: delta.id, fromURL: newURL, domains: ["saved.example"], at: Date())
+        answers.set("Delta", ["fresh.example"])
+        var blocker: OpaquePointer?
+        guard sqlite3_open(path, &blocker) == SQLITE_OK,
+              sqlite3_exec(blocker, "BEGIN IMMEDIATE;", nil, nil, nil) == SQLITE_OK else {
+            failures.append("could not hold the store's write lock"); return finish()
+        }
+        result = await m.refresh()
+        sqlite3_exec(blocker, "ROLLBACK;", nil, nil, nil)
+        sqlite3_close(blocker)
+        expect(result.failedLists.contains("Delta"), "a download that could not be stored must be named as failed, got \(result.failedLists)")
+        expect(published.contains("saved.example"), "a list whose download could not be stored must keep its saved names blocking")
+        expect(!published.contains("fresh.example"), "names that were never stored must not block")
+        result = await m.refresh()
+        expect(!result.failedLists.contains("Delta"), "the next download must store normally once the lock is gone")
+        expect(published.contains("fresh.example") && !published.contains("saved.example"),
+               "the next stored download must replace the saved copy")
         finish()
     }
 
