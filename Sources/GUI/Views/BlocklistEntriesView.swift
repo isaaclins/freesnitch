@@ -59,7 +59,11 @@ struct BlocklistEntriesView: View {
         // count and time, so the same page is asked for again. Removing a name
         // changed neither the list nor the search, so the removed name stayed
         // on screen with the old total (#220).
-        .onChange(of: BlocklistEntryPaging.ContentVersion(blocklist)) { _ in load(resettingOffset: false) }
+        // As with the search, the new value is passed in: `blocklist` here is
+        // still the one from before the change.
+        .onChange(of: BlocklistEntryPaging.ContentVersion(blocklist)) { newValue in
+            load(resettingOffset: false, entryCount: newValue.entryCount)
+        }
     }
 
     @ViewBuilder
@@ -212,13 +216,14 @@ struct BlocklistEntriesView: View {
             : String(localized: "\(first) to \(last) of \(page.total) matches")
     }
 
-    private func load(resettingOffset: Bool, query: String? = nil) {
+    private func load(resettingOffset: Bool, query: String? = nil, entryCount: Int? = nil) {
         let search = query ?? searchText
         if resettingOffset { offset = 0 }
         let token = UUID()
         requestToken = token
         isLoading = true
         if let demo = BlocklistEntriesDemo.page(for: blocklist,
+                                                entryCount: entryCount ?? blocklist.entryCount,
                                                 search: search,
                                                 offset: offset,
                                                 limit: Self.pageSize) {
@@ -270,11 +275,12 @@ struct BlocklistEntriesView: View {
 /// names, and is inert unless FREESNITCH_DEMO is set.
 enum BlocklistEntriesDemo {
     static func page(for blocklist: BlocklistInfo,
+                     entryCount: Int,
                      search: String,
                      offset: Int,
                      limit: Int) -> BlocklistEntryPage? {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return nil }
-        let all = entries(for: blocklist).filter { !(removed[blocklist.id]?.contains($0) ?? false) }
+        let all = entries(for: blocklist, entryCount: entryCount).filter { !(removed[blocklist.id]?.contains($0) ?? false) }
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matching = needle.isEmpty ? all : all.filter { $0.contains(needle) }
         let start = min(max(0, offset), matching.count)
@@ -294,8 +300,8 @@ enum BlocklistEntriesDemo {
         removed[id, default: []].formUnion(domains)
     }
 
-    private static func entries(for blocklist: BlocklistInfo) -> [String] {
-        let count = blocklist.entryCount + (removed[blocklist.id]?.count ?? 0)
+    private static func entries(for blocklist: BlocklistInfo, entryCount: Int) -> [String] {
+        let count = entryCount + (removed[blocklist.id]?.count ?? 0)
         let stems = ["ads", "track", "metrics", "telemetry", "pixel", "beacon", "analytics", "collect"]
         let domains = ["doubleclick.net", "adnxs.com", "criteo.com", "scorecardresearch.com",
                        "adsrvr.org", "taboola.com", "outbrain.com", "branch.io"]
