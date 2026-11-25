@@ -515,6 +515,41 @@ public struct InsightsContactClassifier: Sendable {
     }
 }
 
+/// The GUI's copy of the helper's contact history. Deleting the history drops
+/// it at once, and an answer to a request made before or during the delete is
+/// thrown away, so the next connection is judged against the emptied history
+/// instead of a copy that is up to 30 seconds old (#229).
+public struct InsightsContactCache: Sendable {
+    public private(set) var classifier = InsightsContactClassifier(snapshot: nil)
+    private var generation: UInt64 = 0
+
+    public init() {}
+
+    /// Call before asking the helper; hand the token back with its answer.
+    public mutating func beginRefresh() -> UInt64 {
+        generation &+= 1
+        return generation
+    }
+
+    /// Applies the helper's answer unless a newer request or a delete came
+    /// after it. Returns whether it was applied.
+    @discardableResult
+    public mutating func apply(_ snapshot: InsightsContactSnapshot?, for token: UInt64,
+                               now: Date = Date()) -> Bool {
+        guard token == generation else { return false }
+        classifier = InsightsContactClassifier(snapshot: snapshot, now: now)
+        return true
+    }
+
+    /// The history is being deleted, or was just deleted: forget every known
+    /// destination (alert mode asks while nothing is known) and drop any
+    /// answer still on its way.
+    public mutating func forget() {
+        generation &+= 1
+        classifier = InsightsContactClassifier(snapshot: nil)
+    }
+}
+
 /// A finding is an observed destination difference, not a malware or causation
 /// claim. Missing version identities are displayed as unknown and never filled
 /// with a guessed marketing version.

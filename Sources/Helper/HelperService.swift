@@ -1611,16 +1611,26 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         // the policy database, which records every connection whether or not
         // Insights recording is on (#294). The second runs even when the
         // first fails, so one failure never leaves more behind than it has to.
+        //
+        // The known-destination list the GUI asks for is rebuilt from the
+        // emptied store before the reply, on the queue every rebuild runs on,
+        // so no rebuild that read the old history can land after it (#229).
         var failures: [String] = []
-        if let insights {
-            do {
-                try insights.purge()
-            } catch {
-                PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
-                failures.append(error.localizedDescription)
+        insightsMaintenanceQueue.sync {
+            insightsContactCacheLock.lock()
+            insightsContactSnapshot = nil
+            insightsContactCacheLock.unlock()
+            if let insights {
+                do {
+                    try insights.purge()
+                } catch {
+                    PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
+                    failures.append(error.localizedDescription)
+                }
+            } else {
+                failures.append("insights store is unavailable")
             }
-        } else {
-            failures.append("insights store is unavailable")
+            refreshInsightsContactSnapshot()
         }
         do {
             try store.purgeConnections()

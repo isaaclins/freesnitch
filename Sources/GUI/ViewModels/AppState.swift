@@ -166,7 +166,8 @@ final class AppState: ObservableObject {
     private var lastSnapshotFailure: String?
     /// Prepared by the helper from retained Insights history. This cache is
     /// memory-only on the alert path; an unavailable or stale classifier asks.
-    private var contactClassifier = InsightsContactClassifier(snapshot: nil)
+    private var contactCache = InsightsContactCache()
+    private var contactClassifier: InsightsContactClassifier { contactCache.classifier }
     private var contactRefreshTimer: Timer?
 
     /// Puts the toggle back where reality is after the helper refuses or rolls
@@ -356,11 +357,26 @@ final class AppState: ObservableObject {
     }
 
     private func refreshContactClassifier() {
+        let token = contactCache.beginRefresh()
         helper.insightsContactSnapshot { [weak self] snapshot in
             guard let self else { return }
             // The classifier validates freshness and fields again. A helper
             // transport error therefore cannot turn into a silent allow.
-            self.contactClassifier = InsightsContactClassifier(snapshot: snapshot)
+            self.contactCache.apply(snapshot, for: token)
+        }
+    }
+
+    /// Delete History. The known destinations are forgotten before the helper
+    /// is asked, and fetched again from the emptied history as soon as it
+    /// answers, so no connection in between is allowed as known (#229).
+    func purgeInsightsHistory(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        contactCache.forget()
+        helper.purgeInsights { [weak self] ok, message in
+            if let self {
+                self.contactCache.forget()
+                self.refreshContactClassifier()
+            }
+            completion(ok, message)
         }
     }
 
