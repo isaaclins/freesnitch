@@ -60,9 +60,11 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
             // Offline: there is no gateway, which is not a failure to read one.
             return nil
         }
-        // A default route through an interface (a full-tunnel VPN) has no
-        // gateway address either, and that is also simply no gateway.
-        guard let gateway = gatewayAddress(in: route) else { return nil }
+        // Offline, macOS's route prints "not in table" to stderr, exits 0 and
+        // writes nothing here. A default route through an interface (a
+        // full-tunnel VPN) has no gateway line either. Both are simply no
+        // gateway.
+        guard let gateway = Self.gatewayAddress(in: route) else { return nil }
         let arp = try run(executable: "/usr/sbin/arp", arguments: ["-n", gateway])
         let mac = arp.split(whereSeparator: { $0.isWhitespace || $0 == "(" || $0 == ")" })
             .prefix(512)
@@ -72,7 +74,8 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
         return mac
     }
 
-    private func gatewayAddress(in output: String) -> String? {
+    /// The IPv4 gateway in `route -n get` output, or nil when there is none.
+    public static func gatewayAddress(in output: String) -> String? {
         for line in output.split(whereSeparator: \.isNewline).prefix(512) {
             let fields = line.split(whereSeparator: \.isWhitespace)
             guard fields.count >= 2, fields[0].lowercased() == "gateway:" else { continue }
@@ -99,17 +102,21 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
         } catch {
             throw GatewayMACReadError.launchFailed(tool: tool, reason: error.localizedDescription)
         }
+        // Read before waiting: a tool that fills the pipe would otherwise
+        // block on its write while we block on its exit.
+        let data = pipe.fileHandleForReading.readData(ofLength: Self.maximumCommandOutputBytes + 1)
+        guard data.count <= Self.maximumCommandOutputBytes else {
+            task.terminate()
+            task.waitUntilExit()
+            throw GatewayMACReadError.outputTooLarge(tool: tool, maximum: Self.maximumCommandOutputBytes)
+        }
+        let message = errorPipe.fileHandleForReading.readData(ofLength: 4096)
         task.waitUntilExit()
         guard task.terminationStatus == 0 else {
-            let message = errorPipe.fileHandleForReading.readData(ofLength: 4096)
             if tool == "route", String(decoding: message, as: UTF8.self).contains("not in table") {
                 throw GatewayMACReadError.noRoute
             }
             throw GatewayMACReadError.exitStatus(tool: tool, status: task.terminationStatus)
-        }
-        let data = pipe.fileHandleForReading.readData(ofLength: Self.maximumCommandOutputBytes + 1)
-        guard data.count <= Self.maximumCommandOutputBytes else {
-            throw GatewayMACReadError.outputTooLarge(tool: tool, maximum: Self.maximumCommandOutputBytes)
         }
         guard let text = String(data: data, encoding: .utf8) else {
             throw GatewayMACReadError.unreadableOutput(tool: tool)

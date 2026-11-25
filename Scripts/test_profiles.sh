@@ -551,6 +551,31 @@ expect(brokenSnapshot.gatewayReadProblem != nil, "the Profiles screen is not tol
 expect(retryWatcher.lastReadProblem == nil, "a successful read reported a problem")
 pass("a failed gateway read carries its reason to the Profiles screen")
 
+// Real `route -n get -inet default` output on macOS. Offline it exits 0, says
+// "not in table" on stderr and prints nothing here; a full-tunnel VPN route has
+// an interface and no gateway line. Both are no gateway, not a read failure.
+let routeWithGateway = """
+   route to: default
+destination: default
+       mask: default
+    gateway: 192.168.1.1
+  interface: en1
+      flags: <UP,GATEWAY,DONE,STATIC,PRCLONING,GLOBAL>
+"""
+let routeThroughTunnel = """
+   route to: default
+destination: default
+       mask: default
+  interface: utun4
+      flags: <UP,DONE,CLONING,STATIC>
+"""
+expect(SystemGatewayMACProvider.gatewayAddress(in: routeWithGateway) == "192.168.1.1",
+       "the gateway was not read from route's output")
+expect(SystemGatewayMACProvider.gatewayAddress(in: routeThroughTunnel) == nil, "a tunnel route produced a gateway")
+expect(SystemGatewayMACProvider.gatewayAddress(in: "") == nil, "offline output produced a gateway")
+expect(SystemGatewayMACProvider.gatewayAddress(in: "    gateway: fe80::1%en0") == nil, "an IPv6 gateway was taken for IPv4")
+pass("offline and tunnel routes read as no gateway, a normal route gives its gateway")
+
 print("profiles harness: all checks passed")
 SWIFT
 

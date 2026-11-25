@@ -262,22 +262,32 @@ public final class ProfileCoordinator: @unchecked Sendable {
             }
             return true
         } catch {
-            lock.lock()
-            let userChoseMeanwhile = userChoiceGeneration != generation
-            lock.unlock()
-            // The user picked a profile while this attempt ran: their choice
-            // stands, nothing is pending, and nothing should retry.
-            if userChoseMeanwhile { return true }
-            let profileName = store.networkBinding(forGatewayMAC: mac)?.profileName ?? ""
+            guard let profileName = store.networkBinding(forGatewayMAC: mac)?.profileName else {
+                // The binding went away meanwhile: nothing is owed any more.
+                setPending(nil)
+                return true
+            }
             let failure = PendingNetworkSwitch(gatewayMAC: mac,
                                                profileName: profileName,
                                                problem: error.localizedDescription)
-            if failure != pendingNetworkSwitch {
+            lock.lock()
+            // The user picked a profile while this attempt ran: their choice
+            // stands, nothing is pending, and nothing should retry. Checked
+            // and recorded under one lock, so a pick cannot slip in between.
+            if userChoiceGeneration != generation {
+                lock.unlock()
+                return true
+            }
+            let changed = pending != failure
+            pending = failure
+            let handler = pendingHandler
+            lock.unlock()
+            if changed {
                 PSLog.error(PSLog.helper,
                             "Could not switch to the profile \(profileName) for gateway \(mac): "
                             + "\(failure.problem). Retrying on every gateway check until it works.")
+                handler?(failure)
             }
-            setPending(failure)
             return false
         }
     }
