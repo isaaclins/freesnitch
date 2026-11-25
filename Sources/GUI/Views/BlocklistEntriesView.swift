@@ -61,8 +61,22 @@ struct BlocklistEntriesView: View {
         // on screen with the old total (#220).
         // As with the search, the new value is passed in: `blocklist` here is
         // still the one from before the change.
-        .onChange(of: BlocklistEntryPaging.ContentVersion(blocklist)) { newValue in
+        .onChange(of: ContentVersion(blocklist)) { newValue in
             load(resettingOffset: false, entryCount: newValue.entryCount)
+        }
+    }
+
+    /// What the helper changes on a list whenever its names change: a removal,
+    /// names added in the editor, or a download. A download that brings back
+    /// the same names still moves the time, which costs one extra page query
+    /// and nothing else.
+    private struct ContentVersion: Equatable {
+        let entryCount: Int
+        let lastUpdated: Date?
+
+        init(_ blocklist: BlocklistInfo) {
+            entryCount = blocklist.entryCount
+            lastUpdated = blocklist.lastUpdated
         }
     }
 
@@ -251,14 +265,13 @@ struct BlocklistEntriesView: View {
         // Removing the only name on the last page leaves an offset past the
         // end of the list. That page is asked for again one page back instead
         // of showing "No entries" for a list that still has some.
-        if let result,
-           let retry = BlocklistEntryPaging.offsetToRetry(emptyPage: result.entries,
-                                                          total: result.total,
-                                                          offset: offset,
-                                                          pageSize: Self.pageSize) {
-            offset = retry
-            load(resettingOffset: false, query: search)
-            return
+        if let result, result.entries.isEmpty, result.total > 0 {
+            let lastPage = (result.total - 1) / Self.pageSize * Self.pageSize
+            if lastPage < offset {
+                offset = lastPage
+                load(resettingOffset: false, query: search)
+                return
+            }
         }
         errorMessage = nil
         page = result
