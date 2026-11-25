@@ -237,25 +237,21 @@ final class WindowManager {
             }
     }
 
-    /// A close that waits a moment, so a remembered answer refused right
-    /// after the question closed keeps the same window, where the user left
-    /// it, instead of closing and reopening re-centred (#246).
-    private var pendingAlertClose: DispatchWorkItem?
+    /// Where the alert window's top-left corner was when it last closed, and
+    /// when. A remembered answer refused just after its question closed opens
+    /// the window again there, where the user left it, instead of re-centred
+    /// (#246).
+    private var lastAlertTopLeft: NSPoint?
+    private var lastAlertClosedAt: Date?
 
     private func syncAlertWindow(hasAlert: Bool) {
-        pendingAlertClose?.cancel()
-        pendingAlertClose = nil
         if hasAlert {
             if alertWindow == nil { presentAlertWindow() }
-        } else if alertWindow != nil {
-            let close = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.pendingAlertClose = nil
-                self.alertWindow?.close()
-                self.alertWindow = nil
-            }
-            pendingAlertClose = close
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: close)
+        } else if let window = alertWindow {
+            lastAlertTopLeft = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            lastAlertClosedAt = Date()
+            window.close()
+            alertWindow = nil
         }
     }
 
@@ -303,6 +299,13 @@ final class WindowManager {
             ? [.canJoinAllSpaces, .fullScreenAuxiliary]
             : [.moveToActiveSpace, .fullScreenAuxiliary]
         window.center()
+        if let topLeft = lastAlertTopLeft, let closedAt = lastAlertClosedAt,
+           Date().timeIntervalSince(closedAt) < 30 {
+            // Reopened right after closing: back where it was, and not
+            // centred again once it has measured itself.
+            window.setFrameTopLeftPoint(topLeft)
+            alertHasBeenCentered = true
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         // The card may have measured itself before the window was on screen.
