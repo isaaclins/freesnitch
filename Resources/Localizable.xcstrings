@@ -24,12 +24,32 @@
         }
       }
     },
+    "%@ could not be started: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не удалось запустить: %@"
+          }
+        }
+      }
+    },
     "%@ Drag FreeSnitch into Applications in Finder, then open it from there." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ Перетащите FreeSnitch в папку «Программы» в Finder и откройте его оттуда."
+          }
+        }
+      }
+    },
+    "%@ exited with status %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ завершился с кодом %lld"
           }
         }
       }
@@ -242,6 +262,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$@ → %2$@"
+          }
+        }
+      }
+    },
+    "%@ wrote more than %lld bytes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ вывел больше %lld байт"
+          }
+        }
+      }
+    },
+    "%@ wrote output that is not text" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ вывел данные, которые не являются текстом"
           }
         }
       }
@@ -6027,6 +6067,26 @@
         }
       }
     },
+    "FreeSnitch could not switch to this network's profile: %@. It keeps trying, and %@ stays active until it works." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось переключиться на профиль этой сети: %@. Попытки продолжаются, а %@ остаётся активным, пока это не получится."
+          }
+        }
+      }
+    },
+    "FreeSnitch could not switch to %@ on this network: %@. It keeps trying, and %@ stays active until it works." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось переключиться на %@ в этой сети: %@. Попытки продолжаются, а %@ остаётся активным, пока это не получится."
+          }
+        }
+      }
+    },
     "FreeSnitch couldn't move itself" : {
       "localizations" : {
         "ru" : {
@@ -7546,6 +7606,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Для этого адреса ни разу не встречалось DNS-имя, поэтому правило может привязаться только к самому адресу. Адреса меняются, и привязанное правило молча перестает срабатывать, когда это происходит. Принимайте его, только если вам нужно именно это."
+          }
+        }
+      }
+    },
+    "No gateway MAC visible on this network: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этой сети не виден MAC-адрес шлюза: %@"
+          }
+        }
+      }
+    },
+    "no hardware address is known for the gateway %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "для шлюза %@ не известен аппаратный адрес"
           }
         }
       }
@@ -10745,6 +10825,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Брандмауэр отклонил таблицу адресов, поэтому источники ничего не блокируют. Ваши собственные правила по-прежнему действуют."
+          }
+        }
+      }
+    },
+    "the gateway's hardware address is not in a recognised form" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "аппаратный адрес шлюза имеет неизвестный формат"
           }
         }
       }

@@ -94,6 +94,14 @@ struct ProfilesSettingsView: View {
                                 onDismiss: { profileClient.dismissNotice() })
                 .padding(10)
         }
+        if let pending = profileClient.snapshot?.pendingNetworkSwitch {
+            // The network's profile is not in force even though the user
+            // chose it for this network, so this is said where they look (#269).
+            noticeText(pending.profileName.isEmpty
+                       ? String(localized: "FreeSnitch could not switch to this network's profile: \(pending.problem). It keeps trying, and \(profileClient.activeProfileName) stays active until it works.")
+                       : String(localized: "FreeSnitch could not switch to \(pending.profileName) on this network: \(pending.problem). It keeps trying, and \(profileClient.activeProfileName) stays active until it works."),
+                       tint: .orange)
+        }
         if let message = profileClient.errorMessage {
             noticeText(message, tint: .red)
         }
@@ -572,6 +580,9 @@ struct ProfilesSettingsView: View {
 
     private var gatewayLabel: String {
         guard let mac = profileClient.snapshot?.currentGatewayMAC else {
+            if let problem = profileClient.snapshot?.gatewayReadProblem {
+                return String(localized: "No gateway MAC visible on this network: \(problem)")
+            }
             return String(localized: "No gateway MAC visible on this network")
         }
         return String(localized: "Current gateway \(mac)")

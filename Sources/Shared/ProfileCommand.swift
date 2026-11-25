@@ -39,6 +39,10 @@ public struct ProfileSnapshot: Codable, Sendable {
     public var currentGatewayMAC: String?
     public var notice: ProfileSwitchNotice?
     public var canUndo: Bool
+    /// An automatic switch for this network that failed and is being retried.
+    public var pendingNetworkSwitch: PendingNetworkSwitch?
+    /// Why no gateway MAC is visible, when reading it failed.
+    public var gatewayReadProblem: String?
 
     public init(profiles: [Profile],
                 activeProfile: String,
@@ -49,7 +53,9 @@ public struct ProfileSnapshot: Codable, Sendable {
                 bindings: [ProfileNetworkBinding],
                 currentGatewayMAC: String?,
                 notice: ProfileSwitchNotice?,
-                canUndo: Bool) {
+                canUndo: Bool,
+                pendingNetworkSwitch: PendingNetworkSwitch? = nil,
+                gatewayReadProblem: String? = nil) {
         self.profiles = profiles
         self.activeProfile = activeProfile
         self.alwaysRuleCount = alwaysRuleCount
@@ -60,6 +66,8 @@ public struct ProfileSnapshot: Codable, Sendable {
         self.currentGatewayMAC = currentGatewayMAC
         self.notice = notice
         self.canUndo = canUndo
+        self.pendingNetworkSwitch = pendingNetworkSwitch
+        self.gatewayReadProblem = gatewayReadProblem
     }
 
     /// True when the current network is already bound to the active profile,
@@ -238,7 +246,9 @@ public final class ProfileCommandService: @unchecked Sendable {
             bindings: store.allNetworkBindings(),
             currentGatewayMAC: coordinator.currentGatewayMAC,
             notice: notice,
-            canUndo: coordinator.canUndo
+            canUndo: coordinator.canUndo,
+            pendingNetworkSwitch: coordinator.pendingNetworkSwitch,
+            gatewayReadProblem: coordinator.gatewayReadProblem
         )
     }
 

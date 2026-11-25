@@ -97,6 +97,7 @@ compile_harness() {
   mkdir -p "$dir"
   cat > "$source" <<'SWIFT'
 import Foundation
+import SQLite3
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data(("profiles harness: FAIL: " + message + "\n").utf8))
@@ -423,7 +424,7 @@ pass("every profile change that alters the enforced policy advances its generati
 let watchProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:01")
 let watcher = GatewayMACWatcher(provider: watchProvider)
 var observed: [String?] = []
-watcher.onChange = { observed.append($0) }
+watcher.onChange = { observed.append($0); return true }
 _ = watcher.refresh()
 _ = watcher.refresh()
 watchProvider.set("12:34:56:78:9a:bc")
@@ -433,6 +434,292 @@ _ = watcher.refresh()
 expect(observed == ["aa:bb:cc:dd:ee:01", "12:34:56:78:9a:bc", nil],
        "the gateway watcher reported \(observed) instead of one event per real change")
 pass("the gateway watcher reports one event per change and drops malformed readings")
+
+// A poll that comes in while a change is being handled (the timer and a
+// refresh from the app at once) must not hand the same change over twice.
+let nestedProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:02")
+let nestedWatcher = GatewayMACWatcher(provider: nestedProvider)
+var nestedDeliveries = 0
+nestedWatcher.onChange = { _ in
+    nestedDeliveries += 1
+    if nestedDeliveries == 1 { _ = nestedWatcher.refresh() }
+    return true
+}
+_ = nestedWatcher.refresh()
+_ = nestedWatcher.refresh()
+expect(nestedDeliveries == 1, "one gateway change was handled \(nestedDeliveries) times")
+pass("a gateway change is handled once even when two polls overlap")
+
+// Dropping a pending change (the user picked a profile) only drops the change
+// for that gateway: a newer gateway seen meanwhile is still delivered.
+let scopedProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:0a")
+let scopedWatcher = GatewayMACWatcher(provider: scopedProvider)
+var scopedSeen: [String?] = []
+scopedWatcher.onChange = { mac in
+    scopedSeen.append(mac)
+    return mac == "aa:bb:cc:dd:ee:0b"
+}
+_ = scopedWatcher.refresh()            // A fails, stays undelivered
+scopedProvider.set("aa:bb:cc:dd:ee:0b")
+scopedWatcher.dropUndeliveredChange(for: "aa:bb:cc:dd:ee:0b")
+scopedProvider.set("aa:bb:cc:dd:ee:0a")
+scopedWatcher.dropUndeliveredChange(for: "aa:bb:cc:dd:ee:0b") // not A's gateway: A stays owed
+_ = scopedWatcher.refresh()
+expect(scopedSeen == ["aa:bb:cc:dd:ee:0a", "aa:bb:cc:dd:ee:0a"],
+       "a drop for another gateway lost the pending change: \(scopedSeen)")
+scopedWatcher.dropUndeliveredChange(for: "aa:bb:cc:dd:ee:0a")
+_ = scopedWatcher.refresh()
+expect(scopedSeen.count == 2, "a dropped change was delivered again")
+scopedProvider.set("aa:bb:cc:dd:ee:0b")
+_ = scopedWatcher.refresh()
+expect(scopedSeen.last! == "aa:bb:cc:dd:ee:0b", "a newer gateway after a drop was not delivered")
+pass("dropping a pending change only drops it for its own gateway")
+
+// MARK: - a failed automatic switch is retried and visible (#269)
+
+// Replays the issue: the user bound a gateway to public-wifi, the gateway
+// appears, and the profile write fails because another connection holds the
+// database's write lock. Before the fix the watcher had already recorded the
+// MAC, the coordinator dropped the error, and no later poll tried again.
+let retryPath = databasePath + ".retry"
+let retryStore = try RuleStore(path: retryPath)
+_ = try retryStore.createProfile(name: "office")
+// public-wifi is one of the profiles every store starts with.
+let retryProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:01")
+// The queue never runs, so the timer never polls: every poll is a refresh()
+// below, and the coordinator's own wiring is what handles it.
+let retryQueue = DispatchQueue(label: "profiles-harness.retry")
+retryQueue.suspend()
+let retryWatcher = GatewayMACWatcher(provider: retryProvider, queue: retryQueue)
+let retryCoordinator = ProfileCoordinator(store: retryStore, watcher: retryWatcher)
+let retryService = ProfileCommandService(store: retryStore, coordinator: retryCoordinator)
+var pendingEvents: [PendingNetworkSwitch?] = []
+retryCoordinator.onPendingNetworkSwitchChanged = { pendingEvents.append($0) }
+var retrySwitches = 0
+let serviceSwitch = retryCoordinator.onSwitch
+retryCoordinator.onSwitch = { serviceSwitch?($0); retrySwitches += 1 }
+_ = try retryCoordinator.bindNetwork(gatewayMAC: "12:34:56:78:9a:bc", toProfile: "public-wifi")
+_ = try retryCoordinator.bindNetwork(gatewayMAC: "12:34:56:78:9a:bd", toProfile: "office")
+retryCoordinator.startWatchingNetworks(every: 5)
+_ = retryWatcher.refresh()
+let startingProfile = retryCoordinator.activeProfileName
+expect(startingProfile == Profile.defaultName, "the unbound starting gateway switched profile")
+
+var writeLock: OpaquePointer?
+func holdWriteLock() {
+    expect(sqlite3_open(retryPath, &writeLock) == SQLITE_OK, "could not open a second connection")
+    expect(sqlite3_exec(writeLock, "BEGIN IMMEDIATE;", nil, nil, nil) == SQLITE_OK,
+           "could not take the write lock")
+}
+func releaseWriteLock() {
+    sqlite3_exec(writeLock, "ROLLBACK;", nil, nil, nil)
+    sqlite3_close(writeLock)
+    writeLock = nil
+}
+
+holdWriteLock()
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == startingProfile, "the profile changed although its write failed")
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi",
+       "a failed automatic switch left nothing pending: \(String(describing: retryCoordinator.pendingNetworkSwitch))")
+expect(retryCoordinator.pendingNetworkSwitch?.gatewayMAC == "12:34:56:78:9a:bc", "the pending switch names the wrong gateway")
+expect(!(retryCoordinator.pendingNetworkSwitch?.problem.isEmpty ?? true), "the pending switch does not say what failed")
+let sentenceReason = RuleStore.StoreError.profileNotFound("public-wifi").localizedDescription
+expect(sentenceReason.hasSuffix("."), "the sample store error no longer ends in a period: \(sentenceReason)")
+let trimmed = PendingNetworkSwitch(gatewayMAC: "12:34:56:78:9a:bc", profileName: "public-wifi", problem: sentenceReason)
+expect(!trimmed.problem.hasSuffix(".") && sentenceReason.hasPrefix(trimmed.problem),
+       "a store error's closing period stays in the reason and doubles up mid-sentence: \(trimmed.problem)")
+let failingSnapshot = try retryService.snapshot()
+expect(failingSnapshot.pendingNetworkSwitch?.profileName == "public-wifi",
+       "the Profiles screen is not told that the automatic switch failed")
+let roundTrip = try ProfileTransportBoundary.decodeResponse(ProfileTransportBoundary.encodeResponse(failingSnapshot))
+expect(roundTrip.pendingNetworkSwitch == failingSnapshot.pendingNetworkSwitch,
+       "the pending switch does not survive the trip to the app")
+_ = retryWatcher.refresh()
+_ = retryWatcher.refresh()
+expect(pendingEvents.count == 1, "the same failure was reported \(pendingEvents.count) times instead of once")
+expect(retrySwitches == 0, "a failed switch was announced as a switch")
+pass("a failed automatic switch is kept pending, shown to the app, and reported once")
+
+releaseWriteLock()
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "public-wifi",
+       "the bound profile was not applied once the write could succeed, while the gateway stayed the same")
+expect(retryCoordinator.pendingNetworkSwitch == nil, "the pending switch stayed after it succeeded")
+expect(pendingEvents.count == 2 && pendingEvents.last! == nil, "the app was not told the failure cleared")
+expect(retrySwitches == 1, "the retried switch was not announced exactly once")
+_ = retryWatcher.refresh()
+expect(retrySwitches == 1, "a later poll switched again after the retry succeeded")
+pass("the next poll on the same gateway retries the switch until the bound profile is active")
+
+// #519: a binding that can't be read is not a binding that is gone. Replayed
+// by renaming the bindings table from another connection, so the store's own
+// lookup really fails while public-wifi is still owed to this gateway.
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+holdWriteLock()
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi", "the switch did not fail under the write lock")
+releaseWriteLock()
+func renameBindings(_ from: String, _ to: String) {
+    var other: OpaquePointer?
+    expect(sqlite3_open(retryPath, &other) == SQLITE_OK, "could not open a second connection")
+    expect(sqlite3_exec(other, "ALTER TABLE \(from) RENAME TO \(to);", nil, nil, nil) == SQLITE_OK,
+           "could not rename the bindings table")
+    sqlite3_close(other)
+}
+renameBindings("profile_network_bindings", "bindings_hidden")
+let eventsBeforeLookupFailure = pendingEvents.count
+_ = retryWatcher.refresh()
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a failed binding lookup switched profile")
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi",
+       "a failed binding lookup dropped the pending switch: \(String(describing: retryCoordinator.pendingNetworkSwitch))")
+expect(pendingEvents.count == eventsBeforeLookupFailure + 1,
+       "the lookup failure was reported \(pendingEvents.count - eventsBeforeLookupFailure) times instead of once")
+renameBindings("bindings_hidden", "profile_network_bindings")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "public-wifi", "the switch was not retried once the binding could be read")
+expect(retryCoordinator.pendingNetworkSwitch == nil, "the pending switch stayed after it succeeded")
+pass("a binding that can't be read keeps the switch pending and retried, it is not taken as removed")
+
+// A binding really removed while its switch is failing ends the retry.
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+holdWriteLock()
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi", "the switch did not fail under the write lock")
+expect(sqlite3_exec(writeLock, "DELETE FROM profile_network_bindings WHERE gateway_mac='12:34:56:78:9a:bc';", nil, nil, nil) == SQLITE_OK,
+       "could not remove the binding")
+sqlite3_exec(writeLock, "COMMIT;", nil, nil, nil)
+sqlite3_close(writeLock)
+writeLock = nil
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch == nil, "a removed binding left its switch pending")
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a removed binding still switched profile")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a later poll switched for a removed binding")
+_ = try retryCoordinator.bindNetwork(gatewayMAC: "12:34:56:78:9a:bc", toProfile: "public-wifi")
+pass("a binding removed while its switch is failing ends the retry")
+
+// The user's own choice in the meantime wins over the retry.
+holdWriteLock()
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.pendingNetworkSwitch?.profileName == "office", "the second failure was not kept pending")
+releaseWriteLock()
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+expect(retryCoordinator.pendingNetworkSwitch == nil, "a manual switch left the old automatic one pending")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a retry overrode the profile the user picked")
+pass("a profile the user picks while a switch is pending is not overridden by the retry")
+
+// A retry the watcher had already lined up before that pick, arriving only
+// now: the late delivery for the same gateway must not undo the pick.
+expect(retryCoordinator.applyObservedGatewayMAC("12:34:56:78:9a:bd"), "a late delivery for a settled gateway was not taken as handled")
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a late retry overrode the profile the user picked")
+expect(retryCoordinator.pendingNetworkSwitch == nil, "a late retry brought the pending switch back")
+// A different network right after a pick is a real change and still switches.
+expect(retryCoordinator.applyObservedGatewayMAC("12:34:56:78:9a:bc"), "a new bound gateway after a pick was not handled")
+expect(retryCoordinator.activeProfileName == "public-wifi", "a new network right after a manual pick did not switch")
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+// Through the watcher: it reaches the gateway the user just picked on (no
+// switch), then moves on to the next network (switch).
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "the gateway the user picked on switched anyway")
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "office", "the watcher did not switch for the next real gateway change")
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+pass("a late retry for the gateway the user picked on does nothing, a new gateway still switches")
+
+// A pick that arrives while an automatic switch has read its binding but not
+// applied it yet: switches take turns, so the pick lands last and stands.
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+let pickDone = DispatchSemaphore(value: 0)
+let pickStarted = DispatchSemaphore(value: 0)
+retryCoordinator.networkSwitchHookForTesting = {
+    retryCoordinator.networkSwitchHookForTesting = nil
+    DispatchQueue.global().async {
+        pickStarted.signal()
+        _ = try? retryCoordinator.activate(profileName: "lockdown", reason: .user)
+        pickDone.signal()
+    }
+    pickStarted.wait()
+    // The pick must wait for this switch, not finish inside it.
+    expect(pickDone.wait(timeout: .now() + 0.2) == .timedOut, "a manual pick ran in the middle of a network switch")
+}
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+pickDone.wait()
+expect(retryCoordinator.activeProfileName == "lockdown",
+       "an automatic switch landed after the user's pick: \(retryCoordinator.activeProfileName)")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "lockdown", "a later poll overrode the user's pick")
+pass("a manual pick made during an automatic switch is applied after it and stands")
+retryCoordinator.stopWatchingNetworks()
+
+// A gateway that cannot be read says why instead of looking like no gateway.
+struct BrokenGatewayProvider: GatewayMACProviding {
+    func currentGatewayMAC() -> String? { nil }
+    func readGatewayMAC() throws -> String? { throw GatewayMACReadError.exitStatus(tool: "route", status: 1) }
+}
+let brokenWatcher = GatewayMACWatcher(provider: BrokenGatewayProvider(), queue: retryQueue)
+let brokenCoordinator = ProfileCoordinator(store: retryStore, watcher: brokenWatcher)
+expect(brokenCoordinator.refreshGatewayMAC() == nil, "a failed read produced a gateway MAC")
+expect(brokenCoordinator.gatewayReadProblem?.contains("route") == true,
+       "a failed gateway read gave no reason: \(String(describing: brokenCoordinator.gatewayReadProblem))")
+let brokenSnapshot = try ProfileCommandService(store: retryStore, coordinator: brokenCoordinator).snapshot()
+expect(brokenSnapshot.gatewayReadProblem != nil, "the Profiles screen is not told why there is no gateway")
+expect(retryWatcher.lastReadProblem == nil, "a successful read reported a problem")
+pass("a failed gateway read carries its reason to the Profiles screen")
+
+// Real `route -n get -inet default` output on macOS. Offline it exits 0, says
+// "not in table" on stderr and prints nothing here; a full-tunnel VPN route has
+// an interface and no gateway line. Both are no gateway, not a read failure.
+let routeWithGateway = """
+   route to: default
+destination: default
+       mask: default
+    gateway: 192.168.1.1
+  interface: en1
+      flags: <UP,GATEWAY,DONE,STATIC,PRCLONING,GLOBAL>
+"""
+let routeThroughTunnel = """
+   route to: default
+destination: default
+       mask: default
+  interface: utun4
+      flags: <UP,DONE,CLONING,STATIC>
+"""
+expect(SystemGatewayMACProvider.gatewayAddress(in: routeWithGateway) == "192.168.1.1",
+       "the gateway was not read from route's output")
+expect(SystemGatewayMACProvider.gatewayAddress(in: routeThroughTunnel) == nil, "a tunnel route produced a gateway")
+expect(SystemGatewayMACProvider.gatewayAddress(in: "") == nil, "offline output produced a gateway")
+expect(SystemGatewayMACProvider.gatewayAddress(in: "    gateway: fe80::1%en0") == nil, "an IPv6 gateway was taken for IPv4")
+pass("offline and tunnel routes read as no gateway, a normal route gives its gateway")
+
+// Real `arp -n <gateway>` output: a known gateway, and one not in the table
+// (just after joining, or a tunnel gateway), which arp reports and exits 1 on.
+expect(SystemGatewayMACProvider.gatewayMAC(inARPOutput: "? (192.168.1.1) at f0:b0:14:23:20:75 on en1 ifscope [ethernet]")
+       == "f0:b0:14:23:20:75", "the gateway MAC was not read from arp's output")
+expect(SystemGatewayMACProvider.gatewayMAC(inARPOutput: "192.0.2.77 (192.0.2.77) -- no entry") == nil,
+       "arp's no-entry answer produced a MAC")
+expect(SystemGatewayMACProvider.gatewayMAC(inARPOutput: "? (192.168.1.1) at (incomplete) on en1 ifscope [ethernet]") == nil,
+       "an incomplete arp entry produced a MAC")
+let noEntry = GatewayMACReadError.noMACForGateway("10.8.0.1").localizedDescription
+expect(noEntry.contains("10.8.0.1") && !noEntry.contains("status"),
+       "a gateway missing from the ARP table is not said in plain words: \(noEntry)")
+pass("arp's answer gives the gateway MAC, and a missing entry is said in plain words")
 
 print("profiles harness: all checks passed")
 SWIFT
