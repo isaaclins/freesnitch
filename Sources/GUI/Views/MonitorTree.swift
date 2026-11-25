@@ -577,6 +577,46 @@ struct MonitorRuleTarget: Hashable, Sendable {
         return PFHostValidator.kind(for: rawIP) == nil ? nil : .address(rawIP)
     }
 
+    /// Every process identity a rule can carry and still be about exactly
+    /// this row's process: the row's bundle id, its path, or both, where the
+    /// path may also be the app bundle whose `Contents/MacOS` holds the
+    /// executable, written with or without the trailing slash.
+    var ownerIdentities: [MonitorRuleTarget] {
+        var bundles: [String?] = [nil]
+        if let processBundleID { bundles.append(processBundleID) }
+        var paths: [String?] = [nil]
+        if let processPath {
+            paths.append(processPath)
+            if let bundlePath = Self.appBundle(ofMainExecutable: processPath) {
+                paths.append(bundlePath)
+                paths.append(bundlePath + "/")
+            }
+        }
+        var identities: [MonitorRuleTarget] = []
+        for bundle in bundles {
+            for path in paths where bundle != nil || path != nil {
+                identities.append(MonitorRuleTarget(kind: kind,
+                                                    processBundleID: bundle,
+                                                    processPath: path,
+                                                    remoteHost: remoteHost,
+                                                    remoteIP: remoteIP))
+            }
+        }
+        return identities
+    }
+
+    /// `/Applications/Foo.app` for `/Applications/Foo.app/Contents/MacOS/Foo`.
+    /// Only an executable directly in `Contents/MacOS` counts: a helper deeper
+    /// inside the bundle is its own process with its own row.
+    static func appBundle(ofMainExecutable path: String) -> String? {
+        let marker = ".app/Contents/MacOS/"
+        guard let range = path.range(of: marker, options: .backwards) else { return nil }
+        let executable = path[range.upperBound...]
+        guard !executable.isEmpty, !executable.contains("/") else { return nil }
+        let bundle = String(path[..<range.lowerBound]) + ".app"
+        return bundle.hasPrefix("/") && bundle.count > "/.app".count ? bundle : nil
+    }
+
     /// Can the helper be asked about this endpoint at all. Validation itself
     /// still happens in the helper; this only avoids offering a control that
     /// could not possibly succeed.
@@ -664,17 +704,35 @@ struct MonitorDecisionIndex: Sendable {
 
     var count: Int { byTarget.count }
 
+    /// The rule that speaks for this row. Besides a rule that names the row's
+    /// exact process, that is a rule naming only its bundle id, only its
+    /// path, or the app bundle the process is the main executable of: what
+    /// the Rules editor stores when an app is chosen there (#226). The
+    /// matcher applies those to this process too, so the row shows them and
+    /// Allow, Deny and Remove change that rule instead of adding another.
+    /// A rule that also covers other processes, such as one for a whole app
+    /// bundle seen from one of its helpers, stays unclaimed like a wildcard:
+    /// changing it from one row would decide for rows the user did not touch.
     func rule(for target: MonitorRuleTarget?) -> Rule? {
         guard let target else { return nil }
-        return byTarget[target]
+        var best: Rule?
+        for candidate in target.ownerIdentities {
+            guard let rule = byTarget[candidate] else { continue }
+            if let current = best, !wins(rule, over: current) { continue }
+            best = rule
+        }
+        return best
     }
 
-    /// Same order the matcher uses: priority first, then the newer rule, with
-    /// the id as a last tiebreak so the display never flickers between two
-    /// equally ranked rules.
+    /// Same order the matcher uses: priority first, then the always layer
+    /// before the profile (the helper hands the extension the always rules
+    /// first), then the newer rule, with the id as a last tiebreak so the
+    /// display never flickers between two equally ranked rules.
     private func wins(_ candidate: Rule, over current: Rule) -> Bool {
         if candidate.enabled != current.enabled { return candidate.enabled }
         if candidate.priority != current.priority { return candidate.priority > current.priority }
+        let candidateAlways = candidate.profile == Profile.alwaysName
+        if candidateAlways != (current.profile == Profile.alwaysName) { return candidateAlways }
         if candidate.createdAt != current.createdAt { return candidate.createdAt > current.createdAt }
         return candidate.id.uuidString > current.id.uuidString
     }
