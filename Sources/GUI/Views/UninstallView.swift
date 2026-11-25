@@ -358,7 +358,7 @@ struct UninstallFlowSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .helperLeft(let reason):
             failureHeadline(String(localized: "FreeSnitch couldn’t remove its background helper"))
-            Text("Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings, turn FreeSnitch off under “Allow in the Background”, then empty the Trash.")
+            Text("Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and empty the Trash.")
                 .fixedSize(horizontal: false, vertical: true)
             if systemExtension.uninstallState == .pendingReboot {
                 Text("macOS finishes removing the network filter the next time you restart.")
@@ -377,7 +377,7 @@ struct UninstallFlowSheet: View {
                     note: flow.phase == .removingFilter && systemExtension.uninstallNeedsApproval
                         ? String(localized: "macOS is asking you to allow this in System Settings.") : nil)
             stepRow(String(localized: "Removing the helper and firewall rules"),
-                    done: flow.phase == .movingToTrash,
+                    done: flow.phase == .movingToTrash && flow.helperProblem == nil,
                     active: flow.phase == .removingHelper,
                     note: flow.phase == .removingHelper ? String(localized: "Enter your password when macOS asks.") : nil)
             stepRow(String(localized: "Moving FreeSnitch to the Trash"), done: false,
@@ -432,7 +432,7 @@ struct UninstallFlowSheet: View {
                 Text("Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish.")
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Its background helper is also still there. Open Login Items & Extensions in System Settings, turn FreeSnitch off under “Allow in the Background”, then drag FreeSnitch from Applications to the Trash.")
+                Text("Its background helper is also still there. Open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and drag it from Applications to the Trash.")
                     .fixedSize(horizontal: false, vertical: true)
             }
             reasonText(reason)

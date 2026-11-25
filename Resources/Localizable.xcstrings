@@ -5643,12 +5643,12 @@
         }
       }
     },
-    "Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings, turn FreeSnitch off under “Allow in the Background”, then empty the Trash." : {
+    "Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and empty the Trash." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Всё остальное удалено, и FreeSnitch ничего не фильтрует. Чтобы удалить службу, откройте «Объекты входа и расширения» в Системных настройках, выключите FreeSnitch в разделе «Разрешить в фоне», затем очистите Корзину."
+            "value" : "Всё остальное удалено, и FreeSnitch ничего не фильтрует. Чтобы удалить службу, откройте «Объекты входа и расширения» в Системных настройках и выключите FreeSnitch в разделе «Разрешить в фоне». Затем закройте FreeSnitch и очистите Корзину."
           }
         }
       }
@@ -6794,12 +6794,12 @@
         }
       }
     },
-    "Its background helper is also still there. Open Login Items & Extensions in System Settings, turn FreeSnitch off under “Allow in the Background”, then drag FreeSnitch from Applications to the Trash." : {
+    "Its background helper is also still there. Open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and drag it from Applications to the Trash." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Его фоновая служба тоже осталась. Откройте «Объекты входа и расширения» в Системных настройках, выключите FreeSnitch в разделе «Разрешить в фоне», затем перетащите FreeSnitch из папки «Программы» в Корзину."
+            "value" : "Его фоновая служба тоже осталась. Откройте «Объекты входа и расширения» в Системных настройках и выключите FreeSnitch в разделе «Разрешить в фоне». Затем закройте FreeSnitch и перетащите его из папки «Программы» в Корзину."
           }
         }
       }
