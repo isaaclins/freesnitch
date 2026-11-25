@@ -581,7 +581,7 @@ struct ProfilesSettingsView: View {
     private var gatewayLabel: String {
         guard let mac = profileClient.snapshot?.currentGatewayMAC else {
             if let problem = profileClient.snapshot?.gatewayReadProblem {
-                return String(localized: "No gateway MAC visible on this network: \(problem)")
+                return String(localized: "No gateway MAC visible on this network: \(problem.message)")
             }
             return String(localized: "No gateway MAC visible on this network")
         }
