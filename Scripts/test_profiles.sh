@@ -618,6 +618,34 @@ expect(retryCoordinator.pendingNetworkSwitch == nil, "a manual switch left the o
 _ = retryWatcher.refresh()
 expect(retryCoordinator.activeProfileName == Profile.defaultName, "a retry overrode the profile the user picked")
 pass("a profile the user picks while a switch is pending is not overridden by the retry")
+
+// A pick that arrives while an automatic switch has read its binding but not
+// applied it yet: switches take turns, so the pick lands last and stands.
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+let pickDone = DispatchSemaphore(value: 0)
+let pickStarted = DispatchSemaphore(value: 0)
+retryCoordinator.networkSwitchHookForTesting = {
+    retryCoordinator.networkSwitchHookForTesting = nil
+    DispatchQueue.global().async {
+        pickStarted.signal()
+        _ = try? retryCoordinator.activate(profileName: "lockdown", reason: .user)
+        pickDone.signal()
+    }
+    pickStarted.wait()
+    // The pick must wait for this switch, not finish inside it.
+    expect(pickDone.wait(timeout: .now() + 0.2) == .timedOut, "a manual pick ran in the middle of a network switch")
+}
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+pickDone.wait()
+expect(retryCoordinator.activeProfileName == "lockdown",
+       "an automatic switch landed after the user's pick: \(retryCoordinator.activeProfileName)")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "lockdown", "a later poll overrode the user's pick")
+pass("a manual pick made during an automatic switch is applied after it and stands")
 retryCoordinator.stopWatchingNetworks()
 
 // A gateway that cannot be read says why instead of looking like no gateway.

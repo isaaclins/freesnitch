@@ -47,6 +47,14 @@ public final class ProfileCoordinator: @unchecked Sendable {
     /// Advanced by every switch the user makes, so a network switch that was
     /// already failing when they did cannot report itself as pending after.
     private var userChoiceGeneration = 0
+    /// Serializes every switch, automatic and manual, so an automatic one
+    /// that has already read its binding can't land after a pick the user
+    /// made meanwhile. Recursive because a network switch calls `activate`.
+    private let switchSerial = NSRecursiveLock()
+    /// Runs inside a network switch, after its binding was read and before it
+    /// is applied. Only the profiles harness sets it, to replay a manual pick
+    /// arriving at exactly that moment.
+    var networkSwitchHookForTesting: (() -> Void)?
 
     public init(store: RuleStore, watcher: GatewayMACWatcher = GatewayMACWatcher()) {
         self.store = store
@@ -140,6 +148,8 @@ public final class ProfileCoordinator: @unchecked Sendable {
 
     @discardableResult
     public func activate(profileName: String, reason: SwitchReason = .user) throws -> SwitchResult {
+        switchSerial.lock()
+        defer { switchSerial.unlock() }
         let previousName = store.activeProfileName()
         let previousPolicy = try? store.profilePolicy(named: previousName)
         let activated = try store.setActiveProfile(name: profileName)
@@ -252,6 +262,14 @@ public final class ProfileCoordinator: @unchecked Sendable {
         lock.lock()
         let generation = userChoiceGeneration
         lock.unlock()
+        switchSerial.lock()
+        defer { switchSerial.unlock() }
+        lock.lock()
+        let userChoseBeforeThisStarted = userChoiceGeneration != generation
+        lock.unlock()
+        // The user picked a profile between this change arriving and getting
+        // its turn: their pick stands, as it would after any other switch.
+        if userChoseBeforeThisStarted { return true }
         var boundProfile: String?
         do {
             let result = try applyNetworkChange(rawMAC, boundProfile: &boundProfile)
@@ -321,6 +339,7 @@ public final class ProfileCoordinator: @unchecked Sendable {
         lock.unlock()
         guard let mac, let binding = try store.lookUpNetworkBinding(forGatewayMAC: mac) else { return nil }
         boundProfile = binding.profileName
+        networkSwitchHookForTesting?()
         guard binding.profileName != store.activeProfileName() else { return nil }
         return try activate(profileName: binding.profileName, reason: .network)
     }
