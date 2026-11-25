@@ -227,10 +227,13 @@ final class WindowManager {
     // MARK: - Connection alerts
 
     private func observeAlerts() {
+        // An answer whose rule was not saved keeps the window open too, so a
+        // failed save is said where the answer was given (#246).
         alertCancellable = state.$pendingAlerts
+            .combineLatest(state.$unsavedRememberedAnswers)
             .receive(on: RunLoop.main)
-            .sink { [weak self] alerts in
-                self?.syncAlertWindow(hasAlert: !alerts.isEmpty)
+            .sink { [weak self] alerts, unsaved in
+                self?.syncAlertWindow(hasAlert: !alerts.isEmpty || !unsaved.isEmpty)
             }
     }
 

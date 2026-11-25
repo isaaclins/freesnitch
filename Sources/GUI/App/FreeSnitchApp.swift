@@ -254,6 +254,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case "alert": self.seedDemoAlert()
                 // An address macOS reported without a port, as for ping (#223).
                 case "alert-noport": self.seedDemoAlert(port: 0)
+                // A remembered answer the helper did not save (#246), on its
+                // own and on top of the next question.
+                case "alert-unsaved": self.seedDemoUnsavedAnswer()
+                case "alert-unsaved-next":
+                    self.seedDemoUnsavedAnswer()
+                    self.seedDemoAlert()
                 default: break
                 }
             }
@@ -285,6 +291,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A chatty app reconnects while it waits, so the demo also shows the
         // count those repeats leave on the question (#245).
         state.pendingAlerts = [AppState.PendingAlert(connection: connection, repeatsAllowed: 2) { _, _ in }]
+    }
+
+    private func seedDemoUnsavedAnswer() {
+        let rule = Rule(processBundleId: "com.tinyspeck.slackmacgap",
+                        processPath: "/Applications/Slack.app",
+                        processName: "Slack",
+                        remoteHost: "edgeapi.slack.com",
+                        action: .deny,
+                        scope: .domain,
+                        priority: 100)
+        state.unsavedRememberedAnswers.record(UnsavedRememberedAnswer(
+            processName: "Slack",
+            destination: "edgeapi.slack.com",
+            allow: false,
+            rule: rule,
+            reason: String(localized: "The FreeSnitch helper is not connected.")))
     }
 
     private func seedDemoState() {

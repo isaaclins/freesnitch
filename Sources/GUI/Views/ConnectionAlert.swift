@@ -106,6 +106,13 @@ struct ConnectionAlertView: View {
     /// reachable by Escape.
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // An earlier answer that could not be remembered is said here,
+            // where it was given, even while the next question is waiting
+            // (#246). Compact, and without keyboard shortcuts, so Return and
+            // Escape still answer the question below it.
+            if let unsaved = state.unsavedRememberedAnswers.current {
+                UnsavedRememberedAnswerNotice(answer: unsaved, compact: true)
+            }
             HStack(alignment: .center, spacing: 14) {
                 // 128pt, a full app icon. This panel interrupts you to ask one
                 // question, and the single most important word in it is which
@@ -250,6 +257,111 @@ struct ConnectionAlertView: View {
     }
 }
 
+/// A remembered answer whose rule the helper did not save (#246): what was
+/// answered, that it held for this connection only, the helper's reason, and
+/// the two ways out. Shown on its own in the alert window, or as a strip on top
+/// of the next question.
+struct UnsavedRememberedAnswerNotice: View {
+    @EnvironmentObject var state: AppState
+    let answer: UnsavedRememberedAnswer
+    let compact: Bool
+
+    private var app: String {
+        answer.processName.isEmpty
+            ? String(localized: "Unknown", comment: "Shown in place of an app whose name is not known")
+            : answer.processName
+    }
+
+    private var destination: String {
+        answer.destination.isEmpty ? String(localized: "this destination") : answer.destination
+    }
+
+    /// Whole sentences per answer, so a translation never glues a verb in.
+    private var summary: String {
+        answer.allow
+            ? String(localized: "\(app) was allowed to reach \(destination) this time, but the rule was not saved. The next connection like it is not covered by a rule.")
+            : String(localized: "\(app) was blocked from reaching \(destination) this time, but the rule was not saved. The next connection like it is not covered by a rule.")
+    }
+
+    private var others: String? {
+        let more = state.unsavedRememberedAnswers.items.count - 1
+        guard more > 0 else { return nil }
+        return String(localized: "\(more) more answers were not saved either.")
+    }
+
+    var body: some View {
+        if compact { strip } else { card }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.yellow)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Your answer was not remembered")
+                        .font(.title3.weight(.semibold))
+                    Text(summary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(answer.reason)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let others {
+                        Text(others)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                Button("Dismiss") { state.dismissUnsavedRememberedAnswer(id: answer.id) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Try Again") { state.retryUnsavedRememberedAnswer(id: answer.id) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private var strip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your last answer was not remembered")
+                        .font(.callout.weight(.semibold))
+                    Text(summary)
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(answer.reason)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+            }
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Dismiss") { state.dismissUnsavedRememberedAnswer(id: answer.id) }
+                Button("Try Again") { state.retryUnsavedRememberedAnswer(id: answer.id) }
+            }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
 struct AlertOverlayContainer: View {
     @EnvironmentObject var state: AppState
     var body: some View {
@@ -282,6 +394,11 @@ struct AlertWindowContent: View {
         Group {
             if let alert = state.pendingAlerts.first {
                 ConnectionAlertView(alert: alert).environmentObject(state)
+            } else if let unsaved = state.unsavedRememberedAnswers.current {
+                // The question has closed but its rule was not saved: the
+                // window stays to say so instead of closing like a success.
+                UnsavedRememberedAnswerNotice(answer: unsaved, compact: false)
+                    .environmentObject(state)
             } else {
                 Color.clear.frame(width: 440, height: 1)
             }
