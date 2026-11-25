@@ -134,7 +134,9 @@ final class InsightsStore: @unchecked Sendable {
     /// Drops the oldest history until the rows fit in three quarters of the
     /// ceiling. Nothing runs while they fit in nine tenths, unless `force`.
     /// Oldest goes first, whatever table it is in: a day's raw events go
-    /// before that day's rollup, which keeps the day's totals. The DNS names
+    /// before that day's rollup, which keeps the day's totals. The one
+    /// exception is the batch just written: it is kept even past older
+    /// rollups, so a store that had to trim still records (#579). The DNS names
     /// learned before the cut go with the raw events they explained. Signing
     /// teams and settings are never trimmed: they are one small row per app,
     /// and a team dropped here would let another team's process claim an
