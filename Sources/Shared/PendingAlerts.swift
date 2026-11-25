@@ -136,6 +136,39 @@ public struct PendingAlertRemember: Codable, Sendable, Equatable {
     }
 }
 
+/// When each question the app is showing stops being answerable (#225).
+///
+/// The extension lets an unanswered flow through after its own ask timeout. A
+/// question still on screen after that offers a Deny that can no longer stop
+/// anything and holds up every question queued behind it, so the app closes
+/// each question once its window here has passed, with the fail-open allow.
+/// The window is the registry's `maxLifetime`, which ends before the flow
+/// budget, so the app's reply is the one the flow actually gets.
+public struct PendingAlertDeadlines: Sendable {
+    private var deadlines: [UUID: Date] = [:]
+
+    public init() {}
+
+    public var count: Int { deadlines.count }
+
+    /// Starts the window of a question the app has just put up.
+    public mutating func start(_ id: UUID, at now: Date) {
+        deadlines[id] = now.addingTimeInterval(PendingAlertLimits.maxLifetime)
+    }
+
+    /// Ends the window of a question that was answered or closed.
+    public mutating func end(_ id: UUID) {
+        deadlines[id] = nil
+    }
+
+    /// The questions whose window has passed, oldest deadline first.
+    public func due(at now: Date) -> [UUID] {
+        deadlines.filter { $0.value <= now }
+            .sorted { $0.value < $1.value }
+            .map(\.key)
+    }
+}
+
 /// Parses `5m`, `90s`, `2h`, `7d`, and `forever`. Kept here rather than in the
 /// CLI parser so the helper validates the same bounds it is told about.
 public enum PendingAlertDuration {

@@ -664,23 +664,28 @@ final class AppState: ObservableObject {
         scheduleAlertTimeout(alert.id)
     }
 
-    /// Closes a question nobody answered before its flow runs out of time.
-    ///
-    /// The extension lets an unanswered flow through after its own ask timeout,
-    /// so a question still on screen after that offers a Deny that can no
-    /// longer stop anything and holds up every question queued behind it
-    /// (#225). This answers it with the same fail-open allow a little before
-    /// that timeout, at the moment the command line registry stops accepting
-    /// answers for it too, so the app's reply is the one the flow gets and the
-    /// next question comes up while it can still be answered.
+    /// When each question on screen stops being answerable (#225).
+    private var alertDeadlines = PendingAlertDeadlines()
+
+    /// Closes a question nobody answered before its flow runs out of time, so
+    /// the window never offers a Deny that can no longer stop anything and the
+    /// next question comes up while it can still be answered (#225).
     private func scheduleAlertTimeout(_ id: UUID) {
+        alertDeadlines.start(id, at: Date())
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(PendingAlertLimits.maxLifetime))
-            self?.expireUnansweredAlert(id: id)
+            self?.expireDueAlerts(now: Date())
+        }
+    }
+
+    private func expireDueAlerts(now: Date) {
+        for id in alertDeadlines.due(at: now) {
+            expireUnansweredAlert(id: id)
         }
     }
 
     private func expireUnansweredAlert(id: UUID) {
+        alertDeadlines.end(id)
         guard let alert = pendingAlerts.first(where: { $0.id == id }) else { return }
         // Nobody decided, so the flow is recorded as not filtered, like every
         // other connection this app lets through without an answer (#447).
@@ -776,6 +781,7 @@ final class AppState: ObservableObject {
     private func finishAlert(id: UUID, allow: Bool, remember: Bool) -> Bool {
         guard let index = pendingAlerts.firstIndex(where: { $0.id == id }) else { return false }
         let alert = pendingAlerts.remove(at: index)
+        alertDeadlines.end(id)
         alert.reply(allow, remember)
         // The repeats it let through while it waited, as one line in the same
         // log as the other silent allows: one per question rather than one per
