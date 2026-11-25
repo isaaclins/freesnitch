@@ -376,8 +376,10 @@ public final class IPGeoCache: @unchecked Sendable {
     }
 
     /// One streamed download. Every delegate callback runs on the session's
-    /// serial delegate queue, so the state below is never touched concurrently
-    /// until `done` has been signalled.
+    /// serial delegate queue, and the caller reads the state only after `done`
+    /// has been signalled, so it is never touched concurrently. The one
+    /// exception is `abandoned`, which the caller sets on a timeout and which
+    /// is guarded by its own lock.
     final class BoundedDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         private let destination: URL
         private let maxBytes: Int
@@ -385,6 +387,14 @@ public final class IPGeoCache: @unchecked Sendable {
         private var written = 0
         private var failure: String?
         private let done = DispatchSemaphore(value: 0)
+        private let abandonLock = NSLock()
+        private var abandonedFlag = false
+        /// Set when the caller gave up, so a response that arrives late never
+        /// recreates a file the caller has already removed.
+        private var abandoned: Bool {
+            get { abandonLock.lock(); defer { abandonLock.unlock() }; return abandonedFlag }
+            set { abandonLock.lock(); abandonedFlag = newValue; abandonLock.unlock() }
+        }
 
         private init(destination: URL, maxBytes: Int) {
             self.destination = destination
@@ -408,6 +418,7 @@ public final class IPGeoCache: @unchecked Sendable {
             // The transfer runs on its own queue and the request is capped, so
             // a stalled server cannot hold the caller forever.
             if download.done.wait(timeout: .now() + timeout) == .timedOut {
+                download.abandoned = true
                 task.cancel()
                 _ = download.done.wait(timeout: .now() + 10)
                 try? FileManager.default.removeItem(at: destination)
@@ -431,6 +442,11 @@ public final class IPGeoCache: @unchecked Sendable {
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
                         didReceive response: URLResponse,
                         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+            if abandoned {
+                fail("timed out")
+                completionHandler(.cancel)
+                return
+            }
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 fail("HTTP status \((response as? HTTPURLResponse)?.statusCode ?? 0)")
                 completionHandler(.cancel)
