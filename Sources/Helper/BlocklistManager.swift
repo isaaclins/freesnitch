@@ -71,10 +71,9 @@ final class BlocklistManager: @unchecked Sendable {
             return elapsed < 0 || elapsed >= BlocklistManager.scheduledWait(afterFailuresInARow: failuresInARow)
         }
 
-        mutating func finish(at now: Date, succeeded: Bool) {
+        mutating func record(at now: Date, succeeded: Bool) {
             last = now
             failuresInARow = succeeded ? 0 : failuresInARow + 1
-            running = false
         }
     }
     private var domainSchedule = DownloadSchedule()
@@ -131,8 +130,13 @@ final class BlocklistManager: @unchecked Sendable {
         let (domainDone, feedsDone) = await (domainResult, feedsRead)
         let finished = clock()
         queue.sync {
-            if domains { domainSchedule.finish(at: finished, succeeded: domainDone?.isComplete ?? true) }
-            if feeds { feedSchedule.finish(at: finished, succeeded: feedsDone) }
+            if domains {
+                domainSchedule.record(at: finished, succeeded: domainDone?.isComplete ?? true)
+                domainSchedule.running = false
+            }
+            // A feed download records its outcome when it is published, see
+            // applyIPEntries; one a toggle overtook leaves that to the newer one.
+            if feeds { feedSchedule.running = false }
         }
         return (domainDone, feedsDone)
     }
@@ -376,7 +380,7 @@ final class BlocklistManager: @unchecked Sendable {
         var feeds = snapshot
         let enabled = feeds.enumerated().filter { $0.element.enabled }
         guard !enabled.isEmpty else {
-            return (applyIPEntries([], to: feeds, generation: generation), true)
+            return (applyIPEntries([], to: feeds, generation: generation, allRead: true), true)
         }
 
         var allRead = true
@@ -424,7 +428,7 @@ final class BlocklistManager: @unchecked Sendable {
             }
         }
 
-        return (applyIPEntries(entries, to: feeds, generation: generation), allRead)
+        return (applyIPEntries(entries, to: feeds, generation: generation, allRead: allRead), allRead)
     }
 
     /// A toggle, then a refresh, returning once a refresh that started after
@@ -474,8 +478,9 @@ final class BlocklistManager: @unchecked Sendable {
     }
 
     @discardableResult
-    private func applyIPEntries(_ entries: [String], to feeds: [IPBlocklistFeed], generation: Int) -> Bool {
+    private func applyIPEntries(_ entries: [String], to feeds: [IPBlocklistFeed], generation: Int, allRead: Bool) -> Bool {
         let set = IPBlocklistSet(entries: entries)
+        let finished = clock()
         ipPublishLock.lock()
         defer { ipPublishLock.unlock() }
         let published: [IPBlocklistFeed]? = queue.sync {
@@ -485,6 +490,11 @@ final class BlocklistManager: @unchecked Sendable {
             ipSet = set
             ipFeedsCache = feeds
             ipPublishedGeneration = generation
+            // The schedule follows the result that is enforced, whichever
+            // path downloaded it: a toggle's download that failed brings the
+            // retry forward to an hour, and an older clean download dropped
+            // here cannot push it back out to a day (#491).
+            feedSchedule.record(at: finished, succeeded: allRead)
             return feeds
         }
         guard let published else { return false }

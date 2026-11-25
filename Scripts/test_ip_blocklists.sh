@@ -1176,6 +1176,68 @@ struct IPBlocklistHarness {
         scheduled.domainListFetcher = { _ in ["ads.example"] }
         serve("203.0.113.0/24\n")
 
+        // The feed schedule follows the result that is enforced, whichever
+        // path downloaded it.
+        final class DownloadGate: @unchecked Sendable {
+            private let lock = NSLock()
+            private var waiter: CheckedContinuation<Void, Never>?
+            private var isOpen = false
+            private(set) var entered = false
+            func wait() async {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    lock.lock()
+                    entered = true
+                    if isOpen { lock.unlock(); c.resume() } else { waiter = c; lock.unlock() }
+                }
+            }
+            func open() {
+                lock.lock(); isOpen = true; let w = waiter; waiter = nil; lock.unlock()
+                w?.resume()
+            }
+            var hasEntered: Bool { lock.lock(); defer { lock.unlock() }; return entered }
+        }
+        let secondFeedID = IPBlocklistCatalog.defaults[1].id.uuidString
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "a clean daily download must run before the toggle cases")
+
+        // A feed switched on during an outage: its own download fails, so
+        // the retry comes after an hour, not at the old daily deadline.
+        serve(nil)
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: true),
+                      "switching a feed on must succeed even while its download fails")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "a toggle's failed download must bring the feed retry forward to an hour")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "that retry must restore the feeds")
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: false),
+                      "switching the second feed off again must succeed")
+
+        // An older clean download that finishes after a newer failed one is
+        // dropped, and it must not push the retry back out to a day.
+        advance(BlocklistManager.scheduledRefreshInterval)
+        let olderGate = DownloadGate()
+        let calls = DownloadCounter()
+        scheduled.ipFeedFetcher = { _ in
+            calls.bump()
+            if calls.count == 1 { await olderGate.wait(); return .body("203.0.113.0/24\n") }
+            return .failure("simulated network unreachable")
+        }
+        async let older = scheduled.refreshIfDue()
+        for _ in 0..<10_000 where !olderGate.hasEntered { await Task.yield() }
+        checks.expect(olderGate.hasEntered, "the older download must be in flight before the toggle")
+        _ = await scheduled.setIPFeedEnabledAndRefresh(idString: feedID, enabled: true)
+        olderGate.open()
+        _ = await older
+        checks.expect(scheduled.currentIPBlocklist().isEmpty,
+                      "the newer failed download is what is enforced, not the older clean one")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "an older clean download that was dropped must not push the retry out to a day")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "the retry must restore the feed")
+
         // A clock set back is treated as due, not as "wait until it catches up".
         advance(-7 * BlocklistManager.scheduledRefreshInterval)
         checks.expect(await scheduled.refreshIfDue(), "a clock set back must not stall the schedule")
