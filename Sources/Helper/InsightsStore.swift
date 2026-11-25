@@ -14,10 +14,14 @@ final class InsightsStore: @unchecked Sendable {
     private let fileManager = FileManager.default
     private let expectedUID: uid_t
     let path: String
+    /// The hard ceiling on the database file (#228). Injected only by tests.
+    let maxDatabaseBytes: Int64
 
-    init(path: String = InsightsStore.defaultPath, expectedUID: uid_t = 0) throws {
+    init(path: String = InsightsStore.defaultPath, expectedUID: uid_t = 0,
+         maxDatabaseBytes: Int64 = InsightsLimits.maxDatabaseBytes) throws {
         self.path = URL(fileURLWithPath: path).standardizedFileURL.path
         self.expectedUID = expectedUID
+        self.maxDatabaseBytes = maxDatabaseBytes
         try open()
     }
 
@@ -42,18 +46,12 @@ final class InsightsStore: @unchecked Sendable {
         try queue.sync {
             guard try settingLocked("recording_enabled") != "0" else { return }
             for observation in observations { try observation.validate() }
-            try executeLocked("BEGIN IMMEDIATE;")
-            do {
+            try writeWithinBudgetLocked {
                 for observation in observations {
-                    try insertLocked(observation)
-                    try rollupLocked(observation)
-                    try recordSigningTeamLocked(observation)
+                    try self.insertLocked(observation)
+                    try self.rollupLocked(observation)
+                    try self.recordSigningTeamLocked(observation)
                 }
-                try executeLocked("COMMIT;")
-                try verifyDatabaseFilesLocked()
-            } catch {
-                _ = try? executeLocked("ROLLBACK;")
-                throw error
             }
         }
     }
@@ -63,16 +61,153 @@ final class InsightsStore: @unchecked Sendable {
         try queue.sync {
             guard try settingLocked("recording_enabled") != "0" else { return }
             for mapping in mappings { try mapping.validate() }
+            try writeWithinBudgetLocked {
+                for mapping in mappings { try self.upsertDNSMappingLocked(mapping) }
+            }
+        }
+    }
+
+    /// Runs one write transaction and keeps the file under its ceiling (#228).
+    /// If SQLite refuses the write because the file is full, the oldest
+    /// history is dropped and the batch is tried once more. After a write that
+    /// lands, the oldest history is trimmed once the file is nine tenths full,
+    /// so the ceiling is normally never reached at all.
+    private func writeWithinBudgetLocked(_ body: () throws -> Void) throws {
+        var retried = false
+        while true {
             try executeLocked("BEGIN IMMEDIATE;")
             do {
-                for mapping in mappings { try upsertDNSMappingLocked(mapping) }
+                try body()
                 try executeLocked("COMMIT;")
-                try verifyDatabaseFilesLocked()
+            } catch {
+                let full = db.map { sqlite3_errcode($0) & 0xff } == SQLITE_FULL
+                _ = try? executeLocked("ROLLBACK;")
+                guard full, !retried else { throw error }
+                retried = true
+                try trimToBudgetLocked(force: true)
+                continue
+            }
+            break
+        }
+        try trimToBudgetLocked(force: false)
+        try verifyDatabaseFilesLocked()
+    }
+
+    /// Bytes the stored rows take, without the free pages SQLite keeps for reuse.
+    private func usedBytesLocked() throws -> Int64 {
+        let pageSize = try pragmaIntLocked("page_size")
+        let pages = try pragmaIntLocked("page_count")
+        let free = try pragmaIntLocked("freelist_count")
+        return (pages - free) * pageSize
+    }
+
+    private func pragmaIntLocked(_ name: String) throws -> Int64 {
+        var value: Int64 = 0
+        try queryLocked("PRAGMA \(name);") { statement in value = self.columnInt64(statement, index: 0) }
+        return value
+    }
+
+    /// Caps the file at `maxDatabaseBytes`. SQLite never lowers this below
+    /// the file's current size, so a store that grew larger before #228
+    /// keeps its size until maintenance compacts it, and never grows further.
+    private func applyPageLimitLocked() throws {
+        let pageSize = max(try pragmaIntLocked("page_size"), 512)
+        try execLocked("PRAGMA max_page_count=\(max(maxDatabaseBytes / pageSize, 1));")
+        try execLocked("PRAGMA journal_size_limit=\(InsightsLimits.maxJournalBytes);")
+    }
+
+    /// Drops the oldest history until the rows fit in three quarters of the
+    /// ceiling. Nothing runs while they fit in nine tenths, unless `force`.
+    /// Oldest goes first, whatever table it is in: a day's raw events go
+    /// before that day's rollup, which keeps the day's totals. The DNS names
+    /// learned before the cut go with the raw events they explained. Signing
+    /// teams and settings are never trimmed: they are one small row per app,
+    /// and a team dropped here would let another team's process claim an
+    /// app's history. Losing history can only make a contact look new, which
+    /// asks again; it never allows anything.
+    ///
+    /// Each transaction drops at most `trimSlicesPerTransaction` slices, so
+    /// the write-ahead log stays small even when a store that grew huge before
+    /// #228 is cut down on a nearly full disk. The recording path runs one
+    /// such transaction per batch; maintenance (`untilDone`) keeps going.
+    private func trimToBudgetLocked(force: Bool, untilDone: Bool = false) throws {
+        let start = maxDatabaseBytes / 10 * 9
+        let target = maxDatabaseBytes / 4 * 3
+        var used = try usedBytesLocked()
+        guard force || used > start else { return }
+        // A forced pass drops at least one slice: the write that was just
+        // refused needs room, wherever the free pages stand.
+        var mustTrim = force
+        var progressed = true
+        repeat {
+            try executeLocked("BEGIN IMMEDIATE;")
+            do {
+                progressed = false
+                for _ in 0..<Self.trimSlicesPerTransaction {
+                    guard mustTrim || used > target, try trimOldestLocked() else { break }
+                    mustTrim = false
+                    progressed = true
+                    used = try usedBytesLocked()
+                }
+                try executeLocked("COMMIT;")
             } catch {
                 _ = try? executeLocked("ROLLBACK;")
                 throw error
             }
+        } while untilDone && progressed && used > target
+    }
+
+    private static let trimSlicesPerTransaction = 64
+
+    /// Deletes the oldest slice of history. Returns false when nothing is left.
+    private func trimOldestLocked() throws -> Bool {
+        var oldestRaw: Double?
+        try queryLocked("SELECT MIN(observed_at) FROM flow_observations;") { statement in
+            if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestRaw = sqlite3_column_double(statement, 0) }
         }
+        var oldestDay: String?
+        try queryLocked("""
+            SELECT MIN(day) FROM (SELECT MIN(utc_day) AS day FROM daily_rollups
+                                  UNION ALL SELECT MIN(utc_day) FROM versioned_rollups);
+            """) { statement in oldestDay = self.columnText(statement, index: 0) }
+
+        if let oldestRaw,
+           oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestRaw)) <= $0 }) ?? true {
+            // A slice of the oldest raw events. Everything at the cut's
+            // timestamp goes too, so each pass makes progress.
+            var cut = oldestRaw
+            try queryLocked("SELECT observed_at FROM flow_observations ORDER BY observed_at LIMIT 1 OFFSET ?;",
+                            bind: { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows - 1) }) { statement in
+                cut = sqlite3_column_double(statement, 0)
+            }
+            for table in ["flow_observations", "dns_mappings"] {
+                try executeLocked("DELETE FROM \(table) WHERE observed_at <= ?;") { statement in
+                    try self.bindDouble(statement, index: 1, value: cut)
+                }
+            }
+            return true
+        }
+        if let oldestDay {
+            for table in ["daily_rollups", "versioned_rollups"] {
+                try executeLocked("DELETE FROM \(table) WHERE utc_day <= ?;") { statement in
+                    try self.bindText(statement, index: 1, value: oldestDay)
+                }
+            }
+            return true
+        }
+        // Only DNS answers are left.
+        try executeLocked("""
+            DELETE FROM dns_mappings WHERE rowid IN
+                (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
+            """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
+        return db.map { sqlite3_changes($0) > 0 } ?? false
+    }
+
+    /// Rows dropped per pass: a few thousand at the real ceiling (about a
+    /// megabyte), fewer for a small one, so a pass never takes far more than
+    /// the room that was needed.
+    private var trimSliceRows: Int32 {
+        Int32(min(max(maxDatabaseBytes / (64 * 1024), 16), 2_000))
     }
 
     /// Deletes expired raw evidence and old UTC-day rollups. Call this from a
@@ -110,12 +245,27 @@ final class InsightsStore: @unchecked Sendable {
                       AND app_identity NOT IN (SELECT \(Self.appIdentitySQL) FROM flow_observations);
                     """)
                 try executeLocked("COMMIT;")
-                try verifyDatabaseFilesLocked()
             } catch {
                 _ = try? executeLocked("ROLLBACK;")
                 throw error
             }
+            try trimToBudgetLocked(force: false, untilDone: true)
+            try compactIfOversizedLocked()
+            try verifyDatabaseFilesLocked()
         }
+    }
+
+    /// A store that grew past the ceiling before #228 keeps its size, because
+    /// SQLite only reuses freed pages and never shrinks the file by itself.
+    /// Once trimming has made the rows fit, rewrite the file at its real size
+    /// and put the ceiling back at `maxDatabaseBytes`. This runs from
+    /// maintenance only, never on the recording path.
+    private func compactIfOversizedLocked() throws {
+        let fileBytes = try pragmaIntLocked("page_count") * pragmaIntLocked("page_size")
+        guard fileBytes > maxDatabaseBytes else { return }
+        try execLocked("VACUUM;")
+        try execLocked("PRAGMA wal_checkpoint(TRUNCATE);")
+        try applyPageLimitLocked()
     }
 
     /// Close first so SQLite releases WAL/SHM handles, remove all three files,
@@ -173,6 +323,7 @@ final class InsightsStore: @unchecked Sendable {
             if !existingFiles.contains(path) { try secureNewPath(path, mode: 0o600) }
             try execLocked("PRAGMA journal_mode=WAL;")
             try execLocked("PRAGMA synchronous=NORMAL;")
+            try applyPageLimitLocked()
             try execLocked("""
                 CREATE TABLE IF NOT EXISTS flow_observations (
                     id TEXT PRIMARY KEY,

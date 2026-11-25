@@ -2,7 +2,8 @@
 # Deterministic Insights verification, compiled from the real helper and shared
 # sources. Seeds a store in a temporary directory and asserts the read side:
 # per-app grouping, co-occurrence counts, DNS-name joins, unresolved addresses,
-# domain-scoped app-specific proposals, retention at 14 days and 1 year, a purge
+# domain-scoped app-specific proposals, retention at 14 days and 1 year, the
+# size ceiling on disk (#228), a purge
 # that removes the write-ahead log too, and query bounds.
 set -euo pipefail
 
@@ -654,6 +655,114 @@ struct InsightsHarness {
                                                  from: Data(#"{"allowed":-3,"blocked":2,"unfiltered":-1}"#.utf8))
         equal(negative, InsightsDecisionCounts(allowed: 0, blocked: 2, unfiltered: 0),
               "negative counts from the wire read as zero")
+
+        // MARK: the database has a ceiling on disk (#228)
+        // A flood of connections to distinct destinations, all inside the
+        // retention windows, against a small ceiling: the file must stay
+        // under it, every batch must still be accepted, and what goes is the
+        // oldest history, never the newest.
+        func fileBytes(_ file: String) -> Int64 {
+            var info = stat()
+            return lstat(file, &info) == 0 ? Int64(info.st_size) : 0
+        }
+        func count(_ file: String, _ sql: String) -> Int {
+            var handle: OpaquePointer?
+            var statement: OpaquePointer?
+            defer { sqlite3_finalize(statement); sqlite3_close(handle) }
+            guard sqlite3_open_v2(file, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+                  sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK,
+                  sqlite3_step(statement) == SQLITE_ROW else { return -1 }
+            return Int(sqlite3_column_int64(statement, 0))
+        }
+        func floodBatch(_ index: Int, at date: Date, rows: Int = InsightsLimits.maxBatchCount) -> [FlowObservation] {
+            (0..<rows).map { row in
+                observation(app: "Flood", bundle: "com.example.flood", path: "/Applications/Flood.app",
+                            host: "host-\(index)-\(row).flood.example", ip: "198.51.\(index % 250).\(row % 250)",
+                            at: date, decision: .allowed)
+            }
+        }
+        let cappedSupport = root.appendingPathComponent("Capped Support")
+        try! FileManager.default.createDirectory(at: cappedSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let cappedPath = cappedSupport.appendingPathComponent("Insights/insights.sqlite").path
+        let ceiling: Int64 = 2 * 1024 * 1024
+        do {
+            let capped = try InsightsStore(path: cappedPath, expectedUID: getuid(), maxDatabaseBytes: ceiling)
+            var refused = 0
+            var largest: Int64 = 0
+            let batches = 120
+            for index in 0..<batches {
+                // Oldest first, spread across the 14-day raw window.
+                let at = now.addingTimeInterval(-13 * day + Double(index) * (13 * day / Double(batches)))
+                do { try capped.record(floodBatch(index, at: at)) } catch { refused += 1 }
+                largest = max(largest, fileBytes(cappedPath))
+            }
+            equal(refused, 0, "every batch is accepted while the ceiling is reached again and again")
+            check(largest <= ceiling, "the database file never grows past its ceiling (largest \(largest) of \(ceiling) bytes)")
+            let overview = try capped.report(for: InsightsQuery(kind: .overview, since: now.addingTimeInterval(-day))).overview
+            check((overview?.rawObservationCount ?? 0) < batches * InsightsLimits.maxBatchCount,
+                  "the oldest raw events were dropped to stay under the ceiling")
+            check((overview?.rawObservationCount ?? 0) > 0, "recent raw events are kept")
+            equal(count(cappedPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-\(batches - 1)-%';"),
+                  InsightsLimits.maxBatchCount, "the newest batch is still in the history")
+            check(overview.map { ($0.oldestObservation ?? now) > now.addingTimeInterval(-13 * day + 60) } ?? false,
+                  "the oldest events are the ones that went")
+            try capped.prune(now: now)
+            check(fileBytes(cappedPath) <= ceiling, "maintenance leaves the file under its ceiling")
+        } catch {
+            check(false, "a store with a ceiling keeps recording: \(error)")
+        }
+        // Batches bigger than a tenth of the ceiling reach the hard limit
+        // inside a write; the store makes room and the batch still lands.
+        let tightSupport = root.appendingPathComponent("Tight Support")
+        try! FileManager.default.createDirectory(at: tightSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let tightPath = tightSupport.appendingPathComponent("Insights/insights.sqlite").path
+        let tightCeiling: Int64 = 1024 * 1024
+        do {
+            let tight = try InsightsStore(path: tightPath, expectedUID: getuid(), maxDatabaseBytes: tightCeiling)
+            var refused = 0
+            for index in 0..<40 {
+                do { try tight.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 39) * 8 * 3600))) }
+                catch { refused += 1 }
+            }
+            equal(refused, 0, "a write that hits the hard limit makes room and lands")
+            check(fileBytes(tightPath) <= tightCeiling, "the hard limit holds the file at its ceiling")
+            equal(count(tightPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-39-%';"),
+                  InsightsLimits.maxBatchCount, "the batch that hit the hard limit was recorded in full")
+        } catch {
+            check(false, "a store at its hard limit keeps recording: \(error)")
+        }
+        // A store that grew past the ceiling before it existed stops growing
+        // at once and is compacted under it by the next maintenance run.
+        let grownSupport = root.appendingPathComponent("Grown Support")
+        try! FileManager.default.createDirectory(at: grownSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let grownPath = grownSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            do {
+                let unbounded = try InsightsStore(path: grownPath, expectedUID: getuid())
+                for index in 0..<40 {
+                    try unbounded.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 40) * 3600)))
+                }
+            }
+            let grown = fileBytes(grownPath)
+            let grownCeiling: Int64 = 1024 * 1024
+            check(grown > grownCeiling, "the old store is larger than the new ceiling (\(grown) bytes)")
+            let reopened = try InsightsStore(path: grownPath, expectedUID: getuid(), maxDatabaseBytes: grownCeiling)
+            for index in 40..<60 {
+                try reopened.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 60) * 60)))
+            }
+            check(fileBytes(grownPath) <= grown, "the oversized store does not grow any further")
+            try reopened.prune(now: now)
+            check(fileBytes(grownPath) <= grownCeiling,
+                  "maintenance compacts the oversized store under its ceiling (\(fileBytes(grownPath)) bytes)")
+            try reopened.record(floodBatch(60, at: now))
+            equal(count(grownPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-60-%';"),
+                  InsightsLimits.maxBatchCount, "the compacted store keeps recording")
+        } catch {
+            check(false, "an oversized store opens, records and compacts: \(error)")
+        }
 
         // MARK: a store from before #447 gains the columns and keeps its rows unknown
         let legacySupport = root.appendingPathComponent("Legacy Support")
