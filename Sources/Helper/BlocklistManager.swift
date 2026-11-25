@@ -271,6 +271,17 @@ final class BlocklistManager: @unchecked Sendable {
         return entries
     }
 
+    /// Ceilings for one domain list download. A list larger than either is
+    /// a failed download: its saved entries keep blocking, nothing new is
+    /// kept from it, and the refresh names it as failed (#208). Both sit
+    /// several times above the largest lists people use (HaGeZi Threat
+    /// Intelligence in hosts format: about 27 MB and 1.03 million names in
+    /// November 2026), so they only stop a broken or hostile source.
+    enum DomainListLimits {
+        static let maxBytes = 128 * 1024 * 1024
+        static let maxEntries = 3_000_000
+    }
+
     /// `nil` means the download failed; an empty set means the source really
     /// carried no entries.
     private func fetch(_ list: BlocklistInfo) async -> Set<String>? {
@@ -282,24 +293,51 @@ final class BlocklistManager: @unchecked Sendable {
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue("FreeSnitch/0.1", forHTTPHeaderField: "User-Agent")
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            // `data(for:)` holds the whole response before anything here can
+            // look at its size, so a huge or endless body would grow the
+            // helper without bound. Reading the bytes lets the download stop
+            // at the ceiling instead (#208).
+            let (bytes, response) = try await URLSession.shared.bytes(for: req)
             // Without this check an error page parses into junk "domains":
             // GitHub's 404 body alone yields an entry called "Found".
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 PSLog.error(PSLog.dns, "blocklist \(list.name) returned HTTP \(http.statusCode)")
                 return nil
             }
+            let limit = DomainListLimits.maxBytes
+            if response.expectedContentLength > Int64(limit) {
+                PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(limit) byte limit; not loaded")
+                return nil
+            }
+            var data = Data()
+            data.reserveCapacity(min(limit, 1 * 1024 * 1024))
+            for try await byte in bytes {
+                guard data.count < limit else {
+                    PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(limit) byte limit; not loaded")
+                    return nil
+                }
+                data.append(byte)
+            }
             guard let text = String(data: data, encoding: .utf8) else { return nil }
-            return parse(text)
+            data = Data()
+            guard let names = BlocklistManager.parse(text, maxEntries: DomainListLimits.maxEntries) else {
+                PSLog.error(PSLog.dns,
+                            "blocklist \(list.name) has more than \(DomainListLimits.maxEntries) names; not loaded")
+                return nil
+            }
+            return names
         } catch {
             PSLog.error(PSLog.dns, "blocklist fetch failed: \(list.name) - \(error)")
             return nil
         }
     }
 
-    private func parse(_ text: String) -> Set<String> {
+    /// The names on a list, or `nil` once more than `maxEntries` distinct
+    /// names turn up: a list cut at the ceiling would silently block only
+    /// part of what it says, so it is refused whole.
+    static func parse(_ text: String, maxEntries: Int) -> Set<String>? {
         var out: Set<String> = []
-        out.reserveCapacity(50_000)
+        out.reserveCapacity(min(50_000, maxEntries))
         for raw in text.split(separator: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
             // "[Adblock Plus]" heads every Adblock-syntax list.
@@ -319,6 +357,7 @@ final class BlocklistManager: @unchecked Sendable {
             if host == "localhost" || host == "0.0.0.0" || host == "broadcasthost" { continue }
             if host.isEmpty { continue }
             out.insert(host)
+            if out.count > maxEntries { return nil }
         }
         return out
     }
