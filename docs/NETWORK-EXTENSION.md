@@ -1,11 +1,14 @@
-# Why the shipping build has no Network System Extension
+# The Network System Extension and the two build flavours
 
 `Sources/NetExt` implements a per-process content filter (`NEFilterDataProvider`).
-It is not part of the DMG users download, and `project.yml` deliberately omits
-these two entitlements from the app:
+It ships in the release DMG: releases are built from `project-netext.yml` by
+`Scripts/release.sh`, which embeds `io.isaaclins.freesnitch.netext.systemextension`
+and grants the app the two restricted entitlements:
 
 - `com.apple.developer.networking.networkextension` (`content-filter-provider-systemextension`)
 - `com.apple.developer.system-extension.install`
+
+`project.yml`, the default contributor build, deliberately omits them.
 
 ## The reason
 
@@ -16,20 +19,25 @@ app that requests them without the profile and the failure mode is not a
 degraded feature - the process can be refused before `main()` runs, so the app
 just never opens.
 
+This is why the contributor build (`project.yml`) leaves out these entitlements.
+The release build requires the Developer ID profiles that grant them.
+
 Two concrete consequences we hit while building v0.2.0:
 
-- `xcodebuild` refuses outright: *"FreeSnitch requires a provisioning profile
-  with the Network Extensions and System Extension features."* There is no way
+- `xcodebuild` refused outright: *"FreeSnitch requires a provisioning profile
+  with the Network Extensions and System Extension features."* There was no way
   to produce a signed release with those entitlements and no profile.
 - The 0.1.0 users in issue #5 already had an app that looked dead. Shipping a
-  build that AMFI can kill at launch would have been a strictly worse bug.
+  build that AMFI could kill at launch would have been a strictly worse bug.
 
-So v0.2.0 ships as a **monitor**: menu bar, traffic monitor, rules UI, and the
-privileged helper. No system extension, no extension approval prompt.
+v0.2.0 shipped as a monitor only: menu bar, traffic monitor, rules UI, and the
+privileged helper. No system extension, no extension approval prompt. Current
+releases are the firewall flavour built from `project-netext.yml`; the monitor
+flavour (`project.yml`) is now only the contributor build.
 
-## Building the firewall flavour
+## Building the release firewall flavour
 
-Everything for the extension is still in the tree.
+`Scripts/release.sh` generates the release project with:
 
 ```bash
 xcodegen generate --spec project-netext.yml
@@ -37,8 +45,8 @@ xcodegen generate --spec project-netext.yml
 
 That spec re-adds the entitlements and embeds
 `io.isaaclins.freesnitch.netext.systemextension`, whose filename matches the
-system extension bundle identifier as required by sysextd.
-Before it can be distributed you need, from the Apple Developer portal,
+system extension bundle identifier as required by sysextd. To build and sign
+it, as `Scripts/release.sh` does, you need, from the Apple Developer portal,
 under Team ID `BHAF4L4726`:
 
 1. The **Network Extensions** capability enabled on App ID `io.isaaclins.freesnitch`
@@ -55,3 +63,15 @@ under Team ID `BHAF4L4726`:
 Verify before releasing such a build: launch it on a clean machine from
 `/Applications`, confirm the extension activates, and confirm nothing appears in
 the log as an AMFI/taskgated rejection.
+
+## Contributor build
+
+Generated from `project.yml`:
+
+```bash
+xcodegen generate --spec project.yml
+```
+
+It has no extension and no per-process filtering. Use it to work on everything
+except the firewall feature. It builds without provisioning profiles. It is not
+what users receive; releases are built from `project-netext.yml`.

@@ -1,10 +1,12 @@
-# Per-process firewall flavour: the monitor app PLUS the Network System
-# Extension. This build requires two Apple-issued Developer ID provisioning
+# Per-process firewall flavour, the build that releases ship: the monitor
+# app PLUS the Network System Extension. Scripts/release.sh builds the DMG
+# from this spec. It requires two Apple-issued Developer ID provisioning
 # profiles (one for io.isaaclins.freesnitch with the Network Extensions and
 # System Extension capabilities, one for io.isaaclins.freesnitch.netext with
 # Network Extensions) embedded in the respective bundles. Without them macOS
-# refuses to launch the app, which is why the shipping DMG is built from
-# project.yml instead. See docs/NETWORK-EXTENSION.md.
+# refuses to launch the app, which is why the default contributor build,
+# project.yml, leaves out the extension and its entitlements.
+# See docs/NETWORK-EXTENSION.md.
 #
 #   xcodegen generate --spec project-netext.yml
 #
