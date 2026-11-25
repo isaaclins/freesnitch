@@ -13,6 +13,7 @@ public enum ProfileProblem: Codable, Hashable, Sendable {
     case profileNotFound(String)
     case databaseBusy
     case databaseError(String)
+    case rulesUnreadable(String)
     /// Anything without a code of its own. The detail is shown as is.
     case other(String)
 
@@ -27,6 +28,10 @@ public enum ProfileProblem: Codable, Hashable, Sendable {
         }
         if case RuleStore.StoreError.profileNotFound(let name)? = error as? RuleStore.StoreError {
             self = .profileNotFound(name)
+            return
+        }
+        if case RuleStore.StoreError.policyReadFailed(let detail)? = error as? RuleStore.StoreError {
+            self = .rulesUnreadable(Self.clause(detail))
             return
         }
         let nsError = error as NSError
@@ -65,6 +70,8 @@ public enum ProfileProblem: Codable, Hashable, Sendable {
             return String(localized: "the rule database is busy")
         case .databaseError(let detail):
             return String(localized: "the rule database reported an error (\(detail))")
+        case .rulesUnreadable(let detail):
+            return String(localized: "the saved rules could not be read (\(detail))")
         case .other(let detail):
             return detail
         }

@@ -12187,6 +12187,16 @@
         }
       }
     },
+    "the saved rules could not be read (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не удалось прочитать сохранённые правила (%@)"
+          }
+        }
+      }
+    },
     "The saved rules could not be read: %@" : {
       "localizations" : {
         "ru" : {

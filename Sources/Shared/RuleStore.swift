@@ -432,6 +432,14 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
+    /// SQLite's last error on this connection, with its result code, so a
+    /// caller can tell a busy database from a broken one (#520).
+    private func sqliteErrorLocked(code: Int) -> NSError {
+        NSError(domain: Self.errorDomain, code: code,
+                userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)),
+                           Self.sqliteResultCodeKey: Int(sqlite3_errcode(db))])
+    }
+
     private func execute(_ sql: String, _ bind: (OpaquePointer?) -> Void) throws {
         try queue.sync { try executeLocked(sql, bind) }
     }
@@ -439,18 +447,13 @@ public final class RuleStore: @unchecked Sendable {
     private func executeLocked(_ sql: String, _ bind: (OpaquePointer?) -> Void) throws {
         var stmt: OpaquePointer?
         defer { if stmt != nil { sqlite3_finalize(stmt) } }
-        let prepared = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
-        guard prepared == SQLITE_OK else {
-            throw NSError(domain: Self.errorDomain, code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)),
-                                     Self.sqliteResultCodeKey: Int(prepared)])
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw sqliteErrorLocked(code: 3)
         }
         bind(stmt)
         let rc = sqlite3_step(stmt)
         if rc != SQLITE_DONE && rc != SQLITE_ROW {
-            throw NSError(domain: Self.errorDomain, code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)),
-                                     Self.sqliteResultCodeKey: Int(rc)])
+            throw sqliteErrorLocked(code: 4)
         }
     }
 
@@ -1035,8 +1038,7 @@ public final class RuleStore: @unchecked Sendable {
         defer { if stmt != nil { sqlite3_finalize(stmt) } }
         let sql = "INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "RuleStore", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+            throw sqliteErrorLocked(code: 3)
         }
         let id = blocklistID.uuidString
         for domain in domains {
@@ -1045,8 +1047,7 @@ public final class RuleStore: @unchecked Sendable {
             sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
             let rc = sqlite3_step(stmt)
             if rc != SQLITE_DONE && rc != SQLITE_ROW {
-                throw NSError(domain: "RuleStore", code: 4,
-                              userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+                throw sqliteErrorLocked(code: 4)
             }
         }
     }
@@ -1851,15 +1852,13 @@ public final class RuleStore: @unchecked Sendable {
         var stmt: OpaquePointer?
         defer { if stmt != nil { sqlite3_finalize(stmt) } }
         guard sqlite3_prepare_v2(db, "SELECT id,profile_name,gateway_mac,created_at FROM profile_network_bindings WHERE gateway_mac=? LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "RuleStore", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+            throw sqliteErrorLocked(code: 2)
         }
         sqlite3_bind_text(stmt, 1, gatewayMAC, -1, SQLITE_TRANSIENT)
         let step = sqlite3_step(stmt)
         if step == SQLITE_DONE { return nil }
         guard step == SQLITE_ROW else {
-            throw NSError(domain: "RuleStore", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+            throw sqliteErrorLocked(code: 2)
         }
         return ProfileNetworkBinding(
             id: UUID(uuidString: text(stmt, 0)) ?? UUID(),

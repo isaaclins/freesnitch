@@ -581,6 +581,14 @@ expect(retryCoordinator.pendingNetworkSwitch?.reason == .databaseBusy,
        "a write blocked by another connection was not sent as a busy database: \(String(describing: retryCoordinator.pendingNetworkSwitch?.reason))")
 expect(ProfileProblem(RuleStore.StoreError.profileNotFound("public-wifi")) == .profileNotFound("public-wifi"),
        "a missing profile was not sent as its own code")
+// A rule read that fails mid-switch has its own code, and every SQLite error
+// from the store carries its result code, so busy is told by code, not text.
+expect(ProfileProblem(RuleStore.StoreError.policyReadFailed("disk I/O error.")) == .rulesUnreadable("disk I/O error"),
+       "a failed rule read was not sent as its own code")
+expect(ProfileProblem(NSError(domain: RuleStore.errorDomain, code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "database is locked",
+                                         RuleStore.sqliteResultCodeKey: 517])) == .databaseBusy,
+       "an extended SQLITE_BUSY code was not read as a busy database")
 let sentenceReason = ProfileProblem(NSError(domain: "Elsewhere", code: 1,
                                             userInfo: [NSLocalizedDescriptionKey: "Something went wrong."]))
 expect(sentenceReason == .other("Something went wrong"),
