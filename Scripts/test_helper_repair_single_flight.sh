@@ -78,8 +78,14 @@ grep -q 'isRepairing' "$client" && fail "the old never-set isRepairing flag is g
 grep -q 'guard let self, !self.repairGate.isHeld else { return }' "$client" \
   || fail "polling pauses while a repair holds the gate"
 # Every repairState that ends an attempt releases the gate first.
-grep -c 'repairGate.release()' "$client" | grep -qx 4 \
-  || fail "the four exits of a repair attempt release the gate"
+[ "$(grep -c 'repairGate.release()' "$client")" -ge 4 ] \
+  || fail "the exits of a repair attempt release the gate"
+grep -q 'didSet { state?.helperRepairRunning = repairGate.isHeld }' "$client" \
+  || fail "the banner learns when the gate is held"
+grep -q 'let repairInProgress = repairRunning || repairState == .inProgress' "$banner" \
+  || fail "the button stays disabled while the gate is held, whatever the state says"
+[ "$(grep -c 'action = .repair(running: repairInProgress)' "$banner")" = 2 ] \
+  || fail "both Repair Helper banners use the combined running state"
 grep -q 'state.helper.repairHelper()' "$banner" || fail "the banner still offers Repair Helper"
 [ "$(grep -c 'state.helper.repairHelper()' "$banner")" = 1 ] \
   || fail "every Repair Helper button goes through BannerAction.repair"

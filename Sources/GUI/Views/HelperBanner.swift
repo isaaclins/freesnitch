@@ -26,7 +26,8 @@ struct HelperBanner: View {
                                      connected: state.helperConnected,
                                      needsRepair: state.helperNeedsRepair,
                                      versionState: state.helperVersionState,
-                                     repairState: state.helperRepairState) {
+                                     repairState: state.helperRepairState,
+                                     repairRunning: state.helperRepairRunning) {
                 banner(info)
             }
             if let info = BannerInfo(extensionStatus: systemExtension.status,
@@ -72,8 +73,8 @@ private struct BannerAction {
 
     /// Repair Helper, or a disabled "Repairing…" while an attempt is still
     /// running, so a second click can't start another one (#216).
-    static func repair(_ repairState: HelperRepairState) -> BannerAction {
-        if repairState == .inProgress {
+    static func repair(running: Bool) -> BannerAction {
+        if running {
             return BannerAction(title: String(localized: "Repairing…"), isEnabled: false) { _, _ in }
         }
         return BannerAction(title: String(localized: "Repair Helper")) { state, _ in state.helper.repairHelper() }
@@ -108,7 +109,11 @@ private struct BannerInfo {
           connected: Bool,
           needsRepair: Bool,
           versionState: HelperVersionState,
-          repairState: HelperRepairState) {
+          repairState: HelperRepairState,
+          repairRunning: Bool) {
+        // An attempt that holds the gate counts as running even when an
+        // automatic update message replaced its state meanwhile (#216).
+        let repairInProgress = repairRunning || repairState == .inProgress
         // A copy outside Applications shows the Move banner first: Repair
         // can't work from there (its location guard refuses), moving can (#412).
         if case .mismatch(let helperVersion, let appVersion) = versionState, installState != .wrongLocation {
@@ -123,7 +128,7 @@ private struct BannerInfo {
             case .idle:
                 detail = String(localized: "The helper process is running v\(helperVersion), but the installed app is v\(appVersion), so helper-side fixes are not active and traffic may not be filtered. Repair Helper restarts it for you; macOS will ask you to authorize it.")
             }
-            action = .repair(repairState)
+            action = .repair(running: repairInProgress)
             return
         }
 
@@ -134,12 +139,12 @@ private struct BannerInfo {
             icon = "wrench.and.screwdriver.fill"
             tint = Color.orange
             title = String(localized: "The helper needs repairing")
-            if repairState == .inProgress {
+            if repairInProgress {
                 detail = String(localized: "It is approved but not responding. FreeSnitch is restarting it; authorize the restart when macOS asks. The enabled service is never unregistered and your approval stays intact.")
             } else {
                 detail = String(localized: "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact.")
             }
-            action = .repair(repairState)
+            action = .repair(running: repairInProgress)
         case .enabled:
             icon = "hourglass"
             tint = Color.orange

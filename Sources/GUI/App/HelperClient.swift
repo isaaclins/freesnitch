@@ -104,7 +104,9 @@ final class HelperClient: NSObject, ObservableObject {
 
     private var connection: NSXPCConnection?
     private var pollTimer: Timer?
-    private var repairGate = HelperRepairGate()
+    private var repairGate = HelperRepairGate() {
+        didSet { state?.helperRepairRunning = repairGate.isHeld }
+    }
     private var repairConfirmationID = UUID()
     private var enabledButSilentSince: Date?
     /// One automatic restart attempt per app launch. A helper that comes back
