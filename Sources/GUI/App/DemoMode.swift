@@ -27,6 +27,13 @@ enum DemoMode {
         return servers.isEmpty ? nil : servers
     }
 
+    /// `FREESNITCH_DEMO_REFUSE_LIST_EDITS=1`: taking a name off a list is
+    /// refused the way the helper refuses it once the list holds as many hand
+    /// edits as it can keep, for reviewing what the Rules page says (#221).
+    static var refusesListEdits: Bool {
+        isOn && ProcessInfo.processInfo.environment["FREESNITCH_DEMO_REFUSE_LIST_EDITS"] == "1"
+    }
+
     /// `FREESNITCH_DEMO_SETTINGS_PANE=dns` opens Settings on that pane.
     static var settingsPane: String? {
         isOn ? ProcessInfo.processInfo.environment["FREESNITCH_DEMO_SETTINGS_PANE"] : nil

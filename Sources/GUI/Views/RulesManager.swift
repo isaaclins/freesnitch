@@ -679,9 +679,7 @@ struct RulesManagerView: View {
             BlocklistEntriesView(blocklist: blocklist,
                                  searchText: searchText,
                                  onAllow: { domain in allowDespiteBlocklist(domain, from: blocklist) },
-                                 onRemoveEntry: { domain in
-                                     profileClient.removeBlocklistEntries(blocklist.id, domains: [domain])
-                                 },
+                                 onRemoveEntry: { domain in removeEntry(domain, from: blocklist) },
                                  onCountChange: { count in openBlocklistMatchCount = count })
         } else {
             VStack(spacing: 0) {
@@ -691,6 +689,18 @@ struct RulesManagerView: View {
                     rulesTable
                 }
             }
+        }
+    }
+
+    /// Taking a name off a list can be refused by the helper, for example once
+    /// the list holds as many hand edits as it can keep. The refusal is shown
+    /// here, where the name was removed, and says the name is still on the
+    /// list (#221).
+    private func removeEntry(_ domain: String, from blocklist: BlocklistInfo) {
+        profileClient.removeBlocklistEntries(blocklist.id, domains: [domain]) { ok, message in
+            guard !ok else { return }
+            showError(String(localized: "Could not remove \(domain) from \(blocklist.name)"),
+                      message ?? String(localized: "The helper rejected the change and did not say why."))
         }
     }
 
