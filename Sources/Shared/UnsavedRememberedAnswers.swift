@@ -73,6 +73,16 @@ public struct UnsavedRememberedAnswers: Sendable {
         return answer
     }
 
+    /// Gives the buttons back when a retry has had no answer for too long,
+    /// so a helper that takes the call and never replies cannot leave a
+    /// notice nobody can close. A late answer still clears or replaces it.
+    public mutating func endRetry(id: UUID) {
+        retrying.remove(id)
+    }
+
+    /// How long a retry may wait for the helper before the buttons come back.
+    public static let retryPatience: TimeInterval = 15
+
     /// Removes one: dismissed, or its rule was saved. Nil when it is already
     /// gone.
     @discardableResult

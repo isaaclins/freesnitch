@@ -86,6 +86,9 @@ check(list.items.count == 1, "the same rule failing again replaces its entry")
 check(!list.isRetrying(before) && list.current.map { !list.isRetrying($0.id) } == true,
       "a refused retry can be tried again")
 
+check(list.current?.reason == "rule saved but the firewall refused it: test",
+      "and shows the latest reason")
+
 // With several waiting, a refused retry keeps its place on screen.
 var two = UnsavedRememberedAnswers()
 var other = rule
@@ -97,8 +100,15 @@ _ = two.beginRetry(id: onScreen)
 two.record(answer(rule, "still down"))
 check(two.current?.rule.id == rule.id && two.current?.reason == "still down",
       "a refused retry stays the notice on screen, with the new reason")
-check(list.current?.reason == "rule saved but the firewall refused it: test",
-      "and shows the latest reason")
+
+// A helper that never answers a retry: the buttons come back.
+var stuck = UnsavedRememberedAnswers()
+stuck.record(answer(rule, "down"))
+let hung = stuck.current!.id
+_ = stuck.beginRetry(id: hung)
+stuck.endRetry(id: hung)
+check(!stuck.isRetrying(hung) && stuck.current?.id == hung,
+      "a retry nobody answers gives the buttons back and keeps the notice")
 
 // A helper that is down refuses every save: bounded, oldest dropped, shown in
 // the order they were answered.

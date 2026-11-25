@@ -891,6 +891,10 @@ final class AppState: ObservableObject {
     func retryUnsavedRememberedAnswer(id: UUID) {
         guard let answer = unsavedRememberedAnswers.beginRetry(id: id) else { return }
         saveRememberedRule(answer)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(UnsavedRememberedAnswers.retryPatience))
+            self?.unsavedRememberedAnswers.endRetry(id: id)
+        }
     }
 
     func dismissUnsavedRememberedAnswer(id: UUID) {
