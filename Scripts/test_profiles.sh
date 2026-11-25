@@ -619,6 +619,26 @@ _ = retryWatcher.refresh()
 expect(retryCoordinator.activeProfileName == Profile.defaultName, "a retry overrode the profile the user picked")
 pass("a profile the user picks while a switch is pending is not overridden by the retry")
 
+// A retry the watcher had already lined up before that pick, arriving only
+// now: the late delivery for the same gateway must not undo the pick.
+expect(retryCoordinator.applyObservedGatewayMAC("12:34:56:78:9a:bd"), "a late delivery for a settled gateway was not taken as handled")
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "a late retry overrode the profile the user picked")
+expect(retryCoordinator.pendingNetworkSwitch == nil, "a late retry brought the pending switch back")
+// A different network right after a pick is a real change and still switches.
+expect(retryCoordinator.applyObservedGatewayMAC("12:34:56:78:9a:bc"), "a new bound gateway after a pick was not handled")
+expect(retryCoordinator.activeProfileName == "public-wifi", "a new network right after a manual pick did not switch")
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+// Through the watcher: it reaches the gateway the user just picked on (no
+// switch), then moves on to the next network (switch).
+retryProvider.set("12:34:56:78:9a:bc")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == Profile.defaultName, "the gateway the user picked on switched anyway")
+retryProvider.set("12:34:56:78:9a:bd")
+_ = retryWatcher.refresh()
+expect(retryCoordinator.activeProfileName == "office", "the watcher did not switch for the next real gateway change")
+_ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)
+pass("a late retry for the gateway the user picked on does nothing, a new gateway still switches")
+
 // A pick that arrives while an automatic switch has read its binding but not
 // applied it yet: switches take turns, so the pick lands last and stands.
 _ = try retryCoordinator.activate(profileName: Profile.defaultName, reason: .user)

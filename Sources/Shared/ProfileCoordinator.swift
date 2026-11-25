@@ -44,9 +44,12 @@ public final class ProfileCoordinator: @unchecked Sendable {
     private var pendingHandler: ((PendingNetworkSwitch?) -> Void)?
     private var lastObservedGatewayMAC: String?
     private var pending: PendingNetworkSwitch?
-    /// Advanced by every switch the user makes, so a network switch that was
-    /// already failing when they did cannot report itself as pending after.
-    private var userChoiceGeneration = 0
+    /// The gateway whose automatic switch is settled: applied, not needed, or
+    /// decided by the user picking a profile while on it. A delivery for this
+    /// gateway, however late it arrives, does nothing; a different gateway
+    /// still switches. Only read and written while `switchSerial` is held.
+    /// Nil until the first gateway is handled; "" stands for no gateway.
+    private var settledGatewayMAC: String?
     /// Serializes every switch, automatic and manual, so an automatic one
     /// that has already read its binding can't land after a pick the user
     /// made meanwhile. Recursive because a network switch calls `activate`.
@@ -181,12 +184,13 @@ public final class ProfileCoordinator: @unchecked Sendable {
                                   policy: policy,
                                   previousProfile: changed ? previousName : nil)
         handler?(result)
-        // The user's own choice outranks a retry of an automatic switch that
-        // had failed: retrying it later would undo what they just picked.
+        // The user's own choice settles the network they are on: a retry for
+        // it, even one already on its way, must not undo what they picked.
         if reason != .network {
             lock.lock()
-            userChoiceGeneration += 1
+            let current = lastObservedGatewayMAC ?? ""
             lock.unlock()
+            settledGatewayMAC = current
         }
         if reason != .network, let pendingSwitch = pendingNetworkSwitch {
             watcher.dropUndeliveredChange(for: pendingSwitch.gatewayMAC)
@@ -259,20 +263,18 @@ public final class ProfileCoordinator: @unchecked Sendable {
     @discardableResult
     public func applyObservedGatewayMAC(_ rawMAC: String?) -> Bool {
         let mac = rawMAC.flatMap(GatewayMAC.normalized) ?? ""
-        lock.lock()
-        let generation = userChoiceGeneration
-        lock.unlock()
         switchSerial.lock()
         defer { switchSerial.unlock() }
-        lock.lock()
-        let userChoseBeforeThisStarted = userChoiceGeneration != generation
-        lock.unlock()
-        // The user picked a profile between this change arriving and getting
-        // its turn: their pick stands, as it would after any other switch.
-        if userChoseBeforeThisStarted { return true }
+        // Already settled for this gateway (applied, or the user picked a
+        // profile on it): a late or repeated delivery changes nothing.
+        if settledGatewayMAC == mac { return true }
+        // Another gateway: whatever was settled belonged to the last one, and
+        // coming back to it later is a real change again.
+        settledGatewayMAC = nil
         var boundProfile: String?
         do {
             let result = try applyNetworkChange(rawMAC, boundProfile: &boundProfile)
+            settledGatewayMAC = mac
             if pendingNetworkSwitch != nil {
                 if let result {
                     PSLog.notice(PSLog.helper,
@@ -283,13 +285,6 @@ public final class ProfileCoordinator: @unchecked Sendable {
             return true
         } catch {
             lock.lock()
-            // The user picked a profile while this attempt ran: their choice
-            // stands, nothing is pending, and nothing should retry. Checked
-            // and recorded under one lock, so a pick cannot slip in between.
-            if userChoiceGeneration != generation {
-                lock.unlock()
-                return true
-            }
             // When even the binding could not be read, the profile is the
             // one this gateway was already owed, if it is known.
             let known = pending?.gatewayMAC == mac ? pending?.profileName : nil
