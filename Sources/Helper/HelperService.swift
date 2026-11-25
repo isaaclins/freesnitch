@@ -291,7 +291,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             self?.broadcast { c in
                 let payload: [String: Any] = ["domain": domain, "reason": reason ?? ""]
                 if let data = try? JSONSerialization.data(withJSONObject: payload) {
-                    c.notifyLog(level: "block", message: (reason ?? "").isEmpty ? "blocked: \(domain)" : "blocked: \(domain) (\(reason ?? ""))")
+                    c.notifyLog(level: "block", message: Self.blockLogMessage(domain: domain, reason: reason))
                     _ = data
                 }
             }
@@ -621,6 +621,14 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 c.notifyAlert(connectionJSON: data) { allow, _ in answer(allow) }
             }
         }
+    }
+
+    /// The app log line for a refused lookup. A lookup refused for the CNAME
+    /// target its answer led to (#283) names that target, since the name
+    /// looked up is not the one any list or rule mentions.
+    static func blockLogMessage(domain: String, reason: String?) -> String {
+        guard let reason, reason.hasPrefix("via ") else { return "blocked: \(domain)" }
+        return "blocked: \(domain) (\(reason))"
     }
 
     static func restoredDoHUpstream(from storedValue: String?) -> String {

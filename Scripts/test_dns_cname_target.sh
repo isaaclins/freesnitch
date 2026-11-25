@@ -129,8 +129,11 @@ struct Verify {
         proxy.onBlock = { d, r in blockLock.lock(); blocks.append((d, r)); blockLock.unlock() }
         proxy.dohURL = "http://127.0.0.1:\(upstream.port)/dns-query"
         do { try proxy.start(port: port) } catch { print("cname: FAIL: start: \(error)"); exit(1) }
-        Thread.sleep(forTimeInterval: 0.5)
-        guard proxy.running else { print("cname: FAIL: the proxy did not start on \(port)"); exit(1) }
+        // `running` is set before the bind finishes, so wait for the proxy
+        // to answer a real query instead of guessing how long that takes.
+        var answered = false
+        for _ in 0..<20 where !answered { answered = ask(port, query("www.microsoft.com", id: 1)) != nil }
+        guard answered else { print("cname: FAIL: the proxy on \(port) never answered"); exit(1) }
         var id: UInt16 = 0x4000
 
         enum Outcome: Equatable { case passed, nxdomain, other(String) }
