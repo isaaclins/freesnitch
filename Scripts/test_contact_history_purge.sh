@@ -40,7 +40,9 @@ refresh_line="$(grep -n 'refreshInsightsContactSnapshot()' <<<"$body" | tail -1 
 reply_line="$(grep -n 'reply(failures.isEmpty' <<<"$body" | head -1 | cut -d: -f1)"
 [[ -n "$purge_line" && -n "$refresh_line" && -n "$reply_line" ]] || fail "purge, rebuild or reply is missing from purgeInsights"
 (( purge_line < refresh_line && refresh_line < reply_line )) || fail "the contact list is not rebuilt after the purge and before the reply"
-pass "the helper rebuilds the contact list from the emptied store before it answers"
+try_block="$(awk '/try insights.purge\(\)/{on=1} on{print} on&&/\} catch \{/{exit}' <<<"$body")"
+grep -q 'refreshInsightsContactSnapshot()' <<<"$try_block" || fail "the contact list is rebuilt even when the purge failed"
+pass "the helper rebuilds the contact list from the emptied store before it answers, and only when the purge worked"
 
 # The app forgets its copy when Delete History is pressed, and the Insights
 # window goes through that path instead of calling the helper directly.

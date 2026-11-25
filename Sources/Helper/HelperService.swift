@@ -1623,14 +1623,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             if let insights {
                 do {
                     try insights.purge()
+                    refreshInsightsContactSnapshot()
                 } catch {
+                    // The old database may still be open. Leave the list
+                    // unavailable, so alert mode asks, rather than rebuild
+                    // known destinations from history the user deleted.
                     PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
                     failures.append(error.localizedDescription)
                 }
             } else {
                 failures.append("insights store is unavailable")
             }
-            refreshInsightsContactSnapshot()
         }
         do {
             try store.purgeConnections()
