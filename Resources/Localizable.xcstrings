@@ -4745,6 +4745,16 @@
         }
       }
     },
+    "Could not export the domains: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось экспортировать домены: %@"
+          }
+        }
+      }
+    },
     "Could not export the rules" : {
       "localizations" : {
         "ru" : {
@@ -5673,6 +5683,36 @@
         }
       }
     },
+    "Export domains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспорт доменов"
+          }
+        }
+      }
+    },
+    "Export Domains as CSV…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспортировать домены в CSV…"
+          }
+        }
+      }
+    },
+    "Export Domains as JSON…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспортировать домены в JSON…"
+          }
+        }
+      }
+    },
     "Export rules" : {
       "localizations" : {
         "ru" : {
@@ -5689,6 +5729,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Экспортировать правила в документ %@, который может импортировать CLI."
+          }
+        }
+      }
+    },
+    "Export the domains each app reached in this range" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспортировать домены, к которым обращалось каждое приложение за этот период"
           }
         }
       }
@@ -8062,6 +8112,16 @@
         }
       }
     },
+    "Nothing was recorded in this range, so there is nothing to export." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "За этот период ничего не записано, экспортировать нечего."
+          }
+        }
+      }
+    },
     "OK" : {
       "localizations" : {
         "ru" : {
@@ -9751,6 +9811,26 @@
         }
       }
     },
+    "Saved the domains to %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Домены сохранены в %@."
+          }
+        }
+      }
+    },
+    "Saved the domains to %@. The range held more than one export can page through, so choose a shorter range for the rest." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Домены сохранены в %@. За этот период записей больше, чем помещается в один экспорт, поэтому для остального выберите период короче."
+          }
+        }
+      }
+    },
     "SMAppService cannot manage the helper on this macOS version." : {
       "localizations" : {
         "ru" : {
@@ -10855,6 +10935,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Служба не ответила на импорт в течение 30 секунд. Импорт мог всё же завершиться, поэтому проверьте список правил перед повторным импортом. Если ничего не изменилось, возможно, служба устаревшей версии. Выполните `%@`, затем повторите попытку."
+          }
+        }
+      }
+    },
+    "The helper did not answer the Insights query." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба не ответила на запрос Аналитики."
           }
         }
       }
