@@ -299,8 +299,12 @@ final class WindowManager {
             ? [.canJoinAllSpaces, .fullScreenAuxiliary]
             : [.moveToActiveSpace, .fullScreenAuxiliary]
         window.center()
+        // Only onto a screen that is still there: a display unplugged in the
+        // meantime would put a question nobody can see off screen.
         if let topLeft = lastAlertTopLeft, let closedAt = lastAlertClosedAt,
-           Date().timeIntervalSince(closedAt) < 30 {
+           Date().timeIntervalSince(closedAt) < 30,
+           NSScreen.screens.contains(where: { $0.visibleFrame.insetBy(dx: -1, dy: -1).contains(topLeft)
+               && $0.visibleFrame.contains(NSPoint(x: topLeft.x + 440, y: topLeft.y - 200)) }) {
             // Reopened right after closing: back where it was, and not
             // centred again once it has measured itself.
             window.setFrameTopLeftPoint(topLeft)
