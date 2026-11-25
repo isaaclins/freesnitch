@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 /// Insights, per issue #23.
 ///
@@ -48,6 +49,12 @@ struct InsightsView: View {
                            onSave: { rule in model.add(rule) },
                            onEdit: { _ in })
         }
+        .fileExporter(isPresented: $model.showingExporter,
+                      document: model.exportFile,
+                      contentType: model.exportFile?.contentType ?? .json,
+                      defaultFilename: model.exportFile?.defaultFilename ?? "freesnitch-domains") { result in
+            model.finishExport(result)
+        }
         .alert("Delete all Insights history?", isPresented: $model.confirmingPurge) {
             Button("Cancel", role: .cancel) {}
             Button("Delete History", role: .destructive) { model.purge() }
@@ -95,6 +102,28 @@ struct InsightsView: View {
                 .controlSize(.small)
                 .help("Record connection history. Rules and blocking are unaffected.")
 
+            // The domains each app reached in this range, for an inventory or a
+            // DNS filter elsewhere (#195). Every app, not just the loaded page.
+            Menu {
+                Button("Export Domains as CSV\u{2026}") { model.export(.csv) }
+                Button("Export Domains as JSON\u{2026}") { model.export(.json) }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(model.isExporting)
+            .help("Export the domains each app reached in this range")
+            .accessibilityLabel("Export domains")
+            // Every app is one more helper query, so a long range can take a
+            // moment: say it is working instead of only greying out. Beside
+            // the menu, not in its label, which macOS draws as a static image.
+            if model.isExporting {
+                ProgressView()
+                    .controlSize(.small)
+                    .help("Collecting the domains for the export")
+            }
+
             Button {
                 model.reload()
             } label: {
@@ -139,6 +168,7 @@ struct InsightsView: View {
     /// take space when there is something to say.
     @ViewBuilder private var notices: some View {
         let hasNotice = notBlockingMessage != nil || model.errorMessage != nil || model.ruleAddedMessage != nil
+            || model.exportMessage != nil
         if hasNotice {
             VStack(spacing: 8) {
                 if let message = notBlockingMessage {
@@ -149,6 +179,12 @@ struct InsightsView: View {
                 }
                 if let added = model.ruleAddedMessage {
                     NoticeCard(title: added, icon: "checkmark.circle", tint: .green)
+                }
+                if let exported = model.exportMessage {
+                    // A cut-off list is saved, but it is not the whole picture.
+                    NoticeCard(title: exported,
+                               icon: model.exportIncomplete ? "exclamationmark.triangle" : "checkmark.circle",
+                               tint: model.exportIncomplete ? .orange : .green)
                 }
             }
             .padding(.horizontal, 12)
@@ -1006,6 +1042,11 @@ final class InsightsViewModel: ObservableObject {
     @Published var ruleAddedMessage: String?
     @Published var accepted: Set<UUID> = []
     @Published var confirmingPurge = false
+    @Published var showingExporter = false
+    @Published private(set) var exportFile: InsightsExportFile?
+    @Published private(set) var isExporting = false
+    @Published var exportMessage: String?
+    @Published private(set) var exportIncomplete = false
     @Published var hasMoreApps = false
     @Published var hasMoreDestinations = false
     @Published var hasMoreUnresolved = false
@@ -1041,6 +1082,7 @@ final class InsightsViewModel: ObservableObject {
         errorMessage = nil
         acceptMessage = nil
         ruleAddedMessage = nil
+        exportMessage = nil
         if InsightsDemoData.isEnabled {
             loadDemoData()
             return
@@ -1307,6 +1349,79 @@ final class InsightsViewModel: ObservableObject {
         }
     }
 
+    // MARK: Export (#195)
+
+    /// The screen's page size: each destination row costs the helper extra
+    /// lookups, and a bigger page could run past its 10 second answer limit.
+    private static let exportPageSize = 50
+
+    func export(_ format: InsightsExportFormat) {
+        guard !isExporting else { return }
+        errorMessage = nil
+        exportMessage = nil
+        isExporting = true
+        let now = Date()
+        let since = now.addingTimeInterval(-range.seconds)
+        Task { @MainActor in
+            defer { self.isExporting = false }
+            let collected: InsightsDomainExport
+            if InsightsDemoData.isEnabled {
+                collected = InsightsDomainExport(
+                    generatedAt: now, rangeStart: since, rangeEnd: now, source: .rawEvents, complete: true,
+                    apps: InsightsDemoData.apps.map {
+                        InsightsDomainExport.App(summary: $0, destinations: InsightsDemoData.destinations(for: $0.appIdentity))
+                    })
+            } else {
+                switch await self.collectExport(since: since, until: now) {
+                case .success(let result): collected = result
+                case .failure(let failure):
+                    self.errorMessage = String(localized: "Could not export the domains: \(failure.message)")
+                    return
+                }
+            }
+            guard !collected.apps.isEmpty else {
+                self.errorMessage = String(localized: "Nothing was recorded in this range, so there is nothing to export.")
+                return
+            }
+            do {
+                let data = format == .csv ? collected.csv() : try collected.json()
+                self.exportFile = InsightsExportFile(data: data, format: format, complete: collected.complete)
+                self.showingExporter = true
+            } catch {
+                self.errorMessage = String(localized: "Could not export the domains: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func finishExport(_ result: Result<URL, Error>) {
+        guard let file = exportFile else { return }
+        exportFile = nil
+        switch result {
+        case .success(let url):
+            let name = url.lastPathComponent
+            exportIncomplete = !file.complete
+            exportMessage = file.complete
+                ? String(localized: "Saved the domains to \(name).")
+                : String(localized: "Saved the domains to \(name). This range holds too much history for one file, so some apps or destinations are missing. Choose a shorter range for a complete list.")
+        case .failure(let error):
+            // Cancelling the save panel is not a failure worth a banner.
+            if (error as? CocoaError)?.code == .userCancelled { return }
+            errorMessage = String(localized: "Could not export the domains: \(error.localizedDescription)")
+        }
+    }
+
+    /// Pages through every app in the range and every destination of each.
+    private func collectExport(since: Date, until: Date) async -> Result<InsightsDomainExport, InsightsDomainExport.Failure> {
+        guard let helper = state?.helper else {
+            return .failure(.init(message: String(localized: "The helper is not connected.")))
+        }
+        return await InsightsDomainExport.collect(since: since, until: until, pageSize: Self.exportPageSize) { request in
+            await withCheckedContinuation { continuation in
+                helper.insightsReport(request) { report, error in continuation.resume(returning: (report, error)) }
+            }
+        }
+    }
+
     // MARK: Actions
 
     func setRecording(_ enabled: Bool) {
@@ -1441,5 +1556,39 @@ final class InsightsViewModel: ObservableObject {
                 : String(localized: "Added a rule blocking \(proposal.destinationLabel) for \(proposal.appDisplayName).")
             state.refreshRules()
         }
+    }
+}
+
+
+// MARK: - Domain export file (#195)
+
+enum InsightsExportFormat {
+    case csv
+    case json
+}
+
+/// The bytes are built before the save panel opens, so the panel only writes.
+struct InsightsExportFile: FileDocument {
+    static var readableContentTypes: [UTType] { [.commaSeparatedText, .json] }
+
+    let data: Data
+    let format: InsightsExportFormat
+    let complete: Bool
+
+    var contentType: UTType { format == .csv ? .commaSeparatedText : .json }
+    var defaultFilename: String { "freesnitch-domains" }
+
+    init(data: Data, format: InsightsExportFormat, complete: Bool) {
+        self.data = data
+        self.format = format
+        self.complete = complete
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.fileReadUnsupportedScheme)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }
