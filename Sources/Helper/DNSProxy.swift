@@ -122,6 +122,13 @@ struct DNSPolicy: Sendable {
 }
 
 final class DNSProxy: @unchecked Sendable {
+    /// Held for the whole of `start()` and `stop()`. Both are called from XPC
+    /// handlers that can run on different queues at once (the app and the CLI
+    /// turning enforcement on together), and without one lock across the
+    /// `running` check, the cancel of the old listeners and the new set, two
+    /// starts could both bind and leave one set running that nothing cancels
+    /// anymore. `listeners` and `storedPort` are only touched under it.
+    private let lifecycleLock = NSLock()
     private var listeners: [NWListener] = []
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.dns", qos: .userInitiated)
     private let upstreamQueue = DispatchQueue(label: "io.isaaclins.freesnitch.dns.up")
@@ -132,7 +139,11 @@ final class DNSProxy: @unchecked Sendable {
     /// backstop only covers a handler that never calls back at all, so that no
     /// query can leave this proxy without a reply.
     private let askBackstopTimeout: TimeInterval = 65
-    private(set) var port: UInt16 = 53
+    private var storedPort: UInt16 = 53
+    var port: UInt16 {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        return storedPort
+    }
     /// Whether the proxy is fully serving 127.0.0.1. Written from XPC queues
     /// by start and stop and from `queue` by a listener that fails, so it
     /// lives behind a lock. Each start or stop begins a new generation, and
@@ -256,8 +267,9 @@ final class DNSProxy: @unchecked Sendable {
     }
 
     func start(port: UInt16 = 53) throws {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
         if running { return }   // already listening; avoid re-binding port 53
-        self.port = port
+        storedPort = port
         guard let p = NWEndpoint.Port(rawValue: port) else {
             throw NSError(domain: "DNSProxy", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad port"])
         }
@@ -296,6 +308,7 @@ final class DNSProxy: @unchecked Sendable {
     }
 
     func stop() {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
         listeners.forEach { $0.cancel() }
         listeners = []
         _ = beginGeneration(running: false)
