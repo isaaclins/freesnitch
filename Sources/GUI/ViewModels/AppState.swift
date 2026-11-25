@@ -577,6 +577,8 @@ final class AppState: ObservableObject {
         /// Repeats of a question that was already on screen, logged once when
         /// that question closes (#245).
         case sameQuestionOnScreen(Int)
+        /// A question nobody answered before its flow ran out of time (#225).
+        case unanswered
     }
 
     private func recordSilentAllow(_ c: Connection, because reason: SilentAllowReason) {
@@ -591,6 +593,8 @@ final class AppState: ObservableObject {
             message = String(localized: "Allowed \(name) to reach \(destination) without asking, because \(waiting) questions were already waiting.")
         case .sameQuestionOnScreen(let count):
             message = String(localized: "Allowed \(name) to reach \(destination) \(count) more times without asking, because the same question was already on screen.")
+        case .unanswered:
+            message = String(localized: "Allowed \(name) to reach \(destination), because nobody answered the question in time.")
         }
         appendLog(level: "warning", message: message)
     }
@@ -657,6 +661,32 @@ final class AppState: ObservableObject {
         let alert = PendingAlert(connection: c, reply: reply)
         pendingAlerts.append(alert)
         registerPendingAlertWithHelper(alert)
+        scheduleAlertTimeout(alert.id)
+    }
+
+    /// Closes a question nobody answered before its flow runs out of time.
+    ///
+    /// The extension lets an unanswered flow through after its own ask timeout,
+    /// so a question still on screen after that offers a Deny that can no
+    /// longer stop anything and holds up every question queued behind it
+    /// (#225). This answers it with the same fail-open allow a little before
+    /// that timeout, at the moment the command line registry stops accepting
+    /// answers for it too, so the app's reply is the one the flow gets and the
+    /// next question comes up while it can still be answered.
+    private func scheduleAlertTimeout(_ id: UUID) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PendingAlertLimits.maxLifetime))
+            self?.expireUnansweredAlert(id: id)
+        }
+    }
+
+    private func expireUnansweredAlert(id: UUID) {
+        guard let alert = pendingAlerts.first(where: { $0.id == id }) else { return }
+        // Nobody decided, so the flow is recorded as not filtered, like every
+        // other connection this app lets through without an answer (#447).
+        unansweredAlerts.note(alert.connection.id)
+        guard finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false) else { return }
+        recordSilentAllow(alert.connection, because: .unanswered)
     }
 
     /// Publishes the alert this app is already showing to the helper's bounded
@@ -719,9 +749,12 @@ final class AppState: ObservableObject {
                 unansweredAlerts.note(alert.connection.id)
             }
             finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false)
-        case .withdrawn, .expired:
-            // Answered here, or no longer answerable from outside. The flow
-            // still resumes on the extension's own timeout.
+        case .expired:
+            // Nobody answered in time, from here or from the command line.
+            // Usually the app's own timeout has already closed it (#225).
+            expireUnansweredAlert(id: id)
+        case .withdrawn:
+            // Answered here.
             break
         }
     }

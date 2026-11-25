@@ -625,6 +625,21 @@ require_text "$APP_STATE" "recordSilentAllow(alert.connection, because: .sameQue
   "closing a question logs the repeats it let through"
 require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" "alert.repeatsAllowed" \
   "the alert shows how many repeats were let through while it waited"
+# A question nobody answers is closed by the app before the extension lets its
+# flow through, so the dialog never offers a Deny that can no longer stop
+# anything and the questions behind it come up (#225). The deadline is the
+# registry's own, which is asserted above to end before the flow budget.
+require_text "$APP_STATE" "scheduleAlertTimeout(alert.id)" \
+  "every question the app asks gets its own answer deadline"
+require_text "$APP_STATE" "try? await Task.sleep(for: .seconds(PendingAlertLimits.maxLifetime))" \
+  "the app's answer deadline is the registry lifetime, which ends before the flow budget"
+require_text "$APP_STATE" "guard finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false) else { return }" \
+  "an unanswered question is closed with the fail-open allow and taken off the queue"
+if grep -A3 -F "case .expired:" "$APP_STATE" | grep -Fq "expireUnansweredAlert(id: id)"; then
+  pass "the registry's expiry closes the question in the app too"
+else
+  fail "the registry's expiry closes the question in the app too"
+fi
 # Each way of failing to answer keeps its own code, so a script can tell them
 # apart instead of parsing prose.
 for code in alert_already_answered alert_expired alert_not_found alert_rule_not_stored; do
