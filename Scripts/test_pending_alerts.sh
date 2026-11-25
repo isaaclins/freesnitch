@@ -635,6 +635,13 @@ require_text "$APP_STATE" "try? await Task.sleep(for: .seconds(PendingAlertLimit
   "the app's answer deadline is the registry lifetime, which ends before the flow budget"
 require_text "$APP_STATE" "guard finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false) else { return }" \
   "an unanswered question is closed with the fail-open allow and taken off the queue"
+# The next question then takes its place on its own, so the window ignores
+# answers for a moment after the question changes: a click or Return meant for
+# the closed one must not answer another app's question.
+require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" ".onChange(of: alert.id) { _ in holdAnswersBriefly() }" \
+  "the alert ignores answers for a moment after the question on screen changes"
+require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" ".disabled(!answerable)" \
+  "the Allow and Deny buttons are off while answers are held"
 if grep -A3 -F "case .expired:" "$APP_STATE" | grep -Fq "expireUnansweredAlert(id: id)"; then
   pass "the registry's expiry closes the question in the app too"
 else
