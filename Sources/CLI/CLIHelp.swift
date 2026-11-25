@@ -296,7 +296,8 @@ enum CLIHelp {
           freesnitch settings blocklists [refresh] [--json]
 
     Lists every configured blocklist with ID, URL, enabled state, last update,
-    and entry count. `refresh` downloads all enabled lists.
+    and entry count. `refresh` downloads all enabled lists and IP feeds; the
+    helper also downloads them again once a day by itself.
 
     Blocklists filter DNS names only, and only while enforcement is on, because
     the helper's DNS proxy is what enforces them. They do not stop connections

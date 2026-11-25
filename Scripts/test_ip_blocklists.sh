@@ -16,6 +16,10 @@
 #      anchor follows the matcher's priority order (issue #181).
 #   4. A malformed or unreachable feed leaves enforcement fail-open, and an
 #      address feed never leaks into the domain blocklist.
+#      Feeds are downloaded again after start (issue #491): "Refresh Lists"
+#      reaches them, a schedule does so daily, retries a failed download after
+#      an hour and backs off up to a day, a failed download still fails open,
+#      and a list or feed switched off mid-download stays off.
 #   5. Matching is bounded: a lookup allocates nothing that grows with the set,
 #      and a lookup takes at most floor(log2(n)) + 1 search steps, counted, not timed.
 #   6. A feed of more than 100k entries loads fully and answers correctly. The
@@ -988,6 +992,332 @@ struct IPBlocklistHarness {
         await manager.refreshIPBlocklists()
         checks.expect(manager.currentIPBlocklist().isEmpty && !publishedAnchor.contains("203.0.113.0/24"),
                       "with every feed off nothing may be left in the pf table")
+
+        // 7c. Feeds are downloaded again after start (#491): "Refresh Lists"
+        // and `freesnitch blocklists refresh` reach the address feeds, and a
+        // schedule does so by itself, a day after a clean download and an
+        // hour after a failed one. A failure on any of them still fails open.
+        final class DownloadCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = 0
+            func bump() { lock.lock(); value += 1; lock.unlock() }
+            var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+        }
+        final class TestClock: @unchecked Sendable {
+            private let lock = NSLock()
+            private var current = Date(timeIntervalSince1970: 1_800_000_000)
+            func advance(_ seconds: TimeInterval) { lock.lock(); current = current.addingTimeInterval(seconds); lock.unlock() }
+            var now: Date { lock.lock(); defer { lock.unlock() }; return current }
+        }
+        let scheduled = BlocklistManager(store: store)
+        scheduled.setIPFeedEnabled(idString: feedID, enabled: true)
+        let testClock = TestClock()
+        scheduled.clock = { testClock.now }
+        func advance(_ seconds: TimeInterval) { testClock.advance(seconds) }
+        let domainDownloads = DownloadCounter()
+        // Only one domain list is on, so what it blocks is easy to see.
+        for list in store.allBlocklists() {
+            var only = list
+            only.enabled = list.id == store.allBlocklists()[0].id
+            try? store.updateBlocklist(only)
+        }
+        scheduled.domainListFetcher = { _ in domainDownloads.bump(); return ["ads.example"] }
+        func serve(_ body: String?) {
+            scheduled.ipFeedFetcher = { _ in body.map { .body($0) } ?? .failure("simulated network unreachable") }
+        }
+        serve("198.51.100.0/24\n")
+
+        checks.expect(await scheduled.refreshIfDue(), "the first scheduled check at helper start must download")
+        checks.expect(scheduled.currentIPBlocklist().contains("198.51.100.9"), "the start download must load the feed")
+        checks.expect(domainDownloads.count > 0, "the start download must also fetch the domain lists")
+        checks.expect(scheduled.domains.contains("ads.example"), "the start download must load the domain list")
+
+        // A domain list whose download fails keeps blocking from its last
+        // good copy instead of dropping out until the next download.
+        scheduled.domainListFetcher = { _ in nil }
+        checks.expect(!(await scheduled.refreshAll()).isComplete, "a failed domain download must be reported as a failure")
+        checks.expect(scheduled.domains.contains("ads.example"),
+                      "a domain list that fails to download must keep its last downloaded entries")
+        scheduled.domainListFetcher = { _ in domainDownloads.bump(); return ["ads.example"] }
+
+        // The last good copy only stands for what the user still asks for.
+        // After the list's source changes, a failed download blocks nothing
+        // of the old source; after a reset, nothing they had added by hand.
+        let urlList = store.allBlocklists().first(where: { $0.enabled })!
+        _ = try? store.addBlocklistEntries(id: urlList.id, domains: ["mine.example"])
+        await scheduled.refreshAll()
+        checks.expect(scheduled.domains.contains("ads.example") && scheduled.domains.contains("mine.example"),
+                      "a good download must hold the source's names and the hand-added one")
+        _ = try? store.updateBlocklistURL(id: urlList.id, url: "https://lists.example.org/other.txt")
+        scheduled.domainListFetcher = { _ in nil }
+        await scheduled.refreshAll()
+        checks.expect(!scheduled.domains.contains("ads.example"),
+                      "after its source changed, a failed download must not keep blocking the old source's names")
+        checks.expect(scheduled.domains.contains("mine.example"),
+                      "after its source changed, a hand-added name must still be blocked")
+        let beforeReset = store.allBlocklists().first(where: { $0.id == urlList.id })?.lastUpdated
+        try? store.clearBlocklistEdits(id: urlList.id)
+        checks.expect(store.allBlocklists().first(where: { $0.id == urlList.id })?.lastUpdated == beforeReset,
+                      "a reset downloads nothing and must not claim the list was just updated")
+        await scheduled.refreshAll()
+        checks.expect(!scheduled.domains.contains("mine.example"),
+                      "after a reset, a failed download must not keep blocking a name that was added by hand")
+        _ = try? store.updateBlocklistURL(id: urlList.id, url: urlList.url)
+        scheduled.domainListFetcher = { _ in domainDownloads.bump(); return ["ads.example"] }
+        await scheduled.refreshAll()
+        checks.expect(scheduled.domains.contains("ads.example"), "the list must load again once its download works")
+
+        // The feed's source moves on. "Refresh Lists" must pick it up.
+        serve("192.0.2.0/24\n")
+        await scheduled.refreshAll()
+        checks.expect(scheduled.currentIPBlocklist().contains("192.0.2.9"),
+                      "Refresh Lists must download the address feeds again, not only the domain lists")
+        checks.expect(!scheduled.currentIPBlocklist().contains("198.51.100.9"),
+                      "an entry the feed dropped must be gone after Refresh Lists")
+
+        // Nothing is downloaded again before a day has passed.
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.scheduledRefreshInterval - 60)
+        checks.expect(!(await scheduled.refreshIfDue()), "the schedule must not download again within a day")
+        checks.expect(scheduled.currentIPBlocklist().contains("192.0.2.9"), "an early tick must leave the set alone")
+
+        // A day later it does, by itself.
+        advance(120)
+        checks.expect(await scheduled.refreshIfDue(), "the schedule must download again after a day")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"),
+                      "the scheduled download must load what the feed serves now")
+
+        // A scheduled download that fails fails open and is retried within the hour.
+        serve(nil)
+        advance(BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "the schedule must try again after another day")
+        checks.expect(scheduled.currentIPBlocklist().isEmpty, "a failed scheduled download must fail open")
+        checks.expect(scheduled.ipBlocklistPolicy(enforcementEnabled: true)
+                        .verdict(remoteIP: "203.0.113.9", remotePort: 443, isOwnTraffic: false) == .allowed,
+                      "a failed scheduled download must block nothing")
+        checks.expect(scheduled.ipFeeds().first(where: { $0.id.uuidString == feedID })?.lastError != nil,
+                      "a failed scheduled download must record why the feed enforces nothing")
+        advance(BlocklistManager.failedRefreshRetryInterval - 60)
+        checks.expect(!(await scheduled.refreshIfDue()), "a failed download must not be retried in a tight loop")
+        serve("203.0.113.0/24\n")
+        advance(120)
+        checks.expect(await scheduled.refreshIfDue(), "a failed download must be retried after an hour, not a day")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "the retry must restore the feed")
+
+        // A source that stays gone backs off instead of costing a full
+        // download every hour: 1 h, 2 h, 4 h ... and never longer than a day.
+        serve(nil)
+        advance(BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "the next day's download must run")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(), "the first retry must come after an hour")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(!(await scheduled.refreshIfDue()), "the second retry must wait two hours, not one")
+        advance(BlocklistManager.failedRefreshRetryInterval)
+        checks.expect(await scheduled.refreshIfDue(), "the second retry must come after two hours")
+        checks.expect(BlocklistManager.scheduledWait(afterFailuresInARow: 3) == 4 * BlocklistManager.failedRefreshRetryInterval,
+                      "the third retry must wait four hours")
+        checks.expect(BlocklistManager.scheduledWait(afterFailuresInARow: 40) == BlocklistManager.scheduledRefreshInterval,
+                      "a source gone for good must be tried once a day, not less")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "the source coming back must be picked up")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(!(await scheduled.refreshIfDue()), "after a clean download the wait must be a day again")
+
+        // A domain list whose source is gone for good keeps its own backoff:
+        // it never stretches the retry of an address feed that failed once.
+        scheduled.domainListFetcher = { _ in nil }
+        for _ in 0..<6 {
+            advance(BlocklistManager.scheduledRefreshInterval)
+            await scheduled.refreshIfDue()
+        }
+        serve(nil)
+        advance(BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "the next day's download must run")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "a feed that failed once must be retried after an hour even while a domain list keeps failing")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "the feed's retry must restore it")
+        scheduled.domainListFetcher = { _ in ["ads.example"] }
+        await scheduled.refreshAll()
+
+        // Switched off while its download is in flight: it stays off and
+        // blocks nothing once the download lands, for a domain list and for
+        // an address feed alike. A stale copy must never switch it back on.
+        let onlyList = store.allBlocklists().first(where: { $0.enabled })!
+        scheduled.domainListFetcher = { list in
+            var off = store.allBlocklists().first(where: { $0.id == list.id })!
+            off.enabled = false
+            try? store.updateBlocklist(off)
+            return ["late.example"]
+        }
+        scheduled.ipFeedFetcher = { [scheduled] feed in
+            scheduled.setIPFeedEnabled(idString: feed.id.uuidString, enabled: false)
+            return .body("100.64.0.0/10\n")
+        }
+        await scheduled.refreshAll()
+        checks.expect(store.allBlocklists().first(where: { $0.id == onlyList.id })?.enabled == false,
+                      "a domain list switched off during its download must stay off")
+        checks.expect(!scheduled.domains.contains("late.example") && !scheduled.domains.contains("ads.example"),
+                      "a domain list switched off during its download must block nothing")
+        checks.expect(scheduled.ipFeeds().first(where: { $0.id.uuidString == feedID })?.enabled == false,
+                      "an address feed switched off during its download must stay off")
+        checks.expect(!scheduled.currentIPBlocklist().contains("100.64.1.1"),
+                      "an address feed switched off during its download must not publish what it downloaded")
+        // The toggle's own refresh, which the app always sends after a switch,
+        // then takes the feed's old entries out as well.
+        await scheduled.refreshIPBlocklists()
+        checks.expect(scheduled.currentIPBlocklist().isEmpty,
+                      "an address feed switched off during its download must block nothing after the toggle's refresh")
+        try? store.updateBlocklist(onlyList)
+        scheduled.setIPFeedEnabled(idString: feedID, enabled: true)
+        scheduled.domainListFetcher = { _ in ["ads.example"] }
+        serve("203.0.113.0/24\n")
+
+        // The feed schedule follows the result that is enforced, whichever
+        // path downloaded it.
+        final class DownloadGate: @unchecked Sendable {
+            private let lock = NSLock()
+            private var waiter: CheckedContinuation<Void, Never>?
+            private var isOpen = false
+            private(set) var entered = false
+            func wait() async {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    lock.lock()
+                    entered = true
+                    if isOpen { lock.unlock(); c.resume() } else { waiter = c; lock.unlock() }
+                }
+            }
+            func open() {
+                lock.lock(); isOpen = true; let w = waiter; waiter = nil; lock.unlock()
+                w?.resume()
+            }
+            var hasEntered: Bool { lock.lock(); defer { lock.unlock() }; return entered }
+        }
+        let secondFeedID = IPBlocklistCatalog.defaults[1].id.uuidString
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "a clean daily download must run before the toggle cases")
+
+        // A feed switched on during an outage: its own download fails, so
+        // the retry comes after an hour, not at the old daily deadline.
+        serve(nil)
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: true),
+                      "switching a feed on must succeed even while its download fails")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "a toggle's failed download must bring the feed retry forward to an hour")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "that retry must restore the feeds")
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: false),
+                      "switching the second feed off again must succeed")
+
+        // An older clean download that finishes after a newer failed one is
+        // dropped, and it must not push the retry back out to a day.
+        advance(BlocklistManager.scheduledRefreshInterval)
+        let olderGate = DownloadGate()
+        let calls = DownloadCounter()
+        scheduled.ipFeedFetcher = { _ in
+            calls.bump()
+            if calls.count == 1 { await olderGate.wait(); return .body("203.0.113.0/24\n") }
+            return .failure("simulated network unreachable")
+        }
+        async let older = scheduled.refreshIfDue()
+        for _ in 0..<10_000 where !olderGate.hasEntered { await Task.yield() }
+        checks.expect(olderGate.hasEntered, "the older download must be in flight before the toggle")
+        _ = await scheduled.setIPFeedEnabledAndRefresh(idString: feedID, enabled: true)
+        olderGate.open()
+        _ = await older
+        checks.expect(scheduled.currentIPBlocklist().isEmpty,
+                      "the newer failed download is what is enforced, not the older clean one")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "an older clean download that was dropped must not push the retry out to a day")
+        checks.expect(scheduled.currentIPBlocklist().contains("203.0.113.9"), "the retry must restore the feed")
+
+        // A feed switched on while the others have been failing for a while
+        // starts with a fresh backoff: an hour, not the inherited wait.
+        serve(nil)
+        for _ in 0..<5 {
+            advance(BlocklistManager.scheduledRefreshInterval)
+            await scheduled.refreshIfDue()
+        }
+        checks.expect(BlocklistManager.scheduledWait(afterFailuresInARow: 5) > BlocklistManager.failedRefreshRetryInterval,
+                      "five failures in a row must have backed the feeds off past an hour")
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: true),
+                      "switching a feed on during a long outage must succeed")
+        serve("203.0.113.0/24\n")
+        advance(BlocklistManager.failedRefreshRetryInterval + 60)
+        checks.expect(await scheduled.refreshIfDue(),
+                      "a feed switched on during a long outage must be retried after an hour")
+        checks.expect(await scheduled.setIPFeedEnabledAndRefresh(idString: secondFeedID, enabled: false),
+                      "switching the second feed off again must succeed")
+
+        // A list whose address changes while its old address downloads keeps
+        // nothing of that download.
+        let movingList = store.allBlocklists().first(where: { $0.enabled })!
+        scheduled.domainListFetcher = { list in
+            _ = try? store.updateBlocklistURL(id: list.id, url: "https://lists.example.org/moved.txt")
+            return ["oldsource.example"]
+        }
+        await scheduled.refreshAll()
+        checks.expect(!scheduled.domains.contains("oldsource.example"),
+                      "a download of a list's old address must not block anything once the address changed")
+        _ = try? store.updateBlocklistURL(id: movingList.id, url: movingList.url)
+        scheduled.domainListFetcher = { _ in ["ads.example"] }
+        await scheduled.refreshAll()
+
+        // Two lists, one held back: list A finishes, its address changes and
+        // a newer refresh loads the new source, then the older refresh ends.
+        // It must not bring back A's old names, nor undo a hand edit made
+        // while it ran.
+        let listA = store.allBlocklists().first(where: { $0.enabled })!
+        var listB = store.allBlocklists().first(where: { !$0.enabled })!
+        listB.enabled = true
+        try? store.updateBlocklist(listB)
+        let heldB = DownloadGate()
+        let bCalls = DownloadCounter()
+        scheduled.domainListFetcher = { list in
+            if list.id == listA.id {
+                return list.url == listA.url ? ["a-old.example"] : ["a-new.example"]
+            }
+            bCalls.bump()
+            if bCalls.count == 1 { await heldB.wait() }
+            return ["b.example"]
+        }
+        async let olderRefresh = scheduled.refreshAll()
+        for _ in 0..<10_000 where !heldB.hasEntered { await Task.yield() }
+        func aOldStored() -> Bool {
+            store.blocklistEntries(blocklistID: listA.id, search: "a-old", offset: 0, limit: 10).total > 0
+        }
+        for _ in 0..<100_000 where !aOldStored() { await Task.yield() }
+        checks.expect(heldB.hasEntered && aOldStored(),
+                      "list A's old source must be stored while list B's download is held")
+        _ = try? store.updateBlocklistURL(id: listA.id, url: "https://lists.example.org/a-new.txt")
+        _ = try? store.addBlocklistEntries(id: listA.id, domains: ["hand.example"])
+        await scheduled.refreshAll()
+        checks.expect(scheduled.domains.contains("a-new.example"), "the newer refresh must load A's new source")
+        heldB.open()
+        _ = await olderRefresh
+        checks.expect(!scheduled.domains.contains("a-old.example"),
+                      "an older refresh that ends last must not bring back a replaced source's names")
+        checks.expect(scheduled.domains.contains("a-new.example") && scheduled.domains.contains("b.example"),
+                      "an older refresh that ends last must keep the newer source and its own lists")
+        checks.expect(scheduled.domains.contains("hand.example"),
+                      "an older refresh that ends last must not undo a hand edit made while it ran")
+        try? store.clearBlocklistEdits(id: listA.id)
+        _ = try? store.updateBlocklistURL(id: listA.id, url: listA.url)
+        listB.enabled = false
+        try? store.updateBlocklist(listB)
+        scheduled.domainListFetcher = { _ in ["ads.example"] }
+        await scheduled.refreshAll()
+
+        // A clock set back is treated as due, not as "wait until it catches up".
+        advance(-7 * BlocklistManager.scheduledRefreshInterval)
+        checks.expect(await scheduled.refreshIfDue(), "a clock set back must not stall the schedule")
 
         // 8. Size and time. A feed of this size is ordinary for this data.
         // Wall-clock limits only apply in the opt-in benchmark (issue #356):

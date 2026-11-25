@@ -1386,6 +1386,23 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
+    /// Records a finished download without touching whether the list is on.
+    /// A download takes seconds; the user may switch the list in that time,
+    /// and only they decide that (#491). Returns false for a list that no
+    /// longer exists or whose address is no longer the one downloaded.
+    @discardableResult
+    public func recordBlocklistDownload(id: UUID, fromURL url: String, entryCount: Int, at date: Date) throws -> Bool {
+        try queue.sync {
+            guard let current = blocklistLocked(id: id), current.url == url else { return false }
+            try executeLocked("UPDATE blocklists SET last_updated=?, entry_count=? WHERE id=?;") { stmt in
+                sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
+                sqlite3_bind_int(stmt, 2, Int32(entryCount))
+                sqlite3_bind_text(stmt, 3, id.uuidString, -1, SQLITE_TRANSIENT)
+            }
+            return true
+        }
+    }
+
     public func bindGatewayMAC(_ rawMAC: String, toProfile profileName: String) throws -> ProfileNetworkBinding {
         let canonical: String
         do {

@@ -292,6 +292,8 @@ freesnitch blocklist BLOCKLIST_ID off
 freesnitch blocklist BLOCKLIST_ID on
 ```
 
+`blocklists refresh` downloads every enabled blocklist and IP feed. The helper also downloads them again a day after the last clean download, and after an hour when one failed.
+
 Blocklists are DNS-name filters enforced by the helper's local DNS proxy only when Enforcement is enabled. They apply to names sent to that proxy, not hardcoded IP addresses or names resolved by an app's own encrypted DNS, such as Chrome and Firefox DoH.
 
 IP and CIDR feeds are a separate kind of list, also in Settings > General:
