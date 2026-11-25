@@ -54,7 +54,8 @@ usually completes only after a restart.
 
   --yes                Do not prompt for confirmation.
   --remove-database    Also delete freesnitch.sqlite, which holds your rules,
-                       profiles and blocklists. It can exceed 300 MB. Without
+                       profiles and blocklists and the list of recent
+                       connections. It can exceed 300 MB. Without
                        this flag the database is kept and a later reinstall
                        picks it up again.
 
@@ -390,7 +391,7 @@ main() {
   if (( remove_database == 1 )); then
     safe_remove_database
   else
-    log "Kept $DATABASE with your rules, profiles and blocklists. Rerun with --remove-database to delete it."
+    log "Kept $DATABASE with your rules, profiles, blocklists and the list of recent connections. Rerun with --remove-database to delete it."
   fi
   remove_command_link
   safe_remove_directory "$APP"

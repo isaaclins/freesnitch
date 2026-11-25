@@ -1494,6 +1494,40 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
+    /// Deletes every saved connection row, for Delete History in Insights.
+    ///
+    /// The live connection list is kept here, next to the rules, and Delete
+    /// History used to clear only the Insights store, so this copy survived a
+    /// purge that promised to remove every recorded connection (#294).
+    /// `secure_delete` overwrites the freed pages instead of leaving the old
+    /// rows readable in them, and the checkpoint folds the write-ahead log
+    /// back into the database and empties it, so the old rows are not left
+    /// there either. Rules, profiles and blocklists are not touched.
+    public func purgeConnections() throws {
+        try queue.sync {
+            // The setting is put back afterwards, whatever this SQLite build
+            // started with, so only this delete pays for the overwriting.
+            var stmt: OpaquePointer?
+            var previous: Int32 = 0
+            if sqlite3_prepare_v2(db, "PRAGMA secure_delete;", -1, &stmt, nil) == SQLITE_OK,
+               sqlite3_step(stmt) == SQLITE_ROW {
+                previous = sqlite3_column_int(stmt, 0)
+            }
+            sqlite3_finalize(stmt)
+            try execLocked("PRAGMA secure_delete=1;")
+            defer { try? execLocked("PRAGMA secure_delete=\(previous);") }
+            try execLocked("DELETE FROM connections;")
+            var logFrames: Int32 = 0
+            var checkpointed: Int32 = 0
+            let rc = sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, &logFrames, &checkpointed)
+            guard rc == SQLITE_OK else {
+                throw NSError(domain: "RuleStore", code: 5, userInfo: [
+                    NSLocalizedDescriptionKey: "connection history was deleted, but the write-ahead log could not be emptied: \(String(cString: sqlite3_errmsg(db)))"
+                ])
+            }
+        }
+    }
+
     public func recentConnections(limit: Int = 200, status: Connection.Status? = nil) -> [Connection] {
         queue.sync {
             var out: [Connection] = []

@@ -1599,17 +1599,28 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func purgeInsights(reply: @escaping (Bool, String?) -> Void) {
-        guard let insights else {
-            reply(false, "insights store is unavailable")
-            return
+        // Both copies go: the Insights store, and the saved connection list in
+        // the policy database, which records every connection whether or not
+        // Insights recording is on (#294). The second runs even when the
+        // first fails, so one failure never leaves more behind than it has to.
+        var failures: [String] = []
+        if let insights {
+            do {
+                try insights.purge()
+            } catch {
+                PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
+                failures.append(error.localizedDescription)
+            }
+        } else {
+            failures.append("insights store is unavailable")
         }
         do {
-            try insights.purge()
-            reply(true, nil)
+            try store.purgeConnections()
         } catch {
-            PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
-            reply(false, error.localizedDescription)
+            PSLog.error(PSLog.helper, "connection history purge failed: \(error.localizedDescription)")
+            failures.append(error.localizedDescription)
         }
+        reply(failures.isEmpty, failures.isEmpty ? nil : failures.joined(separator: "; "))
     }
 
     /// The request is bounded and its content validated, because it is an
