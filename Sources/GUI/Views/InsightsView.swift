@@ -1323,7 +1323,9 @@ final class InsightsViewModel: ObservableObject {
             let known = offset == 0 ? [] : Set(self.findings.map(\.id))
             let fresh = report.findings.filter { !known.contains($0.id) }
             self.findings = offset == 0 ? report.findings : self.findings + fresh
-            self.hasMoreFindings = report.hasMore
+            // A page that brought nothing new cannot be followed by one that
+            // does, so the button goes instead of staying and doing nothing.
+            self.hasMoreFindings = report.hasMore && (offset == 0 || !fresh.isEmpty)
         }
     }
 
