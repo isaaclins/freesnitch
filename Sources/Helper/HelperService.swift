@@ -1101,14 +1101,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func enableBlocklist(idString: String, enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
-        let lists = store.allBlocklists()
-        guard let target = lists.first(where: { $0.id.uuidString == idString }) else {
+        guard let id = UUID(uuidString: idString),
+              store.allBlocklists().contains(where: { $0.id == id }) else {
             reply(false, "blocklist not found"); return
         }
-        var updated = target
-        updated.enabled = enabled
-        do { try store.updateBlocklist(updated); reply(true, nil) } catch { reply(false, "\(error)") }
-        Task { await self.blocklists.refresh() }
+        // Only the on/off state is written, for the active profile, the same
+        // way the app's switch does it. Writing back the whole list as it was
+        // read could overwrite a download's newer entry count and time, and
+        // the profile sync would undo a direct write to the global column
+        // (#528).
+        do {
+            try store.setBlocklistEnabled(id: id, profileName: store.activeProfileName(), enabled: enabled)
+        } catch {
+            reply(false, "\(error)"); return
+        }
+        reply(true, nil)
+        Task { await self.blocklists.refreshAll() }
     }
 
     func listBlocklists(reply: @escaping (Data) -> Void) {
