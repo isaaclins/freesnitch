@@ -282,7 +282,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     longitude: 4.90,
                                     firstSeen: now,
                                     lastSeen: now)
-        state.pendingAlerts = [AppState.PendingAlert(connection: connection) { _, _ in }]
+        // A chatty app reconnects while it waits, so the demo also shows the
+        // count those repeats leave on the question (#245).
+        state.pendingAlerts = [AppState.PendingAlert(connection: connection, repeatsAllowed: 2) { _, _ in }]
     }
 
     private func seedDemoState() {
