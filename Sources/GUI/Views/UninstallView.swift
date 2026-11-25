@@ -36,6 +36,10 @@ final class UninstallFlowModel: ObservableObject {
         /// the next restart. Shown instead of quitting at once, so the one
         /// sentence about the restart can be read.
         case doneUntilRestart
+        /// Everything else is gone, but macOS kept the helper's registration.
+        /// Shown instead of quitting, so the person learns what is left and
+        /// how to remove it (#215). Carries what macOS said.
+        case helperLeft(String)
         case failed(Failure)
     }
 
@@ -54,6 +58,10 @@ final class UninstallFlowModel: ObservableObject {
     @Published var removeDatabase = false
     @Published var confirming = false
     @Published private(set) var phase: Phase = .ready
+    /// What macOS said when unregistering the helper failed, or nil while it
+    /// hasn't failed. Read by every ending after the helper step, so none of
+    /// them claims the helper is gone when it isn't (#215).
+    @Published private(set) var helperProblem: String?
 
     private let state: AppState
     private let systemExtension: SystemExtensionManager
@@ -81,7 +89,7 @@ final class UninstallFlowModel: ObservableObject {
     var canClose: Bool {
         switch phase {
         case .ready: return true
-        case .failed(.appKept): return false
+        case .helperLeft, .failed(.appKept): return false
         case .failed: return true
         default: return false
         }
@@ -154,6 +162,7 @@ final class UninstallFlowModel: ObservableObject {
             return
         }
         phase = .removingHelper
+        helperProblem = nil
         let alsoDatabase = removeDatabase
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = PrivilegedUninstall.run(removingDatabase: alsoDatabase)
@@ -162,11 +171,13 @@ final class UninstallFlowModel: ObservableObject {
                 switch outcome {
                 case .success:
                     if let problem = self.state.helper.unregisterDaemonForUninstall() {
-                        // Not fatal: the anchor is already flushed, the bundle
-                        // goes next, and the launchd record for a missing
-                        // bundle is inert. Recorded so it is not silent.
+                        // Not fatal: the anchor is already flushed, so the
+                        // helper has no rules to enforce, and stopping here
+                        // would leave the app behind too. But the ending
+                        // says it is left and how to remove it (#215).
                         self.state.appendLog(level: "error",
                                              message: String(localized: "Uninstall could not unregister the helper: \(problem)"))
+                        self.helperProblem = problem
                     }
                     PrivilegedUninstall.removeUserData()
                     self.moveToTrash()
@@ -193,11 +204,18 @@ final class UninstallFlowModel: ObservableObject {
     }
 
     private func wrapUp() {
-        if systemExtension.uninstallState == .pendingReboot {
-            phase = .doneUntilRestart
-        } else {
-            quit()
+        switch UninstallEnding.after(helperProblem: helperProblem,
+                                     extensionPendingReboot: systemExtension.uninstallState == .pendingReboot) {
+        case .quit: quit()
+        case .doneUntilRestart: phase = .doneUntilRestart
+        case .helperLeft(let problem): phase = .helperLeft(problem)
         }
+    }
+
+    /// Where the person turns the leftover helper off. Opening a System
+    /// Settings pane changes nothing by itself, so a demo may do it too.
+    func openLoginItems() {
+        state.helper.openLoginItemsSettings()
     }
 
     /// Ends the process outright. `NSApp.terminate` runs the app's whole
@@ -213,7 +231,8 @@ final class UninstallFlowModel: ObservableObject {
 
     /// `FREESNITCH_DEMO=1` walks through the screens without touching the
     /// system. `FREESNITCH_DEMO_UNINSTALL` picks the ending: `restart`
-    /// (default), `quit`, `refused`, `cancelled` or `trash`.
+    /// (default), `quit`, `refused`, `cancelled`, `trash` or `helper` (macOS
+    /// kept the helper's registration, #215).
     private func runDemo() {
         let ending = ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL"] ?? "restart"
         let hold = Double(ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL_HOLD"] ?? "") ?? 1.5
@@ -226,11 +245,15 @@ final class UninstallFlowModel: ObservableObject {
             self.phase = .removingHelper
             DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
                 if ending == "cancelled" { self.phase = .failed(.passwordCancelled); return }
+                if ending == "helper" {
+                    self.helperProblem = "domain=SMAppServiceErrorDomain, code=1, description=Operation not permitted"
+                }
                 self.phase = .movingToTrash
                 DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
                     switch ending {
                     case "trash": self.phase = .failed(.appKept("You don’t have permission to access “Applications”."))
                     case "quit": self.quit()
+                    case "helper": self.wrapUp()
                     default: self.phase = .doneUntilRestart
                     }
                 }
@@ -295,6 +318,15 @@ struct UninstallFlowSheet: View {
         }
     }
 
+    /// The way to the leftover helper, on every ending that has one.
+    private var showsLoginItemsButton: Bool {
+        switch flow.phase {
+        case .helperLeft: return true
+        case .failed(.appKept): return flow.helperProblem != nil
+        default: return false
+        }
+    }
+
     /// While macOS waits for the person to allow the removal, the way there
     /// is the one thing to press.
     private var showsApprovalButton: Bool {
@@ -324,6 +356,15 @@ struct UninstallFlowSheet: View {
             headline(String(localized: "FreeSnitch is uninstalled"), icon: "checkmark.circle.fill", tint: Color(nsColor: .systemGreen))
             Text("FreeSnitch isn’t filtering anything now, and macOS finishes removing it the next time you restart.")
                 .fixedSize(horizontal: false, vertical: true)
+        case .helperLeft(let reason):
+            failureHeadline(String(localized: "FreeSnitch couldn’t remove its background helper"))
+            Text("Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and delete it from the Trash.")
+                .fixedSize(horizontal: false, vertical: true)
+            if systemExtension.uninstallState == .pendingReboot {
+                Text("macOS finishes removing the network filter the next time you restart.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            reasonText(reason)
         case .failed(let failure):
             failureText(failure)
         }
@@ -336,18 +377,21 @@ struct UninstallFlowSheet: View {
                     note: flow.phase == .removingFilter && systemExtension.uninstallNeedsApproval
                         ? String(localized: "macOS is asking you to allow this in System Settings.") : nil)
             stepRow(String(localized: "Removing the helper and firewall rules"),
-                    done: flow.phase == .movingToTrash,
+                    done: flow.phase == .movingToTrash && flow.helperProblem == nil,
                     active: flow.phase == .removingHelper,
+                    warning: flow.helperProblem != nil,
                     note: flow.phase == .removingHelper ? String(localized: "Enter your password when macOS asks.") : nil)
             stepRow(String(localized: "Moving FreeSnitch to the Trash"), done: false,
                     active: flow.phase == .movingToTrash, note: nil)
         }
     }
 
-    private func stepRow(_ title: String, done: Bool, active: Bool, note: String?) -> some View {
+    private func stepRow(_ title: String, done: Bool, active: Bool, warning: Bool = false, note: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Group {
-                if done {
+                if warning {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(Color(nsColor: .systemOrange))
+                } else if done {
                     Image(systemName: "checkmark.circle.fill").foregroundColor(Color(nsColor: .systemGreen))
                 } else if active {
                     ProgressView().controlSize(.small)
@@ -357,7 +401,7 @@ struct UninstallFlowSheet: View {
             }
             .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).foregroundColor(done || active ? .primary : .secondary)
+                Text(title).foregroundColor(done || active || warning ? .primary : .secondary)
                 if let note {
                     Text(note).font(.caption).foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -387,8 +431,13 @@ struct UninstallFlowSheet: View {
             reasonText(reason)
         case .appKept(let reason):
             failureHeadline(String(localized: "FreeSnitch couldn’t move itself to the Trash"))
-            Text("Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish.")
-                .fixedSize(horizontal: false, vertical: true)
+            if flow.helperProblem == nil {
+                Text("Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish.")
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Its background helper is also still there. Open Login Items & Extensions in System Settings and turn FreeSnitch off under “Allow in the Background”. Then quit FreeSnitch and drag it from Applications to the Trash.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             reasonText(reason)
         }
     }
@@ -419,6 +468,9 @@ struct UninstallFlowSheet: View {
             if showsApprovalButton {
                 Button("Open System Settings") { systemExtension.openNetworkExtensionsSettings() }
             }
+            if showsLoginItemsButton {
+                Button("Open Login Items…") { flow.openLoginItems() }
+            }
             Spacer(minLength: 8)
             if flow.canClose {
                 Button(flow.hasStarted ? "Close" : "Cancel") { flow.isPresented = false }
@@ -436,7 +488,7 @@ struct UninstallFlowSheet: View {
                 .keyboardShortcut(.defaultAction)
         case .removingFilter, .removingHelper, .movingToTrash:
             EmptyView()
-        case .doneUntilRestart, .failed(.appKept):
+        case .doneUntilRestart, .helperLeft, .failed(.appKept):
             Button("Quit FreeSnitch") { flow.quit() }
                 .keyboardShortcut(.defaultAction)
         case .failed:
