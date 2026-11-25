@@ -10,7 +10,8 @@
 #   - the list of unsaved answers keeps what the alert window shows, in the
 #     order answered, bounded, with a retry that fails again replacing its
 #     earlier entry rather than stacking a second one
-#   - an answer is taken once, so a double click on Try Again sends one save
+#   - Try Again keeps the notice up while it runs, a double click sends one
+#     save, and a retry that worked clears the notice
 #   - the app records a refused save into that list (not only the log), the
 #     alert window stays open while the list has something in it, and the
 #     helper call reports a dropped connection instead of never answering
@@ -65,17 +66,25 @@ check(list.current?.reason == "The FreeSnitch helper is not connected.",
 check(list.current?.rule.id == rule.id && list.current?.rule.action == .deny,
       "the shown answer carries the exact rule that was refused, for Try Again")
 
-// Try Again: taken once, so a second click finds nothing to send.
+// Try Again: one save per click, and the notice stays while it is in flight,
+// so the window does not close and reopen.
 let first = list.current!.id
-let retried = list.take(id: first)
-check(retried?.rule.id == rule.id, "Try Again takes the answer to send its rule again")
-check(list.take(id: first) == nil, "a second click on the same answer sends nothing")
-check(list.isEmpty, "the notice goes away while the retry is in flight")
+let retried = list.beginRetry(id: first)
+check(retried?.rule.id == rule.id, "Try Again hands back the same rule to send again")
+check(list.beginRetry(id: first) == nil, "a second click on the same answer sends nothing")
+check(list.current?.id == first && list.isRetrying(first), "the notice stays while the retry is in flight")
+// The retry worked: the notice goes.
+list.take(id: first)
+check(list.isEmpty && !list.isRetrying(first), "a retry that worked clears the notice")
 
 // The retry is refused too: one entry for the rule, with the new reason.
 list.record(answer(rule, "first"))
+let before = list.current!.id
+_ = list.beginRetry(id: before)
 list.record(answer(rule, "rule saved but the firewall refused it: test"))
 check(list.items.count == 1, "the same rule failing again replaces its entry")
+check(!list.isRetrying(before) && list.current.map { !list.isRetrying($0.id) } == true,
+      "a refused retry can be tried again")
 check(list.current?.reason == "rule saved but the firewall refused it: test",
       "and shows the latest reason")
 
@@ -118,8 +127,8 @@ WINDOWS="$ROOT/Sources/GUI/App/WindowManager.swift"
 ALERT="$ROOT/Sources/GUI/Views/ConnectionAlert.swift"
 
 save_body="$(awk '/private func saveRememberedRule\(/,/^    }$/' "$STATE")"
-if grep -q 'unsavedRememberedAnswers.record(' <<<"$save_body"; then
-  pass "a refused remembered rule is recorded for the alert window, not only logged"
+if grep -q 'unsavedRememberedAnswers.record(' <<<"$save_body" && grep -q 'unsavedRememberedAnswers.take(id: answer.id)' <<<"$save_body"; then
+  pass "a refused remembered rule is recorded for the alert window, not only logged, and cleared once saved"
 else
   fail "saveRememberedRule no longer records a refused save for the alert window"
 fi

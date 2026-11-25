@@ -14576,22 +14576,22 @@
         }
       }
     },
-    "%@ was allowed to reach %@ this time, but the rule was not saved. The next connection like it is not covered by a rule." : {
+    "%@ was allowed to reach %@ this time, but remembering the answer failed, so the next connection like it may be asked about again." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ на этот раз разрешено подключиться к %2$@, но правило не сохранено. Следующее такое же соединение не покрыто правилом."
+            "value" : "%1$@ на этот раз разрешено подключиться к %2$@, но запомнить ответ не удалось, поэтому о следующем таком же соединении могут спросить снова."
           }
         }
       }
     },
-    "%@ was blocked from reaching %@ this time, but the rule was not saved. The next connection like it is not covered by a rule." : {
+    "%@ was blocked from reaching %@ this time, but remembering the answer failed, so the next connection like it may be asked about again." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$@ на этот раз запрещено подключаться к %2$@, но правило не сохранено. Следующее такое же соединение не покрыто правилом."
+            "value" : "%1$@ на этот раз запрещено подключаться к %2$@, но запомнить ответ не удалось, поэтому о следующем таком же соединении могут спросить снова."
           }
         }
       }

@@ -880,6 +880,8 @@ final class AppState: ObservableObject {
                 self.refreshRules()
                 return
             }
+            // A retry that worked clears its notice.
+            self.unsavedRememberedAnswers.take(id: answer.id)
             self.refreshRules()
         }
     }
@@ -887,7 +889,7 @@ final class AppState: ObservableObject {
     /// Sends the same rule again. It keeps its id, and the helper replaces a
     /// rule with the same id, so a retry after a partial save cannot leave two.
     func retryUnsavedRememberedAnswer(id: UUID) {
-        guard let answer = unsavedRememberedAnswers.take(id: id) else { return }
+        guard let answer = unsavedRememberedAnswers.beginRetry(id: id) else { return }
         saveRememberedRule(answer)
     }
 

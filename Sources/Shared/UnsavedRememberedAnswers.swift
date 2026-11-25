@@ -42,20 +42,38 @@ public struct UnsavedRememberedAnswers: Sendable {
 
     public var isEmpty: Bool { items.isEmpty }
 
+    /// Answers whose rule is being sent again right now. They stay on screen
+    /// while the retry is in flight, so the window does not close and reopen,
+    /// and a second click sends nothing.
+    public private(set) var retrying: Set<UUID> = []
+
+    public func isRetrying(_ id: UUID) -> Bool { retrying.contains(id) }
+
     /// Records a failed save. The same rule failing again (a retry that was
     /// refused too) replaces its earlier entry instead of adding a second.
     public mutating func record(_ answer: UnsavedRememberedAnswer) {
+        for old in items where old.rule.id == answer.rule.id { retrying.remove(old.id) }
         items.removeAll { $0.rule.id == answer.rule.id }
         items.append(answer)
         if items.count > Self.limit {
+            for dropped in items.prefix(items.count - Self.limit) { retrying.remove(dropped.id) }
             items.removeFirst(items.count - Self.limit)
         }
     }
 
-    /// Removes one and hands it back, for a retry or a dismissal. Nil when it
-    /// is already gone, so a double click does nothing the second time.
+    /// Marks one as being retried and hands it back to send. Nil when it is
+    /// gone or already being retried, so a double click sends one save.
+    public mutating func beginRetry(id: UUID) -> UnsavedRememberedAnswer? {
+        guard !retrying.contains(id), let answer = items.first(where: { $0.id == id }) else { return nil }
+        retrying.insert(id)
+        return answer
+    }
+
+    /// Removes one: dismissed, or its rule was saved. Nil when it is already
+    /// gone.
     @discardableResult
     public mutating func take(id: UUID) -> UnsavedRememberedAnswer? {
+        retrying.remove(id)
         guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
         return items.remove(at: index)
     }

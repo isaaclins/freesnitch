@@ -279,8 +279,8 @@ struct UnsavedRememberedAnswerNotice: View {
     /// Whole sentences per answer, so a translation never glues a verb in.
     private var summary: String {
         answer.allow
-            ? String(localized: "\(app) was allowed to reach \(destination) this time, but the rule was not saved. The next connection like it is not covered by a rule.")
-            : String(localized: "\(app) was blocked from reaching \(destination) this time, but the rule was not saved. The next connection like it is not covered by a rule.")
+            ? String(localized: "\(app) was allowed to reach \(destination) this time, but remembering the answer failed, so the next connection like it may be asked about again.")
+            : String(localized: "\(app) was blocked from reaching \(destination) this time, but remembering the answer failed, so the next connection like it may be asked about again.")
     }
 
     private var others: String? {
@@ -324,6 +324,7 @@ struct UnsavedRememberedAnswerNotice: View {
                 Button("Try Again") { state.retryUnsavedRememberedAnswer(id: answer.id) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
+                    .disabled(state.unsavedRememberedAnswers.isRetrying(answer.id))
             }
         }
         .padding(20)
@@ -353,6 +354,7 @@ struct UnsavedRememberedAnswerNotice: View {
                 Spacer(minLength: 0)
                 Button("Dismiss") { state.dismissUnsavedRememberedAnswer(id: answer.id) }
                 Button("Try Again") { state.retryUnsavedRememberedAnswer(id: answer.id) }
+                    .disabled(state.unsavedRememberedAnswers.isRetrying(answer.id))
             }
             .controlSize(.small)
         }
