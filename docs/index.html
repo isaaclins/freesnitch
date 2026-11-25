@@ -344,7 +344,7 @@ footer{margin-top:120px;padding:56px 0 48px;border-top:1px solid var(--line)}
   <section class="trust wrap rv">
     <div><h3>It fails open.</h3><p>If FreeSnitch stops answering, your internet keeps working. A broken firewall never becomes an outage.</p></div>
     <div><h3>Signed and notarized.</h3><p>Built with a Developer ID and checked by Apple. Updates are verified with a signature before they install.</p></div>
-    <div><h3>Nothing phones home.</h3><p>No analytics, no account, no licence check. It only contacts the blocklists and DNS you pick, and its update feed.</p></div>
+    <div><h3>Nothing phones home.</h3><p>No analytics, no account, no licence check. It only contacts the blocklists and DNS you pick, its update feed, and the map's IP location data, fetched in bulk about once a month and never per address.</p></div>
   </section>
 
   <section class="compare wrap" id="compare">
@@ -363,7 +363,7 @@ footer{margin-top:120px;padding:56px 0 48px;border-top:1px solid var(--line)}
       <summary>Where it stops<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></summary>
       <div class="limits-body">
         <div><h4>Blocklists work on names</h4><p>They don't stop apps that connect to a fixed address, or that look names up with their own encrypted DNS, like Chrome or Firefox with DoH on.</p></div>
-        <div><h4>The map is an estimate</h4><p>Locations come from offline IP data, not measurement.</p></div>
+        <div><h4>The map is an estimate</h4><p>Locations come from offline IP data, not measurement. FreeSnitch downloads that data from GitHub when it first starts and refreshes it about once a month.</p></div>
         <div><h4>Blocking is opt-in</h4><p>Out of the box FreeSnitch only watches. Rules and blocklists start when you turn on Enforcement in Settings.</p></div>
       </div>
     </details>
