@@ -45,12 +45,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # Several harnesses filter with ripgrep. Install it explicitly rather
-      # than rely on the runner image: without it one harness would hide its
-      # own compile errors.
       - name: Select Xcode
         uses: ./.github/actions/select-xcode
 
+      # Several harnesses filter with ripgrep. Install it explicitly rather
+      # than rely on the runner image: without it one harness would hide its
+      # own compile errors.
       - name: Install ripgrep
         run: command -v rg >/dev/null || brew install ripgrep
 
@@ -107,7 +107,11 @@ jobs:
 
   monitor-build:
     name: Build monitor flavour
-    # macos-15, not macos-26: see .github/actions/select-xcode.
+    # macos-15, not macos-26: see .github/actions/select-xcode. Xcode 26
+    # crashes compiling the Icon Composer icon (Resources/AppIcon.icon) on a
+    # macOS 15 host, so this build leaves it out and uses AppIcon.appiconset,
+    # exactly like a build with an Xcode older than 26. app-icon.yml builds
+    # with the Icon Composer icon on macos-26 whenever a change can affect it.
     runs-on: macos-15
     steps:
       - name: Check out repository
@@ -135,6 +139,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
             PROVISIONING_PROFILE_SPECIFIER='' \
+            EXCLUDED_SOURCE_FILE_NAMES=AppIcon.icon \
             build
 
       - name: Verify monitor bundle has no restricted entitlements
