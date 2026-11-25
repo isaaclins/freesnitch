@@ -474,13 +474,32 @@ struct MonitorRuleTarget: Hashable, Sendable {
     let processPath: String?
     let remoteHost: String?
     let remoteIP: String?
+    /// The team that signed the row's connections, when they agree (#364).
+    /// Not part of the identity: it only decides whether an allow rule tied
+    /// to a team by bundle id alone applies to this row.
+    let signerTeamID: String?
 
-    private init(kind: Kind, processBundleID: String?, processPath: String?, remoteHost: String?, remoteIP: String?) {
+    private init(kind: Kind, processBundleID: String?, processPath: String?, remoteHost: String?, remoteIP: String?,
+                 signerTeamID: String? = nil) {
         self.kind = kind
         self.processBundleID = processBundleID
         self.processPath = processPath
         self.remoteHost = remoteHost
         self.remoteIP = remoteIP
+        self.signerTeamID = signerTeamID
+    }
+
+    static func == (lhs: MonitorRuleTarget, rhs: MonitorRuleTarget) -> Bool {
+        lhs.kind == rhs.kind && lhs.processBundleID == rhs.processBundleID && lhs.processPath == rhs.processPath
+            && lhs.remoteHost == rhs.remoteHost && lhs.remoteIP == rhs.remoteIP
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(processBundleID)
+        hasher.combine(processPath)
+        hasher.combine(remoteHost)
+        hasher.combine(remoteIP)
     }
 
     /// Every app connection, wherever it goes.
@@ -490,7 +509,8 @@ struct MonitorRuleTarget: Hashable, Sendable {
                                  processBundleID: node.bundleID,
                                  processPath: node.path,
                                  remoteHost: nil,
-                                 remoteIP: nil)
+                                 remoteIP: nil,
+                                 signerTeamID: node.teamID)
     }
 
     /// One destination of one app.
@@ -508,14 +528,16 @@ struct MonitorRuleTarget: Hashable, Sendable {
                                      processBundleID: app.bundleID,
                                      processPath: app.path,
                                      remoteHost: isAddress ? nil : host,
-                                     remoteIP: isAddress ? host : nil)
+                                     remoteIP: isAddress ? host : nil,
+                                     signerTeamID: app.teamID)
         }
         guard let ip = MonitorTreeKey.normalized(node.remoteIP)?.lowercased() else { return nil }
         return MonitorRuleTarget(kind: .destination,
                                  processBundleID: app.bundleID,
                                  processPath: app.path,
                                  remoteHost: nil,
-                                 remoteIP: ip)
+                                 remoteIP: ip,
+                                 signerTeamID: app.teamID)
     }
 
     /// The target an existing rule speaks about, when it speaks about a row of
@@ -595,7 +617,7 @@ struct MonitorRuleTarget: Hashable, Sendable {
 
     func replacingProcess(bundleID: String?, path: String?) -> MonitorRuleTarget {
         MonitorRuleTarget(kind: kind, processBundleID: bundleID, processPath: path,
-                          remoteHost: remoteHost, remoteIP: remoteIP)
+                          remoteHost: remoteHost, remoteIP: remoteIP, signerTeamID: signerTeamID)
     }
 
     /// `/Applications/Foo.app` for a rule path of `/Applications/Foo.app` or
@@ -673,6 +695,7 @@ enum MonitorRuleDraft {
 /// enforced is whatever the helper and the extension hold.
 struct MonitorDecisionIndex: Sendable {
     private var byTarget: [MonitorRuleTarget: Rule] = [:]
+    private var teamBound: [MonitorRuleTarget: [Rule]] = [:]
 
     init() {}
 
@@ -693,10 +716,13 @@ struct MonitorDecisionIndex: Sendable {
             guard rule.profile == profile || rule.profile == Profile.alwaysName else { continue }
             guard let target = MonitorRuleTarget.of(rule) else { continue }
             // An allow rule that names only a bundle id and records a team
-            // applies only to code that team signed (#364). A row does not
-            // say who signed it, so such a rule is not shown as its decision.
+            // applies only to code that team signed (#364). It is this row's
+            // decision only when the row was signed by that team.
             if target.processPath == nil, rule.action == .allow,
-               !(rule.processTeamId ?? "").isEmpty { continue }
+               let team = rule.processTeamId, !team.isEmpty {
+                teamBound[target, default: []].append(rule)
+                continue
+            }
             insert(rule, at: target)
             guard let path = target.processPath,
                   let bundle = MonitorRuleTarget.appBundlePath(path) else { continue }
@@ -723,7 +749,7 @@ struct MonitorDecisionIndex: Sendable {
         Bundle(path: bundlePath)?.object(forInfoDictionaryKey: "CFBundleExecutable") as? String
     }
 
-    var count: Int { byTarget.count }
+    var count: Int { byTarget.count + teamBound.count }
 
     /// The rule that speaks for this row. Besides a rule that names the row's
     /// exact process, that is a rule naming only its bundle id, only its
@@ -733,8 +759,14 @@ struct MonitorDecisionIndex: Sendable {
     func rule(for target: MonitorRuleTarget?) -> Rule? {
         guard let target else { return nil }
         var best: Rule?
+        var found: [Rule] = []
         for candidate in target.ownerIdentities {
-            guard let rule = byTarget[candidate] else { continue }
+            if let rule = byTarget[candidate] { found.append(rule) }
+            if let team = target.signerTeamID, let bound = teamBound[candidate] {
+                found.append(contentsOf: bound.filter { $0.processTeamId == team })
+            }
+        }
+        for rule in found {
             if let current = best, !wins(rule, over: current) { continue }
             best = rule
         }

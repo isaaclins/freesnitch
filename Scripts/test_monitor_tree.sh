@@ -439,7 +439,27 @@ var teamBundleAllow = bundleOnly
 teamBundleAllow.action = .allow
 teamBundleAllow.processTeamId = "EQHXZ8M8AV"
 check(decide([teamBundleAllow]).rule(for: appTarget) == nil,
-      "an allow rule tied to a signing team by bundle id alone is not claimed by a row that cannot show its signer")
+      "an allow rule tied to a signing team by bundle id alone is not claimed by a row with no single signer")
+func signedBeeper(_ team: String) -> MonitorAppNode {
+    var c = beeperConnection
+    c.processTeamId = team
+    return MonitorTreeBuilder.build(connections: [c], order: MonitorRowOrder()).snapshot.apps.first!
+}
+let sameTeamTarget = MonitorRuleTarget.app(signedBeeper("EQHXZ8M8AV"))!
+equal(decide([teamBundleAllow]).rule(for: sameTeamTarget)?.id, teamBundleAllow.id,
+      "the team-bound allow rule is shown on a row that team signed")
+equal(RuleMatcher().explainedDecision(for: { var c = beeperConnection; c.processTeamId = "EQHXZ8M8AV"; return c }(),
+                                      prepared: PreparedRuleSet(rules: [teamBundleAllow]), defaultMode: .alert).matchedRuleID,
+      teamBundleAllow.id, "the firewall applies it to that team's app too")
+check(decide([teamBundleAllow]).rule(for: MonitorRuleTarget.app(signedBeeper("ATTACKER01"))!) == nil,
+      "the team-bound allow rule is not shown on a row another team signed")
+let teamFlip = MonitorRuleDraft.rule(for: sameTeamTarget, processName: "Beeper", action: .deny, profile: "default",
+                                     existing: decide([teamBundleAllow]).rule(for: sameTeamTarget))!
+equal(teamFlip.id, teamBundleAllow.id, "Deny on that row changes the team-bound rule instead of adding one")
+var learnedDeny = bundleOnly
+learnedDeny.processTeamId = "EQHXZ8M8AV"
+equal(decide([learnedDeny]).rule(for: appTarget)?.id, learnedDeny.id,
+      "a deny rule that learned a team still applies to every signer and stays claimed")
 let editorDomain = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app/", processName: "Beeper",
                         remoteHost: "api.beeper.com", action: .deny, scope: .domain)
 equal(decide([editorDomain]).rule(for: domainTarget)?.id, editorDomain.id,
