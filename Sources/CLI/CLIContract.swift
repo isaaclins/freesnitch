@@ -182,13 +182,13 @@ enum CLIOutput {
         if json {
             if result.exitCode == .success {
                 let envelope = CLIEnvelope<AnyEncodable>.success(command: command, data: result.data)
-                writeStdout(encode(envelope))
+                writeEnvelope(envelope)
             } else {
                 let error = result.error ?? CLIError(result.exitCode,
                                                       message: "The command completed with \(result.exitCode.name).",
                                                       remediation: "Run `freesnitch doctor` for the relevant recovery steps.")
                 let envelope = CLIEnvelope<AnyEncodable>.failure(command: command, error: error, data: result.data)
-                writeStdout(encode(envelope))
+                writeEnvelope(envelope)
                 writeStderr("freesnitch: \(error.message)\n")
             }
         } else {
@@ -202,7 +202,7 @@ enum CLIOutput {
     static func failure(command: String, error: CLIError, json: Bool) {
         if json {
             let envelope = CLIEnvelope<EmptyPayload>.failure(command: command, error: error)
-            writeStdout(encode(envelope))
+            writeEnvelope(envelope)
         }
         var message = "freesnitch: \(error.message)"
         if let remediation = error.remediation {
@@ -211,15 +211,33 @@ enum CLIOutput {
         writeStderr(message + "\n")
     }
 
-    /// If the payload cannot be encoded, the response is still a well-formed
-    /// envelope: an internal failure with `data: null`, never bare text.
-    static func encode<T: Encodable>(_ envelope: CLIEnvelope<T>) -> Data {
-        if let data = try? CLIJSON.encode(envelope) { return data }
-        let fallback = CLIEnvelope<EmptyPayload>.failure(
-            command: envelope.command,
-            error: CLIError(.internalFailure, message: "The CLI response could not be encoded."))
-        return (try? CLIJSON.encode(fallback))
-            ?? Data("{\"command\":null,\"data\":null,\"error\":{\"code\":\"internal_failure\",\"exitCode\":73,\"message\":\"The CLI response could not be encoded.\"},\"exitCode\":73,\"ok\":false,\"schema\":\"freesnitch.cli.v1\"}\n".utf8)
+    /// Writes the envelope to stdout. If the payload cannot be encoded, the
+    /// response is still a whole envelope (an internal failure with
+    /// `data: null`, never bare text) and the process exits 73, so the JSON
+    /// and the exit code agree.
+    static func writeEnvelope<T: Encodable>(_ envelope: CLIEnvelope<T>) {
+        if let data = try? CLIJSON.encode(envelope) {
+            writeStdout(data)
+            return
+        }
+        writeStdout(encodingFailure(command: envelope.command))
+        writeStderr("freesnitch: \(encodingFailureMessage) The command may still have run; check with `freesnitch status`.\n")
+        exit(Int32(CLIExitCode.internalFailure.rawValue))
+    }
+
+    static let encodingFailureMessage = "The CLI response could not be encoded."
+
+    static func encodingFailure(command: String) -> Data {
+        let error = CLIError(.internalFailure, message: encodingFailureMessage)
+        if let data = try? CLIJSON.encode(CLIEnvelope<EmptyPayload>.failure(command: command, error: error)) {
+            return data
+        }
+        let object: [String: Any] = [
+            "schema": CLIEnvelope<EmptyPayload>.schema, "command": command, "ok": false,
+            "exitCode": error.exitCode.rawValue, "data": NSNull(),
+            "error": ["code": error.code, "message": error.message, "exitCode": error.exitCode.rawValue],
+        ]
+        return (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])) ?? Data()
     }
 
     static func writeStdout(_ data: Data) {
