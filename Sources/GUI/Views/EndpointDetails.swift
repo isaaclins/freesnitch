@@ -73,7 +73,7 @@ private struct EndpointAddressDetails: View {
             }
 
             if let location {
-                LabeledContent("Location") { Text(locationText(location)).multilineTextAlignment(.trailing) }
+                LabeledContent("Location") { CopyableValue(value: locationText(location)) }
             }
             note(locationNote(location))
             credit
