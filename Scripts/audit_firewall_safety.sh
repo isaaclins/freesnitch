@@ -126,7 +126,10 @@ SNAPSHOT_RECOVERY="$CODE_ROOT/Sources/Shared/SnapshotRecovery.swift"
 PF_MANAGER="$CODE_ROOT/Sources/Helper/PFManager.swift"
 
 fail() {
-  printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
+  # Name source files by their place in the repository, not by the
+  # comment-free copy the checks read, which is gone once the audit exits.
+  local message="$*"
+  printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "${message//"$CODE_ROOT"/$ROOT}" >&2
   exit 1
 }
 
