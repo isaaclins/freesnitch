@@ -14616,7 +14616,7 @@
         }
       }
     },
-    "%lld more answers were not saved either." : {
+    "%lld more answers were not remembered either." : {
       "localizations" : {
         "en" : {
           "variations" : {
@@ -14624,13 +14624,13 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld more answer was not saved either."
+                  "value" : "%lld more answer was not remembered either."
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld more answers were not saved either."
+                  "value" : "%lld more answers were not remembered either."
                 }
               }
             }
@@ -14642,25 +14642,25 @@
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ещё %lld ответ тоже не сохранён."
+                  "value" : "Ещё %lld ответ тоже не запомнен."
                 }
               },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ещё %lld ответа тоже не сохранены."
+                  "value" : "Ещё %lld ответа тоже не запомнены."
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ещё %lld ответов тоже не сохранены."
+                  "value" : "Ещё %lld ответов тоже не запомнены."
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ещё %lld ответа тоже не сохранены."
+                  "value" : "Ещё %lld ответа тоже не запомнены."
                 }
               }
             }

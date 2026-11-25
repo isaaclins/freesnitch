@@ -50,10 +50,14 @@ public struct UnsavedRememberedAnswers: Sendable {
     public func isRetrying(_ id: UUID) -> Bool { retrying.contains(id) }
 
     /// Records a failed save. The same rule failing again (a retry that was
-    /// refused too) replaces its earlier entry instead of adding a second.
+    /// refused too) replaces its earlier entry in place, so the notice just
+    /// retried stays the one on screen instead of a second being added.
     public mutating func record(_ answer: UnsavedRememberedAnswer) {
-        for old in items where old.rule.id == answer.rule.id { retrying.remove(old.id) }
-        items.removeAll { $0.rule.id == answer.rule.id }
+        if let index = items.firstIndex(where: { $0.rule.id == answer.rule.id }) {
+            retrying.remove(items[index].id)
+            items[index] = answer
+            return
+        }
         items.append(answer)
         if items.count > Self.limit {
             for dropped in items.prefix(items.count - Self.limit) { retrying.remove(dropped.id) }

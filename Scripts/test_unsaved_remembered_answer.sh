@@ -85,6 +85,18 @@ list.record(answer(rule, "rule saved but the firewall refused it: test"))
 check(list.items.count == 1, "the same rule failing again replaces its entry")
 check(!list.isRetrying(before) && list.current.map { !list.isRetrying($0.id) } == true,
       "a refused retry can be tried again")
+
+// With several waiting, a refused retry keeps its place on screen.
+var two = UnsavedRememberedAnswers()
+var other = rule
+other.id = UUID()
+two.record(answer(rule, "down"))
+two.record(answer(other, "down"))
+let onScreen = two.current!.id
+_ = two.beginRetry(id: onScreen)
+two.record(answer(rule, "still down"))
+check(two.current?.rule.id == rule.id && two.current?.reason == "still down",
+      "a refused retry stays the notice on screen, with the new reason")
 check(list.current?.reason == "rule saved but the firewall refused it: test",
       "and shows the latest reason")
 

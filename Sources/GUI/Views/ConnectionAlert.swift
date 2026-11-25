@@ -286,7 +286,7 @@ struct UnsavedRememberedAnswerNotice: View {
     private var others: String? {
         let more = state.unsavedRememberedAnswers.items.count - 1
         guard more > 0 else { return nil }
-        return String(localized: "\(more) more answers were not saved either.")
+        return String(localized: "\(more) more answers were not remembered either.")
     }
 
     var body: some View {
@@ -321,6 +321,7 @@ struct UnsavedRememberedAnswerNotice: View {
                 Spacer(minLength: 0)
                 Button("Dismiss") { state.dismissUnsavedRememberedAnswer(id: answer.id) }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(state.unsavedRememberedAnswers.isRetrying(answer.id))
                 Button("Try Again") { state.retryUnsavedRememberedAnswer(id: answer.id) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
@@ -353,6 +354,7 @@ struct UnsavedRememberedAnswerNotice: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Button("Dismiss") { state.dismissUnsavedRememberedAnswer(id: answer.id) }
+                    .disabled(state.unsavedRememberedAnswers.isRetrying(answer.id))
                 Button("Try Again") { state.retryUnsavedRememberedAnswer(id: answer.id) }
                     .disabled(state.unsavedRememberedAnswers.isRetrying(answer.id))
             }
