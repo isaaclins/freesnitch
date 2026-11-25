@@ -54,6 +54,18 @@ struct Verify {
         expect(ruleHost: "API.EXAMPLE.COM", flowHost: "api.example.org", matches: false)
         expect(ruleHost: "*.EXAMPLE.COM", flowHost: "notexample.com", matches: false)
         expect(ruleHost: "API.EXAMPLE.COM", flowHost: "www.api.example.com", matches: false)
+        // A final root dot names the same host (#284), on either side.
+        expect(ruleHost: "blocked.example.com.", flowHost: "blocked.example.com", matches: true)
+        expect(ruleHost: "blocked.example.com", flowHost: "blocked.example.com.", matches: true)
+        expect(ruleHost: "Blocked.Example.COM.", flowHost: "blocked.example.com", matches: true)
+        expect(ruleHost: "*.example.com.", flowHost: "cdn.example.com", matches: true)
+        expect(ruleHost: ".example.com.", flowHost: "example.com", matches: true)
+        expect(ruleHost: "*.example.com", flowHost: "cdn.example.com.", matches: true)
+        // Dropping the dot never widens a rule to other names.
+        expect(ruleHost: "blocked.example.com.", flowHost: "www.blocked.example.com", matches: false)
+        expect(ruleHost: "blocked.example.com.", flowHost: "blocked.example.co", matches: false)
+        expect(ruleHost: "*.example.com.", flowHost: "notexample.com", matches: false)
+        expect(ruleHost: "blocked.example.com..", flowHost: "blocked.example.com", matches: false)
         // An address in the host field still matches by address.
         expect(ruleHost: "198.51.100.7", flowHost: "Host.Example.com", matches: true)
 
@@ -64,6 +76,18 @@ struct Verify {
                                direction: .outgoing, status: .pending)
         check(matcher.decision(for: query, rules: [everyApp], defaultMode: .silentAllow) == .deny,
               "DNS proxy query tracker.example.net is denied by Tracker.EXAMPLE.net")
+
+        // The issue's case: a deny for every app saved with the final dot
+        // answers the proxy's query for the name without it (#284).
+        let dotted = Rule(remoteHost: "blocked.example.com.", direction: .outgoing, action: .deny, scope: .domain)
+        let dottedQuery = Connection(pid: 0, processName: "", processPath: "", remoteHost: "blocked.example.com",
+                                     direction: .outgoing, status: .pending)
+        check(matcher.decision(for: dottedQuery, rules: [dotted], defaultMode: .silentAllow) == .deny,
+              "DNS proxy query blocked.example.com is denied by blocked.example.com.")
+        let otherQuery = Connection(pid: 0, processName: "", processPath: "", remoteHost: "other.example.com",
+                                    direction: .outgoing, status: .pending)
+        check(matcher.decision(for: otherQuery, rules: [dotted], defaultMode: .silentAllow) == .allow,
+              "DNS proxy query other.example.com is left to the default by blocked.example.com.")
 
         // Fail open stays: an allow typed in capitals in Silent Deny lets the
         // lower-case flow through and leaves other names to the default.
