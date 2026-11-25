@@ -7,10 +7,12 @@
 # inside the initializer, the audit still passed, so a helper that drops the
 # user's resolver after every restart could ship.
 #
-# This replays that on a copy of the sources: the untouched copy passes, and
+# The audit now reads every Swift file with its comments blanked out. This
+# replays the issue on a copy of the sources: the untouched copy passes, and
 # every way of leaving the line only as a comment fails with the resolver
-# message. It also checks that reading code without comments keeps string
-# literals whole, so text after a URL in a string is still seen.
+# message. One check that reads a file directly instead of through a helper
+# is covered the same way. It also checks that reading code without comments
+# keeps string literals whole, so text after a URL in a string is still seen.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,21 +29,27 @@ RESTORE='dns.dohURL = Self.restoredDoHUpstream(from: store.getSetting("doh_url")
 VALIDATE='DoHUpstreamValidator.rejectionReason(for: storedValue)'
 RESTORE_MESSAGE='restores mode without also restoring and validating the persisted DoH upstream'
 VALIDATE_MESSAGE='restores a persisted DoH upstream without validating it'
+OWN_TRAFFIC='if isOwnTraffic(conn) || isLoopback(conn.remoteIP) { observe(.unfiltered); return .allow() }'
+OWN_TRAFFIC_MESSAGE='own-traffic and loopback exemption is missing'
+HELPER_FILE=Sources/Helper/HelperService.swift
+FILTER_FILE=Sources/NetExt/FilterDataProvider.swift
 
-grep -Fq -- "$RESTORE" "$ROOT/Sources/Helper/HelperService.swift" \
+grep -Fq -- "$RESTORE" "$ROOT/$HELPER_FILE" \
   || fail "the helper no longer has the restore line this test edits"
-grep -Fq -- "$VALIDATE" "$ROOT/Sources/Helper/HelperService.swift" \
+grep -Fq -- "$VALIDATE" "$ROOT/$HELPER_FILE" \
   || fail "the helper no longer has the validation call this test edits"
+grep -Fq -- "$OWN_TRAFFIC" "$ROOT/$FILTER_FILE" \
+  || fail "the extension no longer has the own-traffic line this test edits"
 
-# A fresh copy of what the audit reads, with one line of the helper replaced.
-# $1 names the case, $2 is the text to replace, $3 what replaces it.
+# A fresh copy of what the audit reads, with one piece of text replaced.
+# $1 names the case, $2 is the file, $3 the text to replace, $4 what replaces it.
 make_copy() {
   local dir="$TMP/$1"
   mkdir -p "$dir"
   cp -R "$ROOT/Scripts" "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml" "$dir/"
-  if [ "$#" -eq 3 ]; then
-    FIND="$2" REPLACE="$3" perl -0pi -e 's/\Q$ENV{FIND}\E/$ENV{REPLACE}/ or die "text not found\n"' \
-      "$dir/Sources/Helper/HelperService.swift"
+  if [ "$#" -eq 4 ]; then
+    FIND="$3" REPLACE="$4" perl -0pi -e 's/\Q$ENV{FIND}\E/$ENV{REPLACE}/ or die "text not found\n"' \
+      "$dir/$2"
   fi
   printf '%s\n' "$dir"
 }
@@ -52,9 +60,9 @@ run_audit() {
 }
 
 expect_failure() {
-  local name="$1" find="$2" replace="$3" message="$4"
+  local name="$1" file="$2" find="$3" replace="$4" message="$5"
   local dir output
-  dir="$(make_copy "$name" "$find" "$replace")"
+  dir="$(make_copy "$name" "$file" "$find" "$replace")"
   if output="$(run_audit "$dir")"; then
     fail "$name: the audit passed although the line is only left in a comment"
   fi
@@ -69,18 +77,21 @@ echo "ok - untouched sources pass"
 
 # The steps in #236: the live line removed, its text left in a // comment
 # inside the initializer.
-expect_failure "line comment" "$RESTORE" "// $RESTORE" "$RESTORE_MESSAGE"
+expect_failure "line comment" "$HELPER_FILE" "$RESTORE" "// $RESTORE" "$RESTORE_MESSAGE"
 # The same text after other code on the line.
-expect_failure "trailing comment" "$RESTORE" "_ = 0 // $RESTORE" "$RESTORE_MESSAGE"
+expect_failure "trailing comment" "$HELPER_FILE" "$RESTORE" "_ = 0 // $RESTORE" "$RESTORE_MESSAGE"
 # The same text in a block comment, on one line and across lines.
-expect_failure "block comment" "$RESTORE" "/* $RESTORE */" "$RESTORE_MESSAGE"
-expect_failure "multi-line block comment" "$RESTORE" "/*
+expect_failure "block comment" "$HELPER_FILE" "$RESTORE" "/* $RESTORE */" "$RESTORE_MESSAGE"
+expect_failure "multi-line block comment" "$HELPER_FILE" "$RESTORE" "/*
         $RESTORE
         */" "$RESTORE_MESSAGE"
 # The validator check had the same gap.
-expect_failure "validator in a comment" "guard let reason = $VALIDATE else {" \
+expect_failure "validator in a comment" "$HELPER_FILE" "guard let reason = $VALIDATE else {" \
   "// guard let reason = $VALIDATE else {
         guard let reason = Optional<String>.none else {" "$VALIDATE_MESSAGE"
+# A check that greps the file itself rather than going through a helper.
+expect_failure "own-traffic exemption in a comment" "$FILTER_FILE" "$OWN_TRAFFIC" \
+  "// $OWN_TRAFFIC" "$OWN_TRAFFIC_MESSAGE"
 
 # Reading code without comments must not cut a line at the // of a URL in a
 # string, or drop code after a string that holds one.
