@@ -1318,7 +1318,11 @@ final class InsightsViewModel: ObservableObject {
             self.isLoading = false
             guard let report else { self.errorMessage = error; return }
             self.source = report.source
-            self.findings = offset == 0 ? report.findings : self.findings + report.findings
+            // A helper from before #231 ignored the offset and sent the first
+            // page again; never list the same finding twice.
+            let known = offset == 0 ? [] : Set(self.findings.map(\.id))
+            let fresh = report.findings.filter { !known.contains($0.id) }
+            self.findings = offset == 0 ? report.findings : self.findings + fresh
             self.hasMoreFindings = report.hasMore
         }
     }
