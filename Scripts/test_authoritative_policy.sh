@@ -89,7 +89,7 @@ let path = CommandLine.arguments[1]
 let rule = Rule(id: UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!,
                 remoteHost: "cli-added.example", action: .deny, scope: .domain)
 var store: RuleStore? = try RuleStore(path: path)
-let before = store!.policyState()
+let before = (try! store!.policyState())
 let cliState = try store!.mutatePolicy { draft in
     draft.rules.append(rule)
 }
@@ -97,7 +97,7 @@ let cliSnapshot = SharedRuleBridge.Snapshot(mode: cliState.mode,
                                              rules: cliState.rules,
                                              updatedAt: Date(timeIntervalSinceReferenceDate: 200),
                                              generation: cliState.generation)
-let guiState = store!.policyState()
+let guiState = (try! store!.policyState())
 let guiSnapshot = SharedRuleBridge.Snapshot(mode: guiState.mode,
                                              rules: guiState.rules,
                                              updatedAt: Date(timeIntervalSinceReferenceDate: 201),
@@ -108,7 +108,7 @@ expect(before.generation <= cliSnapshot.generation, "generation decreased during
 expect(cliSnapshot.generation <= guiSnapshot.generation, "generation decreased during GUI refresh")
 store = nil
 let reopened = try RuleStore(path: path)
-let reopenedState = reopened.policyState()
+let reopenedState = (try! reopened.policyState())
 expect(reopenedState.rules.contains { $0.id == rule.id }, "reopened store lost the committed mutation")
 expect(guiSnapshot.generation <= reopenedState.generation, "generation decreased after reopening the store")
 print("rule store sequencing harness: CLI generation \(cliSnapshot.generation), GUI refresh generation \(guiSnapshot.generation), reopened generation \(reopenedState.generation)")

@@ -669,14 +669,14 @@ INSERT INTO rules VALUES ('\(allowSafari.id.uuidString)', 'com.google.Chrome', N
 """, nil, nil, nil)
 sqlite3_close(old)
 let store = try! RuleStore(path: dbPath)
-let migrated = store.allRules()
+let migrated = (try! store.allRules())
 expect(migrated.count == 1 && migrated[0].processBundleId == "com.google.Chrome" && migrated[0].processTeamId == nil
        && migrated[0].hitCount == 3, "an existing rule survives the new column, with no team yet")
 var bound = migrated[0]
 bound.processTeamId = chromeTeam
 _ = try! store.mutatePolicy { draft in draft.rules = draft.rules.map { $0.id == bound.id ? bound : $0 } }
-expect(store.allRules().first?.processTeamId == chromeTeam, "a learned team is stored")
-expect((try? RuleStore(path: dbPath))?.allRules().first?.processTeamId == chromeTeam,
+expect((try! store.allRules()).first?.processTeamId == chromeTeam, "a learned team is stored")
+expect((try? RuleStore(path: dbPath)).flatMap { try? $0.allRules() }?.first?.processTeamId == chromeTeam,
        "opening the store again keeps the column and the team")
 try? FileManager.default.removeItem(atPath: dbPath)
 let exported = try! RuleExportCodec.decode(RuleExportCodec.encode([allowChrome])).rules

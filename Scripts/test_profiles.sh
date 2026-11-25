@@ -216,9 +216,9 @@ pass("no profile can ever produce a third allow layer")
 
 // A fresh profile inherits Always immediately, by reference and not by copy.
 let fresh = try store.createProfile(name: "Cafe", mode: .alert)
-let freshOwn = store.allRules(profile: fresh.name)
+let freshOwn = (try! store.allRules(profile: fresh.name))
 let freshLayer = try store.layeredRules(profileName: fresh.name)
-let alwaysRules = store.allRules(profile: Profile.alwaysName)
+let alwaysRules = (try! store.allRules(profile: Profile.alwaysName))
 expect(freshOwn.isEmpty, "creating a profile copied \(freshOwn.count) rules into it")
 expect(freshLayer.map(\.id).sorted(by: { $0.uuidString < $1.uuidString })
         == alwaysRules.map(\.id).sorted(by: { $0.uuidString < $1.uuidString }),
@@ -372,7 +372,7 @@ pass("the profile command surface is bounded, refuses unknown profiles and refre
 // the extension stops filtering ("split-brain snapshot").
 
 func liveSnapshot() -> SharedRuleBridge.Snapshot {
-    let state = store.activePolicyState()
+    let state = (try! store.activePolicyState())
     return SharedRuleBridge.Snapshot(mode: state.mode, rules: state.rules,
                                      generation: state.generation, epoch: state.epoch)
 }

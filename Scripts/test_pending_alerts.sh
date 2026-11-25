@@ -489,7 +489,7 @@ struct PendingAlertHarness {
             equal(stored?.profile, "home", "a CLI-remembered rule is stored in the active profile")
             check(enforced.rules.contains { $0.id == built.id && $0.action == .deny },
                   "the remembered deny is part of the policy enforced while home is active")
-            check(!store.allRules(profile: Profile.defaultName).contains { $0.id == built.id },
+            check(!(try! store.allRules(profile: Profile.defaultName)).contains { $0.id == built.id },
                   "the remembered rule is not parked in the inactive default profile")
 
             // The profile switches after the rule was built but before it
