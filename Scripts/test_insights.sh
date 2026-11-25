@@ -800,6 +800,33 @@ struct InsightsHarness {
             check(false, "an oversized store opens, records and compacts: \(error)")
         }
 
+        // When one UTC day alone fills the budget, the trim after a write
+        // must not take the batch that was just written (#579). Every batch
+        // here is on the same day, at noon UTC, whatever time the harness runs.
+        let oneDaySupport = root.appendingPathComponent("One Day Support")
+        try! FileManager.default.createDirectory(at: oneDaySupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let oneDayPath = oneDaySupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(identifier: "UTC")!
+            let noon = utc.date(bySettingHour: 12, minute: 0, second: 0, of: now)!
+            let oneDayCeiling: Int64 = 1024 * 1024
+            let oneDay = try InsightsStore(path: oneDayPath, expectedUID: getuid(), maxDatabaseBytes: oneDayCeiling)
+            var lost: [Int] = []
+            for index in 0..<40 {
+                try oneDay.record(floodBatch(index, at: noon.addingTimeInterval(Double(index))))
+                if count(oneDayPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-\(index)-%';")
+                    != InsightsLimits.maxBatchCount { lost.append(index) }
+            }
+            check(count(oneDayPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-0-%';") == 0,
+                  "a store filled by one day was trimmed")
+            equal(lost, [], "every batch written into a store filled by one day is kept by the trim that follows it")
+            check(fileBytes(oneDayPath) <= oneDayCeiling, "a store filled by one day stays under its ceiling")
+        } catch {
+            check(false, "a store filled by one day keeps recording: \(error)")
+        }
+
         // A store from before #228 that is over the ceiling, has no free
         // pages and lacks the indexes this change adds must still open,
         // record and be compacted.

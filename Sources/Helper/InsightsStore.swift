@@ -175,10 +175,25 @@ final class InsightsStore: @unchecked Sendable {
     private static let trimSlicesPerTransaction = 64
 
     /// Deletes the oldest slice of history. Returns false when nothing is left.
+    ///
+    /// The newest batch of raw events is never trimmed (#579). Once a single
+    /// day fills the budget, the oldest raw events are that day's, and "raw
+    /// before its day's rollup" would otherwise delete the batch that was just
+    /// written, so recording would keep going and the last 14 days would show
+    /// nothing new. Past that point the day's rollups go instead.
     private func trimOldestLocked() throws -> Bool {
+        // Raw events at or after this time are the newest batch and stay.
+        var keepFrom: Double?
+        try queryLocked("SELECT observed_at FROM flow_observations ORDER BY observed_at DESC LIMIT 1 OFFSET ?;",
+                        bind: { statement in try self.bindInt(statement, index: 1, value: Int32(InsightsLimits.maxBatchCount - 1)) }) { statement in
+            keepFrom = sqlite3_column_double(statement, 0)
+        }
         var oldestRaw: Double?
-        try queryLocked("SELECT MIN(observed_at) FROM flow_observations;") { statement in
-            if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestRaw = sqlite3_column_double(statement, 0) }
+        if let keepFrom {
+            try queryLocked("SELECT MIN(observed_at) FROM flow_observations WHERE observed_at < ?;",
+                            bind: { statement in try self.bindDouble(statement, index: 1, value: keepFrom) }) { statement in
+                if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestRaw = sqlite3_column_double(statement, 0) }
+            }
         }
         var oldestDay: String?
         try queryLocked("""
@@ -212,6 +227,8 @@ final class InsightsStore: @unchecked Sendable {
                             bind: { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows - 1) }) { statement in
                 cut = sqlite3_column_double(statement, 0)
             }
+            // Never into the newest batch: stop just before it.
+            if let keepFrom, cut >= keepFrom { cut = keepFrom.nextDown }
             for table in ["flow_observations", "dns_mappings"] {
                 try executeLocked("DELETE FROM \(table) WHERE observed_at <= ?;") { statement in
                     try self.bindDouble(statement, index: 1, value: cut)
