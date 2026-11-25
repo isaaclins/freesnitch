@@ -85,7 +85,10 @@ final class InsightsStore: @unchecked Sendable {
             } catch {
                 let full = db.map { sqlite3_errcode($0) & 0xff } == SQLITE_FULL
                 _ = try? executeLocked("ROLLBACK;")
-                guard full, !retried else { throw error }
+                // Only the ceiling is answered by trimming. When the disk
+                // itself is full, dropping rows frees nothing on it and would
+                // only erase the history alerts rely on, batch after batch.
+                guard full, !retried, !volumeIsFull() else { throw error }
                 retried = true
                 fullRetryCount += 1
                 try trimToBudgetLocked(force: true)
@@ -95,6 +98,14 @@ final class InsightsStore: @unchecked Sendable {
         }
         try trimToBudgetLocked(force: false)
         try verifyDatabaseFilesLocked()
+    }
+
+    /// True when the volume holding the store has almost no room left, so a
+    /// refused write came from the disk and not from the ceiling.
+    private func volumeIsFull() -> Bool {
+        var info = statfs()
+        guard statfs((path as NSString).deletingLastPathComponent, &info) == 0 else { return true }
+        return Int64(info.f_bavail) * Int64(info.f_bsize) < InsightsLimits.maxJournalBytes
     }
 
     /// Bytes the stored rows take, without the free pages SQLite keeps for reuse.
@@ -180,11 +191,12 @@ final class InsightsStore: @unchecked Sendable {
             if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestDNS = sqlite3_column_double(statement, 0) }
         }
 
-        // DNS answers older than every event and every rollup day go first,
-        // so a flood of lookups never costs older connection history.
+        // DNS answers older than every event go first, and like raw events
+        // they go before the rollup of their own day, so a flood of lookups
+        // never costs newer connection history.
         if let oldestDNS,
            oldestRaw.map({ oldestDNS < $0 }) ?? true,
-           oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestDNS)) < $0 }) ?? true {
+           oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestDNS)) <= $0 }) ?? true {
             try executeLocked("""
                 DELETE FROM dns_mappings WHERE rowid IN
                     (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);

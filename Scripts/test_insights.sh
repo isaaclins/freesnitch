@@ -739,30 +739,33 @@ struct InsightsHarness {
             check(false, "a store at its hard limit keeps recording: \(error)")
         }
         // A flood of DNS answers is trimmed oldest first like everything
-        // else: a connection newer than the oldest answers is kept.
+        // else, and like raw events before the rollup of their own day: a
+        // connection newer than every answer survives the flood that follows.
+        // Everything is on one UTC day, where answers used to lose to the
+        // connection's rollup and take the connection with them.
         let dnsSupport = root.appendingPathComponent("DNS Flood Support")
         try! FileManager.default.createDirectory(at: dnsSupport, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o755])
         let dnsPath = dnsSupport.appendingPathComponent("Insights/insights.sqlite").path
         do {
             let flooded = try InsightsStore(path: dnsPath, expectedUID: getuid(), maxDatabaseBytes: 1024 * 1024)
+            let floodNow = Date()
             for index in 0..<60 {
-                if index == 58 {
+                if index == 10 {
                     try flooded.record([observation(app: "Kept", bundle: "com.example.kept", path: "/Applications/Kept.app",
-                                                    host: "kept.example", ip: "192.0.2.81",
-                                                    at: now.addingTimeInterval(-day + Double(index) * 60))])
+                                                    host: "kept.example", ip: "192.0.2.81", at: floodNow)])
                 }
-                let at = now.addingTimeInterval(-day + Double(index) * 60)
+                let at = floodNow.addingTimeInterval(-Double(60 - index) / 10)
                 try flooded.recordDNSMappings((0..<InsightsLimits.maxDNSMappingCount).map { row in
                     DNSMapping(domain: "random-\(index)-\(row).dns-flood.example", ip: "203.0.113.\(row % 250)",
                                observedAt: at, expiresAt: at.addingTimeInterval(300))
                 })
             }
             check(fileBytes(dnsPath) <= 1024 * 1024, "a DNS flood stays under the ceiling")
-            equal(count(dnsPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host = 'kept.example';"), 1,
-                  "a connection survives while older DNS answers are left to trim")
             check(count(dnsPath, "SELECT COUNT(*) FROM dns_mappings WHERE domain LIKE 'random-0-%';") == 0,
-                  "the oldest DNS answers are the ones that went")
+                  "the DNS flood was trimmed")
+            equal(count(dnsPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host = 'kept.example';"), 1,
+                  "a connection newer than every DNS answer survives the flood")
         } catch {
             check(false, "a DNS flood is trimmed: \(error)")
         }
