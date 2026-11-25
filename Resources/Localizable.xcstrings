@@ -10229,16 +10229,6 @@
         }
       }
     },
-    "the default route has no IPv4 gateway" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "у маршрута по умолчанию нет шлюза IPv4"
-          }
-        }
-      }
-    },
     "The DNS proxy runs inside the privileged helper and filters domain lookups against the enabled blocklists. It reports as running only once the helper confirms it." : {
       "localizations" : {
         "ru" : {

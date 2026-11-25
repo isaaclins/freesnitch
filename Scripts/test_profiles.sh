@@ -435,6 +435,21 @@ expect(observed == ["aa:bb:cc:dd:ee:01", "12:34:56:78:9a:bc", nil],
        "the gateway watcher reported \(observed) instead of one event per real change")
 pass("the gateway watcher reports one event per change and drops malformed readings")
 
+// A poll that comes in while a change is being handled (the timer and a
+// refresh from the app at once) must not hand the same change over twice.
+let nestedProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:02")
+let nestedWatcher = GatewayMACWatcher(provider: nestedProvider)
+var nestedDeliveries = 0
+nestedWatcher.onChange = { _ in
+    nestedDeliveries += 1
+    if nestedDeliveries == 1 { _ = nestedWatcher.refresh() }
+    return true
+}
+_ = nestedWatcher.refresh()
+_ = nestedWatcher.refresh()
+expect(nestedDeliveries == 1, "one gateway change was handled \(nestedDeliveries) times")
+pass("a gateway change is handled once even when two polls overlap")
+
 // MARK: - a failed automatic switch is retried and visible (#269)
 
 // Replays the issue: the user bound a gateway to public-wifi, the gateway

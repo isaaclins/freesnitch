@@ -44,6 +44,9 @@ public final class ProfileCoordinator: @unchecked Sendable {
     private var pendingHandler: ((PendingNetworkSwitch?) -> Void)?
     private var lastObservedGatewayMAC: String?
     private var pending: PendingNetworkSwitch?
+    /// Advanced by every switch the user makes, so a network switch that was
+    /// already failing when they did cannot report itself as pending after.
+    private var userChoiceGeneration = 0
 
     public init(store: RuleStore, watcher: GatewayMACWatcher = GatewayMACWatcher()) {
         self.store = store
@@ -170,6 +173,11 @@ public final class ProfileCoordinator: @unchecked Sendable {
         handler?(result)
         // The user's own choice outranks a retry of an automatic switch that
         // had failed: retrying it later would undo what they just picked.
+        if reason != .network {
+            lock.lock()
+            userChoiceGeneration += 1
+            lock.unlock()
+        }
         if reason != .network, pendingNetworkSwitch != nil {
             watcher.dropUndeliveredChange()
             setPending(nil)
@@ -239,18 +247,27 @@ public final class ProfileCoordinator: @unchecked Sendable {
     /// delivers the same gateway again on its next poll until it works.
     @discardableResult
     public func applyObservedGatewayMAC(_ rawMAC: String?) -> Bool {
+        let mac = rawMAC.flatMap(GatewayMAC.normalized) ?? ""
+        lock.lock()
+        let generation = userChoiceGeneration
+        lock.unlock()
         do {
             let result = try handleGatewayMACChange(rawMAC)
-            if let previous = pendingNetworkSwitch {
+            if pendingNetworkSwitch != nil {
                 if let result {
                     PSLog.notice(PSLog.helper,
-                                 "The profile \(result.notice.activeProfile) is now active for gateway \(previous.gatewayMAC).")
+                                 "The profile \(result.notice.activeProfile) is now active for gateway \(mac).")
                 }
                 setPending(nil)
             }
             return true
         } catch {
-            let mac = rawMAC.flatMap(GatewayMAC.normalized) ?? ""
+            lock.lock()
+            let userChoseMeanwhile = userChoiceGeneration != generation
+            lock.unlock()
+            // The user picked a profile while this attempt ran: their choice
+            // stands, nothing is pending, and nothing should retry.
+            if userChoseMeanwhile { return true }
             let profileName = store.networkBinding(forGatewayMAC: mac)?.profileName ?? ""
             let failure = PendingNetworkSwitch(gatewayMAC: mac,
                                                profileName: profileName,

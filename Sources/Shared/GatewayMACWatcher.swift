@@ -21,7 +21,8 @@ public enum GatewayMACReadError: Error, LocalizedError, Equatable, Sendable {
     case exitStatus(tool: String, status: Int32)
     case outputTooLarge(tool: String, maximum: Int)
     case unreadableOutput(tool: String)
-    case noGatewayInRoute
+    /// `route` found no default route. Mapped to "no gateway", never shown.
+    case noRoute
     case noMACForGateway(String)
 
     public var errorDescription: String? {
@@ -34,8 +35,8 @@ public enum GatewayMACReadError: Error, LocalizedError, Equatable, Sendable {
             return String(localized: "\(tool) wrote more than \(maximum) bytes")
         case .unreadableOutput(let tool):
             return String(localized: "\(tool) wrote output that is not text")
-        case .noGatewayInRoute:
-            return String(localized: "the default route has no IPv4 gateway")
+        case .noRoute:
+            return "no default route"
         case .noMACForGateway(let gateway):
             return String(localized: "no hardware address is known for the gateway \(gateway)")
         }
@@ -52,10 +53,16 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
     }
 
     public func readGatewayMAC() throws -> String? {
-        let route = try run(executable: "/sbin/route", arguments: ["-n", "get", "-inet", "default"])
-        guard let gateway = gatewayAddress(in: route) else {
-            throw GatewayMACReadError.noGatewayInRoute
+        let route: String
+        do {
+            route = try run(executable: "/sbin/route", arguments: ["-n", "get", "-inet", "default"])
+        } catch GatewayMACReadError.noRoute {
+            // Offline: there is no gateway, which is not a failure to read one.
+            return nil
         }
+        // A default route through an interface (a full-tunnel VPN) has no
+        // gateway address either, and that is also simply no gateway.
+        guard let gateway = gatewayAddress(in: route) else { return nil }
         let arp = try run(executable: "/usr/sbin/arp", arguments: ["-n", gateway])
         let mac = arp.split(whereSeparator: { $0.isWhitespace || $0 == "(" || $0 == ")" })
             .prefix(512)
@@ -85,7 +92,8 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
         task.arguments = arguments
         let pipe = Pipe()
         task.standardOutput = pipe
-        task.standardError = Pipe()
+        let errorPipe = Pipe()
+        task.standardError = errorPipe
         do {
             try task.run()
         } catch {
@@ -93,6 +101,10 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
         }
         task.waitUntilExit()
         guard task.terminationStatus == 0 else {
+            let message = errorPipe.fileHandleForReading.readData(ofLength: 4096)
+            if tool == "route", String(decoding: message, as: UTF8.self).contains("not in table") {
+                throw GatewayMACReadError.noRoute
+            }
             throw GatewayMACReadError.exitStatus(tool: tool, status: task.terminationStatus)
         }
         let data = pipe.fileHandleForReading.readData(ofLength: Self.maximumCommandOutputBytes + 1)
@@ -125,6 +137,7 @@ public final class GatewayMACWatcher: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var lastMAC: String?
     private var undelivered = false
+    private var delivering = false
     private var readProblem: String?
     private var handler: ChangeHandler?
 
@@ -211,7 +224,12 @@ public final class GatewayMACWatcher: @unchecked Sendable {
             lastMAC = current
             undelivered = true
         }
-        let deliver = undelivered
+        // One delivery at a time: the timer and a refresh from the app can
+        // poll at once, and the same change must not be handled twice. A poll
+        // that finds a delivery running leaves the change to it, or to the
+        // next poll if it fails.
+        let deliver = undelivered && !delivering && handler != nil
+        if deliver { delivering = true }
         callback = deliver ? handler : nil
         let problemChanged = problem != readProblem
         readProblem = problem
@@ -227,6 +245,7 @@ public final class GatewayMACWatcher: @unchecked Sendable {
         guard deliver, let callback else { return current }
         let handled = callback(current)
         lock.lock()
+        delivering = false
         // A newer change that arrived meanwhile stays undelivered whatever
         // this older one did.
         if lastMAC == current, handled { undelivered = false }
