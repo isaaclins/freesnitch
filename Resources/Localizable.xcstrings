@@ -4875,6 +4875,16 @@
         }
       }
     },
+    "Could not remove %@ from %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось удалить %@ из %@"
+          }
+        }
+      }
+    },
     "Could not remove the rule for %@" : {
       "localizations" : {
         "ru" : {
