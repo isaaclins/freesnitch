@@ -168,13 +168,16 @@ final class BlocklistManager: @unchecked Sendable {
     @discardableResult
     func refresh() async -> DomainRefreshResult {
         let lists = store.allBlocklists().filter { $0.enabled }
-        var downloadedSets: [UUID: Set<String>] = [:]
+        /// What each list's source carried, before hand edits, and from which
+        /// address. Edits and the address are checked again when the result is
+        /// built, because either may change while the slowest list downloads.
+        var downloaded: [UUID: (url: String, names: Set<String>)] = [:]
         var failed: [String] = []
         await withTaskGroup(of: (BlocklistInfo, Set<String>?).self) { group in
             for list in lists {
                 group.addTask { (list, await self.fetch(list)) }
             }
-            for await (list, downloaded) in group {
+            for await (list, fetched) in group {
                 // A list that failed to download must not be recorded as a
                 // successful empty one, or Settings reports "0 entries,
                 // updated just now" for a source that is simply gone. Nor may
@@ -182,7 +185,7 @@ final class BlocklistManager: @unchecked Sendable {
                 // source is unreachable would otherwise silently drop every
                 // name it carried (#252). What is stored for it, hand edits
                 // included, keeps blocking until a download succeeds.
-                guard var set = downloaded else {
+                guard let source = fetched else {
                     failed.append(list.name)
                     PSLog.error(PSLog.dns,
                                 "blocklist \(list.name) was not refreshed; its saved entries stay in effect")
@@ -190,10 +193,7 @@ final class BlocklistManager: @unchecked Sendable {
                 }
                 // Hand edits are reapplied after every download, which is the
                 // whole reason they are stored apart from the entries (#97).
-                let edits = store.blocklistEdits(id: list.id)
-                set.formUnion(edits.added)
-                set.subtract(edits.removed)
-                downloadedSets[list.id] = set
+                let set = BlocklistManager.applying(store.blocklistEdits(id: list.id), to: source)
                 // Only the download's own fields are written, never `enabled`:
                 // with downloads on a schedule (#491) the user may switch the
                 // list off while one runs, and a stale copy would switch it
@@ -202,9 +202,9 @@ final class BlocklistManager: @unchecked Sendable {
                 // this downloaded the old one, keeps nothing of this download.
                 guard (try? self.store.recordBlocklistDownload(id: list.id, fromURL: list.url,
                                                                entryCount: set.count, at: Date())) == true else {
-                    downloadedSets[list.id] = nil
                     continue
                 }
+                downloaded[list.id] = (list.url, source)
                 // Kept per list, on disk, so the GUI can ask what is on a list
                 // without anyone holding one in memory (#79). A failure here
                 // costs the browsable copy, never the blocking itself, which
@@ -217,16 +217,29 @@ final class BlocklistManager: @unchecked Sendable {
                 }
             }
         }
-        // Built from the lists that are on now, for the same reason. A list
-        // that failed, or was switched on during the download, blocks from
-        // its saved copy until its own download lands.
+        // Built from the lists as they are now, for the same reason: only
+        // lists that are on, a download only while its list still has that
+        // address, and with the hand edits as they are now. A list that
+        // failed, was switched on, or got a new address during this refresh
+        // blocks from its saved copy until its own download lands.
         var merged: Set<String> = []
         for list in store.allBlocklists() where list.enabled {
-            merged.formUnion(downloadedSets[list.id] ?? storedEntries(of: list))
+            if let fresh = downloaded[list.id], fresh.url == list.url {
+                merged.formUnion(BlocklistManager.applying(store.blocklistEdits(id: list.id), to: fresh.names))
+            } else {
+                merged.formUnion(storedEntries(of: list))
+            }
         }
         queue.sync { self.domains = merged }
         onUpdate?(merged.count)
         return DomainRefreshResult(failedLists: failed)
+    }
+
+    private static func applying(_ edits: BlocklistEdits, to source: Set<String>) -> Set<String> {
+        var set = source
+        set.formUnion(edits.added)
+        set.subtract(edits.removed)
+        return set
     }
 
     /// Rebuilds the matching set from what is already stored, without touching

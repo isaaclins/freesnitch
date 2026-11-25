@@ -1270,6 +1270,51 @@ struct IPBlocklistHarness {
         scheduled.domainListFetcher = { _ in ["ads.example"] }
         await scheduled.refreshAll()
 
+        // Two lists, one held back: list A finishes, its address changes and
+        // a newer refresh loads the new source, then the older refresh ends.
+        // It must not bring back A's old names, nor undo a hand edit made
+        // while it ran.
+        let listA = store.allBlocklists().first(where: { $0.enabled })!
+        var listB = store.allBlocklists().first(where: { !$0.enabled })!
+        listB.enabled = true
+        try? store.updateBlocklist(listB)
+        let heldB = DownloadGate()
+        let bCalls = DownloadCounter()
+        scheduled.domainListFetcher = { list in
+            if list.id == listA.id {
+                return list.url == listA.url ? ["a-old.example"] : ["a-new.example"]
+            }
+            bCalls.bump()
+            if bCalls.count == 1 { await heldB.wait() }
+            return ["b.example"]
+        }
+        async let olderRefresh = scheduled.refreshAll()
+        for _ in 0..<10_000 where !heldB.hasEntered { await Task.yield() }
+        func aOldStored() -> Bool {
+            store.blocklistEntries(blocklistID: listA.id, search: "a-old", offset: 0, limit: 10).total > 0
+        }
+        for _ in 0..<100_000 where !aOldStored() { await Task.yield() }
+        checks.expect(heldB.hasEntered && aOldStored(),
+                      "list A's old source must be stored while list B's download is held")
+        _ = try? store.updateBlocklistURL(id: listA.id, url: "https://lists.example.org/a-new.txt")
+        _ = try? store.addBlocklistEntries(id: listA.id, domains: ["hand.example"])
+        await scheduled.refreshAll()
+        checks.expect(scheduled.domains.contains("a-new.example"), "the newer refresh must load A's new source")
+        heldB.open()
+        _ = await olderRefresh
+        checks.expect(!scheduled.domains.contains("a-old.example"),
+                      "an older refresh that ends last must not bring back a replaced source's names")
+        checks.expect(scheduled.domains.contains("a-new.example") && scheduled.domains.contains("b.example"),
+                      "an older refresh that ends last must keep the newer source and its own lists")
+        checks.expect(scheduled.domains.contains("hand.example"),
+                      "an older refresh that ends last must not undo a hand edit made while it ran")
+        try? store.clearBlocklistEdits(id: listA.id)
+        _ = try? store.updateBlocklistURL(id: listA.id, url: listA.url)
+        listB.enabled = false
+        try? store.updateBlocklist(listB)
+        scheduled.domainListFetcher = { _ in ["ads.example"] }
+        await scheduled.refreshAll()
+
         // A clock set back is treated as due, not as "wait until it catches up".
         advance(-7 * BlocklistManager.scheduledRefreshInterval)
         checks.expect(await scheduled.refreshIfDue(), "a clock set back must not stall the schedule")
