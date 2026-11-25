@@ -138,6 +138,8 @@ final class ProfileClient: ObservableObject {
         case .removeBlocklistEntries(let id, let domains):
             guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return nil }
             snapshot.blocklists[index].entryCount = max(0, snapshot.blocklists[index].entryCount - domains.count)
+            snapshot.blocklists[index].lastUpdated = Date()
+            BlocklistEntriesDemo.remove(domains, from: id)
         case .resetBlocklistEntries:
             return nil
         case .updateBlocklistURL(let id, let url):

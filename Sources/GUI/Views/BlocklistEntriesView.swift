@@ -53,6 +53,24 @@ struct BlocklistEntriesView: View {
         // reading the property here queried one keystroke behind what the
         // field showed (#96).
         .onChange(of: searchText) { newValue in load(resettingOffset: true, query: newValue) }
+        // The list changed under the page that is showing: a name was removed
+        // here, names were added in the editor, or the list was downloaded
+        // again. The helper answers every one of those with the list's new
+        // count and time, so the same page is asked for again. Removing a name
+        // changed neither the list nor the search, so the removed name stayed
+        // on screen with the old total (#220).
+        .onChange(of: ContentVersion(blocklist)) { _ in load(resettingOffset: false) }
+    }
+
+    /// What changes when the names on a list change, and nothing else.
+    private struct ContentVersion: Equatable {
+        let entryCount: Int
+        let lastUpdated: Date?
+
+        init(_ blocklist: BlocklistInfo) {
+            entryCount = blocklist.entryCount
+            lastUpdated = blocklist.lastUpdated
+        }
     }
 
     @ViewBuilder
@@ -216,9 +234,7 @@ struct BlocklistEntriesView: View {
                                                 offset: offset,
                                                 limit: Self.pageSize) {
             isLoading = false
-            errorMessage = nil
-            page = demo
-            onCountChange?(demo.total)
+            show(demo, search: search)
             return
         }
         let request = BlocklistEntryQuery(blocklistID: blocklist.id,
@@ -233,10 +249,28 @@ struct BlocklistEntriesView: View {
                 page = nil
                 return
             }
-            errorMessage = nil
-            page = result
-            onCountChange?(result?.total ?? 0)
+            show(result, search: search)
         }
+    }
+
+    private func show(_ result: BlocklistEntryPage?, search: String) {
+        // Removing the only name on the last page leaves an offset past the
+        // end of the list. That page is asked for again one page back instead
+        // of showing "No entries" for a list that still has some.
+        if let result, result.entries.isEmpty, result.total > 0 {
+            let lastPage = (result.total - 1) / Self.pageSize * Self.pageSize
+            if lastPage < offset {
+                offset = lastPage
+                load(resettingOffset: false, query: search)
+                return
+            }
+        }
+        errorMessage = nil
+        page = result
+        if let selected = selection, !(result?.entries.contains(selected) ?? false) {
+            selection = nil
+        }
+        onCountChange?(result?.total ?? 0)
     }
 }
 
@@ -250,7 +284,7 @@ enum BlocklistEntriesDemo {
                      offset: Int,
                      limit: Int) -> BlocklistEntryPage? {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return nil }
-        let all = entries(for: blocklist)
+        let all = entries(for: blocklist).filter { !(removed[blocklist.id]?.contains($0) ?? false) }
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matching = needle.isEmpty ? all : all.filter { $0.contains(needle) }
         let start = min(max(0, offset), matching.count)
@@ -260,13 +294,24 @@ enum BlocklistEntriesDemo {
                                   offset: start)
     }
 
+    /// Names taken off a list in demo mode. The demo list is generated from its
+    /// count, so without this a removal dropped whichever name sorted last
+    /// instead of the one the user picked.
+    private static var removed: [UUID: Set<String>] = [:]
+
+    static func remove(_ domains: [String], from id: UUID) {
+        guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return }
+        removed[id, default: []].formUnion(domains)
+    }
+
     private static func entries(for blocklist: BlocklistInfo) -> [String] {
+        let count = blocklist.entryCount + (removed[blocklist.id]?.count ?? 0)
         let stems = ["ads", "track", "metrics", "telemetry", "pixel", "beacon", "analytics", "collect"]
         let domains = ["doubleclick.net", "adnxs.com", "criteo.com", "scorecardresearch.com",
                        "adsrvr.org", "taboola.com", "outbrain.com", "branch.io"]
         // Every name distinct, the way a real list is: a generator that
         // repeats itself makes the pane look broken rather than full.
-        return (0..<blocklist.entryCount).map { i in
+        return (0..<count).map { i in
             "\(stems[i % stems.count])\(i).\(domains[i % domains.count])"
         }
         .sorted()
