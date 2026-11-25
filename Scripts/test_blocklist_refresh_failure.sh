@@ -17,6 +17,10 @@
 #      failed download after a reset does not keep them blocking. Changing a
 #      list's source drops the old source's names the same way.
 #   5. A list that never downloaded and fails adds nothing to the set.
+#   6. A download is stored only under the address it came from (#529): the
+#      address check, the count and time, and the names are one transaction,
+#      so an address change racing a finished download can never leave the
+#      old source's names saved under the new address.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -158,7 +162,61 @@ struct Verify {
         result = await m.refresh()
         expect(result.failedLists == ["Gamma"], "a never-downloaded failing list must be named, got \(result.failedLists)")
         expect(published == before, "a never-downloaded failing list must not change what is blocked")
+
+        // 6. A download is stored only under the address it came from (#529).
+        guard let delta = try? store.addCustomBlocklist(name: "Delta", url: "https://example.com/delta-old.txt", profileName: profile) else {
+            failures.append("could not add Delta"); return finish()
+        }
+        let oldURL = "https://example.com/delta-old.txt", newURL = "https://example.com/delta-new.txt"
+        let deltaBefore = store.blocklist(id: delta.id)
+        let refused = try? store.storeBlocklistDownload(id: delta.id, fromURL: newURL,
+                                                        domains: ["wrong.example"], at: Date())
+        expect(refused == false, "a download of an address the list does not have must be refused")
+        expect(store.blocklistEntries(blocklistID: delta.id, search: "", offset: 0, limit: 10).total == 0,
+               "a refused download must store no names")
+        expect(store.blocklist(id: delta.id)?.lastUpdated == deltaBefore?.lastUpdated,
+               "a refused download must not look like an update")
+        let stamp = Date(timeIntervalSince1970: 1_800_000_000)
+        let accepted = try? store.storeBlocklistDownload(id: delta.id, fromURL: oldURL,
+                                                         domains: ["d1.example", "d2.example"], at: stamp)
+        expect(accepted == true, "a download of the list's own address must be stored")
+        expect(store.blocklist(id: delta.id)?.entryCount == 2, "a stored download must record its count")
+        expect(store.blocklist(id: delta.id)?.lastUpdated == stamp, "a stored download must record its time")
+        expect(Set(store.blocklistEntries(blocklistID: delta.id, search: "", offset: 0, limit: 10).entries)
+                   == ["d1.example", "d2.example"], "a stored download must store its names")
+
+        // The race itself: a download of the old address finishing while the
+        // user changes the address, many times over. Whatever order they land
+        // in, a list that ends on the new address must not hold the old names.
+        let trials = 3000
+        let leaked = raceLeaks(store, id: delta.id, oldURL: oldURL, newURL: newURL, trials: trials)
+        expect(leaked == 0, "the old address's names were saved under the new address in \(leaked) of \(trials) races")
         finish()
+    }
+
+    /// Synchronous on purpose: the two sides race on plain threads.
+    static func raceLeaks(_ store: RuleStore, id: UUID, oldURL: String, newURL: String, trials: Int) -> Int {
+        var leaked = 0
+        for _ in 0..<trials {
+            _ = try? store.updateBlocklistURL(id: id, url: oldURL)
+            _ = try? store.replaceBlocklistEntries(blocklistID: id, domains: [])
+            let start = DispatchSemaphore(value: 0)
+            let group = DispatchGroup()
+            DispatchQueue.global().async(group: group) {
+                start.wait()
+                _ = try? store.storeBlocklistDownload(id: id, fromURL: oldURL,
+                                                      domains: ["old-source.example"], at: Date())
+            }
+            DispatchQueue.global().async(group: group) {
+                start.wait()
+                _ = try? store.updateBlocklistURL(id: id, url: newURL)
+            }
+            start.signal(); start.signal()
+            group.wait()
+            let page = store.blocklistEntries(blocklistID: id, search: "", offset: 0, limit: 10)
+            if store.blocklist(id: id)?.url == newURL, page.entries.contains("old-source.example") { leaked += 1 }
+        }
+        return leaked
     }
 
     static func finish() {
