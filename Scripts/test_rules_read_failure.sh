@@ -69,12 +69,14 @@ struct Verify {
         let first = Rule(remoteHost: "tracker.example", direction: .outgoing, action: .deny,
                          scope: .domain, priority: 60, profile: Profile.defaultName)
         let poison = Rule(remoteHost: "poison.example", direction: .outgoing, action: .allow,
-                          scope: .domain, priority: 10, profile: Profile.defaultName)
+                          scope: .domain, priority: 10, profile: Profile.alwaysName)
         _ = try store.mutatePolicy { draft in
             draft.mode = .silentDeny
             draft.rules = [always, first, poison]
         }
+        _ = try store.createProfile(name: "Work")
         let healthy = try store.activePolicyState()
+        let activeBefore = store.activeProfileName()
         check(healthy.rules.count == 3, "the saved policy reads in full before anything breaks")
 
         func expectEveryReadFails(_ how: String) {
@@ -93,6 +95,10 @@ struct Verify {
             }, "\(how): a policy change refuses to start from the failed read")
             check(store.getSetting("mode") == AppMode.silentDeny.rawValue,
                   "\(how): the refused change did not commit its mode")
+            check(isReadFailure { _ = try store.setActiveProfile(name: "Work") },
+                  "\(how): a profile switch whose policy cannot be read is refused")
+            check(store.activeProfileName() == activeBefore,
+                  "\(how): the refused switch left the active profile as it was")
         }
 
         // 1. The rules query cannot be prepared.
@@ -101,7 +107,8 @@ struct Verify {
         sql(path, "ALTER TABLE rules_away RENAME TO rules;")
 
         // 2. The rules query is prepared, then a row fails while stepping. A
-        //    view with the same columns raises a runtime error on one row.
+        //    view with the same columns raises a runtime error on one row. The
+        //    row is in the Always layer, which every policy read includes.
         let columns = "id, process_bundle_id, process_path, process_name, remote_host, remote_ip, remote_port, "
             + "direction, action, scope, priority, profile, group_name, "
             + "CASE WHEN remote_host = 'poison.example' THEN json('{') ELSE notes END AS notes, "
@@ -126,6 +133,20 @@ struct Verify {
     }
 }
 SWIFT
+
+# The helper side: a failed read is answered as a failed snapshot and never
+# republished, so the extension, pf and the DNS proxy keep the last full policy.
+HELPER="$ROOT/Sources/Helper/HelperService.swift"
+body() { awk -v sig="$2" 'index($0, sig) { on = 1 } on { print } on && /^    }$/ { exit }' "$1"; }
+snapshot_reply="$(body "$HELPER" 'func getAuthoritativeSnapshot(')"
+grep -Fq 'snapshot = try authoritativeSnapshot()' <<<"$snapshot_reply" \
+  && grep -Fq 'reply(Data())' <<<"$snapshot_reply" \
+  || { echo "rules read failure: FAIL: a failed policy read is not answered as a failed snapshot"; exit 1; }
+republish="$(body "$HELPER" 'private func republishActivePolicy(')"
+awk '/try store.activePolicyState\(\)/ { read = NR } /return false/ && read { refused = NR } /dns.applyPolicy/ { applied = NR }
+     END { exit !(read && refused && applied && read < refused && refused < applied) }' <<<"$republish" \
+  || { echo "rules read failure: FAIL: a failed policy read can still reach the DNS proxy on republish"; exit 1; }
+echo "rules read failure: PASS: the helper keeps the last full policy when the read fails"
 
 xcrun swiftc -O -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos13.0 -parse-as-library \
   -o "$TMP/run" "$ROOT"/Sources/Shared/*.swift "$TMP/verify.swift" -lsqlite3

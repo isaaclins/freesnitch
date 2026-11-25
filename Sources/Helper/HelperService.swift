@@ -405,8 +405,8 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         guard published else {
             broadcast { client in
                 client.notifyLog(level: "error",
-                                 message: "The saved rules could not be read, so the profile change was not applied. "
-                                 + "The previous rules stay in force.")
+                                 message: "The saved rules could not be read. FreeSnitch keeps enforcing the previous rules "
+                                 + "until they can be read again.")
             }
             return
         }

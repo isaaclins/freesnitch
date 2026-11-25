@@ -524,7 +524,7 @@ public final class RuleStore: @unchecked Sendable {
     /// validate the complete batch before this method commits anything.
     @discardableResult
     public func mutatePolicy(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
-        try queue.sync { try mutatePolicyLocked(change) }
+        try queue.sync { try mutatePolicyLocked(change, returningActive: false) }
     }
 
     /// Commits like `mutatePolicy`, but returns the policy that is enforced
@@ -535,12 +535,16 @@ public final class RuleStore: @unchecked Sendable {
     /// profile switch cannot land between the commit and the read.
     public func mutateActivePolicy(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
         try queue.sync {
-            _ = try mutatePolicyLocked(change)
-            return try activePolicyStateLocked()
+            try mutatePolicyLocked(change, returningActive: true)
         }
     }
 
-    private func mutatePolicyLocked(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
+    /// Returns the policy read back inside the transaction, just before it
+    /// commits: the raw state, or with `returningActive` the enforced one. A
+    /// read that fails there rolls the change back, so a change is never saved
+    /// without the policy the caller then publishes (#279).
+    private func mutatePolicyLocked(_ change: (inout PolicyDraft) throws -> Void,
+                                    returningActive: Bool) throws -> PolicyState {
         // A draft built on a failed read would start from no rules, and
         // committing it would delete every saved rule (#279).
         let current = try policyStateLocked()
@@ -564,15 +568,17 @@ public final class RuleStore: @unchecked Sendable {
                 }
             }
             try setSettingLocked(Self.policyGenerationSettingKey, String(nextGeneration))
+            // Read the stored ordering back so the helper runtime and every
+            // later authoritative snapshot use the same persisted rule order,
+            // including priority tie-breaks. This connection already sees the
+            // uncommitted writes, so this is exactly what COMMIT makes durable.
+            let committed = returningActive ? try activePolicyStateLocked() : try policyStateLocked()
             try execLocked("COMMIT;")
+            return committed
         } catch {
             try? execLocked("ROLLBACK;")
             throw error
         }
-        // Read the committed ordering back so the helper runtime and
-        // every later authoritative snapshot use the same persisted rule
-        // order, including priority tie-breaks.
-        return try policyStateLocked()
     }
 
     /// Advances the policy generation inside the caller's transaction. A
@@ -580,10 +586,16 @@ public final class RuleStore: @unchecked Sendable {
     /// the enforced policy without going through `mutatePolicy`. Republishing
     /// that under the old generation made the extension refuse it as a
     /// split-brain snapshot and stop filtering until the next rule edit (#438).
+    ///
+    /// Callers run this as the last step before COMMIT, so it also reads the
+    /// policy the change produces. When that read fails the change rolls back:
+    /// saving a profile switch whose policy cannot be published would leave the
+    /// saved profile and what is enforced out of step (#279).
     private func advancePolicyGenerationLocked() throws {
         let current = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
         guard current < UInt64.max else { throw PolicyStoreError.generationExhausted }
         try setSettingLocked(Self.policyGenerationSettingKey, String(current + 1))
+        _ = try activePolicyStateLocked()
     }
 
     private func policyStateLocked() throws -> PolicyState {
