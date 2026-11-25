@@ -108,7 +108,13 @@ struct InsightsView: View {
                 Button("Export Domains as CSV\u{2026}") { model.export(.csv) }
                 Button("Export Domains as JSON\u{2026}") { model.export(.json) }
             } label: {
-                Image(systemName: "square.and.arrow.up")
+                // Every app is one more helper query, so a long range can take
+                // a moment: say it is working instead of only greying out.
+                if model.isExporting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                }
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -174,7 +180,10 @@ struct InsightsView: View {
                     NoticeCard(title: added, icon: "checkmark.circle", tint: .green)
                 }
                 if let exported = model.exportMessage {
-                    NoticeCard(title: exported, icon: "checkmark.circle", tint: .green)
+                    // A cut-off list is saved, but it is not the whole picture.
+                    NoticeCard(title: exported,
+                               icon: model.exportIncomplete ? "exclamationmark.triangle" : "checkmark.circle",
+                               tint: model.exportIncomplete ? .orange : .green)
                 }
             }
             .padding(.horizontal, 12)
@@ -1036,6 +1045,7 @@ final class InsightsViewModel: ObservableObject {
     @Published private(set) var exportFile: InsightsExportFile?
     @Published private(set) var isExporting = false
     @Published var exportMessage: String?
+    @Published private(set) var exportIncomplete = false
     @Published var hasMoreApps = false
     @Published var hasMoreDestinations = false
     @Published var hasMoreUnresolved = false
@@ -1388,6 +1398,7 @@ final class InsightsViewModel: ObservableObject {
         switch result {
         case .success(let url):
             let name = url.lastPathComponent
+            exportIncomplete = !file.complete
             exportMessage = file.complete
                 ? String(localized: "Saved the domains to \(name).")
                 : String(localized: "Saved the domains to \(name). The range held more than one export can page through, so choose a shorter range for the rest.")
