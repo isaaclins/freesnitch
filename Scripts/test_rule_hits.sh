@@ -109,17 +109,17 @@ struct Verify {
         let store = try RuleStore(path: CommandLine.arguments[1])
         let gone = UUID()
         _ = try store.mutatePolicy { draft in draft.rules = [deny, allow] }
-        let staleCopy = store.allRules()
+        let staleCopy = (try! store.allRules())
         try store.recordRuleHits(drained + [RuleHit(ruleID: gone, count: 3, lastMatchedAt: Date())])
-        var stored = store.allRules().first { $0.id == deny.id }
+        var stored = (try! store.allRules()).first { $0.id == deny.id }
         check(stored?.hitCount == 7, "the deny rule shows 7 hits after its matches are recorded (was 0 before #434)")
         check(stored?.lastUsedAt.map { abs($0.timeIntervalSince(t0.addingTimeInterval(20))) < 0.01 } == true,
               "Last used is the time of the latest match")
-        check(store.allRules().first { $0.id == allow.id }?.hitCount == 1, "the allow rule shows its one hit")
-        check(!store.allRules().contains { $0.id == gone }, "a hit for a deleted rule creates nothing")
+        check((try! store.allRules()).first { $0.id == allow.id }?.hitCount == 1, "the allow rule shows its one hit")
+        check(!(try! store.allRules()).contains { $0.id == gone }, "a hit for a deleted rule creates nothing")
 
         try store.recordRuleHits([RuleHit(ruleID: deny.id, count: 2, lastMatchedAt: t0)])
-        stored = store.allRules().first { $0.id == deny.id }
+        stored = (try! store.allRules()).first { $0.id == deny.id }
         check(stored?.hitCount == 9, "later hits add to the count")
         check(stored?.lastUsedAt.map { abs($0.timeIntervalSince(t0.addingTimeInterval(20))) < 0.01 } == true,
               "an older match time never moves Last used back")
@@ -132,14 +132,14 @@ struct Verify {
                 return edited
             }
         }
-        stored = store.allRules().first { $0.id == deny.id }
+        stored = (try! store.allRules()).first { $0.id == deny.id }
         check(stored?.notes == "Ad tracker", "the edit itself is saved")
         check(stored?.hitCount == 9 && stored?.lastUsedAt != nil,
               "saving rules from an older copy keeps the counted hits and Last used")
         var single = staleCopy.first { $0.id == allow.id }!
         single.notes = "Mine"
         _ = try store.mutatePolicy { draft in draft.rules = draft.rules.map { $0.id == single.id ? single : $0 } }
-        check(store.allRules().first { $0.id == allow.id }?.hitCount == 1, "saving one rule from an older copy keeps its hits")
+        check((try! store.allRules()).first { $0.id == allow.id }?.hitCount == 1, "saving one rule from an older copy keeps its hits")
 
         if failures == 0 {
             print("rule hits harness: PASS (all checks)")

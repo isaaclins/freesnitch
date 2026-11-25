@@ -11863,6 +11863,16 @@
         }
       }
     },
+    "The saved rules could not be read: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать сохранённые правила: %@"
+          }
+        }
+      }
+    },
     "The set hit its size limit and was truncated." : {
       "localizations" : {
         "ru" : {

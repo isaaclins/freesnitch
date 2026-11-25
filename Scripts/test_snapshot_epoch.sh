@@ -151,25 +151,25 @@ expect(mutated.epoch == PolicyEpoch.first, "a policy state does not carry its se
 // A helper restart: same database, new process.
 store = nil
 let restartedStore = try RuleStore(path: path)
-expect(restartedStore.policyState().generation == 2,
+expect((try! restartedStore.policyState()).generation == 2,
        "the generation did not survive a helper restart")
 let secondSession = restartedStore.beginPolicySession()
 expect(secondSession.epoch == PolicyEpoch.first + 1, "a helper restart did not open a strictly newer session")
-expect(restartedStore.policyState().generation == 2,
+expect((try! restartedStore.policyState()).generation == 2,
        "opening a new session rewound the persisted generation")
-expect(restartedStore.policyState().epoch == secondSession.epoch,
+expect((try! restartedStore.policyState()).epoch == secondSession.epoch,
        "the restarted helper publishes the previous session's epoch")
 
 // And the extension accepts that restarted helper even at the reported
 // generation 0, which is the exact shape of #70.
 var afterRestart = SharedRuleBridge.LiveSnapshotGate(current: snapshot(generation: 8, epoch: firstSession.epoch))
-let published = snapshot(generation: restartedStore.policyState().generation, epoch: secondSession.epoch)
+let published = snapshot(generation: (try! restartedStore.policyState()).generation, epoch: secondSession.epoch)
 expect(afterRestart.apply(published) == .accepted, "the restarted helper's real snapshot was rejected")
 print("snapshot epoch harness: generation 2 survived the restart, session \(firstSession.epoch) to \(secondSession.epoch)")
 
 // A store that never opened a session claims no authority.
 let observer = try RuleStore(path: path)
-expect(observer.policyState().epoch == PolicyEpoch.unknown,
+expect((try! observer.policyState()).epoch == PolicyEpoch.unknown,
        "a store that never opened a helper session claims a session epoch")
 print("snapshot epoch harness: PASS")
 SWIFT

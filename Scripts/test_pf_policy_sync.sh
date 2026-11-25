@@ -79,7 +79,7 @@ struct Verify {
         let published = try store.mutateActivePolicy { draft in
             draft.rules = [workDeny, homeDeny, alwaysAllow]
         }
-        let snapshot = store.activePolicyState()
+        let snapshot = (try! store.activePolicyState())
         checks.expect(published.rules.map(\.id) == [alwaysAllow.id, homeDeny.id],
                       "a mutation must publish the Always rules, then the active profile's, got \(published.rules.map(\.remoteIP))")
         checks.expect(published.rules.map(\.id) == snapshot.rules.map(\.id),
@@ -88,7 +88,7 @@ struct Verify {
                       "a mutation must publish the active profile's mode, got \(published.mode)")
         checks.expect(published.generation == snapshot.generation,
                       "the published policy must carry the committed generation")
-        checks.expect(store.policyState().rules.contains { $0.id == workDeny.id },
+        checks.expect((try! store.policyState()).rules.contains { $0.id == workDeny.id },
                       "the store must keep the inactive profile's rule; it is only not enforced")
 
         let pf = PFManager()
@@ -104,7 +104,7 @@ struct Verify {
 
         // 2. A profile switch changes what is enforced.
         try store.setActiveProfile(name: "work")
-        let switched = store.activePolicyState()
+        let switched = (try! store.activePolicyState())
         checks.expect(switched.rules.map(\.id) == [alwaysAllow.id, workDeny.id],
                       "after a switch the Always rules and the new profile's must be enforced, got \(switched.rules.map(\.remoteIP))")
         checks.expect(switched.mode == .alert, "after a switch the new profile's mode must be enforced")
@@ -118,7 +118,7 @@ struct Verify {
             draft.mode = .silentAllow
             draft.activeProfileMode = .silentAllow
         }
-        checks.expect(modeChanged.mode == .silentAllow && store.activePolicyState().mode == .silentAllow,
+        checks.expect(modeChanged.mode == .silentAllow && (try! store.activePolicyState()).mode == .silentAllow,
                       "a mode change must be enforced through the active profile, got \(modeChanged.mode)")
         checks.expect(store.profile(named: "office")?.mode == AppMode.silentDeny,
                       "a mode change must not touch a profile that is not active")

@@ -84,6 +84,10 @@ public final class RuleStore: @unchecked Sendable {
         case invalidBlocklistURL(String)
         case noValidBlocklistEntries
         case tooManyBlocklistEntries(Int)
+        /// Reading the saved policy failed part way. Never answered with an
+        /// empty or partial rule list: that would be published as a valid
+        /// policy that silently dropped the user's rules (#279).
+        case policyReadFailed(String)
 
         public var errorDescription: String? {
             switch self {
@@ -97,6 +101,7 @@ public final class RuleStore: @unchecked Sendable {
             case .invalidBlocklistURL(let reason): return String(localized: "Invalid blocklist URL: \(reason).")
             case .noValidBlocklistEntries: return String(localized: "None of those lines is a domain name.")
             case .tooManyBlocklistEntries(let limit): return String(localized: "A hand-edited list holds at most \(limit) entries.")
+            case .policyReadFailed(let reason): return String(localized: "The saved rules could not be read: \(reason)")
             }
         }
     }
@@ -458,30 +463,33 @@ public final class RuleStore: @unchecked Sendable {
         try setSettingLocked(Self.policyGenerationSettingKey, String(generation))
     }
 
-    public func policyState() -> PolicyState {
-        queue.sync { policyStateLocked() }
+    public func policyState() throws -> PolicyState {
+        try queue.sync { try policyStateLocked() }
     }
 
     /// The policy that should actually be enforced: the active profile's
     /// strictness plus exactly two rule layers, Always and that profile.
     /// The generation is the same committed policy generation, so existing
     /// snapshot gating is unchanged.
-    public func activePolicyState() -> PolicyState {
-        queue.sync { activePolicyStateLocked() }
+    ///
+    /// Throws when the rules or the active profile cannot be read, instead of
+    /// returning a policy that is missing them (#279).
+    public func activePolicyState() throws -> PolicyState {
+        try queue.sync { try activePolicyStateLocked() }
     }
 
-    private func activePolicyStateLocked() -> PolicyState {
+    private func activePolicyStateLocked() throws -> PolicyState {
         let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
-        guard let profile = activeProfileLocked() else {
+        guard let profile = try readActiveProfileLocked() else {
             // No profile at all: the Always layer only, never every
             // profile's rules (issue #184).
-            return PolicyState(mode: policyStateLocked().mode,
-                               rules: allRulesLocked(profile: Profile.alwaysName),
+            return PolicyState(mode: try policyStateLocked().mode,
+                               rules: try readRulesLocked(profile: Profile.alwaysName),
                                generation: generation,
                                epoch: sessionEpoch)
         }
         return PolicyState(mode: profile.mode,
-                           rules: layeredRulesLocked(profileName: profile.name),
+                           rules: try layeredRulesLocked(profileName: profile.name),
                            generation: generation,
                            epoch: sessionEpoch)
     }
@@ -491,23 +499,23 @@ public final class RuleStore: @unchecked Sendable {
             guard let profile = profileLocked(named: name) else {
                 throw StoreError.profileNotFound(name)
             }
-            return profilePolicyLocked(profile)
+            return try profilePolicyLocked(profile)
         }
     }
 
     public func activeProfilePolicy() throws -> ProfilePolicy {
         try queue.sync {
-            guard let profile = activeProfileLocked() else {
+            guard let profile = try readActiveProfileLocked() else {
                 throw StoreError.profileNotFound(Profile.defaultName)
             }
-            return profilePolicyLocked(profile)
+            return try profilePolicyLocked(profile)
         }
     }
 
-    private func profilePolicyLocked(_ profile: Profile) -> ProfilePolicy {
+    private func profilePolicyLocked(_ profile: Profile) throws -> ProfilePolicy {
         ProfilePolicy(profile: profile,
-                      alwaysRules: allRulesLocked(profile: Profile.alwaysName),
-                      profileRules: allRulesLocked(profile: profile.name),
+                      alwaysRules: try readRulesLocked(profile: Profile.alwaysName),
+                      profileRules: try readRulesLocked(profile: profile.name),
                       selectedBlocklistIDs: profileBlocklistIDsLocked(profileName: profile.name))
     }
 
@@ -528,15 +536,17 @@ public final class RuleStore: @unchecked Sendable {
     public func mutateActivePolicy(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
         try queue.sync {
             _ = try mutatePolicyLocked(change)
-            return activePolicyStateLocked()
+            return try activePolicyStateLocked()
         }
     }
 
     private func mutatePolicyLocked(_ change: (inout PolicyDraft) throws -> Void) throws -> PolicyState {
-        let current = policyStateLocked()
+        // A draft built on a failed read would start from no rules, and
+        // committing it would delete every saved rule (#279).
+        let current = try policyStateLocked()
         var draft = PolicyDraft(mode: current.mode,
                                 rules: current.rules,
-                                activeProfileName: activeProfileLocked()?.name ?? Profile.defaultName)
+                                activeProfileName: try readActiveProfileLocked()?.name ?? Profile.defaultName)
         try change(&draft)
         guard current.generation < UInt64.max else {
             throw PolicyStoreError.generationExhausted
@@ -547,7 +557,7 @@ public final class RuleStore: @unchecked Sendable {
         do {
             try replaceRulesLocked(draft.rules)
             try setSettingLocked(Self.modeSettingKey, draft.mode.rawValue)
-            if let profileMode = draft.activeProfileMode, let profile = activeProfileLocked() {
+            if let profileMode = draft.activeProfileMode, let profile = try readActiveProfileLocked() {
                 try executeLocked("UPDATE profiles SET mode=? WHERE id=?;") { stmt in
                     sqlite3_bind_text(stmt, 1, profileMode.rawValue, -1, SQLITE_TRANSIENT)
                     sqlite3_bind_text(stmt, 2, profile.id.uuidString, -1, SQLITE_TRANSIENT)
@@ -562,7 +572,7 @@ public final class RuleStore: @unchecked Sendable {
         // Read the committed ordering back so the helper runtime and
         // every later authoritative snapshot use the same persisted rule
         // order, including priority tie-breaks.
-        return policyStateLocked()
+        return try policyStateLocked()
     }
 
     /// Advances the policy generation inside the caller's transaction. A
@@ -576,14 +586,14 @@ public final class RuleStore: @unchecked Sendable {
         try setSettingLocked(Self.policyGenerationSettingKey, String(current + 1))
     }
 
-    private func policyStateLocked() -> PolicyState {
+    private func policyStateLocked() throws -> PolicyState {
         // Missing means a genuinely fresh database. Existing installs retain
         // their stored choice, while a new user starts honestly in Silent
         // Allow and can move to Alert once Insights has a real picture.
         let mode = AppMode(rawValue: getSettingLocked(Self.modeSettingKey) ?? "") ?? .silentAllow
         let generation = UInt64(getSettingLocked(Self.policyGenerationSettingKey) ?? "") ?? 0
         return PolicyState(mode: mode,
-                           rules: allRulesLocked(profile: nil),
+                           rules: try readRulesLocked(profile: nil),
                            generation: generation,
                            epoch: sessionEpoch)
     }
@@ -690,8 +700,8 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
-    public func allRules(profile: String? = nil) -> [Rule] {
-        queue.sync { allRulesLocked(profile: profile) }
+    public func allRules(profile: String? = nil) throws -> [Rule] {
+        try queue.sync { try readRulesLocked(profile: profile) }
     }
 
     /// Returns the only allowed allow-rule composition: Always plus one
@@ -701,24 +711,29 @@ public final class RuleStore: @unchecked Sendable {
             guard profileLocked(named: profileName) != nil else {
                 throw StoreError.profileNotFound(profileName)
             }
-            return layeredRulesLocked(profileName: profileName)
+            return try layeredRulesLocked(profileName: profileName)
         }
     }
 
-    public func activeLayeredRules() -> [Rule] {
-        queue.sync {
-            guard let profile = activeProfileLocked() else { return allRulesLocked(profile: Profile.alwaysName) }
-            return layeredRulesLocked(profileName: profile.name)
+    public func activeLayeredRules() throws -> [Rule] {
+        try queue.sync {
+            guard let profile = try readActiveProfileLocked() else {
+                return try readRulesLocked(profile: Profile.alwaysName)
+            }
+            return try layeredRulesLocked(profileName: profile.name)
         }
     }
 
-    private func layeredRulesLocked(profileName: String) -> [Rule] {
-        let always = allRulesLocked(profile: Profile.alwaysName)
+    private func layeredRulesLocked(profileName: String) throws -> [Rule] {
+        let always = try readRulesLocked(profile: Profile.alwaysName)
         guard profileName != Profile.alwaysName else { return always }
-        return always + allRulesLocked(profile: profileName)
+        return always + (try readRulesLocked(profile: profileName))
     }
 
-    private func allRulesLocked(profile: String?) -> [Rule] {
+    /// Every saved rule, or a thrown error. A query that cannot be prepared,
+    /// or that stops before SQLITE_DONE, is a failed read: answering with an
+    /// empty or partial list made it look like a valid policy (#279).
+    private func readRulesLocked(profile: String?) throws -> [Rule] {
         var rules: [Rule] = []
         let sql: String
         if profile != nil {
@@ -728,10 +743,17 @@ public final class RuleStore: @unchecked Sendable {
         }
         var stmt: OpaquePointer?
         defer { if stmt != nil { sqlite3_finalize(stmt) } }
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw StoreError.policyReadFailed(String(cString: sqlite3_errmsg(db)))
+        }
         if let profile = profile { sqlite3_bind_text(stmt, 1, profile, -1, SQLITE_TRANSIENT) }
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var rc = sqlite3_step(stmt)
+        while rc == SQLITE_ROW {
             if let r = readRule(stmt) { rules.append(r) }
+            rc = sqlite3_step(stmt)
+        }
+        guard rc == SQLITE_DONE else {
+            throw StoreError.policyReadFailed(String(cString: sqlite3_errmsg(db)))
         }
         return rules
     }
@@ -1469,6 +1491,24 @@ public final class RuleStore: @unchecked Sendable {
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return profileFromRow(stmt)
+    }
+
+    /// The active profile for building the enforced policy. Unlike
+    /// `activeProfileLocked`, a failed read throws: falling back to the Always
+    /// layer alone would publish a policy without the profile's rules (#279).
+    /// No active row still means the default profile, and no profiles at all
+    /// still means nil.
+    private func readActiveProfileLocked() throws -> Profile? {
+        var stmt: OpaquePointer?
+        defer { if stmt != nil { sqlite3_finalize(stmt) } }
+        guard sqlite3_prepare_v2(db, "SELECT id,name,mode,icon,is_active FROM profiles WHERE is_active=1 ORDER BY name LIMIT 1;", -1, &stmt, nil) == SQLITE_OK else {
+            throw StoreError.policyReadFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        switch sqlite3_step(stmt) {
+        case SQLITE_ROW: return profileFromRow(stmt)
+        case SQLITE_DONE: return profileLocked(named: Profile.defaultName)
+        default: throw StoreError.policyReadFailed(String(cString: sqlite3_errmsg(db)))
+        }
     }
 
     private func activeProfileLocked() -> Profile? {

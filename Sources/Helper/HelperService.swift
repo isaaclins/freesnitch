@@ -207,6 +207,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let diagnosticsLock = NSLock()
     private var mode: AppMode = .alert
     private var policyGeneration: UInt64 = 0
+    /// How many rules the last adopted policy carries. Status reports this
+    /// when a fresh read fails, instead of a count of zero that would claim
+    /// the user's rules are gone (#279).
+    private var adoptedRuleCount = 0
     /// Bundle ids some stored rule has not learned the signing team for yet
     /// (#364). Nil means not computed since the last rule change. Guarded by
     /// `policyQueue`.
@@ -231,9 +235,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         let session = self.store.beginPolicySession()
         // The active profile's policy, as every later publication uses: the
         // raw store state carries every profile's rules (issue #184).
-        let persistedPolicy = store.activePolicyState()
+        // A rules read that fails here stops the helper like a database that
+        // cannot be opened does, instead of starting it with no rules (#279).
+        let persistedPolicy = try store.activePolicyState()
         self.mode = persistedPolicy.mode
         self.policyGeneration = persistedPolicy.generation
+        self.adoptedRuleCount = persistedPolicy.rules.count
         self.blocklists = BlocklistManager(store: store)
         let coordinator = ProfileCoordinator(store: store)
         self.profileCoordinator = coordinator
@@ -377,12 +384,31 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// connected clients to resynchronize, so the extension is updated through
     /// the existing authoritative-snapshot path rather than from cached state.
     private func republishActivePolicy() {
-        policyQueue.sync {
-            let state = store.activePolicyState()
+        let published: Bool = policyQueue.sync {
+            let state: RuleStore.PolicyState
+            do {
+                state = try store.activePolicyState()
+            } catch {
+                // Keep enforcing the last policy that was read in full. An
+                // empty or partial one would drop the user's rules (#279).
+                PSLog.error(PSLog.helper,
+                            "the active profile's policy could not be read; the previous policy stays in force: "
+                            + error.localizedDescription)
+                return false
+            }
             teamlessBundleIds = nil
             fruitlessSightings.removeAll()
             adoptLocked(state)
             dns.applyPolicy(mode: state.mode, rules: state.rules)
+            return true
+        }
+        guard published else {
+            broadcast { client in
+                client.notifyLog(level: "error",
+                                 message: "The saved rules could not be read, so the profile change was not applied. "
+                                 + "The previous rules stay in force.")
+            }
+            return
         }
         // pf follows the switch too, or it kept enforcing the previous
         // profile's rules until some unrelated rule change (issue #184).
@@ -643,11 +669,20 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
     }
 
-    private func authoritativePolicyState() -> RuleStore.PolicyState {
+    /// The policy status reports. When the store cannot be read, this is the
+    /// policy the helper last adopted, which is the one still in force.
+    private func authoritativePolicyState() -> (mode: AppMode, generation: UInt64, ruleCount: Int) {
         policyQueue.sync {
-            let state = store.activePolicyState()
-            adoptLocked(state)
-            return state
+            do {
+                let state = try store.activePolicyState()
+                adoptLocked(state)
+                return (state.mode, state.generation, state.rules.count)
+            } catch {
+                PSLog.error(PSLog.helper,
+                            "status could not read the saved policy; reporting the policy in force: "
+                            + error.localizedDescription)
+                return (mode, policyGeneration, adoptedRuleCount)
+            }
         }
     }
 
@@ -660,6 +695,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func adoptLocked(_ state: RuleStore.PolicyState) {
         mode = state.mode
         policyGeneration = state.generation
+        adoptedRuleCount = state.rules.count
         do {
             try store.recordPolicyGeneration(atLeast: state.generation)
         } catch {
@@ -670,13 +706,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     /// Snapshot construction is serialized with every policy mutation and
     /// reads the persisted helper state, never a GUI or CLI cache.
-    private func authoritativeSnapshot() -> SharedRuleBridge.Snapshot {
-        policyQueue.sync {
+    ///
+    /// Throws when the policy cannot be read in full. The snapshot is the
+    /// extension's whole policy, so an empty or partial one must never be
+    /// published as if it were valid (#279).
+    private func authoritativeSnapshot() throws -> SharedRuleBridge.Snapshot {
+        try policyQueue.sync {
             // The enforced policy is the ACTIVE profile's strictness plus the
             // two rule layers, Always and that profile. Publishing the raw
             // store state instead would enforce rules the active profile does
             // not select, which is the whole point of #31.
-            let state = store.activePolicyState()
+            let state = try store.activePolicyState()
             adoptLocked(state)
             return SharedRuleBridge.Snapshot(mode: state.mode,
                                              rules: state.rules,
@@ -711,7 +751,17 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func getAuthoritativeSnapshot(reply: @escaping (Data) -> Void) {
-        let snapshot = authoritativeSnapshot()
+        let snapshot: SharedRuleBridge.Snapshot
+        do {
+            snapshot = try authoritativeSnapshot()
+        } catch {
+            // The caller reports an empty reply as a failed snapshot and keeps
+            // the policy it already has. The reason is logged here.
+            PSLog.error(PSLog.helper,
+                        "authoritative snapshot not published: \(error.localizedDescription)")
+            reply(Data())
+            return
+        }
         do {
             reply(try SharedRuleBridge.encode(snapshot))
         } catch {
@@ -737,7 +787,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             pfctlError: pfctlError,
             dnsProxyActive: dns.running,
             dnsProxyPort: Int(dns.port),
-            activeRules: policy.rules.count,
+            activeRules: policy.ruleCount,
             blockedToday: dns.statistics.blocked,
             mode: policy.mode,
             policyGeneration: policy.generation,
@@ -929,12 +979,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     }
 
     func listRules(profile: String, reply: @escaping (Data) -> Void) {
-        let rules = store.allRules(profile: profile.isEmpty ? nil : profile)
         do {
+            let rules = try store.allRules(profile: profile.isEmpty ? nil : profile)
             reply(try RuleTransportBoundary.encodeRuleBatch(rules))
         } catch {
             PSLog.error(PSLog.helper,
-                        "rule list could not be encoded for a caller: \(error.localizedDescription)")
+                        "rule list could not be read or encoded for a caller: \(error.localizedDescription)")
             reply(Data())
         }
     }
@@ -1217,8 +1267,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         guard !sightings.isEmpty else { return }
         sightings = policyQueue.sync {
-            if teamlessBundleIds == nil {
-                teamlessBundleIds = RuleSigningTeam.teamlessBundleIds(store.allRules())
+            if teamlessBundleIds == nil, let rules = try? store.allRules() {
+                // Left nil on a failed read, so the next batch tries again.
+                teamlessBundleIds = RuleSigningTeam.teamlessBundleIds(rules)
             }
             return sightings.filter {
                 teamlessBundleIds?.contains($0.bundleId) == true && !fruitlessSightings.contains($0)

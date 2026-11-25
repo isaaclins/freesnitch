@@ -36,7 +36,7 @@ struct Verify {
     }
 
     static func helperSnapshot(_ store: RuleStore) -> SharedRuleBridge.Snapshot {
-        let state = store.activePolicyState()
+        let state = (try! store.activePolicyState())
         return SharedRuleBridge.Snapshot(mode: state.mode, rules: state.rules,
                                          generation: state.generation, epoch: state.epoch)
     }

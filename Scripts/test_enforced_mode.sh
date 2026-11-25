@@ -129,7 +129,7 @@ func helperSetMode(_ mode: AppMode) throws {
 }
 
 /// What the helper enforces and reports (status, snapshot, DNS proxy).
-func enforced() -> AppMode { store.activePolicyState().mode }
+func enforced() -> AppMode { (try! store.activePolicyState()).mode }
 
 /// What the Profiles page shows for the active profile.
 func profilesPage() throws -> AppMode {
@@ -167,7 +167,7 @@ active.mode = .alert
 let before = refreshes
 _ = try service.execute(.updateProfile(active))
 try check(.alert, after: "the Profiles page set the active profile to Alert")
-guard store.policyState().mode == .silentDeny else {
+guard (try! store.policyState()).mode == .silentDeny else {
     fail("the Profiles page also wrote the global mode; this test no longer covers the split")
 }
 guard refreshes > before else { fail("a Profiles page mode change did not tell the app to refresh") }
