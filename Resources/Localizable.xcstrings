@@ -5643,6 +5643,16 @@
         }
       }
     },
+    "Everything else is removed, and FreeSnitch isn’t filtering anything. To remove the helper, open Login Items & Extensions in System Settings, turn FreeSnitch off under “Allow in the Background”, then empty the Trash." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всё остальное удалено, и FreeSnitch ничего не фильтрует. Чтобы удалить службу, откройте «Объекты входа и расширения» в Системных настройках, выключите FreeSnitch в разделе «Разрешить в фоне», затем очистите Корзину."
+          }
+        }
+      }
+    },
     "Everything else is removed. Drag FreeSnitch from Applications to the Trash to finish." : {
       "localizations" : {
         "ru" : {
@@ -6103,6 +6113,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "FreeSnitch не удалось переместиться в Корзину"
+          }
+        }
+      }
+    },
+    "FreeSnitch couldn’t remove its background helper" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось удалить свою фоновую службу"
           }
         }
       }
@@ -6770,6 +6790,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Она одобрена, но не отвечает. «Восстановить службу» перезапустит её, и macOS попросит вас это подтвердить. Это безопасно: включённая служба не отменяет регистрацию, и ваше одобрение сохраняется."
+          }
+        }
+      }
+    },
+    "Its background helper is also still there. Open Login Items & Extensions in System Settings, turn FreeSnitch off under “Allow in the Background”, then drag FreeSnitch from Applications to the Trash." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Его фоновая служба тоже осталась. Откройте «Объекты входа и расширения» в Системных настройках, выключите FreeSnitch в разделе «Разрешить в фоне», затем перетащите FreeSnitch из папки «Программы» в Корзину."
           }
         }
       }
@@ -7616,6 +7646,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "В этой сети не виден MAC-адрес шлюза: %@"
+          }
+        }
+      }
+    },
+    "macOS finishes removing the network filter the next time you restart." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS завершит удаление сетевого фильтра при следующей перезагрузке."
           }
         }
       }
