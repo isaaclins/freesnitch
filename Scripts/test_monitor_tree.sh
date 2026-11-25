@@ -393,12 +393,22 @@ check(workOnly.rule(for: domainTarget) == nil, "a rule belonging to another prof
 check(MonitorRuleTarget.of(wildcard) == nil, "a wildcard rule is broader than one row and is not claimed by one")
 check(MonitorRuleTarget.of(portScoped) == nil, "a port-scoped rule is narrower than one row and is not claimed by one")
 
+// The Monitor learns an app's main program from its Info.plist; the harness
+// stands in for the apps it names.
+func mainProgram(_ bundle: String) -> String? {
+    ["/Applications/Beeper.app": "Beeper",
+     "/Applications/Beeper.app/Contents/Frameworks/Beeper Helper.app": "Beeper Helper"][bundle]
+}
+func decide(_ rules: [Rule]) -> MonitorDecisionIndex {
+    MonitorDecisionIndex(rules: rules, profile: "default", mainExecutable: mainProgram)
+}
+
 // #226: a rule chosen in the Rules editor names the app bundle with a trailing
 // slash and no bundle id. The firewall applies it to the app's executable, so
 // the app row shows it and a change from the row edits it instead of adding a
 // second rule.
 let editorApp = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app/", processName: "Beeper",
-                     action: .allow, scope: .process, profile: "default")
+                     action: .allow, scope: .process)
 let beeperConnection = Connection(pid: 1, processName: "Beeper",
                                   processPath: "/Applications/Beeper.app/Contents/MacOS/Beeper",
                                   processBundleId: "com.beeper.app",
@@ -406,37 +416,37 @@ let beeperConnection = Connection(pid: 1, processName: "Beeper",
 equal(RuleMatcher().explainedDecision(for: beeperConnection, prepared: PreparedRuleSet(rules: [editorApp]),
                                       defaultMode: .alert).matchedRuleID, editorApp.id,
       "the firewall applies the editor's app rule to the app's connections")
-let editorIndex = MonitorDecisionIndex(rules: [editorApp], profile: "default")
+let editorIndex = decide([editorApp])
 equal(editorIndex.rule(for: appTarget)?.id, editorApp.id, "a Rules editor app rule is shown on the app's row")
 let editorFlip = MonitorRuleDraft.rule(for: appTarget, processName: "Beeper", action: .deny, profile: "default",
                                        existing: editorIndex.rule(for: appTarget))!
 equal(editorFlip.id, editorApp.id, "Deny on the row changes the editor's rule instead of adding a second one")
 equal(editorFlip.processPath, "/Applications/Beeper.app/", "changing the editor's rule keeps what it names")
 equal(editorFlip.action, .deny, "the edited rule carries the new action")
-equal(MonitorDecisionIndex(rules: [editorFlip], profile: "default").rule(for: appTarget)?.action, .deny,
+equal(decide([editorFlip]).rule(for: appTarget)?.action, .deny,
       "after the change the row shows the edited rule")
 check(editorIndex.rule(for: domainTarget) == nil, "an app-wide rule is not shown as one destination's decision")
 
 let noSlash = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app", processName: "Beeper",
-                   action: .deny, scope: .process, profile: "default")
-equal(MonitorDecisionIndex(rules: [noSlash], profile: "default").rule(for: appTarget)?.id, noSlash.id,
+                   action: .deny, scope: .process)
+equal(decide([noSlash]).rule(for: appTarget)?.id, noSlash.id,
       "an app bundle path without the trailing slash is recognised too")
 let bundleOnly = Rule(processBundleId: "com.beeper.app", processPath: nil, processName: "Beeper",
-                      action: .deny, scope: .process, profile: "default")
-equal(MonitorDecisionIndex(rules: [bundleOnly], profile: "default").rule(for: appTarget)?.id, bundleOnly.id,
+                      action: .deny, scope: .process)
+equal(decide([bundleOnly]).rule(for: appTarget)?.id, bundleOnly.id,
       "a rule naming only the bundle id is shown on that app's row")
 let editorDomain = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app/", processName: "Beeper",
-                        remoteHost: "api.beeper.com", action: .deny, scope: .domain, profile: "default")
-equal(MonitorDecisionIndex(rules: [editorDomain], profile: "default").rule(for: domainTarget)?.id, editorDomain.id,
+                        remoteHost: "api.beeper.com", action: .deny, scope: .domain)
+equal(decide([editorDomain]).rule(for: domainTarget)?.id, editorDomain.id,
       "a Rules editor destination rule is shown on that destination's row")
 
 let otherBundle = Rule(processBundleId: "com.other.app", processPath: nil, processName: "Other",
-                       action: .deny, scope: .process, profile: "default")
+                       action: .deny, scope: .process)
 let lookalike = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app.old/", processName: "Beeper",
-                     action: .deny, scope: .process, profile: "default")
+                     action: .deny, scope: .process)
 let wrongPath = Rule(processBundleId: "com.beeper.app", processPath: "/Applications/Other.app/", processName: "Beeper",
-                     action: .deny, scope: .process, profile: "default")
-check(MonitorDecisionIndex(rules: [otherBundle, lookalike, wrongPath], profile: "default").rule(for: appTarget) == nil,
+                     action: .deny, scope: .process)
+check(decide([otherBundle, lookalike, wrongPath]).rule(for: appTarget) == nil,
       "rules for another bundle id, another app bundle or a mismatched pair are not this row's")
 
 // A rule for the whole bundle also covers its helpers, which are rows of their
@@ -448,12 +458,27 @@ let bundledHelperRow = MonitorTreeBuilder.build(connections: [bundledHelper], or
 check(editorIndex.rule(for: MonitorRuleTarget.app(bundledHelperRow)) == nil,
       "an app-wide rule is not claimed by a helper row inside the bundle")
 let helperOwn = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app/Contents/Frameworks/Beeper Helper.app/",
-                     processName: "Beeper Helper", action: .deny, scope: .process, profile: "default")
-equal(MonitorDecisionIndex(rules: [editorApp, helperOwn], profile: "default")
+                     processName: "Beeper Helper", action: .deny, scope: .process)
+equal(decide([editorApp, helperOwn])
         .rule(for: MonitorRuleTarget.app(bundledHelperRow))?.id, helperOwn.id,
       "a nested helper app's own bundle rule is shown on the helper's row")
-check(MonitorRuleTarget.appBundle(ofMainExecutable: "/Applications/Beeper.app/Contents/MacOS/sub/tool") == nil,
-      "only an executable directly in Contents/MacOS is an app's main executable")
+
+// A second program next to the main one in Contents/MacOS (like Firefox's
+// pingsender) is not the app: the app-wide rule is not claimed by its row.
+var sideTool = connection(app: "pingsender", bundle: nil, host: "example.com", ip: "203.0.113.22")
+sideTool.processPath = "/Applications/Beeper.app/Contents/MacOS/pingsender"
+let sideToolRow = MonitorTreeBuilder.build(connections: [sideTool], order: MonitorRowOrder()).snapshot.apps.first!
+check(editorIndex.rule(for: MonitorRuleTarget.app(sideToolRow)) == nil,
+      "an app-wide rule is not claimed by a second program in Contents/MacOS")
+let sideDeny = MonitorRuleDraft.rule(for: MonitorRuleTarget.app(sideToolRow)!, processName: "pingsender", action: .deny,
+                                     profile: "default", existing: editorIndex.rule(for: MonitorRuleTarget.app(sideToolRow)))!
+check(sideDeny.id != editorApp.id && sideDeny.processPath == sideTool.processPath,
+      "Deny on that program's row writes a rule for that program and leaves the app's rule alone")
+equal(MonitorDecisionIndex.bundleExecutable("/System/Applications/Calculator.app"), "Calculator",
+      "the main program is read from a real app's Info.plist")
+// An app whose Info.plist cannot be read: nothing is claimed by guesswork.
+check(MonitorDecisionIndex(rules: [editorApp], profile: "default", mainExecutable: { _ in nil }).rule(for: appTarget) == nil,
+      "an app bundle rule is not claimed when the app's main program is unknown")
 
 // Rules stacked on one row by the old behaviour: the row shows the one the
 // firewall applies. The helper hands the extension the always layer first,
@@ -476,7 +501,7 @@ for stacked in [[olderExact, editorApp], [editorApp, olderExact], [olderExact, a
                                                   prepared: PreparedRuleSet(rules: enforcedOrder(stacked)),
                                                   defaultMode: .alert).matchedRuleID
     check(applied != nil, "the firewall applies one of the stacked rules")
-    equal(MonitorDecisionIndex(rules: stacked, profile: "default").rule(for: appTarget)?.id, applied,
+    equal(decide(stacked).rule(for: appTarget)?.id, applied,
           "with two rules for one row the row shows the one the firewall applies")
 }
 

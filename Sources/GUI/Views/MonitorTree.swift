@@ -578,43 +578,32 @@ struct MonitorRuleTarget: Hashable, Sendable {
     }
 
     /// Every process identity a rule can carry and still be about exactly
-    /// this row's process: the row's bundle id, its path, or both, where the
-    /// path may also be the app bundle whose `Contents/MacOS` holds the
-    /// executable, written with or without the trailing slash.
+    /// this row's process: the row's bundle id, its path, or both.
     var ownerIdentities: [MonitorRuleTarget] {
         var bundles: [String?] = [nil]
         if let processBundleID { bundles.append(processBundleID) }
         var paths: [String?] = [nil]
-        if let processPath {
-            paths.append(processPath)
-            if let bundlePath = Self.appBundle(ofMainExecutable: processPath) {
-                paths.append(bundlePath)
-                paths.append(bundlePath + "/")
-            }
-        }
+        if let processPath { paths.append(processPath) }
         var identities: [MonitorRuleTarget] = []
         for bundle in bundles {
             for path in paths where bundle != nil || path != nil {
-                identities.append(MonitorRuleTarget(kind: kind,
-                                                    processBundleID: bundle,
-                                                    processPath: path,
-                                                    remoteHost: remoteHost,
-                                                    remoteIP: remoteIP))
+                identities.append(replacingProcess(bundleID: bundle, path: path))
             }
         }
         return identities
     }
 
-    /// `/Applications/Foo.app` for `/Applications/Foo.app/Contents/MacOS/Foo`.
-    /// Only an executable directly in `Contents/MacOS` counts: a helper deeper
-    /// inside the bundle is its own process with its own row.
-    static func appBundle(ofMainExecutable path: String) -> String? {
-        let marker = ".app/Contents/MacOS/"
-        guard let range = path.range(of: marker, options: .backwards) else { return nil }
-        let executable = path[range.upperBound...]
-        guard !executable.isEmpty, !executable.contains("/") else { return nil }
-        let bundle = String(path[..<range.lowerBound]) + ".app"
-        return bundle.hasPrefix("/") && bundle.count > "/.app".count ? bundle : nil
+    func replacingProcess(bundleID: String?, path: String?) -> MonitorRuleTarget {
+        MonitorRuleTarget(kind: kind, processBundleID: bundleID, processPath: path,
+                          remoteHost: remoteHost, remoteIP: remoteIP)
+    }
+
+    /// `/Applications/Foo.app` for a rule path of `/Applications/Foo.app` or
+    /// `/Applications/Foo.app/`, the form the Rules editor saves.
+    static func appBundlePath(_ path: String) -> String? {
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
+        guard trimmed.hasSuffix(".app"), trimmed.hasPrefix("/"), trimmed.count > "/.app".count else { return nil }
+        return trimmed
     }
 
     /// Can the helper be asked about this endpoint at all. Validation itself
@@ -687,32 +676,55 @@ struct MonitorDecisionIndex: Sendable {
 
     init() {}
 
-    init(rules: [Rule], profile: String) {
+    /// `mainExecutable` names the program an app bundle launches, its
+    /// `CFBundleExecutable`. A rule for a whole app bundle, which is what the
+    /// Rules editor saves (#226), is this row's decision only on the row of
+    /// that program. Other programs in the bundle, such as a second tool in
+    /// `Contents/MacOS` or a helper app, have rows of their own; seen from
+    /// there the rule is broader than the row and stays unclaimed like a
+    /// wildcard, so a change on such a row never decides for the whole app.
+    init(rules: [Rule], profile: String,
+         mainExecutable: (String) -> String? = MonitorDecisionIndex.bundleExecutable) {
+        var executables: [String: String?] = [:]
         for rule in rules {
             // Two layers can be in force at once: the always layer and the
             // selected profile. Rules of another profile are not in force and
             // must not be shown as this row's decision.
             guard rule.profile == profile || rule.profile == Profile.alwaysName else { continue }
             guard let target = MonitorRuleTarget.of(rule) else { continue }
-            guard let current = byTarget[target] else {
-                byTarget[target] = rule
-                continue
+            insert(rule, at: target)
+            guard let path = target.processPath,
+                  let bundle = MonitorRuleTarget.appBundlePath(path) else { continue }
+            let executable: String?
+            if let known = executables[bundle] {
+                executable = known
+            } else {
+                executable = mainExecutable(bundle)
+                executables[bundle] = executable
             }
-            if wins(rule, over: current) { byTarget[target] = rule }
+            guard let name = executable, !name.isEmpty, !name.contains("/") else { continue }
+            insert(rule, at: target.replacingProcess(bundleID: target.processBundleID,
+                                                     path: bundle + "/Contents/MacOS/" + name))
         }
+    }
+
+    private mutating func insert(_ rule: Rule, at target: MonitorRuleTarget) {
+        if let current = byTarget[target], !wins(rule, over: current) { return }
+        byTarget[target] = rule
+    }
+
+    /// The program an app bundle on this Mac launches, from its Info.plist.
+    static func bundleExecutable(_ bundlePath: String) -> String? {
+        Bundle(path: bundlePath)?.object(forInfoDictionaryKey: "CFBundleExecutable") as? String
     }
 
     var count: Int { byTarget.count }
 
     /// The rule that speaks for this row. Besides a rule that names the row's
     /// exact process, that is a rule naming only its bundle id, only its
-    /// path, or the app bundle the process is the main executable of: what
-    /// the Rules editor stores when an app is chosen there (#226). The
+    /// path, or the app bundle whose main program the row is (#226). The
     /// matcher applies those to this process too, so the row shows them and
     /// Allow, Deny and Remove change that rule instead of adding another.
-    /// A rule that also covers other processes, such as one for a whole app
-    /// bundle seen from one of its helpers, stays unclaimed like a wildcard:
-    /// changing it from one row would decide for rows the user did not touch.
     func rule(for target: MonitorRuleTarget?) -> Rule? {
         guard let target else { return nil }
         var best: Rule?
