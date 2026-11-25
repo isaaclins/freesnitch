@@ -79,6 +79,13 @@ for symbol in PreparedRuleSet RuleMatcher setEnforcementEnabled SharedRuleBridge
 done
 pass "decisions go through the helper ingest path and nothing is enforced from GUI state"
 
+# 3b. The monitor decides when to rebuild its index from the whole rule, not a
+#     few of its fields, so a rule moved to another profile or edited in Rules
+#     is never saved back from a stale copy (#227).
+grep -Fq "MonitorDecisionInputs(rules: rules, profile: profile)" "$CONTROLLER" \
+  || fail "the monitor does not compare whole rules before reusing its decision index"
+pass "the monitor rebuilds its decision index whenever a rule changes"
+
 # 4. A decision must be explicit. The only callers of the apply path are the
 #    row's own controls, never a tap on the row.
 if grep -nE 'onTapGesture.*(apply|decide)' "$ROWS" "$MONITOR" >/dev/null; then
@@ -529,6 +536,45 @@ for stacked in [[olderExact, editorApp], [editorApp, olderExact], [olderExact, a
     equal(decide(stacked).rule(for: appTarget)?.id, applied,
           "with two rules for one row the row shows the one the firewall applies")
 }
+// MARK: - A rule moved to another profile (#227)
+
+// Steps from the issue: allow an app from its row with Default active, then
+// move that rule to Work in Rules. The move keeps the id, action and switch.
+let allowedHere = MonitorRuleDraft.rule(for: appTarget, processName: "Beeper", action: .allow,
+                                        profile: "default", existing: nil)!
+var movedToWork = allowedHere
+movedToWork.profile = "work"
+let beforeMove = MonitorDecisionInputs(rules: [allowedHere], profile: "default")
+let afterMove = MonitorDecisionInputs(rules: [movedToWork], profile: "default")
+check(beforeMove != afterMove, "moving a rule to another profile counts as a change, so the monitor rebuilds")
+let movedIndex = MonitorDecisionIndex(rules: [movedToWork], profile: "default")
+check(movedIndex.rule(for: appTarget) == nil,
+      "after the move the row no longer shows the rule as in force in Default")
+let denyAfterMove = MonitorRuleDraft.rule(for: appTarget, processName: "Beeper", action: .deny,
+                                          profile: "default", existing: movedIndex.rule(for: appTarget))!
+check(denyAfterMove.id != movedToWork.id, "Deny after the move makes a new rule instead of reusing the Work rule's id")
+equal(denyAfterMove.profile, "default", "Deny after the move writes into the active profile")
+equal(movedToWork.profile, "work", "the Work rule is left where the user put it")
+let workIndex = MonitorDecisionIndex(rules: [movedToWork], profile: "work")
+equal(workIndex.rule(for: appTarget)?.id, movedToWork.id, "switching to Work shows the moved rule on the row")
+
+// Any other edit in Rules has to reach the row too, or its buttons save the
+// old copy back over it.
+var renamed = allowedHere
+renamed.notes = "edited in Rules"
+check(MonitorDecisionInputs(rules: [renamed], profile: "default") != beforeMove,
+      "an edit to any other field of a rule counts as a change")
+var reprioritised = allowedHere
+reprioritised.priority = 500
+check(MonitorDecisionInputs(rules: [reprioritised], profile: "default") != beforeMove,
+      "a priority change counts as a change")
+var used = allowedHere
+used.hitCount = 42
+used.lastUsedAt = Date()
+check(MonitorDecisionInputs(rules: [used], profile: "default") == beforeMove,
+      "traffic hitting a rule does not rebuild the index")
+check(MonitorDecisionInputs(rules: [allowedHere], profile: "work") != beforeMove,
+      "switching profiles counts as a change")
 
 // MARK: - Bounded compute, measured
 

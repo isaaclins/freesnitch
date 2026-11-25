@@ -136,8 +136,13 @@ final class ProfileClient: ObservableObject {
             guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return nil }
             snapshot.blocklists[index].entryCount += domains.count
         case .removeBlocklistEntries(let id, let domains):
+            if DemoMode.refusesListEdits {
+                return RuleStore.StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries).localizedDescription
+            }
             guard let index = snapshot.blocklists.firstIndex(where: { $0.id == id }) else { return nil }
+            BlocklistEntriesDemo.remove(domains, from: snapshot.blocklists[index])
             snapshot.blocklists[index].entryCount = max(0, snapshot.blocklists[index].entryCount - domains.count)
+            snapshot.blocklists[index].lastUpdated = Date()
         case .resetBlocklistEntries:
             return nil
         case .updateBlocklistURL(let id, let url):
@@ -243,8 +248,11 @@ final class ProfileClient: ObservableObject {
         send(.addBlocklistEntries(blocklistID: id, domains: domains), completion: completion)
     }
 
-    func removeBlocklistEntries(_ id: UUID, domains: [String]) {
-        send(.removeBlocklistEntries(blocklistID: id, domains: domains))
+    /// The caller shows a refusal where the name was removed. Without a
+    /// completion it landed in `errorMessage`, which only the Profiles page
+    /// renders, so the Rules page said nothing when a removal failed (#221).
+    func removeBlocklistEntries(_ id: UUID, domains: [String], completion: ((Bool, String?) -> Void)? = nil) {
+        send(.removeBlocklistEntries(blocklistID: id, domains: domains), completion: completion)
     }
 
     func resetBlocklistEntries(_ id: UUID, completion: ((Bool, String?) -> Void)? = nil) {

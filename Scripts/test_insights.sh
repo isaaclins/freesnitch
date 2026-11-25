@@ -2,7 +2,8 @@
 # Deterministic Insights verification, compiled from the real helper and shared
 # sources. Seeds a store in a temporary directory and asserts the read side:
 # per-app grouping, co-occurrence counts, DNS-name joins, unresolved addresses,
-# domain-scoped app-specific proposals, retention at 14 days and 1 year, a purge
+# domain-scoped app-specific proposals, retention at 14 days and 1 year, the
+# size ceiling on disk (#228), a purge
 # that removes the write-ahead log too, and query bounds.
 set -euo pipefail
 
@@ -654,6 +655,188 @@ struct InsightsHarness {
                                                  from: Data(#"{"allowed":-3,"blocked":2,"unfiltered":-1}"#.utf8))
         equal(negative, InsightsDecisionCounts(allowed: 0, blocked: 2, unfiltered: 0),
               "negative counts from the wire read as zero")
+
+        // MARK: the database has a ceiling on disk (#228)
+        // A flood of connections to distinct destinations, all inside the
+        // retention windows, against a small ceiling: the file must stay
+        // under it, every batch must still be accepted, and what goes is the
+        // oldest history, never the newest.
+        func fileBytes(_ file: String) -> Int64 {
+            var info = stat()
+            return lstat(file, &info) == 0 ? Int64(info.st_size) : 0
+        }
+        func count(_ file: String, _ sql: String) -> Int {
+            var handle: OpaquePointer?
+            var statement: OpaquePointer?
+            defer { sqlite3_finalize(statement); sqlite3_close(handle) }
+            guard sqlite3_open_v2(file, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+                  sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK,
+                  sqlite3_step(statement) == SQLITE_ROW else { return -1 }
+            return Int(sqlite3_column_int64(statement, 0))
+        }
+        func floodBatch(_ index: Int, at date: Date, rows: Int = InsightsLimits.maxBatchCount,
+                        path: String = "/Applications/Flood.app") -> [FlowObservation] {
+            (0..<rows).map { row in
+                observation(app: "Flood", bundle: "com.example.flood", path: path,
+                            host: "host-\(index)-\(row).flood.example", ip: "198.51.\(index % 250).\(row % 250)",
+                            at: date, decision: .allowed)
+            }
+        }
+        let cappedSupport = root.appendingPathComponent("Capped Support")
+        try! FileManager.default.createDirectory(at: cappedSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let cappedPath = cappedSupport.appendingPathComponent("Insights/insights.sqlite").path
+        let ceiling: Int64 = 2 * 1024 * 1024
+        do {
+            let capped = try InsightsStore(path: cappedPath, expectedUID: getuid(), maxDatabaseBytes: ceiling)
+            var refused = 0
+            var largest: Int64 = 0
+            let batches = 120
+            for index in 0..<batches {
+                // Oldest first, spread across the 14-day raw window.
+                let at = now.addingTimeInterval(-13 * day + Double(index) * (13 * day / Double(batches)))
+                do { try capped.record(floodBatch(index, at: at)) } catch { refused += 1 }
+                largest = max(largest, fileBytes(cappedPath))
+            }
+            equal(refused, 0, "every batch is accepted while the ceiling is reached again and again")
+            check(largest <= ceiling, "the database file never grows past its ceiling (largest \(largest) of \(ceiling) bytes)")
+            let overview = try capped.report(for: InsightsQuery(kind: .overview, since: now.addingTimeInterval(-day))).overview
+            check((overview?.rawObservationCount ?? 0) < batches * InsightsLimits.maxBatchCount,
+                  "the oldest raw events were dropped to stay under the ceiling")
+            check((overview?.rawObservationCount ?? 0) > 0, "recent raw events are kept")
+            equal(count(cappedPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-\(batches - 1)-%';"),
+                  InsightsLimits.maxBatchCount, "the newest batch is still in the history")
+            check(overview.map { ($0.oldestObservation ?? now) > now.addingTimeInterval(-13 * day + 60) } ?? false,
+                  "the oldest events are the ones that went")
+            try capped.prune(now: now)
+            check(fileBytes(cappedPath) <= ceiling, "maintenance leaves the file under its ceiling")
+        } catch {
+            check(false, "a store with a ceiling keeps recording: \(error)")
+        }
+        // Batches bigger than a tenth of the ceiling (long process paths make
+        // each one about a sixth of it) reach the hard limit inside a write;
+        // the store makes room and the batch still lands.
+        let tightSupport = root.appendingPathComponent("Tight Support")
+        try! FileManager.default.createDirectory(at: tightSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let tightPath = tightSupport.appendingPathComponent("Insights/insights.sqlite").path
+        let tightCeiling: Int64 = 4 * 1024 * 1024
+        let longPath = "/Applications/" + String(repeating: "Flood/", count: 400) + "Flood.app"
+        do {
+            let tight = try InsightsStore(path: tightPath, expectedUID: getuid(), maxDatabaseBytes: tightCeiling)
+            var refused = 0
+            for index in 0..<40 {
+                do { try tight.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 39) * 8 * 3600),
+                                                 path: longPath)) }
+                catch { refused += 1 }
+            }
+            equal(refused, 0, "a write that hits the hard limit makes room and lands")
+            check(tight.fullRetryCount > 0, "the hard limit was actually reached and a write was retried after trimming")
+            check(fileBytes(tightPath) <= tightCeiling, "the hard limit holds the file at its ceiling")
+            equal(count(tightPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-39-%';"),
+                  InsightsLimits.maxBatchCount, "the batch that hit the hard limit was recorded in full")
+        } catch {
+            check(false, "a store at its hard limit keeps recording: \(error)")
+        }
+        // A flood of DNS answers is trimmed oldest first like everything
+        // else, and like raw events before the rollup of their own day: a
+        // connection newer than every answer survives the flood that follows.
+        // Everything is on one UTC day, where answers used to lose to the
+        // connection's rollup and take the connection with them.
+        let dnsSupport = root.appendingPathComponent("DNS Flood Support")
+        try! FileManager.default.createDirectory(at: dnsSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let dnsPath = dnsSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            let flooded = try InsightsStore(path: dnsPath, expectedUID: getuid(), maxDatabaseBytes: 1024 * 1024)
+            let floodNow = Date()
+            for index in 0..<60 {
+                if index == 10 {
+                    try flooded.record([observation(app: "Kept", bundle: "com.example.kept", path: "/Applications/Kept.app",
+                                                    host: "kept.example", ip: "192.0.2.81", at: floodNow)])
+                }
+                let at = floodNow.addingTimeInterval(-Double(60 - index) / 10)
+                try flooded.recordDNSMappings((0..<InsightsLimits.maxDNSMappingCount).map { row in
+                    DNSMapping(domain: "random-\(index)-\(row).dns-flood.example", ip: "203.0.113.\(row % 250)",
+                               observedAt: at, expiresAt: at.addingTimeInterval(300))
+                })
+            }
+            check(fileBytes(dnsPath) <= 1024 * 1024, "a DNS flood stays under the ceiling")
+            check(count(dnsPath, "SELECT COUNT(*) FROM dns_mappings WHERE domain LIKE 'random-0-%';") == 0,
+                  "the DNS flood was trimmed")
+            equal(count(dnsPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host = 'kept.example';"), 1,
+                  "a connection newer than every DNS answer survives the flood")
+        } catch {
+            check(false, "a DNS flood is trimmed: \(error)")
+        }
+        // A store that grew past the ceiling before it existed stops growing
+        // at once and is compacted under it by the next maintenance run.
+        let grownSupport = root.appendingPathComponent("Grown Support")
+        try! FileManager.default.createDirectory(at: grownSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let grownPath = grownSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            do {
+                let unbounded = try InsightsStore(path: grownPath, expectedUID: getuid())
+                for index in 0..<40 {
+                    try unbounded.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 40) * 3600)))
+                }
+            }
+            let grown = fileBytes(grownPath)
+            let grownCeiling: Int64 = 1024 * 1024
+            check(grown > grownCeiling, "the old store is larger than the new ceiling (\(grown) bytes)")
+            let reopened = try InsightsStore(path: grownPath, expectedUID: getuid(), maxDatabaseBytes: grownCeiling)
+            for index in 40..<60 {
+                try reopened.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 60) * 60)))
+            }
+            check(fileBytes(grownPath) <= grown, "the oversized store does not grow any further")
+            try reopened.prune(now: now)
+            check(fileBytes(grownPath) <= grownCeiling,
+                  "maintenance compacts the oversized store under its ceiling (\(fileBytes(grownPath)) bytes)")
+            try reopened.record(floodBatch(60, at: now))
+            equal(count(grownPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-60-%';"),
+                  InsightsLimits.maxBatchCount, "the compacted store keeps recording")
+        } catch {
+            check(false, "an oversized store opens, records and compacts: \(error)")
+        }
+
+        // A store from before #228 that is over the ceiling, has no free
+        // pages and lacks the indexes this change adds must still open,
+        // record and be compacted.
+        let fullSupport = root.appendingPathComponent("Full Support")
+        try! FileManager.default.createDirectory(at: fullSupport, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        let fullPath = fullSupport.appendingPathComponent("Insights/insights.sqlite").path
+        do {
+            do {
+                let unbounded = try InsightsStore(path: fullPath, expectedUID: getuid())
+                for index in 0..<30 {
+                    try unbounded.record(floodBatch(index, at: now.addingTimeInterval(Double(index - 30) * 3600)))
+                }
+            }
+            var raw: OpaquePointer?
+            check(sqlite3_open(fullPath, &raw) == SQLITE_OK, "the pre-#228 store can be opened directly")
+            check(sqlite3_exec(raw, """
+                DROP INDEX IF EXISTS idx_insights_dns_observed_at;
+                DROP INDEX IF EXISTS idx_insights_versioned_rollup_day;
+                VACUUM;
+                PRAGMA wal_checkpoint(TRUNCATE);
+                """, nil, nil, nil) == SQLITE_OK, "the new indexes were removed and the free pages compacted away")
+            sqlite3_close(raw)
+            equal(count(fullPath, "PRAGMA freelist_count;"), 0, "the pre-#228 store has no free pages")
+            let fullCeiling: Int64 = 1024 * 1024
+            check(fileBytes(fullPath) > fullCeiling, "the pre-#228 store is over the new ceiling")
+            let reopened = try InsightsStore(path: fullPath, expectedUID: getuid(), maxDatabaseBytes: fullCeiling)
+            equal(count(fullPath, "SELECT COUNT(*) FROM sqlite_master WHERE name='idx_insights_dns_observed_at';"), 1,
+                  "the full, oversized store opens and gains the new indexes")
+            try reopened.record(floodBatch(90, at: now))
+            equal(count(fullPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-90-%';"),
+                  InsightsLimits.maxBatchCount, "the full, oversized store keeps recording")
+            try reopened.prune(now: now)
+            check(fileBytes(fullPath) <= fullCeiling, "the full, oversized store is compacted under its ceiling")
+        } catch {
+            check(false, "a full, oversized store from before #228 opens: \(error)")
+        }
 
         // MARK: a store from before #447 gains the columns and keeps its rows unknown
         let legacySupport = root.appendingPathComponent("Legacy Support")

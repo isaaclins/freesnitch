@@ -424,9 +424,12 @@ struct SettingsView: View {
                 // it already held that value.
                 // Return was the only way to save, and nothing said so: an
                 // edited field looked saved and was not (#142).
+                // The DNS proxy always forwards to a DoH upstream and has no
+                // system-resolver mode, so the prompt must not offer an empty
+                // field as a choice: the helper refuses it (#219).
                 HStack {
                     TextField("Upstream", text: $doh,
-                              prompt: Text("Leave empty to use the system resolver"))
+                              prompt: Text("The resolver’s HTTPS address (required)"))
                         .onSubmit { saveDoHUpstream() }
                     Button("Apply") { saveDoHUpstream() }
                         .disabled(doh == savedDoH)

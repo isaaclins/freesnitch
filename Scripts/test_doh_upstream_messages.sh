@@ -69,6 +69,19 @@ for key in keys:
         unit = entry.get("localizations", {}).get(lang, {}).get("stringUnit", {})
         if unit.get("state") != "translated" or not unit.get("value"):
             failures.append(f"{lang}: no translation for {key!r}")
+# #219: an empty upstream is refused (.empty above) and the proxy has no
+# system-resolver mode, so the field's prompt must not offer empty as a choice.
+prompt = re.search(r'TextField\("Upstream", text: \$doh,\s*prompt: Text\("([^"]+)"\)\)', source)
+if prompt is None:
+    failures.append("the DoH upstream field's prompt was not found")
+else:
+    text = prompt.group(1)
+    if re.search(r"empty|system resolver", text, re.I):
+        failures.append(f"the prompt offers an empty upstream, which the helper refuses: {text!r}")
+    for lang in sorted(languages - {catalog.get("sourceLanguage", "en")}):
+        unit = catalog["strings"].get(text, {}).get("localizations", {}).get(lang, {}).get("stringUnit", {})
+        if unit.get("state") != "translated" or not unit.get("value"):
+            failures.append(f"{lang}: no translation for the prompt {text!r}")
 for failure in failures:
     print("FAIL", failure, file=sys.stderr)
 sys.exit(1 if failures else 0)

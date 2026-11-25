@@ -3094,6 +3094,16 @@
         }
       }
     },
+    "Allowed %@ to reach %@, because nobody answered the question in time." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: доступ к %@ разрешён, так как на вопрос никто не ответил вовремя."
+          }
+        }
+      }
+    },
     "Also delete my rules and profiles" : {
       "localizations" : {
         "ru" : {
@@ -4871,6 +4881,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось снова зарегистрировать службу из %@; она продолжает работать из копии в ~/Applications: %@"
+          }
+        }
+      }
+    },
+    "Could not remove %@ from %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось удалить %@ из %@"
           }
         }
       }
@@ -6974,12 +6994,12 @@
         }
       }
     },
-    "Leave empty to use the system resolver" : {
+    "The resolver’s HTTPS address (required)" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Оставьте пустым, чтобы использовать системный DNS"
+            "value" : "HTTPS-адрес DNS-резолвера (обязательно)"
           }
         }
       }
@@ -11865,6 +11885,16 @@
         }
       }
     },
+    "the profile %@ no longer exists" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "профиль %@ больше не существует"
+          }
+        }
+      }
+    },
     "The profile `%@` does not exist." : {
       "localizations" : {
         "ru" : {
@@ -12013,6 +12043,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось подготовить удаление."
+          }
+        }
+      }
+    },
+    "the rule database is busy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "база данных правил занята"
+          }
+        }
+      }
+    },
+    "the rule database reported an error (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "база данных правил сообщила об ошибке (%@)"
           }
         }
       }
@@ -12203,6 +12253,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запущенная служба слишком старая, чтобы сообщить действующий вышестоящий сервер DoH. Перезапустите службу, чтобы завершить обновление."
+          }
+        }
+      }
+    },
+    "the saved rules could not be read (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не удалось прочитать сохранённые правила (%@)"
           }
         }
       }

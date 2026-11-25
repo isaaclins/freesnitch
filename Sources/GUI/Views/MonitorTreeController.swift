@@ -27,19 +27,12 @@ final class MonitorTreeController: ObservableObject {
     private var revision: UInt64 = 0
     private var isBuilding = false
     private var queued: [Connection]?
-    private var lastDecisionKey: DecisionKey?
+    private var lastDecisionInputs: MonitorDecisionInputs?
 
     /// Expansion is remembered for apps that are not on screen right now, so a
     /// process that goes quiet for a moment comes back expanded. The set is
     /// still bounded: past this many entries it is trimmed to what exists.
     private static let maxRememberedExpansions = 512
-
-    private struct DecisionKey: Equatable {
-        let profile: String
-        let ruleIDs: [UUID]
-        let actions: [RuleAction]
-        let enabled: [Bool]
-    }
 
     // MARK: Grouping
 
@@ -114,12 +107,9 @@ final class MonitorTreeController: ObservableObject {
     /// Rebuilds the decision index when, and only when, the helper's rules
     /// actually changed. `AppState.rules` is republished on every refresh.
     func updateDecisions(rules: [Rule], profile: String) {
-        let key = DecisionKey(profile: profile,
-                              ruleIDs: rules.map(\.id),
-                              actions: rules.map(\.action),
-                              enabled: rules.map(\.enabled))
-        guard key != lastDecisionKey else { return }
-        lastDecisionKey = key
+        let inputs = MonitorDecisionInputs(rules: rules, profile: profile)
+        guard inputs != lastDecisionInputs else { return }
+        lastDecisionInputs = inputs
         decisions = MonitorDecisionIndex(rules: rules, profile: profile)
     }
 
