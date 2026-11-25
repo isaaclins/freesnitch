@@ -6,7 +6,16 @@ The GitHub Actions workflow runs `Scripts/audit_firewall_safety.sh` on every
 pull request and every push to `main`. The audit uses only Bash and `awk`
 logic and runs on `ubuntu-latest`.
 
-The macOS job builds the monitor flavour from `project.yml`. It does not use
+The macOS jobs (four groups of test harnesses and the monitor build) run on
+every push to `main` and once per pull request, right before it merges: bring
+the branch up to date with `main`, run `gh workflow run build.yml --ref
+<branch>`, and merge when that run is green. They don't run on every push to a
+pull request from this repo, because the macOS runners are few and shared and
+a run takes five of them; a skipped job counts as passed in the check list, so
+the manual run is the one to look at. Pull requests from forks run them right
+away.
+
+The monitor build job builds the monitor flavour from `project.yml`. It does not use
 `project-netext.yml`, provisioning profiles, or a Developer ID signature. It
 sets `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` and checks that restricted Network
 Extension and System Extension entitlements are absent. The firewall flavour

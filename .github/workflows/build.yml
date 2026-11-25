@@ -31,6 +31,15 @@ jobs:
 
   harness:
     name: Test harnesses (group ${{ matrix.group }} of 4)
+    # macOS runners are few and shared, a run here takes five of them, and a
+    # pull request gets several pushes while it is reviewed: on 2026-11-25
+    # macOS jobs waited about 50 minutes in the queue for 11 minutes of work.
+    # So on pull requests from this repo the macOS jobs run once, right before
+    # merging, on the branch brought up to date with main (`gh workflow run
+    # build.yml --ref <branch>`; a manual run tests the branch itself, not the
+    # merge with main), and on every push to main. Pull requests from forks
+    # still run them at once.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     # macos-15, not macos-26: see .github/actions/select-xcode. The same
     # Xcode 26 toolchain and SDK are selected there.
     runs-on: macos-15
@@ -97,7 +106,8 @@ jobs:
   harnesses:
     name: Test harnesses
     needs: harness
-    if: ${{ !cancelled() }}
+    # Skipped with the harnesses on a pull request push (see above).
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every harness to pass
@@ -107,6 +117,8 @@ jobs:
 
   monitor-build:
     name: Build monitor flavour
+    # Runs when the harnesses run (see above).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     # macos-15, not macos-26: see .github/actions/select-xcode. Xcode 26
     # crashes compiling the Icon Composer icon (Resources/AppIcon.icon) on a
     # macOS 15 host, so this build leaves it out and uses AppIcon.appiconset,
