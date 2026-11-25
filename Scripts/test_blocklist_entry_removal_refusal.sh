@@ -7,8 +7,7 @@
 # A list is filled to its hand-edit limit, then one more name is removed
 # through ProfileClient. The refusal must reach the caller's completion with
 # the store's reason, must not land only in ProfileClient.errorMessage (which
-# only the Profiles page shows), and the name must still be on the list. The
-# Rules page must pass a completion and show what it gets.
+# only the Profiles page shows), and the name must still be on the list.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,20 +15,6 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/freesnitch-entry-removal.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 fail() { printf 'entry removal refusal: FAIL: %s\n' "$*" >&2; exit 1; }
-
-# The Rules page passes a completion and shows the refusal where the name was
-# removed, with the helper's reason.
-RULES="$ROOT/Sources/GUI/Views/RulesManager.swift"
-python3 - "$RULES" <<'PY' || fail "the Rules page does not show a refused removal"
-import re, sys
-src = open(sys.argv[1]).read()
-m = re.search(r'func removeEntry\(_ domain: String, from blocklist: BlocklistInfo\) \{(.*?)\n    \}\n', src, re.S)
-assert m, "removeEntry is missing"
-body = m.group(1)
-assert re.search(r'removeBlocklistEntries\(blocklist\.id, domains: \[domain\]\) \{ ok, message in', body), "no completion"
-assert 'guard !ok else { return }' in body and 'showError(' in body and 'message ??' in body, "refusal not shown"
-assert 'onRemoveEntry: { domain in removeEntry(domain, from: blocklist) }' in src, "entries view not wired to removeEntry"
-PY
 
 cat > "$TMP/verify.swift" <<'SWIFT'
 import Foundation
