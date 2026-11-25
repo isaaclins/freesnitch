@@ -6854,12 +6854,12 @@
         }
       }
     },
-    "It is approved but not responding. FreeSnitch is restarting it; authorize the restart when macOS asks. The enabled service is never unregistered and your approval stays intact." : {
+    "It is approved but not responding. FreeSnitch is restarting it. If macOS asks, authorize the restart. The enabled service is never unregistered and your approval stays intact." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Она одобрена, но не отвечает. FreeSnitch перезапускает её; подтвердите перезапуск, когда macOS попросит. Включённая служба не отменяет регистрацию, и ваше одобрение сохраняется."
+            "value" : "Она одобрена, но не отвечает. FreeSnitch перезапускает её. Если macOS попросит, подтвердите перезапуск. Включённая служба не отменяет регистрацию, и ваше одобрение сохраняется."
           }
         }
       }

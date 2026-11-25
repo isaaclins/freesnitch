@@ -78,8 +78,15 @@ grep -q 'isRepairing' "$client" && fail "the old never-set isRepairing flag is g
 grep -q 'guard let self, !self.repairGate.isHeld else { return }' "$client" \
   || fail "polling pauses while a repair holds the gate"
 # Every repairState that ends an attempt releases the gate first.
-[ "$(grep -c 'repairGate.release()' "$client")" -ge 4 ] \
-  || fail "the exits of a repair attempt release the gate"
+# Each exit of a repair attempt releases the gate: read the lines right
+# after each exit's marker, so a release dropped from one of them fails.
+releases_after() {  # <marker> <lines> : a release within <lines> after <marker>
+  awk -v m="$1" -v n="$2" 'index($0, m) { hit = NR } hit && NR > hit && NR <= hit + n && /repairGate\.release\(\)/ { found = 1 } END { exit !found }' "$client"
+}
+releases_after 'private func finishRepairFailure(' 3 || fail "a reported failure releases the gate"
+releases_after 'case .failure(.cancelled):' 1 || fail "a cancelled prompt releases the gate"
+releases_after 'DispatchQueue.main.asyncAfter(deadline: .now() + 1.5)' 2 || fail "a finished kickstart releases the gate"
+releases_after 'if installState == .requiresApproval {' 4 || fail "a returned registration releases the gate"
 grep -q 'didSet { state?.helperRepairRunning = repairGate.isHeld }' "$client" \
   || fail "the banner learns when the gate is held"
 grep -q 'let repairInProgress = repairRunning || repairState == .inProgress' "$banner" \

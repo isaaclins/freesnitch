@@ -140,7 +140,7 @@ private struct BannerInfo {
             tint = Color.orange
             title = String(localized: "The helper needs repairing")
             if repairInProgress {
-                detail = String(localized: "It is approved but not responding. FreeSnitch is restarting it; authorize the restart when macOS asks. The enabled service is never unregistered and your approval stays intact.")
+                detail = String(localized: "It is approved but not responding. FreeSnitch is restarting it. If macOS asks, authorize the restart. The enabled service is never unregistered and your approval stays intact.")
             } else {
                 detail = String(localized: "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact.")
             }
