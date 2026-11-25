@@ -450,6 +450,31 @@ _ = nestedWatcher.refresh()
 expect(nestedDeliveries == 1, "one gateway change was handled \(nestedDeliveries) times")
 pass("a gateway change is handled once even when two polls overlap")
 
+// Dropping a pending change (the user picked a profile) only drops the change
+// for that gateway: a newer gateway seen meanwhile is still delivered.
+let scopedProvider = FixedGatewayProvider("aa:bb:cc:dd:ee:0a")
+let scopedWatcher = GatewayMACWatcher(provider: scopedProvider)
+var scopedSeen: [String?] = []
+scopedWatcher.onChange = { mac in
+    scopedSeen.append(mac)
+    return mac == "aa:bb:cc:dd:ee:0b"
+}
+_ = scopedWatcher.refresh()            // A fails, stays undelivered
+scopedProvider.set("aa:bb:cc:dd:ee:0b")
+scopedWatcher.dropUndeliveredChange(for: "aa:bb:cc:dd:ee:0b")
+scopedProvider.set("aa:bb:cc:dd:ee:0a")
+scopedWatcher.dropUndeliveredChange(for: "aa:bb:cc:dd:ee:0b") // not A's gateway: A stays owed
+_ = scopedWatcher.refresh()
+expect(scopedSeen == ["aa:bb:cc:dd:ee:0a", "aa:bb:cc:dd:ee:0a"],
+       "a drop for another gateway lost the pending change: \(scopedSeen)")
+scopedWatcher.dropUndeliveredChange(for: "aa:bb:cc:dd:ee:0a")
+_ = scopedWatcher.refresh()
+expect(scopedSeen.count == 2, "a dropped change was delivered again")
+scopedProvider.set("aa:bb:cc:dd:ee:0b")
+_ = scopedWatcher.refresh()
+expect(scopedSeen.last! == "aa:bb:cc:dd:ee:0b", "a newer gateway after a drop was not delivered")
+pass("dropping a pending change only drops it for its own gateway")
+
 // MARK: - a failed automatic switch is retried and visible (#269)
 
 // Replays the issue: the user bound a gateway to public-wifi, the gateway

@@ -230,12 +230,16 @@ public final class GatewayMACWatcher: @unchecked Sendable {
     @discardableResult
     public func refresh() -> String? {
         var problem: String?
+        var expected = false
         let raw: String?
         do {
             raw = try provider.readGatewayMAC()
         } catch {
             raw = nil
             problem = error.localizedDescription
+            // Every join starts with the gateway missing from the ARP table
+            // for a moment: worth a note, not an error.
+            if case GatewayMACReadError.noMACForGateway = error { expected = true }
         }
         let current = raw.flatMap(GatewayMAC.normalized)
         if raw != nil, current == nil {
@@ -260,7 +264,9 @@ public final class GatewayMACWatcher: @unchecked Sendable {
         lock.unlock()
 
         if problemChanged {
-            if let problem {
+            if let problem, expected {
+                PSLog.info(PSLog.helper, "The default gateway has no hardware address yet: \(problem)")
+            } else if let problem {
                 PSLog.error(PSLog.helper, "The default gateway could not be read: \(problem)")
             } else {
                 PSLog.info(PSLog.helper, "The default gateway can be read again.")
