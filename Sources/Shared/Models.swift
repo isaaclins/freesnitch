@@ -333,7 +333,11 @@ public struct PendingNetworkSwitch: Codable, Hashable, Sendable {
     public init(gatewayMAC: String, profileName: String, problem: String) {
         self.gatewayMAC = gatewayMAC
         self.profileName = profileName
-        self.problem = problem
+        // Store errors are whole sentences, but the notice and the log put the
+        // reason mid-sentence, where its closing period would double up.
+        var reason = problem.trimmingCharacters(in: .whitespacesAndNewlines)
+        while reason.hasSuffix(".") { reason.removeLast() }
+        self.problem = reason
     }
 }
 

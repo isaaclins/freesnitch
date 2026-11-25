@@ -525,8 +525,11 @@ expect(retryCoordinator.pendingNetworkSwitch?.profileName == "public-wifi",
        "a failed automatic switch left nothing pending: \(String(describing: retryCoordinator.pendingNetworkSwitch))")
 expect(retryCoordinator.pendingNetworkSwitch?.gatewayMAC == "12:34:56:78:9a:bc", "the pending switch names the wrong gateway")
 expect(!(retryCoordinator.pendingNetworkSwitch?.problem.isEmpty ?? true), "the pending switch does not say what failed")
-expect(!(retryCoordinator.pendingNetworkSwitch?.problem.hasSuffix(".") ?? true),
-       "the reason ends in a period, which doubles up mid-sentence")
+let sentenceReason = RuleStore.StoreError.profileNotFound("public-wifi").localizedDescription
+expect(sentenceReason.hasSuffix("."), "the sample store error no longer ends in a period: \(sentenceReason)")
+let trimmed = PendingNetworkSwitch(gatewayMAC: "12:34:56:78:9a:bc", profileName: "public-wifi", problem: sentenceReason)
+expect(!trimmed.problem.hasSuffix(".") && sentenceReason.hasPrefix(trimmed.problem),
+       "a store error's closing period stays in the reason and doubles up mid-sentence: \(trimmed.problem)")
 let failingSnapshot = try retryService.snapshot()
 expect(failingSnapshot.pendingNetworkSwitch?.profileName == "public-wifi",
        "the Profiles screen is not told that the automatic switch failed")
