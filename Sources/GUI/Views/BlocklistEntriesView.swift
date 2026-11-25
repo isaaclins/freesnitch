@@ -53,31 +53,11 @@ struct BlocklistEntriesView: View {
         // reading the property here queried one keystroke behind what the
         // field showed (#96).
         .onChange(of: searchText) { newValue in load(resettingOffset: true, query: newValue) }
-        // The list changed under the page that is showing: a name was removed
-        // here, names were added in the editor, or the list was downloaded
-        // again. The helper answers every one of those with the list's new
-        // count and time, so the same page is asked for again. Removing a name
+        // The names on the list changed: one was removed here, some were added
+        // in the editor, or the list was downloaded again. Removing a name
         // changed neither the list nor the search, so the removed name stayed
         // on screen with the old total (#220).
-        // As with the search, the new value is passed in: `blocklist` here is
-        // still the one from before the change.
-        .onChange(of: ContentVersion(blocklist)) { newValue in
-            load(resettingOffset: false, entryCount: newValue.entryCount)
-        }
-    }
-
-    /// What the helper changes on a list whenever its names change: a removal,
-    /// names added in the editor, or a download. A download that brings back
-    /// the same names still moves the time, which costs one extra page query
-    /// and nothing else.
-    private struct ContentVersion: Equatable {
-        let entryCount: Int
-        let lastUpdated: Date?
-
-        init(_ blocklist: BlocklistInfo) {
-            entryCount = blocklist.entryCount
-            lastUpdated = blocklist.lastUpdated
-        }
+        .onChange(of: BlocklistEntryPaging.ContentVersion(blocklist)) { _ in load(resettingOffset: false) }
     }
 
     @ViewBuilder
@@ -230,14 +210,13 @@ struct BlocklistEntriesView: View {
             : String(localized: "\(first) to \(last) of \(page.total) matches")
     }
 
-    private func load(resettingOffset: Bool, query: String? = nil, entryCount: Int? = nil) {
+    private func load(resettingOffset: Bool, query: String? = nil) {
         let search = query ?? searchText
         if resettingOffset { offset = 0 }
         let token = UUID()
         requestToken = token
         isLoading = true
         if let demo = BlocklistEntriesDemo.page(for: blocklist,
-                                                entryCount: entryCount ?? blocklist.entryCount,
                                                 search: search,
                                                 offset: offset,
                                                 limit: Self.pageSize) {
@@ -262,16 +241,11 @@ struct BlocklistEntriesView: View {
     }
 
     private func show(_ result: BlocklistEntryPage?, search: String) {
-        // Removing the only name on the last page leaves an offset past the
-        // end of the list. That page is asked for again one page back instead
-        // of showing "No entries" for a list that still has some.
-        if let result, result.entries.isEmpty, result.total > 0 {
-            let lastPage = (result.total - 1) / Self.pageSize * Self.pageSize
-            if lastPage < offset {
-                offset = lastPage
-                load(resettingOffset: false, query: search)
-                return
-            }
+        if let result,
+           let retry = BlocklistEntryPaging.offsetToRetry(result, offset: offset, pageSize: Self.pageSize) {
+            offset = retry
+            load(resettingOffset: false, query: search)
+            return
         }
         errorMessage = nil
         page = result
@@ -288,12 +262,11 @@ struct BlocklistEntriesView: View {
 /// names, and is inert unless FREESNITCH_DEMO is set.
 enum BlocklistEntriesDemo {
     static func page(for blocklist: BlocklistInfo,
-                     entryCount: Int,
                      search: String,
                      offset: Int,
                      limit: Int) -> BlocklistEntryPage? {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return nil }
-        let all = entries(for: blocklist, entryCount: entryCount).filter { !(removed[blocklist.id]?.contains($0) ?? false) }
+        let all = entries(for: blocklist).filter { !(removed[blocklist.id]?.names.contains($0) ?? false) }
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matching = needle.isEmpty ? all : all.filter { $0.contains(needle) }
         let start = min(max(0, offset), matching.count)
@@ -303,18 +276,18 @@ enum BlocklistEntriesDemo {
                                   offset: start)
     }
 
-    /// Names taken off a list in demo mode. The demo list is generated from its
-    /// count, so without this a removal dropped whichever name sorted last
-    /// instead of the one the user picked.
-    private static var removed: [UUID: Set<String>] = [:]
+    /// Names taken off a list in demo mode, and the list's count before the
+    /// first one. The names are generated from that count, so a removal drops
+    /// the name the user picked instead of whichever sorted last.
+    private static var removed: [UUID: (seeded: Int, names: Set<String>)] = [:]
 
-    static func remove(_ domains: [String], from id: UUID) {
+    static func remove(_ domains: [String], from blocklist: BlocklistInfo) {
         guard ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1" else { return }
-        removed[id, default: []].formUnion(domains)
+        removed[blocklist.id, default: (blocklist.entryCount, [])].names.formUnion(domains)
     }
 
-    private static func entries(for blocklist: BlocklistInfo, entryCount: Int) -> [String] {
-        let count = entryCount + (removed[blocklist.id]?.count ?? 0)
+    private static func entries(for blocklist: BlocklistInfo) -> [String] {
+        let count = removed[blocklist.id]?.seeded ?? blocklist.entryCount
         let stems = ["ads", "track", "metrics", "telemetry", "pixel", "beacon", "analytics", "collect"]
         let domains = ["doubleclick.net", "adnxs.com", "criteo.com", "scorecardresearch.com",
                        "adsrvr.org", "taboola.com", "outbrain.com", "branch.io"]
