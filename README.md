@@ -103,7 +103,7 @@ This build needs no system extension approval, because it has no extension to ap
 
 ## Uninstall
 
-Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor, deletes its data and removes the `freesnitch` command link behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again.
+Open **FreeSnitch > Settings > Uninstall**, press **Uninstall…** and confirm. FreeSnitch then does everything by itself: it turns the filter off, asks macOS to remove its network extension and waits for the answer, empties its `pf` anchor, deletes its data and removes the `freesnitch` command link behind one password prompt, then removes the privileged helper, moves itself to the Trash and quits. The helper and the app are only removed once macOS says the extension has stopped. Tick **Also delete my rules and profiles** to remove `/Library/Application Support/FreeSnitch/freesnitch.sqlite` too; otherwise it stays, so a reinstall finds your rules again. The record of every connection FreeSnitch has seen is kept in that file too; **Delete History** in Insights removes it.
 
 macOS often keeps a stopped extension listed until the next restart. Nothing of FreeSnitch runs or filters by then, so there is no need to restart for it; the app says so in one sentence when it happens.
 
@@ -115,7 +115,7 @@ From a source checkout, after removing the extension in the app, the script does
 
 ```bash
 sudo bash Scripts/uninstall_freesnitch.sh --yes
-# also delete your rules, profiles and blocklists:
+# also delete your rules, profiles, blocklists and the record of connections it has seen:
 sudo bash Scripts/uninstall_freesnitch.sh --yes --remove-database
 ```
 
