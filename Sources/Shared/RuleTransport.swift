@@ -33,6 +33,10 @@ public enum RuleTransportBoundary {
     public static let maximumProfileBytes = 256
     public static let maximumGroupNameBytes = 256
     public static let maximumNotesBytes = 8192
+    /// The rule store keeps priority and hit count in 32-bit SQLite
+    /// columns, so a value outside these ranges can't be saved (#202).
+    public static let priorityRange = Int(Int32.min)...Int(Int32.max)
+    public static let hitCountRange = 0...Int(Int32.max)
 
     public enum PayloadKind: String, Sendable {
         case snapshot
@@ -136,6 +140,14 @@ public enum RuleTransportBoundary {
         }
         if let remotePort = rule.remotePort, !(0...65535).contains(remotePort) {
             throw ValidationError.invalidField(field: "remotePort", reason: "expected a value from 0 through 65535")
+        }
+        if !priorityRange.contains(rule.priority) {
+            throw ValidationError.invalidField(field: "priority",
+                                               reason: "expected a value from \(priorityRange.lowerBound) through \(priorityRange.upperBound)")
+        }
+        if !hitCountRange.contains(rule.hitCount) {
+            throw ValidationError.invalidField(field: "hitCount",
+                                               reason: "expected a value from 0 through \(hitCountRange.upperBound)")
         }
     }
 
