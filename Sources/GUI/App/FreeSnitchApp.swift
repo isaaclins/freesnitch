@@ -257,6 +257,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // A remembered answer the helper did not save (#246), on its
                 // own and on top of the next question.
                 case "alert-unsaved": self.seedDemoUnsavedAnswer()
+                // The real path end to end: the demo alert is answered
+                // "Deny, remember" through resolveAlert, and the save goes to a
+                // helper demo mode never connects, so the refusal shown is the
+                // one the app really produces (#246).
+                case "alert-refused":
+                    self.seedDemoAlert()
+                    if let alert = self.state.pendingAlerts.first {
+                        self.state.resolveAlert(alert, allow: false, remember: true)
+                    }
                 case "alert-unsaved-next":
                     self.seedDemoUnsavedAnswer()
                     self.seedDemoAlert()

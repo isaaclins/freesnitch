@@ -241,14 +241,14 @@ final class WindowManager {
     /// when. A remembered answer refused just after its question closed opens
     /// the window again there, where the user left it, instead of re-centred
     /// (#246).
-    private var lastAlertTopLeft: NSPoint?
+    private var lastAlertFrame: NSRect?
     private var lastAlertClosedAt: Date?
 
     private func syncAlertWindow(hasAlert: Bool) {
         if hasAlert {
             if alertWindow == nil { presentAlertWindow() }
         } else if let window = alertWindow {
-            lastAlertTopLeft = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            lastAlertFrame = window.frame
             lastAlertClosedAt = Date()
             window.close()
             alertWindow = nil
@@ -301,13 +301,12 @@ final class WindowManager {
         window.center()
         // Only onto a screen that is still there: a display unplugged in the
         // meantime would put a question nobody can see off screen.
-        if let topLeft = lastAlertTopLeft, let closedAt = lastAlertClosedAt,
+        if let last = lastAlertFrame, let closedAt = lastAlertClosedAt,
            Date().timeIntervalSince(closedAt) < 30,
-           NSScreen.screens.contains(where: { $0.visibleFrame.insetBy(dx: -1, dy: -1).contains(topLeft)
-               && $0.visibleFrame.contains(NSPoint(x: topLeft.x + 440, y: topLeft.y - 200)) }) {
+           NSScreen.screens.contains(where: { $0.visibleFrame.insetBy(dx: -1, dy: -1).contains(last) }) {
             // Reopened right after closing: back where it was, and not
             // centred again once it has measured itself.
-            window.setFrameTopLeftPoint(topLeft)
+            window.setFrameTopLeftPoint(NSPoint(x: last.minX, y: last.maxY))
             alertHasBeenCentered = true
         }
         window.makeKeyAndOrderFront(nil)
