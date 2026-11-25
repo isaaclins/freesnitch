@@ -819,7 +819,8 @@ final class FilterDataProvider: NEFilterDataProvider {
     private func isDNSOrDHCP(_ conn: Connection, flow: NEFilterSocketFlow, snapshotOrigin: SnapshotOrigin) -> Bool {
         if DHCPTraffic.isAddressConfiguration(transportProtocol: flow.socketProtocol,
                                               localPort: localPort(of: flow),
-                                              remotePort: conn.remotePort) { return true }
+                                              remotePort: conn.remotePort,
+                                              remoteIP: conn.remoteIP) { return true }
         guard conn.remotePort == 53, snapshotOrigin == .boot else { return false }
         let lookup = conn.remoteIP.isEmpty ? FlowDestination.unspecifiedLookupToken : conn.remoteIP
         return resolverBypass.allowsDNS(to: lookup)
@@ -896,11 +897,12 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     /// The port this end of the flow is bound to, or 0 when it is not bound
-    /// yet. Same endpoint API split as `remoteAddress(of:)`, except that an
-    /// empty new endpoint falls back to the old one: missing a DHCP client's
-    /// port would put address configuration under the app's rules.
+    /// yet. Same endpoint API split as `remoteAddress(of:)`, except that a
+    /// new endpoint without a port (missing, or port 0) falls back to the old
+    /// one: missing a DHCP client's port would put address configuration
+    /// under the app's rules.
     private func localPort(of flow: NEFilterSocketFlow) -> Int {
-        if #available(macOS 15.0, *), case let .hostPort(_, port) = flow.localFlowEndpoint {
+        if #available(macOS 15.0, *), case let .hostPort(_, port) = flow.localFlowEndpoint, port.rawValue != 0 {
             return Int(port.rawValue)
         }
         let legacy = flow.localEndpoint as? NWHostEndpoint

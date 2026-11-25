@@ -17,12 +17,26 @@ public enum DHCPTraffic {
     public static let ipv4Ports: Set<Int> = [67, 68]
     public static let ipv6Ports: Set<Int> = [546, 547]
 
+    /// Where a client sends before it has an address or a server: the IPv4
+    /// limited broadcast (RFC 2131 section 4.1), and the DHCPv6 relay agents
+    /// and servers multicast groups (RFC 8415 section 7.1).
+    public static let ipv4ServerDiscovery: Set<String> = ["255.255.255.255"]
+    public static let ipv6ServerDiscovery: Set<String> = ["ff02::1:2", "ff05::1:3"]
+
     /// `transportProtocol` is the IP protocol number (IPPROTO_UDP is 17).
-    /// A flow whose local port is not known (0) is not address configuration:
-    /// a DHCP client binds its port before it sends anything.
-    public static func isAddressConfiguration(transportProtocol: Int32, localPort: Int, remotePort: Int) -> Bool {
+    /// When the flow's local port is not known (0), only a send to a DHCP
+    /// server port on the discovery broadcast or multicast address counts:
+    /// a client that reads as unbound must still get an address, and those
+    /// destinations never leave the local network (link or site scope), so
+    /// no app reaches a service on the internet through them.
+    public static func isAddressConfiguration(transportProtocol: Int32, localPort: Int,
+                                              remotePort: Int, remoteIP: String) -> Bool {
         guard transportProtocol == Int32(IPPROTO_UDP) else { return false }
-        return (ipv4Ports.contains(localPort) && ipv4Ports.contains(remotePort))
-            || (ipv6Ports.contains(localPort) && ipv6Ports.contains(remotePort))
+        if ipv4Ports.contains(localPort) && ipv4Ports.contains(remotePort) { return true }
+        if ipv6Ports.contains(localPort) && ipv6Ports.contains(remotePort) { return true }
+        guard localPort == 0 else { return false }
+        let address = remoteIP.lowercased()
+        return (remotePort == 67 && ipv4ServerDiscovery.contains(address))
+            || (remotePort == 547 && ipv6ServerDiscovery.contains(address))
     }
 }

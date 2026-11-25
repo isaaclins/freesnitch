@@ -31,8 +31,8 @@ struct Verify {
     static let udp = Int32(IPPROTO_UDP)
     static let tcp = Int32(IPPROTO_TCP)
 
-    static func exempt(_ proto: Int32, local: Int, remote: Int) -> Bool {
-        DHCPTraffic.isAddressConfiguration(transportProtocol: proto, localPort: local, remotePort: remote)
+    static func exempt(_ proto: Int32, local: Int, remote: Int, ip: String = "203.0.113.9") -> Bool {
+        DHCPTraffic.isAddressConfiguration(transportProtocol: proto, localPort: local, remotePort: remote, remoteIP: ip)
     }
 
     static func main() {
@@ -55,6 +55,15 @@ struct Verify {
         // Mixing the v4 and v6 port families is neither protocol.
         check(!exempt(udp, local: 68, remote: 547), "a DHCP client port to a DHCPv6 server port is not exempt")
         check(!exempt(udp, local: 546, remote: 67), "a DHCPv6 client port to a DHCP server port is not exempt")
+        // A client whose port reads as unknown still gets an address: its
+        // discovery goes to the local-link broadcast or DHCPv6 multicast.
+        check(exempt(udp, local: 0, remote: 67, ip: "255.255.255.255"), "an unbound DHCP discover to the broadcast address is exempt")
+        check(exempt(udp, local: 0, remote: 547, ip: "ff02::1:2"), "an unbound DHCPv6 solicit to ff02::1:2 is exempt")
+        check(exempt(udp, local: 0, remote: 547, ip: "FF05::1:3"), "an unbound DHCPv6 message to ff05::1:3 is exempt, in any case")
+        check(!exempt(tcp, local: 0, remote: 67, ip: "255.255.255.255"), "TCP to the broadcast address is not exempt")
+        check(!exempt(udp, local: 0, remote: 68, ip: "255.255.255.255"), "unbound UDP to the client port on broadcast is not exempt")
+        check(!exempt(udp, local: 51234, remote: 67, ip: "255.255.255.255"), "an ephemeral port to broadcast port 67 is not exempt")
+        check(!exempt(udp, local: 0, remote: 547, ip: "2001:db8::1"), "unbound UDP to a unicast DHCPv6 port is not exempt")
         // Ordinary traffic was never exempt and still isn't.
         check(!exempt(udp, local: 68, remote: 443), "a DHCP client port to port 443 is not exempt")
 
