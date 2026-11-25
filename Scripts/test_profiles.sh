@@ -90,6 +90,20 @@ for symbol in NSRegularExpression 'Regex<' range\(of: options:\ .regularExpressi
 done
 pass "no regex is used by any profile source"
 
+# 6. The helper's blocklist switch (`freesnitch blocklist ID on|off`) writes
+#    only the on/off state for the active profile and then refreshes domain
+#    lists and IP feeds together. Writing back the whole list as it was read
+#    overwrote a download's newer entry count and time (#528).
+enable_body="$(awk '/func enableBlocklist\(/{f=1} f{print} f&&/^    }$/{exit}' "$ROOT/Sources/Helper/HelperService.swift")"
+[[ -n "$enable_body" ]] || fail "the helper no longer has enableBlocklist"
+grep -Fq 'store.setBlocklistEnabled(' <<<"$enable_body" \
+  || fail "the helper's blocklist switch no longer writes only the on/off state"
+grep -Fq 'store.updateBlocklist(' <<<"$enable_body" \
+  && fail "the helper's blocklist switch writes back the whole list again"
+grep -Fq 'blocklists.refreshAll()' <<<"$enable_body" \
+  || fail "the helper's blocklist switch no longer refreshes domain lists and IP feeds together"
+pass "the helper's blocklist switch writes only on/off and refreshes every feed"
+
 compile_harness() {
   local dir="$TMP/harness"
   local source="$dir/main.swift"
