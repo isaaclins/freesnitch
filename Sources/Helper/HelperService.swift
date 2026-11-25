@@ -1037,8 +1037,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func refreshBlocklists(reply: @escaping (Bool, String?) -> Void) {
         Task {
-            await self.blocklists.refresh()
-            reply(true, nil)
+            // A list that could not be downloaded keeps blocking what was
+            // saved for it, but the caller hears about it instead of a plain
+            // success (#252).
+            let result = await self.blocklists.refresh()
+            reply(result.isComplete, result.failureMessage)
         }
     }
 

@@ -181,7 +181,10 @@ final class CLIHelperClient: NSObject {
     }
 
     func refreshBlocklists() async throws {
-        try await requireSuccess(timeout: 120) { proxy, reply in
+        // A failed refresh is a list that could not be downloaded, not a
+        // helper or pf problem (#252).
+        try await requireSuccess(timeout: 120,
+                                 remediation: "Check that the list's address is reachable, then run `freesnitch blocklists refresh` again.") { proxy, reply in
             proxy.refreshBlocklists(reply: reply)
         }
     }
@@ -404,6 +407,7 @@ final class CLIHelperClient: NSObject {
     }
 
     private func requireSuccess(timeout: TimeInterval,
+                                remediation: String = "Run `freesnitch doctor` for helper and pf diagnostics.",
                                 _ invoke: @escaping (HelperProtocol, @escaping (Bool, String?) -> Void) -> Void) async throws {
         let reply: HelperOperationReply = try await perform(timeout: timeout) { proxy, completion in
             invoke(proxy) { ok, message in
@@ -413,7 +417,7 @@ final class CLIHelperClient: NSObject {
         guard reply.succeeded else {
             throw CLIError(.operationFailed,
                            message: reply.message ?? "The helper refused the operation.",
-                           remediation: "Run `freesnitch doctor` for helper and pf diagnostics.")
+                           remediation: remediation)
         }
     }
 
