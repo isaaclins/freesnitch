@@ -49,20 +49,9 @@ jobs:
       # matter, but the toolchain does: the Icon Composer icon only compiles
       # with Xcode 26, and the harnesses should use the compiler the release
       # uses. The image defaults to an older Xcode, so pick the newest
-      # released one and stop if it is older than 26.
+      # released one and stop if it is older than 26 (Scripts/ci_select_xcode.sh).
       - name: Select the newest released Xcode
-        run: |
-          xcode=$(find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' \
-            | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)
-          if [ -z "$xcode" ]; then echo '::error::No released Xcode found on this runner.'; exit 1; fi
-          sudo xcode-select -s "$xcode/Contents/Developer"
-          xcodebuild -version
-          swiftc --version
-          major=$(xcodebuild -version | awk 'NR == 1 { split($2, v, "."); print v[1] }')
-          if [ "$major" -lt 26 ]; then
-            echo "::error::Newest Xcode on this runner is $xcode; FreeSnitch needs Xcode 26 or newer."
-            exit 1
-          fi
+        run: bash Scripts/ci_select_xcode.sh
 
       # Several harnesses filter with ripgrep. Install it explicitly rather
       # than rely on the runner image: without it one harness would hide its
@@ -130,18 +119,7 @@ jobs:
 
       # Same toolchain choice as the harness jobs above.
       - name: Select the newest released Xcode
-        run: |
-          xcode=$(find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' \
-            | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)
-          if [ -z "$xcode" ]; then echo '::error::No released Xcode found on this runner.'; exit 1; fi
-          sudo xcode-select -s "$xcode/Contents/Developer"
-          xcodebuild -version
-          swiftc --version
-          major=$(xcodebuild -version | awk 'NR == 1 { split($2, v, "."); print v[1] }')
-          if [ "$major" -lt 26 ]; then
-            echo "::error::Newest Xcode on this runner is $xcode; FreeSnitch needs Xcode 26 or newer."
-            exit 1
-          fi
+        run: bash Scripts/ci_select_xcode.sh
 
       - name: Install XcodeGen
         run: brew install xcodegen
