@@ -830,7 +830,9 @@ struct InsightsHarness {
 
         // A DNS flood after a single batch, with nothing older to trim: the
         // answers newer than that batch still make room, so the store never
-        // refuses every write at its ceiling.
+        // refuses every write at its ceiling. They go before that day's
+        // rollups (#588). Everything is on one UTC day, noon yesterday,
+        // whatever time the harness runs.
         let lateDNSSupport = root.appendingPathComponent("Late DNS Support")
         try! FileManager.default.createDirectory(at: lateDNSSupport, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o755])
@@ -838,7 +840,9 @@ struct InsightsHarness {
         do {
             let lateCeiling: Int64 = 512 * 1024
             let late = try InsightsStore(path: lateDNSPath, expectedUID: getuid(), maxDatabaseBytes: lateCeiling)
-            let lateNow = Date()
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(identifier: "UTC")!
+            let lateNow = utc.date(bySettingHour: 12, minute: 0, second: 0, of: now.addingTimeInterval(-24 * 3600))!
             try late.record(floodBatch(0, at: lateNow.addingTimeInterval(-120)))
             var refused = 0
             for index in 0..<80 {
@@ -852,6 +856,8 @@ struct InsightsHarness {
             }
             equal(refused, 0, "a DNS flood after a single batch keeps landing")
             check(fileBytes(lateDNSPath) <= lateCeiling, "a DNS flood after a single batch stays under the ceiling")
+            equal(count(lateDNSPath, "SELECT COUNT(*) FROM daily_rollups;"), InsightsLimits.maxBatchCount,
+                  "a DNS flood after a single batch trims its own answers before that day's rollups")
             try late.record(floodBatch(1, at: lateNow))
             equal(count(lateDNSPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-1-%';"),
                   InsightsLimits.maxBatchCount, "a connection batch after that DNS flood is recorded")
