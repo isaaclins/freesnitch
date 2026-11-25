@@ -119,14 +119,61 @@ public final class RuleStore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "io.isaaclins.freesnitch.rulestore")
     public let path: String
 
-    public init(path: String) throws {
+    /// The folder, the database and its `-wal`/`-shm` files may be used only
+    /// by `owner` (the helper passes root): the folder is kept at 0700, the
+    /// files at 0600. Looser modes left by an older install are tightened
+    /// here; anything that cannot be made private (a link, another owner, a
+    /// mode that will not change) stops the open instead of recording into a
+    /// file other accounts can read (#290).
+    public init(path: String, owner: uid_t = geteuid()) throws {
         self.path = path
         let dir = (path as NSString).deletingLastPathComponent
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try Self.securePrivatePath(dir, kind: S_IFDIR, mode: 0o700, owner: owner, create: true)
+        for file in Self.databaseFiles(path) {
+            try Self.securePrivatePath(file, kind: S_IFREG, mode: 0o600, owner: owner)
+        }
         if sqlite3_open(path, &db) != SQLITE_OK {
             throw NSError(domain: "RuleStore", code: 1, userInfo: [NSLocalizedDescriptionKey: "open failed"])
         }
+        // SQLite gives the sidecar files the main file's mode, so the main
+        // file is made private before WAL mode creates them.
+        try Self.securePrivatePath(path, kind: S_IFREG, mode: 0o600, owner: owner)
         try setup()
+        for file in Self.databaseFiles(path) {
+            try Self.securePrivatePath(file, kind: S_IFREG, mode: 0o600, owner: owner)
+        }
+    }
+
+    private static func databaseFiles(_ path: String) -> [String] {
+        ["", "-wal", "-shm", "-journal"].map { path + $0 }
+    }
+
+    /// Makes `file` a `kind` owned by `owner` with exactly `mode`, or throws.
+    /// A missing file is fine (SQLite creates it later) unless `create` is
+    /// set, which creates a missing folder with `mode`.
+    private static func securePrivatePath(_ file: String, kind: mode_t, mode: mode_t,
+                                          owner: uid_t, create: Bool = false) throws {
+        func fail(_ reason: String) -> NSError {
+            NSError(domain: "RuleStore", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "\(reason): \(file)"])
+        }
+        var info = stat()
+        if lstat(file, &info) != 0 {
+            guard errno == ENOENT else { throw fail("cannot inspect") }
+            guard create else { return }
+            try FileManager.default.createDirectory(atPath: file, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: Int(mode)])
+            guard lstat(file, &info) == 0 else { throw fail("cannot inspect") }
+        }
+        guard (info.st_mode & S_IFMT) == kind else { throw fail("not a plain file or folder") }
+        guard info.st_uid == owner else { throw fail("owned by another account") }
+        if (info.st_mode & 0o7777) != mode {
+            guard chmod(file, mode) == 0 else { throw fail("cannot restrict mode") }
+            guard lstat(file, &info) == 0,
+                  (info.st_mode & S_IFMT) == kind,
+                  info.st_uid == owner,
+                  (info.st_mode & 0o7777) == mode else { throw fail("mode did not change") }
+        }
     }
 
     deinit { if db != nil { sqlite3_close(db) } }

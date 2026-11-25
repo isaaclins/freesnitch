@@ -224,9 +224,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     init(listener: NSXPCListener) throws {
         let dbDir = "/Library/Application Support/FreeSnitch"
-        try? FileManager.default.createDirectory(atPath: dbDir, withIntermediateDirectories: true)
         let dbPath = (dbDir as NSString).appendingPathComponent("freesnitch.sqlite")
-        self.store = try RuleStore(path: dbPath)
+        // Root only: the store holds every rule and the connection history.
+        self.store = try RuleStore(path: dbPath, owner: 0)
         self.insights = try? InsightsStore()
         if self.insights == nil {
             PSLog.error(PSLog.helper, "Insights store failed to open; observation recording is unavailable.")
