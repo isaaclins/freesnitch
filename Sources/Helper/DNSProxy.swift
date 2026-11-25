@@ -19,6 +19,10 @@ struct DNSPolicy: Sendable {
     /// The enabled allow rules that name a host, prepared the same way. A
     /// lookup one of them covers passes the blocklist (#217).
     let blocklistOverrides: PreparedRuleSet
+    /// The enabled rules, allow and deny, that name a host and no app, in
+    /// their usual order. They decide what a CNAME target in an answer means
+    /// (#283).
+    let hostRules: PreparedRuleSet
     let blocklist: Set<String>
     let dohURL: String
 
@@ -30,6 +34,7 @@ struct DNSPolicy: Sendable {
         self.rules = rules
         self.preparedRules = PreparedRuleSet(rules: rules)
         self.blocklistOverrides = DNSPolicy.blocklistOverrides(in: rules)
+        self.hostRules = DNSPolicy.hostRules(in: rules)
         self.blocklist = blocklist
         self.dohURL = dohURL
     }
@@ -40,29 +45,31 @@ struct DNSPolicy: Sendable {
                  rules: [Rule],
                  preparedRules: PreparedRuleSet,
                  blocklistOverrides: PreparedRuleSet,
+                 hostRules: PreparedRuleSet,
                  blocklist: Set<String>,
                  dohURL: String) {
         self.mode = mode
         self.rules = rules
         self.preparedRules = preparedRules
         self.blocklistOverrides = blocklistOverrides
+        self.hostRules = hostRules
         self.blocklist = blocklist
         self.dohURL = dohURL
     }
 
     func replacingMode(_ newMode: AppMode) -> DNSPolicy {
         DNSPolicy(mode: newMode, rules: rules, preparedRules: preparedRules,
-                  blocklistOverrides: blocklistOverrides, blocklist: blocklist, dohURL: dohURL)
+                  blocklistOverrides: blocklistOverrides, hostRules: hostRules, blocklist: blocklist, dohURL: dohURL)
     }
 
     func replacingBlocklist(_ newBlocklist: Set<String>) -> DNSPolicy {
         DNSPolicy(mode: mode, rules: rules, preparedRules: preparedRules,
-                  blocklistOverrides: blocklistOverrides, blocklist: newBlocklist, dohURL: dohURL)
+                  blocklistOverrides: blocklistOverrides, hostRules: hostRules, blocklist: newBlocklist, dohURL: dohURL)
     }
 
     func replacingDoHURL(_ newDoHURL: String) -> DNSPolicy {
         DNSPolicy(mode: mode, rules: rules, preparedRules: preparedRules,
-                  blocklistOverrides: blocklistOverrides, blocklist: blocklist, dohURL: newDoHURL)
+                  blocklistOverrides: blocklistOverrides, hostRules: hostRules, blocklist: blocklist, dohURL: newDoHURL)
     }
 
     func replacingRules(_ newRules: [Rule]) -> DNSPolicy {
@@ -97,15 +104,47 @@ struct DNSPolicy: Sendable {
         return action
     }
 
-    private static func blocklistOverrides(in rules: [Rule]) -> PreparedRuleSet {
-        // A rule that names an app speaks for that app only. DNS lookups
-        // reach the proxy without one, and a rule naming an app just by its
-        // name matches any process, so it must not open the name for all.
+    /// Whether a lookup that resolved through the CNAME `target` must be
+    /// refused (#283). A tracker hidden behind an unlisted alias of the site
+    /// would otherwise get its address through, so each target in an answer
+    /// is judged as if it had been looked up by name: it is refused when it
+    /// is on an enabled blocklist and no allow rule naming a host covers it
+    /// (the rule "Allow Anyway" writes), or when a deny rule that names a
+    /// host covers it. The mode and rules with no host never refuse a target:
+    /// the user allowed the name they looked up, and only a list or a rule
+    /// that names the target says anything about where it points.
+    func refusesAliasTarget(_ target: String, matcher: RuleMatcher = RuleMatcher()) -> Bool {
+        let name = target.lowercased()
+        let stub = Connection(pid: 0, processName: "", processPath: "", remoteHost: name,
+                              direction: .outgoing, status: .pending)
+        if matcher.decision(for: stub, prepared: hostRules, defaultMode: .silentAllow) == .deny {
+            return true
+        }
+        return Self.isBlocklisted(name, in: blocklist)
+            && matcher.explainedDecision(for: stub, prepared: blocklistOverrides,
+                                         defaultMode: .silentDeny).matchedRuleID == nil
+    }
+
+    /// The first CNAME target in `answer` this policy refuses, if any.
+    func refusedAliasTarget(in answer: Data, matcher: RuleMatcher = RuleMatcher()) -> String? {
+        DNSWire.cnameTargets(answer).first { refusesAliasTarget($0, matcher: matcher) }
+    }
+
+    // A rule that names an app speaks for that app only. DNS lookups reach
+    // the proxy without one, and a rule naming an app just by its name
+    // matches any process, so it must not open or close a name for all.
+    private static func namesHostForEveryone(_ rule: Rule) -> Bool {
         func blank(_ value: String?) -> Bool { (value ?? "").isEmpty }
-        return PreparedRuleSet(rules: rules.filter { rule in
-            rule.enabled && rule.action == .allow && !blank(rule.remoteHost)
-                && blank(rule.processName) && blank(rule.processPath) && blank(rule.processBundleId)
-        })
+        return rule.enabled && !blank(rule.remoteHost)
+            && blank(rule.processName) && blank(rule.processPath) && blank(rule.processBundleId)
+    }
+
+    private static func blocklistOverrides(in rules: [Rule]) -> PreparedRuleSet {
+        PreparedRuleSet(rules: rules.filter { $0.action == .allow && namesHostForEveryone($0) })
+    }
+
+    private static func hostRules(in rules: [Rule]) -> PreparedRuleSet {
+        PreparedRuleSet(rules: rules.filter { $0.action != .ask && namesHostForEveryone($0) })
     }
 
     /// True when `domain`, or a parent domain of it, is on the blocklist.
@@ -439,7 +478,7 @@ final class DNSProxy: @unchecked Sendable {
                     if let resp = DNSWire.nxResponse(for: payload) { reply(resp) } else { reply(nil) }
                     return
                 }
-                self.forwardDoH(payload: payload, domain: domain, resolver: policy.dohURL, reply: reply)
+                self.forwardDoH(payload: payload, domain: domain, policy: policy, reply: reply)
             }
             let isAnswered: () -> Bool = {
                 answerLock.lock(); defer { answerLock.unlock() }
@@ -461,15 +500,16 @@ final class DNSProxy: @unchecked Sendable {
             return
         }
 
-        forwardDoH(payload: payload, domain: domain, resolver: policy.dohURL, reply: reply)
+        forwardDoH(payload: payload, domain: domain, policy: policy, reply: reply)
     }
 
-    private func forwardDoH(payload: Data, domain: String, resolver: String, reply: @escaping (Data?) -> Void) {
-        stats.incrAllowed()
-        guard let url = URL(string: resolver) else {
+    private func forwardDoH(payload: Data, domain: String, policy: DNSPolicy, reply: @escaping (Data?) -> Void) {
+        guard let url = URL(string: policy.dohURL) else {
+            stats.incrAllowed()
             PSLog.error(PSLog.dns, "doh upstream failed: the resolver address does not parse")
             reply(DNSWire.servFailResponse(for: payload)); return
         }
+        let matcher = self.matcher
         var req = URLRequest(url: url, timeoutInterval: 5)
         req.httpMethod = "POST"
         req.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")
@@ -478,6 +518,15 @@ final class DNSProxy: @unchecked Sendable {
         let task = URLSession.shared.dataTask(with: req) { data, response, error in
             switch Self.upstreamAnswer(data: data, response: response, error: error, query: payload) {
             case .answer(let answer):
+                // The name was allowed, but the answer may lead to a name
+                // that is not (#283). The same policy snapshot judges it.
+                if let target = policy.refusedAliasTarget(in: answer, matcher: matcher) {
+                    self.stats.incrBlocked()
+                    self.onBlock?(domain, "via \(target)")
+                    reply(DNSWire.nxResponse(for: payload))
+                    return
+                }
+                self.stats.incrAllowed()
                 if let ips = DNSWire.extractAnswers(answer) {
                     self.onResolve?(domain, ips)
                 }
@@ -486,6 +535,7 @@ final class DNSProxy: @unchecked Sendable {
                 // The resolver could not answer. The client gets SERVFAIL,
                 // the standard "upstream failed" reply, at once instead of an
                 // HTTP error page parsed as DNS or a wait for its own timeout.
+                self.stats.incrAllowed()
                 PSLog.error(PSLog.dns, "doh upstream failed: \(reason)")
                 reply(DNSWire.servFailResponse(for: payload))
             }
@@ -644,16 +694,17 @@ enum DNSWire {
         return resp
     }
 
-    static func extractAnswers(_ data: Data) -> [String]? {
+    /// Each well-formed record in the answer section, as its type and where
+    /// its data sits. Stops at the first record that does not parse.
+    static func answerRecords(_ data: Data) -> [(type: UInt16, start: Int, length: Int)]? {
         guard data.count > 12 else { return nil }
         let ancount = Int(UInt16(data[6]) << 8 | UInt16(data[7]))
         guard ancount > 0 else { return [] }
         var pos = 12
         // skip question
-        guard let q = firstQuestion(data) else { return nil }
-        _ = q
+        guard firstQuestion(data) != nil else { return nil }
         if let (_, end) = readName(data, from: 12) { pos = end + 4 } else { return nil }
-        var out: [String] = []
+        var out: [(type: UInt16, start: Int, length: Int)] = []
         for _ in 0..<ancount {
             guard let (_, end) = readName(data, from: pos) else { break }
             pos = end
@@ -662,6 +713,28 @@ enum DNSWire {
             let rdlen = Int(UInt16(data[pos+8]) << 8 | UInt16(data[pos+9]))
             pos += 10
             guard pos + rdlen <= data.count else { break }
+            out.append((type, pos, rdlen))
+            pos += rdlen
+        }
+        return out
+    }
+
+    /// The names the CNAME records in the answer section point to, lowercased
+    /// and without a trailing dot. Empty for an answer that does not parse.
+    static func cnameTargets(_ data: Data) -> [String] {
+        (answerRecords(data) ?? []).compactMap { record in
+            guard record.type == 5, record.length > 0,
+                  let (name, end) = readName(data, from: record.start),
+                  end <= record.start + record.length, !name.isEmpty else { return nil }
+            return name.lowercased()
+        }
+    }
+
+    static func extractAnswers(_ data: Data) -> [String]? {
+        guard let records = answerRecords(data) else { return nil }
+        var out: [String] = []
+        for record in records {
+            let type = record.type, rdlen = record.length, pos = record.start
             if type == 1 && rdlen == 4 {
                 let ip = "\(data[pos]).\(data[pos+1]).\(data[pos+2]).\(data[pos+3])"
                 out.append(ip)
@@ -673,7 +746,6 @@ enum DNSWire {
                 }
                 out.append(parts.joined(separator: ":"))
             }
-            pos += rdlen
         }
         return out
     }

@@ -291,7 +291,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             self?.broadcast { c in
                 let payload: [String: Any] = ["domain": domain, "reason": reason ?? ""]
                 if let data = try? JSONSerialization.data(withJSONObject: payload) {
-                    c.notifyLog(level: "block", message: "blocked: \(domain)")
+                    c.notifyLog(level: "block", message: (reason ?? "").isEmpty ? "blocked: \(domain)" : "blocked: \(domain) (\(reason ?? ""))")
                     _ = data
                 }
             }
