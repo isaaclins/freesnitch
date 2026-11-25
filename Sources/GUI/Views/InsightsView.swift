@@ -108,19 +108,21 @@ struct InsightsView: View {
                 Button("Export Domains as CSV\u{2026}") { model.export(.csv) }
                 Button("Export Domains as JSON\u{2026}") { model.export(.json) }
             } label: {
-                // Every app is one more helper query, so a long range can take
-                // a moment: say it is working instead of only greying out.
-                if model.isExporting {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "square.and.arrow.up")
-                }
+                Image(systemName: "square.and.arrow.up")
             }
             .menuIndicator(.hidden)
             .fixedSize()
             .disabled(model.isExporting)
             .help("Export the domains each app reached in this range")
             .accessibilityLabel("Export domains")
+            // Every app is one more helper query, so a long range can take a
+            // moment: say it is working instead of only greying out. Beside
+            // the menu, not in its label, which macOS draws as a static image.
+            if model.isExporting {
+                ProgressView()
+                    .controlSize(.small)
+                    .help("Collecting the domains for the export")
+            }
 
             Button {
                 model.reload()
@@ -1349,9 +1351,9 @@ final class InsightsViewModel: ObservableObject {
 
     // MARK: Export (#195)
 
-    /// Larger pages than the screen uses: an export walks every app, and the
-    /// helper allows up to `maxQueryPageSize` rows per answer.
-    private static let exportPageSize = 100
+    /// The screen's page size: each destination row costs the helper extra
+    /// lookups, and a bigger page could run past its 10 second answer limit.
+    private static let exportPageSize = 50
 
     func export(_ format: InsightsExportFormat) {
         guard !isExporting else { return }
@@ -1400,7 +1402,7 @@ final class InsightsViewModel: ObservableObject {
             exportIncomplete = !file.complete
             exportMessage = file.complete
                 ? String(localized: "Saved the domains to \(name).")
-                : String(localized: "Saved the domains to \(name). The range held more than one export can page through, so choose a shorter range for the rest.")
+                : String(localized: "Saved the domains to \(name). This range holds too much history for one file, so some apps or destinations are missing. Choose a shorter range for a complete list.")
         case .failure(let error):
             // Cancelling the save panel is not a failure worth a banner.
             if (error as? CocoaError)?.code == .userCancelled { return }

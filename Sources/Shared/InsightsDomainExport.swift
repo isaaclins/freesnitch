@@ -96,8 +96,9 @@ public struct InsightsDomainExport: Sendable {
 
     // MARK: CSV
 
-    /// One row per app and destination. `domain` is empty when no name was
-    /// seen; `ip` is empty when the store kept only the name.
+    /// One row per app and destination, as the Insights screen lists them.
+    /// `domain` is empty when no name was seen; `ip` is the latest address
+    /// the destination was reached at.
     public func csv() -> Data {
         var lines = [Self.csvHeader.joined(separator: ",")]
         for app in apps {
@@ -153,7 +154,9 @@ public struct InsightsDomainExport: Sendable {
 
     private struct DomainEntry: Encodable {
         let domain: String
-        /// Every address the name was reached at, so one name is one entry.
+        /// The addresses the exported rows carry for this name. Insights keeps
+        /// the latest address per destination, not every address a name ever
+        /// had, so this is not a full address history.
         let ips: [String]
         let connections: Int
         let lastSeen: String?
@@ -194,9 +197,9 @@ public struct InsightsDomainExport: Sendable {
         return try encoder.encode(document)
     }
 
-    /// One entry per name. The store can hold the same name more than once for
-    /// an app (asked for by name, and reached at several mapped addresses), and
-    /// an allowlist wants each name once.
+    /// One entry per name. The same name can come back in more than one row
+    /// for an app (asked for by name, and reached at an address that a DNS
+    /// answer later named), and an allowlist wants each name once.
     private static func domainEntries(_ destinations: [InsightsDestinationSummary]) -> [DomainEntry] {
         var order: [String] = []
         var merged: [String: (ips: [String], connections: Int, lastSeen: Date?)] = [:]

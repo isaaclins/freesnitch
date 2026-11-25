@@ -4365,6 +4365,16 @@
         }
       }
     },
+    "Collecting the domains for the export" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбор доменов для экспорта"
+          }
+        }
+      }
+    },
     "Command Line" : {
       "localizations" : {
         "ru" : {
@@ -9821,12 +9831,12 @@
         }
       }
     },
-    "Saved the domains to %@. The range held more than one export can page through, so choose a shorter range for the rest." : {
+    "Saved the domains to %@. This range holds too much history for one file, so some apps or destinations are missing. Choose a shorter range for a complete list." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Домены сохранены в %@. За этот период записей больше, чем помещается в один экспорт, поэтому для остального выберите период короче."
+            "value" : "Домены сохранены в %@. За этот период истории слишком много для одного файла, поэтому часть приложений или адресатов отсутствует. Для полного списка выберите период короче."
           }
         }
       }
