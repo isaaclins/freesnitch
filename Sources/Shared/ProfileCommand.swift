@@ -42,7 +42,7 @@ public struct ProfileSnapshot: Codable, Sendable {
     /// An automatic switch for this network that failed and is being retried.
     public var pendingNetworkSwitch: PendingNetworkSwitch?
     /// Why no gateway MAC is visible, when reading it failed.
-    public var gatewayReadProblem: String?
+    public var gatewayReadProblem: ProfileProblem?
 
     public init(profiles: [Profile],
                 activeProfile: String,
@@ -55,7 +55,7 @@ public struct ProfileSnapshot: Codable, Sendable {
                 notice: ProfileSwitchNotice?,
                 canUndo: Bool,
                 pendingNetworkSwitch: PendingNetworkSwitch? = nil,
-                gatewayReadProblem: String? = nil) {
+                gatewayReadProblem: ProfileProblem? = nil) {
         self.profiles = profiles
         self.activeProfile = activeProfile
         self.alwaysRuleCount = alwaysRuleCount
