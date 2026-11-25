@@ -237,12 +237,25 @@ final class WindowManager {
             }
     }
 
+    /// A close that waits a moment, so a remembered answer refused right
+    /// after the question closed keeps the same window, where the user left
+    /// it, instead of closing and reopening re-centred (#246).
+    private var pendingAlertClose: DispatchWorkItem?
+
     private func syncAlertWindow(hasAlert: Bool) {
+        pendingAlertClose?.cancel()
+        pendingAlertClose = nil
         if hasAlert {
             if alertWindow == nil { presentAlertWindow() }
-        } else {
-            alertWindow?.close()
-            alertWindow = nil
+        } else if alertWindow != nil {
+            let close = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.pendingAlertClose = nil
+                self.alertWindow?.close()
+                self.alertWindow = nil
+            }
+            pendingAlertClose = close
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: close)
         }
     }
 
