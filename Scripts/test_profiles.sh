@@ -379,8 +379,9 @@ pass("the profile command surface is bounded, refuses unknown profiles and refre
 
 // MARK: - switching a list writes only its on/off state (#528)
 //
-// A download records its entry count and time while the switch is in flight.
-// The switch must not write back an older copy of the list over them.
+// The switch writes only the on/off state, so a download's entry count and
+// time can never be replaced by an older copy of the list. The source check
+// near the top of this script guards that the helper uses this call.
 do {
     let listID = stacked.first!
     let active = store.activeProfileName()
