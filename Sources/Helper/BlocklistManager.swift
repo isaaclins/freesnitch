@@ -198,23 +198,26 @@ final class BlocklistManager: @unchecked Sendable {
                 // with downloads on a schedule (#491) the user may switch the
                 // list off while one runs, and a stale copy would switch it
                 // back on.
-                // A list deleted meanwhile, or whose address changed while
-                // this downloaded the old one, keeps nothing of this download.
-                guard (try? self.store.recordBlocklistDownload(id: list.id, fromURL: list.url,
-                                                               entryCount: set.count, at: Date())) == true else {
+                // Kept per list, on disk, so the GUI can ask what is on a list
+                // without anyone holding one in memory (#79). A list deleted
+                // meanwhile, or whose address changed while this downloaded
+                // the old one, keeps nothing of this download; the check and
+                // the write are one transaction so no change can slip between
+                // them (#529). A download that could not be stored counts as
+                // failed: the list is named, blocks from its saved copy and
+                // is retried on the failure schedule.
+                do {
+                    guard try self.store.storeBlocklistDownload(id: list.id, fromURL: list.url,
+                                                                domains: Array(set), at: Date()) else {
+                        continue
+                    }
+                } catch {
+                    failed.append(list.name)
+                    PSLog.error(PSLog.helper,
+                                "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
                     continue
                 }
                 downloaded[list.id] = (list.url, source)
-                // Kept per list, on disk, so the GUI can ask what is on a list
-                // without anyone holding one in memory (#79). A failure here
-                // costs the browsable copy, never the blocking itself, which
-                // works off the merged set below.
-                do {
-                    try self.store.replaceBlocklistEntries(blocklistID: list.id, domains: Array(set))
-                } catch {
-                    PSLog.error(PSLog.helper,
-                                "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
-                }
             }
         }
         // Built from the lists as they are now, for the same reason: only
