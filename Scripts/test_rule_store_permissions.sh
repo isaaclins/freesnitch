@@ -110,10 +110,17 @@ struct Verify {
         symlink(base + "/realdir", base + "/linkdir")
         check((try? RuleStore(path: base + "/linkdir/freesnitch.sqlite")) == nil, "a folder that is a symlink is refused")
 
-        // Files owned by another account (the store expects someone else).
+        // An existing install owned by another account (the store expects
+        // someone else): refused, and nothing in it is changed.
         let other = base + "/other/FreeSnitch"
+        try FileManager.default.createDirectory(atPath: other, withIntermediateDirectories: true)
+        chmod(other, 0o755)
+        FileManager.default.createFile(atPath: other + "/freesnitch.sqlite", contents: nil)
+        chmod(other + "/freesnitch.sqlite", 0o644)
         check((try? RuleStore(path: other + "/freesnitch.sqlite", owner: geteuid() + 1)) == nil,
-              "a folder owned by another account is refused")
+              "an existing folder owned by another account is refused")
+        check(mode(other) == 0o755 && mode(other + "/freesnitch.sqlite") == 0o644,
+              "a refused install is left as it was")
 
         if failures > 0 {
             print("rule store permissions: \(failures) check(s) failed")
