@@ -698,7 +698,9 @@ public final class RuleStore: @unchecked Sendable {
             sqlite3_bind_text(stmt, 8, r.direction.rawValue, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 9, r.action.rawValue, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 10, r.scope.rawValue, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_int(stmt, 11, Int32(r.priority))
+            // The transport and import validators reject a priority outside
+            // Int32 (#202); clamping keeps a missed path from trapping the helper.
+            sqlite3_bind_int(stmt, 11, Int32(clamping: r.priority))
             sqlite3_bind_text(stmt, 12, r.profile, -1, SQLITE_TRANSIENT)
             bindOpt(stmt, 13, r.groupName)
             bindOpt(stmt, 14, r.notes)

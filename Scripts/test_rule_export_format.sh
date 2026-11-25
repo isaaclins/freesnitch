@@ -151,6 +151,43 @@ struct Verify {
             print("rule export harness: rejection reason: \(error.errorDescription ?? "")")
         }
 
+        // 10b. Integers the store can't hold as Int32 are refused before
+        //      any write (#202), and the reason names the field.
+        for (label, field, apply) in [
+            ("priority too large", "priority", { (r: inout Rule) in r.priority = Int(Int32.max) + 1 }),
+            ("priority too small", "priority", { (r: inout Rule) in r.priority = Int(Int32.min) - 1 }),
+            ("hit count too large", "hit count", { (r: inout Rule) in r.hitCount = Int(Int32.max) + 1 }),
+            ("negative hit count", "hit count", { (r: inout Rule) in r.hitCount = -1 }),
+        ] as [(String, String, (inout Rule) -> Void)] {
+            var outOfRange = ruleB()
+            apply(&outOfRange)
+            let batch = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [ruleA(), outOfRange]))
+            do {
+                let accepted = try RuleExportCodec.decode(batch)
+                failures += 1
+                print("rule export harness: FAIL: \(label) imported \(accepted.rules.count) rules")
+            } catch let error as RuleExportError {
+                var refused = false
+                if case .invalidRule(let id, let reason) = error, id == outOfRange.id.uuidString,
+                   reason.contains(field) { refused = true }
+                check("\(label) refused at import", refused)
+            }
+        }
+        // The exact JSON from the report: 2147483648 is a valid JSON integer.
+        let rawText = String(decoding: try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [ruleB()])), as: UTF8.self)
+        let bigPriority = rawText.replacingOccurrences(
+            of: #""priority" : \d+"#, with: "\"priority\" : 2147483648", options: .regularExpression)
+        check("raw priority 2147483648 is in the test file", bigPriority.contains("2147483648"))
+        do {
+            _ = try RuleExportCodec.decode(Data(bigPriority.utf8))
+            check("raw priority 2147483648 refused at import", false)
+        } catch let error as RuleExportError {
+            var refused = false
+            if case .invalidRule(_, let reason) = error, reason.contains("priority 2147483648") { refused = true }
+            check("raw priority 2147483648 refused at import", refused)
+            print("rule export harness: rejection reason: \(error.errorDescription ?? "")")
+        }
+
         // 11. Duplicate ids rejected.
         let dupes = try RuleExportCodec.encoder().encode(RuleExportDocument(rules: [ruleA(), ruleA()]))
         expectRejected("duplicate rule id rejected", dupes, .duplicateRuleID(ruleA().id.uuidString))

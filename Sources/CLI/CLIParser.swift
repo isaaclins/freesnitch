@@ -417,8 +417,10 @@ enum CLIParser {
                 scopeExplicit = true
             case "--priority":
                 let value = try cursor.value(for: token)
-                guard let parsed = Int(value), (Int.min...Int.max).contains(parsed) else {
-                    throw CLIError(.invalidArgument, message: "invalid priority `\(value)`.", remediation: "Use an integer priority.")
+                guard let parsed = Int(value), RuleTransportBoundary.priorityRange.contains(parsed) else {
+                    let range = RuleTransportBoundary.priorityRange
+                    throw CLIError(.invalidArgument, message: "invalid priority `\(value)`.",
+                                   remediation: "Use an integer priority from \(range.lowerBound) through \(range.upperBound).")
                 }
                 priority = parsed
             case "--profile": profile = try cursor.value(for: token)
