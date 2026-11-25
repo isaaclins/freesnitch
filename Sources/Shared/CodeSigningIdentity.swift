@@ -191,7 +191,13 @@ public enum CodeSigningIdentity {
             return nil
         }
         var code: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, attributes as CFDictionary, [], &code) == errSecSuccess else {
+        let status = SecCodeCopyGuestWithAttributes(nil, attributes as CFDictionary, [], &code)
+        guard status == errSecSuccess else {
+            // A sandbox refusal lands here too (#398): the extension may only
+            // read files it is allowed to, and the code's file is read to find
+            // its signature. Say so once instead of every allow quietly
+            // turning into an alert.
+            reportUnreadable(status)
             return nil
         }
         return code
