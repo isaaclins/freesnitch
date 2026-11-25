@@ -103,7 +103,7 @@ public final class ProfileCoordinator: @unchecked Sendable {
     }
 
     /// Why the gateway could not be read, when it could not.
-    public var gatewayReadProblem: String? {
+    public var gatewayReadProblem: ProfileProblem? {
         watcher.lastReadProblem
     }
 
@@ -290,7 +290,7 @@ public final class ProfileCoordinator: @unchecked Sendable {
             let known = pending?.gatewayMAC == mac ? pending?.profileName : nil
             let failure = PendingNetworkSwitch(gatewayMAC: mac,
                                                profileName: boundProfile ?? known ?? "",
-                                               problem: error.localizedDescription)
+                                               reason: ProfileProblem(error))
             let changed = pending != failure
             pending = failure
             let handler = pendingHandler

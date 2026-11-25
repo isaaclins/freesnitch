@@ -69,6 +69,12 @@ public final class RuleStore: @unchecked Sendable {
         }
     }
 
+    /// Errors from SQLite itself carry this domain and, where SQLite gave one,
+    /// its result code under `sqliteResultCodeKey`, so a caller can tell a busy
+    /// database from a broken one without reading English text (#520).
+    public static let errorDomain = "RuleStore"
+    public static let sqliteResultCodeKey = "SQLiteResultCode"
+
     public enum PolicyStoreError: Error {
         case generationExhausted
     }
@@ -417,10 +423,12 @@ public final class RuleStore: @unchecked Sendable {
 
     private func execLocked(_ sql: String) throws {
         var err: UnsafeMutablePointer<CChar>?
-        if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
+        let rc = sqlite3_exec(db, sql, nil, nil, &err)
+        if rc != SQLITE_OK {
             let msg = err.map { String(cString: $0) } ?? "unknown"
             sqlite3_free(err)
-            throw NSError(domain: "RuleStore", code: 2, userInfo: [NSLocalizedDescriptionKey: msg])
+            throw NSError(domain: Self.errorDomain, code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: msg, Self.sqliteResultCodeKey: Int(rc)])
         }
     }
 
@@ -431,13 +439,18 @@ public final class RuleStore: @unchecked Sendable {
     private func executeLocked(_ sql: String, _ bind: (OpaquePointer?) -> Void) throws {
         var stmt: OpaquePointer?
         defer { if stmt != nil { sqlite3_finalize(stmt) } }
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "RuleStore", code: 3, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+        let prepared = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        guard prepared == SQLITE_OK else {
+            throw NSError(domain: Self.errorDomain, code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)),
+                                     Self.sqliteResultCodeKey: Int(prepared)])
         }
         bind(stmt)
         let rc = sqlite3_step(stmt)
         if rc != SQLITE_DONE && rc != SQLITE_ROW {
-            throw NSError(domain: "RuleStore", code: 4, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+            throw NSError(domain: Self.errorDomain, code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)),
+                                     Self.sqliteResultCodeKey: Int(rc)])
         }
     }
 

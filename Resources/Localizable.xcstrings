@@ -11815,6 +11815,16 @@
         }
       }
     },
+    "the profile %@ no longer exists" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "профиль %@ больше не существует"
+          }
+        }
+      }
+    },
     "The profile `%@` does not exist." : {
       "localizations" : {
         "ru" : {
@@ -11963,6 +11973,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось подготовить удаление."
+          }
+        }
+      }
+    },
+    "the rule database is busy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "база данных правил занята"
+          }
+        }
+      }
+    },
+    "the rule database reported an error (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "база данных правил сообщила об ошибке (%@)"
           }
         }
       }
