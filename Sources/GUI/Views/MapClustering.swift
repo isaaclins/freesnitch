@@ -119,7 +119,6 @@ enum MapClusterEngine {
         var hasher = Hasher()
         hasher.combine(connections.count)
         for connection in connections {
-            hasher.combine(connection.id)
             hasher.combine(connection.latitude)
             hasher.combine(connection.longitude)
             hasher.combine(connection.countryCode)

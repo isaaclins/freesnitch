@@ -12,8 +12,8 @@
 #     one to 8.8.8.8 with 100 bytes changes the fingerprint, and the map
 #     built from the new input really is different
 #   * every field the clusterer reads changes the fingerprint on its own
-#   * the same input gives the same fingerprint, so an idle monitor does not
-#     recluster on every redraw
+#   * the same input gives the same fingerprint, so a redraw with unchanged
+#     data does not recluster
 #
 # Static checks: the view refreshes on the engine's fingerprint, and every
 # Connection field the clusterer reads is part of the fingerprint, so a new
@@ -97,7 +97,7 @@ check(oldMap.nodes.map(\.title) == ["Sydney"], "the old map should show Sydney, 
 check(newMap.nodes.map(\.title) == ["Mountain View"], "the new map should show Mountain View, got \(newMap.nodes.map(\.title))")
 print("connection map refresh verification: PASS: swapping 1.1.1.1 for 8.8.8.8 at equal count and traffic changes the fingerprint, and the rebuilt map shows Mountain View instead of Sydney")
 
-// Same input, same fingerprint: no reclustering when nothing changed.
+// Same input, same fingerprint: a redraw with unchanged data does not recluster.
 check(MapClusterEngine.inputFingerprint(before) == MapClusterEngine.inputFingerprint(before),
       "the same input gives two fingerprints")
 let copy = before.map { $0 }
@@ -109,7 +109,6 @@ print("connection map refresh verification: PASS: unchanged input keeps its fing
 let base = before[0]
 let base_print = MapClusterEngine.inputFingerprint([base])
 let edits: [(String, (inout Connection) -> Void)] = [
-    ("id", { $0.id = UUID() }),
     ("latitude", { $0.latitude = -33.0 }),
     ("longitude", { $0.longitude = 150.0 }),
     ("latitude to nil", { $0.latitude = nil }),
