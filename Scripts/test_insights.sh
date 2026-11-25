@@ -802,7 +802,8 @@ struct InsightsHarness {
 
         // When one UTC day alone fills the budget, the trim after a write
         // must not take the batch that was just written (#579). Every batch
-        // here is on the same day, at noon UTC, whatever time the harness runs.
+        // here is on the same day, noon UTC yesterday, whatever time the
+        // harness runs (today's noon can still be in the future).
         let oneDaySupport = root.appendingPathComponent("One Day Support")
         try! FileManager.default.createDirectory(at: oneDaySupport, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o755])
@@ -810,7 +811,7 @@ struct InsightsHarness {
         do {
             var utc = Calendar(identifier: .gregorian)
             utc.timeZone = TimeZone(identifier: "UTC")!
-            let noon = utc.date(bySettingHour: 12, minute: 0, second: 0, of: now)!
+            let noon = utc.date(bySettingHour: 12, minute: 0, second: 0, of: now.addingTimeInterval(-24 * 3600))!
             let oneDayCeiling: Int64 = 1024 * 1024
             let oneDay = try InsightsStore(path: oneDayPath, expectedUID: getuid(), maxDatabaseBytes: oneDayCeiling)
             var lost: [Int] = []

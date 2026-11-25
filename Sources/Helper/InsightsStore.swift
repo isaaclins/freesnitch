@@ -188,6 +188,10 @@ final class InsightsStore: @unchecked Sendable {
                         bind: { statement in try self.bindInt(statement, index: 1, value: Int32(InsightsLimits.maxBatchCount - 1)) }) { statement in
             keepFrom = sqlite3_column_double(statement, 0)
         }
+        var oldestAnyRaw: Double?
+        try queryLocked("SELECT MIN(observed_at) FROM flow_observations;") { statement in
+            if sqlite3_column_type(statement, 0) != SQLITE_NULL { oldestAnyRaw = sqlite3_column_double(statement, 0) }
+        }
         var oldestRaw: Double?
         if let keepFrom {
             try queryLocked("SELECT MIN(observed_at) FROM flow_observations WHERE observed_at < ?;",
@@ -208,9 +212,10 @@ final class InsightsStore: @unchecked Sendable {
 
         // DNS answers older than every event go first, and like raw events
         // they go before the rollup of their own day, so a flood of lookups
-        // never costs newer connection history.
+        // never costs newer connection history. Compared with every raw
+        // event, so the answers that name the newest batch stay with it.
         if let oldestDNS,
-           oldestRaw.map({ oldestDNS < $0 }) ?? true,
+           oldestAnyRaw.map({ oldestDNS < $0 }) ?? true,
            oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestDNS)) <= $0 }) ?? true {
             try executeLocked("""
                 DELETE FROM dns_mappings WHERE rowid IN
