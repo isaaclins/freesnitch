@@ -72,8 +72,16 @@ fileprivate func parsePreparedIPv4Address(_ raw: String) -> UInt32? {
 /// they were typed in and the DNS proxy lowercases every query name, so both
 /// sides are compared in lower case. A host that is already lower case, the
 /// usual one, is returned as is without allocating.
+///
+/// A final root dot names the same host too: `blocked.example.com.` is the
+/// fully qualified spelling of `blocked.example.com`, and the DNS proxy
+/// reports query names without it (#284). One final dot is dropped from both
+/// the rule and the flow. A lone "." stays as it is, so it never turns into
+/// an empty name that matches flows without a hostname.
 fileprivate func lowercasedHostName(_ host: String) -> String {
-    host.utf8.contains(where: { ($0 >= 65 && $0 <= 90) || $0 >= 128 }) ? host.lowercased() : host
+    var name = host
+    if name.utf8.count > 1, name.utf8.last == 46 { name.removeLast() }
+    return name.utf8.contains(where: { ($0 >= 65 && $0 <= 90) || $0 >= 128 }) ? name.lowercased() : name
 }
 
 fileprivate struct PreparedConnectionAddress: Sendable {
@@ -545,7 +553,8 @@ public struct RuleMatcher: Sendable {
     }
 
     public func hostMatches(pattern typedPattern: String, host typedHost: String) -> Bool {
-        // Case-insensitive like DNS itself (#198).
+        // Case-insensitive like DNS itself (#198), and a final root dot on
+        // either side names the same host (#284).
         let pattern = lowercasedHostName(typedPattern)
         let host = lowercasedHostName(typedHost)
         if pattern == host { return true }
