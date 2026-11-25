@@ -3094,6 +3094,16 @@
         }
       }
     },
+    "Allowed %@ to reach %@, because nobody answered the question in time." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: доступ к %@ разрешён, так как на вопрос никто не ответил вовремя."
+          }
+        }
+      }
+    },
     "Also delete my rules and profiles" : {
       "localizations" : {
         "ru" : {

@@ -530,6 +530,38 @@ struct PendingAlertHarness {
             }
         }
 
+        // MARK: an unanswered question closes before its flow is let through (#225)
+        do {
+            // Replays the report: A is asked, B queues behind it ten seconds
+            // later, nobody answers either.
+            let start = ContinuousClock.now
+            let a = UUID(), b = UUID()
+            var deadlines = PendingAlertDeadlines()
+            deadlines.start(a, at: start)
+            deadlines.start(b, at: start.advanced(by: .seconds(10)))
+            check(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.maxLifetime - 0.5))).isEmpty,
+                  "a question is still answerable just before its window ends")
+            let firstDue = deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.maxLifetime)))
+            equal(firstDue, [a], "the unanswered question is due when its window ends, and only that one")
+            check(PendingAlertLimits.maxLifetime < PendingAlertLimits.flowAskTimeout,
+                  "it is closed before the extension lets its flow through, so the app's allow is the reply the flow gets")
+            deadlines.end(a)
+            check(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.maxLifetime + 9))).isEmpty,
+                  "the question queued behind it stays answerable for its own full window")
+            equal(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.flowAskTimeout + 10))), [b],
+                  "the queued question closes the same way once its own window ends")
+
+            // An answered question never closes itself afterwards.
+            let c = UUID(), d = UUID()
+            deadlines.start(c, at: start)
+            deadlines.start(d, at: start.advanced(by: .seconds(1)))
+            deadlines.end(c)
+            equal(deadlines.due(at: start.advanced(by: .seconds(PendingAlertLimits.flowAskTimeout * 2))), [d, b],
+                  "an answered question is never closed again, and several due ones come oldest first")
+            deadlines.end(b); deadlines.end(d)
+            equal(deadlines.count, 0, "nothing is kept once every question has closed")
+        }
+
         // The shell half of this test compares these against the real sources.
         print("harness-value maxLifetime=\(Int(PendingAlertLimits.maxLifetime))")
         print("harness-value flowAskTimeout=\(Int(PendingAlertLimits.flowAskTimeout))")
@@ -625,6 +657,30 @@ require_text "$APP_STATE" "recordSilentAllow(alert.connection, because: .sameQue
   "closing a question logs the repeats it let through"
 require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" "alert.repeatsAllowed" \
   "the alert shows how many repeats were let through while it waited"
+# A question nobody answers is closed by the app before the extension lets its
+# flow through, so the dialog never offers a Deny that can no longer stop
+# anything and the questions behind it come up (#225). The deadline is the
+# registry's own, which is asserted above to end before the flow budget.
+require_text "$APP_STATE" "scheduleAlertTimeout(alert.id)" \
+  "every question the app asks gets its own answer deadline"
+require_text "$APP_STATE" "alertDeadlines.start(id, at: .now)" \
+  "the app keeps its answer deadlines in the type the harness replays"
+require_text "$APP_STATE" "for id in alertDeadlines.due(at: now) {" \
+  "the app closes exactly the questions whose deadline has passed"
+require_text "$APP_STATE" "guard finishAlert(id: id, allow: PendingAlertRegistry.defaultDecision, remember: false) else { return }" \
+  "an unanswered question is closed with the fail-open allow and taken off the queue"
+# The next question then takes its place on its own, so the window ignores
+# answers for a moment after the question changes: a click or Return meant for
+# the closed one must not answer another app's question.
+require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" ".onChange(of: alert.id) { _ in holdAnswersBriefly() }" \
+  "the alert ignores answers for a moment after the question on screen changes"
+require_text "$ROOT/Sources/GUI/Views/ConnectionAlert.swift" ".disabled(!answerable)" \
+  "the Allow and Deny buttons are off while answers are held"
+if grep -A3 -F "case .expired:" "$APP_STATE" | grep -Fq "expireUnansweredAlert(id: id)"; then
+  pass "the registry's expiry closes the question in the app too"
+else
+  fail "the registry's expiry closes the question in the app too"
+fi
 # Each way of failing to answer keeps its own code, so a script can tell them
 # apart instead of parsing prose.
 for code in alert_already_answered alert_expired alert_not_found alert_rule_not_stored; do
