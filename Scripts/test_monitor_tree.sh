@@ -435,6 +435,11 @@ let bundleOnly = Rule(processBundleId: "com.beeper.app", processPath: nil, proce
                       action: .deny, scope: .process)
 equal(decide([bundleOnly]).rule(for: appTarget)?.id, bundleOnly.id,
       "a rule naming only the bundle id is shown on that app's row")
+var teamBundleAllow = bundleOnly
+teamBundleAllow.action = .allow
+teamBundleAllow.processTeamId = "EQHXZ8M8AV"
+check(decide([teamBundleAllow]).rule(for: appTarget) == nil,
+      "an allow rule tied to a signing team by bundle id alone is not claimed by a row that cannot show its signer")
 let editorDomain = Rule(processBundleId: nil, processPath: "/Applications/Beeper.app/", processName: "Beeper",
                         remoteHost: "api.beeper.com", action: .deny, scope: .domain)
 equal(decide([editorDomain]).rule(for: domainTarget)?.id, editorDomain.id,

@@ -692,6 +692,11 @@ struct MonitorDecisionIndex: Sendable {
             // must not be shown as this row's decision.
             guard rule.profile == profile || rule.profile == Profile.alwaysName else { continue }
             guard let target = MonitorRuleTarget.of(rule) else { continue }
+            // An allow rule that names only a bundle id and records a team
+            // applies only to code that team signed (#364). A row does not
+            // say who signed it, so such a rule is not shown as its decision.
+            if target.processPath == nil, rule.action == .allow,
+               !(rule.processTeamId ?? "").isEmpty { continue }
             insert(rule, at: target)
             guard let path = target.processPath,
                   let bundle = MonitorRuleTarget.appBundlePath(path) else { continue }
