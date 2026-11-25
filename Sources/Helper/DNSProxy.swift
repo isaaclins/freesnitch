@@ -19,8 +19,8 @@ struct DNSPolicy: Sendable {
     /// The enabled allow rules that name a host, prepared the same way. A
     /// lookup one of them covers passes the blocklist (#217).
     let blocklistOverrides: PreparedRuleSet
-    /// The enabled rules that name a host and no app, in their usual order. They decide what a CNAME target in an answer means
-    /// (#283).
+    /// The enabled rules that name a host and no app, in their usual order.
+    /// They decide what a CNAME target in an answer means (#283).
     let hostRules: PreparedRuleSet
     let blocklist: Set<String>
     let dohURL: String
