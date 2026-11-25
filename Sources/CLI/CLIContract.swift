@@ -211,8 +211,15 @@ enum CLIOutput {
         writeStderr(message + "\n")
     }
 
-    static func encode<T: Encodable>(_ value: T) -> Data {
-        (try? CLIJSON.encode(value)) ?? Data("{\"error\":\"could not encode CLI response\"}\n".utf8)
+    /// If the payload cannot be encoded, the response is still a well-formed
+    /// envelope: an internal failure with `data: null`, never bare text.
+    static func encode<T: Encodable>(_ envelope: CLIEnvelope<T>) -> Data {
+        if let data = try? CLIJSON.encode(envelope) { return data }
+        let fallback = CLIEnvelope<EmptyPayload>.failure(
+            command: envelope.command,
+            error: CLIError(.internalFailure, message: "The CLI response could not be encoded."))
+        return (try? CLIJSON.encode(fallback))
+            ?? Data("{\"command\":null,\"data\":null,\"error\":{\"code\":\"internal_failure\",\"exitCode\":73,\"message\":\"The CLI response could not be encoded.\"},\"exitCode\":73,\"ok\":false,\"schema\":\"freesnitch.cli.v1\"}\n".utf8)
     }
 
     static func writeStdout(_ data: Data) {

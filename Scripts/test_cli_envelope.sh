@@ -55,6 +55,17 @@ struct Check {
         expect((report["data"] as? [String: Int])?["checks"] == 3, "a failing report must keep its data")
         expect(report["error"] is [String: Any], "a failing report must carry its error")
 
+        // A payload that cannot be encoded still yields a whole envelope.
+        struct Unencodable: Encodable {
+            func encode(to encoder: Encoder) throws {
+                throw EncodingError.invalidValue(0, .init(codingPath: [], debugDescription: "refused"))
+            }
+        }
+        let broken = object(CLIOutput.encode(CLIEnvelope<Unencodable>.success(command: "status", data: Unencodable())))
+        expect(Set(broken.keys) == keys, "an encoding failure must still carry exactly the documented keys, got \(broken.keys.sorted())")
+        expect(isNull(broken["data"]) && broken["command"] as? String == "status", "an encoding failure must keep the command and carry `data: null`")
+        expect((broken["error"] as? [String: Any])?["code"] as? String == "internal_failure", "an encoding failure must report internal_failure")
+
         guard failures.isEmpty else {
             failures.forEach { FileHandle.standardError.write(Data("cli envelope: FAIL: \($0)\n".utf8)) }
             exit(1)
