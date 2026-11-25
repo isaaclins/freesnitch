@@ -56,6 +56,7 @@ struct HelperBanner: View {
                    tint: info.tint,
                    compact: compact,
                    actionTitle: info.action?.title,
+                   actionEnabled: info.action?.isEnabled ?? true,
                    action: info.action.map { action in
                        { action.run(state, systemExtension) }
                    })
@@ -66,7 +67,17 @@ struct HelperBanner: View {
 
 private struct BannerAction {
     let title: String
+    var isEnabled = true
     let run: @MainActor (AppState, SystemExtensionManager) -> Void
+
+    /// Repair Helper, or a disabled "Repairing…" while an attempt is still
+    /// running, so a second click can't start another one (#216).
+    static func repair(_ repairState: HelperRepairState) -> BannerAction {
+        if repairState == .inProgress {
+            return BannerAction(title: String(localized: "Repairing…"), isEnabled: false) { _, _ in }
+        }
+        return BannerAction(title: String(localized: "Repair Helper")) { state, _ in state.helper.repairHelper() }
+    }
 }
 
 @MainActor
@@ -112,7 +123,7 @@ private struct BannerInfo {
             case .idle:
                 detail = String(localized: "The helper process is running v\(helperVersion), but the installed app is v\(appVersion), so helper-side fixes are not active and traffic may not be filtered. Repair Helper restarts it for you; macOS will ask you to authorize it.")
             }
-            action = BannerAction(title: String(localized: "Repair Helper")) { state, _ in state.helper.repairHelper() }
+            action = .repair(repairState)
             return
         }
 
@@ -123,8 +134,12 @@ private struct BannerInfo {
             icon = "wrench.and.screwdriver.fill"
             tint = Color.orange
             title = String(localized: "The helper needs repairing")
-            detail = String(localized: "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact.")
-            action = BannerAction(title: String(localized: "Repair Helper")) { state, _ in state.helper.repairHelper() }
+            if repairState == .inProgress {
+                detail = String(localized: "It is approved but not responding. FreeSnitch is restarting it; authorize the restart when macOS asks. The enabled service is never unregistered and your approval stays intact.")
+            } else {
+                detail = String(localized: "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact.")
+            }
+            action = .repair(repairState)
         case .enabled:
             icon = "hourglass"
             tint = Color.orange

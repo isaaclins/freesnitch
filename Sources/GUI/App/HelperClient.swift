@@ -39,12 +39,6 @@ enum HelperVersionState: Equatable {
     case mismatch(helper: String, app: String)
 }
 
-enum HelperRepairState: Equatable {
-    case idle
-    case inProgress
-    case manualRequired(String)
-}
-
 enum HelperRecovery {
     static let kickstartCommand = AppConstants.helperKickstartCommand
 
@@ -110,7 +104,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     private var connection: NSXPCConnection?
     private var pollTimer: Timer?
-    private var isRepairing = false
+    private var repairGate = HelperRepairGate()
     private var repairConfirmationID = UUID()
     private var enabledButSilentSince: Date?
     /// One automatic restart attempt per app launch. A helper that comes back
@@ -309,7 +303,10 @@ final class HelperClient: NSObject, ObservableObject {
     }
 
     private func repairHelperInternal() {
-        guard !DemoMode.isOn, !isRepairing else { return }
+        // One attempt at a time: a second click while the first is still
+        // registering, prompting or waiting for the helper would start a
+        // second registration or kickstart (#216).
+        guard !DemoMode.isOn, repairGate.begin(state: repairState) else { return }
         repairState = .inProgress
         guard Self.isInApplicationsFolder else {
             installState = .wrongLocation
@@ -358,7 +355,7 @@ final class HelperClient: NSObject, ObservableObject {
                 finishRepairFailure(String(localized: "macOS registered the helper, but it still needs approval in System Settings under General > Login Items & Extensions. Registration must happen before the kickstart command can work."))
                 return
             }
-            isRepairing = false
+            repairGate.release()
             scheduleRepairConfirmation()
             reconnectAndPing(force: true)
         } catch {
@@ -417,14 +414,14 @@ final class HelperClient: NSObject, ObservableObject {
                     // asking it for its version is meaningful.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                         guard let self else { return }
-                        self.isRepairing = false
+                        self.repairGate.release()
                         self.repairState = .idle
                         self.needsRepair = false
                         self.refreshInstallState()
                         self.connect()
                     }
                 case .failure(.cancelled):
-                    self.isRepairing = false
+                    self.repairGate.release()
                     self.repairState = .idle
                     self.needsRepair = true
                 case .failure(.failed(let reason)):
@@ -442,7 +439,7 @@ final class HelperClient: NSObject, ObservableObject {
 
     private func finishRepairFailure(_ message: String) {
         repairConfirmationID = UUID()
-        isRepairing = false
+        repairGate.release()
         repairState = .manualRequired(message)
         needsRepair = true
     }
@@ -523,7 +520,7 @@ final class HelperClient: NSObject, ObservableObject {
         pollTimer?.invalidate()
         let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.isRepairing else { return }
+                guard let self, !self.repairGate.isHeld else { return }
                 self.refreshInstallState()
                 guard !self.connected else {
                     self.enabledButSilentSince = nil

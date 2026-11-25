@@ -17,6 +17,8 @@ struct NoticeCard: View {
     let tint: Color
     var compact: Bool = false
     var actionTitle: String? = nil
+    /// False while the action's work is still running (#216).
+    var actionEnabled: Bool = true
     var action: (() -> Void)? = nil
 
     var body: some View {
@@ -76,6 +78,7 @@ struct NoticeCard: View {
             Button(actionTitle, action: action)
                 .buttonStyle(.borderedProminent)
                 .controlSize(compact ? .small : .regular)
+                .disabled(!actionEnabled)
         }
     }
 }
