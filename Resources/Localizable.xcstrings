@@ -6984,12 +6984,12 @@
         }
       }
     },
-    "Leave empty to use the system resolver" : {
+    "The resolver’s HTTPS address (required)" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Оставьте пустым, чтобы использовать системный DNS"
+            "value" : "HTTPS-адрес DNS-резолвера (обязательно)"
           }
         }
       }
