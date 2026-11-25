@@ -798,6 +798,9 @@ struct InsightsView: View {
                     }
                     }
                 }
+                listFooter(hasMore: model.hasMoreFindings,
+                           title: String(localized: "Load more changes"),
+                           action: { model.loadMoreFindings() })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1051,6 +1054,7 @@ final class InsightsViewModel: ObservableObject {
     @Published var hasMoreDestinations = false
     @Published var hasMoreUnresolved = false
     @Published var hasMoreProposals = false
+    @Published var hasMoreFindings = false
     @Published private(set) var source: InsightsDataSource = .rawEvents
 
     var changedAppCount: Int { Set(findings.map(\.appIdentity)).count }
@@ -1136,6 +1140,7 @@ final class InsightsViewModel: ObservableObject {
         hasMoreDestinations = false
         hasMoreUnresolved = false
         hasMoreProposals = false
+        hasMoreFindings = false
         hasMoreReachingApps = false
         apps = InsightsDemoData.apps
         unresolved = InsightsDemoData.unresolved
@@ -1314,6 +1319,7 @@ final class InsightsViewModel: ObservableObject {
             guard let report else { self.errorMessage = error; return }
             self.source = report.source
             self.findings = offset == 0 ? report.findings : self.findings + report.findings
+            self.hasMoreFindings = report.hasMore
         }
     }
 
