@@ -5,7 +5,7 @@
 # The network extension runs in the app sandbox. To check a process's
 # signature, the Security framework reads the process's executable file, and
 # the sandbox alone refuses every file outside the system folders: an app in
-# ~/Applications, ~/Downloads, /opt or on a mounted disk image got no signed
+# ~/Applications, /Users/Shared, /opt or on a mounted disk image got no signed
 # bundle id, so every bundle-id allow rule for it turned into an alert.
 #
 # The harness compiles the real CodeSigningIdentity into a small tool, signs it

@@ -202,9 +202,10 @@ targets:
         com.apple.security.app-sandbox: true
         # Read-only, so the extension can read the code signature of an app
         # wherever it runs from: the sandbox alone refuses every file outside
-        # the system folders (an app in ~/Applications, ~/Downloads, /opt or a
+        # the system folders (an app in ~/Applications, /Users/Shared, /opt or a
         # mounted disk image), and with no signature a bundle-id allow rule
-        # never matches that app (#398). Writes stay sandboxed.
+        # never matches that app (#398). Writes stay sandboxed. Privacy
+        # protection may still guard ~/Desktop, ~/Documents and ~/Downloads.
         com.apple.security.temporary-exception.files.absolute-path.read-only:
           - /
         com.apple.security.application-groups:
