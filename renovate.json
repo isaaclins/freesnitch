@@ -2,5 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "CI runs on macos-15 on purpose: the macos-26 runner pool keeps running out and leaves every job queued. The Xcode 26 toolchain is selected on macos-15 instead (.github/actions/select-xcode).",
+      "matchDatasources": ["github-runners"],
+      "matchPackageNames": ["macos"],
+      "enabled": false
+    }
   ]
 }

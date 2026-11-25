@@ -1,0 +1,40 @@
+name: Select the newest Xcode
+description: >
+  Points xcodebuild, xcrun and swiftc at the newest released Xcode on the
+  runner and fails if it is older than the minimum. The macOS jobs run on
+  macos-15 because the macos-26 pool has repeatedly run out of runners and
+  left every job queued for hours. macos-15 also ships Xcode 26, so the
+  build and the harnesses still use the macOS 26 SDK and the Swift compiler
+  the app ships with (Icon Composer's AppIcon.icon needs Xcode 26).
+inputs:
+  minimum-major:
+    description: Lowest Xcode major version CI accepts.
+    default: '26'
+runs:
+  using: composite
+  steps:
+    - name: Select the newest Xcode
+      shell: bash
+      env:
+        MINIMUM_MAJOR: ${{ inputs.minimum-major }}
+      run: |
+        # Released Xcodes only (Xcode_26.1.app, Xcode_26.1.1.app), no betas
+        # or release candidates.
+        newest=$(find /Applications -maxdepth 1 -name 'Xcode_*.app' -print \
+          | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)
+        if [ -z "$newest" ]; then
+          echo '::error::No released Xcode found in /Applications.'
+          ls -d /Applications/Xcode* || true
+          exit 1
+        fi
+        major=$(basename "$newest" .app | sed -E 's/^Xcode_([0-9]+).*/\1/')
+        if [ "$major" -lt "$MINIMUM_MAJOR" ]; then
+          echo "::error::Newest Xcode on this runner is $newest; CI needs Xcode $MINIMUM_MAJOR or later."
+          exit 1
+        fi
+        echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+        export DEVELOPER_DIR="$newest/Contents/Developer"
+        sw_vers
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+        xcrun swiftc --version
