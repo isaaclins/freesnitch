@@ -313,7 +313,7 @@ struct UninstallFlowSheet: View {
                     .toggleStyle(.checkbox)
                 Text(flow.removeDatabase
                      ? "They can’t be recovered."
-                     : "They are kept, so they come back if you install FreeSnitch again. So is the list of recent connections, unless you delete history in Insights first.")
+                     : "They are kept, so they come back if you install FreeSnitch again. So is the record of every connection FreeSnitch has seen, unless you delete history in Insights first.")
                     .font(.caption).foregroundColor(.secondary)
                     .padding(.leading, 20)
             }

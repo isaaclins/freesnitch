@@ -12295,12 +12295,12 @@
         }
       }
     },
-    "They are kept, so they come back if you install FreeSnitch again. So is the list of recent connections, unless you delete history in Insights first." : {
+    "They are kept, so they come back if you install FreeSnitch again. So is the record of every connection FreeSnitch has seen, unless you delete history in Insights first." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Они сохраняются и вернутся, если вы снова установите FreeSnitch. Список недавних соединений тоже сохраняется, если сначала не удалить историю в Insights."
+            "value" : "Они сохраняются и вернутся, если вы снова установите FreeSnitch. Запись всех соединений, которые видел FreeSnitch, тоже сохраняется, если сначала не удалить историю в Insights."
           }
         }
       }
