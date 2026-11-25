@@ -65,13 +65,28 @@ public struct SystemGatewayMACProvider: GatewayMACProviding, Sendable {
         // full-tunnel VPN) has no gateway line either. Both are simply no
         // gateway.
         guard let gateway = Self.gatewayAddress(in: route) else { return nil }
-        let arp = try run(executable: "/usr/sbin/arp", arguments: ["-n", gateway])
-        let mac = arp.split(whereSeparator: { $0.isWhitespace || $0 == "(" || $0 == ")" })
+        let arp: String
+        do {
+            arp = try run(executable: "/usr/sbin/arp", arguments: ["-n", gateway])
+        } catch GatewayMACReadError.exitStatus {
+            // arp says "-- no entry" and exits 1 when the gateway is not in
+            // the ARP table yet (just after joining) or never will be (a
+            // tunnel gateway). Said in plain words, not as an exit status.
+            throw GatewayMACReadError.noMACForGateway(gateway)
+        }
+        guard let mac = Self.gatewayMAC(inARPOutput: arp) else {
+            throw GatewayMACReadError.noMACForGateway(gateway)
+        }
+        return mac
+    }
+
+    /// The hardware address in `arp -n <gateway>` output, or nil when there is
+    /// none (an incomplete entry, or "-- no entry").
+    public static func gatewayMAC(inARPOutput output: String) -> String? {
+        output.split(whereSeparator: { $0.isWhitespace || $0 == "(" || $0 == ")" })
             .prefix(512)
             .compactMap { GatewayMAC.normalized(String($0)) }
             .first
-        guard let mac else { throw GatewayMACReadError.noMACForGateway(gateway) }
-        return mac
     }
 
     /// The IPv4 gateway in `route -n get` output, or nil when there is none.
@@ -202,9 +217,11 @@ public final class GatewayMACWatcher: @unchecked Sendable {
     /// Forgets a change the handler has not managed to act on yet, so the next
     /// poll does not deliver it again. For when the user decided in the
     /// meantime, which outranks a retry.
-    public func dropUndeliveredChange() {
+    /// Only drops it while `mac` is still the latest reading, so a newer
+    /// gateway seen meanwhile is still delivered.
+    public func dropUndeliveredChange(for mac: String) {
         lock.lock()
-        undelivered = false
+        if (lastMAC ?? "") == mac { undelivered = false }
         lock.unlock()
     }
 

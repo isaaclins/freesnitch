@@ -576,6 +576,19 @@ expect(SystemGatewayMACProvider.gatewayAddress(in: "") == nil, "offline output p
 expect(SystemGatewayMACProvider.gatewayAddress(in: "    gateway: fe80::1%en0") == nil, "an IPv6 gateway was taken for IPv4")
 pass("offline and tunnel routes read as no gateway, a normal route gives its gateway")
 
+// Real `arp -n <gateway>` output: a known gateway, and one not in the table
+// (just after joining, or a tunnel gateway), which arp reports and exits 1 on.
+expect(SystemGatewayMACProvider.gatewayMAC(inARPOutput: "? (192.168.1.1) at f0:b0:14:23:20:75 on en1 ifscope [ethernet]")
+       == "f0:b0:14:23:20:75", "the gateway MAC was not read from arp's output")
+expect(SystemGatewayMACProvider.gatewayMAC(inARPOutput: "192.0.2.77 (192.0.2.77) -- no entry") == nil,
+       "arp's no-entry answer produced a MAC")
+expect(SystemGatewayMACProvider.gatewayMAC(inARPOutput: "? (192.168.1.1) at (incomplete) on en1 ifscope [ethernet]") == nil,
+       "an incomplete arp entry produced a MAC")
+let noEntry = GatewayMACReadError.noMACForGateway("10.8.0.1").localizedDescription
+expect(noEntry.contains("10.8.0.1") && !noEntry.contains("status"),
+       "a gateway missing from the ARP table is not said in plain words: \(noEntry)")
+pass("arp's answer gives the gateway MAC, and a missing entry is said in plain words")
+
 print("profiles harness: all checks passed")
 SWIFT
 

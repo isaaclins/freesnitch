@@ -178,8 +178,8 @@ public final class ProfileCoordinator: @unchecked Sendable {
             userChoiceGeneration += 1
             lock.unlock()
         }
-        if reason != .network, pendingNetworkSwitch != nil {
-            watcher.dropUndeliveredChange()
+        if reason != .network, let pendingSwitch = pendingNetworkSwitch {
+            watcher.dropUndeliveredChange(for: pendingSwitch.gatewayMAC)
             setPending(nil)
         }
         return result
