@@ -318,6 +318,9 @@ final class HelperClient: NSObject, ObservableObject {
         // registering, prompting or waiting for the helper would start a
         // second registration or kickstart (#216).
         guard !DemoMode.isOn, repairGate.begin(state: repairState) else { return }
+        // A confirmation timer left by an earlier registration must not
+        // report on this attempt.
+        repairConfirmationID = UUID()
         repairState = .inProgress
         guard Self.isInApplicationsFolder else {
             installState = .wrongLocation

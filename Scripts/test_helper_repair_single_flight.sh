@@ -74,6 +74,8 @@ fail() { echo "FAIL $1"; exit 1; }
 
 grep -q 'guard !DemoMode.isOn, repairGate.begin(state: repairState) else { return }' "$client" \
   || fail "repairHelperInternal starts through the gate"
+grep -A4 'guard !DemoMode.isOn, repairGate.begin(state: repairState) else { return }' "$client" | grep -q 'repairConfirmationID = UUID()' \
+  || fail "a new attempt cancels an earlier registration's confirmation timer"
 grep -q 'isRepairing' "$client" && fail "the old never-set isRepairing flag is gone"
 grep -q 'guard let self, !self.repairGate.isHeld else { return }' "$client" \
   || fail "polling pauses while a repair holds the gate"
