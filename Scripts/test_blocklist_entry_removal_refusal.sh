@@ -86,6 +86,7 @@ swiftc -parse-as-library \
   "$ROOT"/Sources/Shared/*.swift \
   "$ROOT/Sources/GUI/ViewModels/ProfileClient.swift" \
   "$ROOT/Sources/GUI/App/DemoMode.swift" \
+  "$ROOT/Sources/GUI/App/BlocklistEntriesDemo.swift" \
   "$TMP/verify.swift" \
   -lsqlite3 -o "$TMP/verify" 2>"$TMP/build.log" || { cat "$TMP/build.log" >&2; fail "the harness did not compile"; }
 "$TMP/verify"
