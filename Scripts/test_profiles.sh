@@ -235,8 +235,11 @@ let freshOwn = (try! store.allRules(profile: fresh.name))
 let freshLayer = try store.layeredRules(profileName: fresh.name)
 let alwaysRules = (try! store.allRules(profile: Profile.alwaysName))
 expect(freshOwn.isEmpty, "creating a profile copied \(freshOwn.count) rules into it")
-expect(freshLayer.map(\.id).sorted(by: { $0.uuidString < $1.uuidString })
-        == alwaysRules.map(\.id).sorted(by: { $0.uuidString < $1.uuidString }),
+// Split into typed steps: as one expression the type checker can run out
+// of time on a slower machine.
+let freshLayerIDs: [String] = freshLayer.map { $0.id.uuidString }.sorted()
+let alwaysRuleIDs: [String] = alwaysRules.map { $0.id.uuidString }.sorted()
+expect(freshLayerIDs == alwaysRuleIDs,
        "a fresh profile does not inherit exactly the Always rules")
 pass("a fresh profile inherits every Always rule immediately, without copying one")
 
