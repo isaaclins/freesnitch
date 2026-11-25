@@ -16,7 +16,8 @@ public enum ProfileProblem: Codable, Hashable, Sendable {
     /// Anything without a code of its own. The detail is shown as is.
     case other(String)
 
-    /// SQLite's primary result codes for a database another connection holds.
+    /// SQLite's primary result codes for a database that is in use: held by
+    /// another connection (BUSY) or by a conflicting statement (LOCKED).
     private static let busyCodes: Set<Int> = [5, 6] // SQLITE_BUSY, SQLITE_LOCKED
 
     public init(_ error: Error) {
