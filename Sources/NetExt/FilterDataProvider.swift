@@ -346,7 +346,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         // rather than hidden behind a wildcard address.
         let destinationKnown = !conn.remoteIP.isEmpty || !conn.remoteHost.isEmpty
         let policy = currentPolicy()
-        if isDNSOrDHCP(conn, snapshotOrigin: policy.origin) { observe(.unfiltered); return .allow() }
+        if isDNSOrDHCP(conn, flow: socketFlow, snapshotOrigin: policy.origin) { observe(.unfiltered); return .allow() }
         // Equivalent to `guard let snapshot = currentSnapshot() else`, but
         // the snapshot and its boot/live origin must come from one locked read.
         guard let snapshot = policy.snapshot else {
@@ -802,7 +802,10 @@ final class FilterDataProvider: NEFilterDataProvider {
     }
 
     /// DHCP and DHCPv6 remain exempt for every policy state, as they are in
-    /// the pf anchor (issue #186). Port 53 is exempt only
+    /// the pf anchor (issue #186), but only real address configuration: UDP
+    /// between the DHCP ports on both ends (`DHCPTraffic`). Before #293 the
+    /// destination port alone exempted a flow, so an app's deny was skipped
+    /// for any service it reached on 67, 68, 546 or 547. Port 53 is exempt only
     /// while a valid helper boot snapshot is active, and only for a configured
     /// resolver. If resolver configuration is unavailable during that boot
     /// window, ResolverBypass fails open so name resolution still works.
@@ -813,8 +816,12 @@ final class FilterDataProvider: NEFilterDataProvider {
     /// unattributable port-53 flow into a blanket boot-window exemption. The
     /// wildcard is never a configured resolver, so such a flow keeps exactly
     /// the answer it received before the destination was recorded honestly.
-    private func isDNSOrDHCP(_ conn: Connection, snapshotOrigin: SnapshotOrigin) -> Bool {
-        if [67, 68, 546, 547].contains(conn.remotePort) { return true }
+    private func isDNSOrDHCP(_ conn: Connection, flow: NEFilterSocketFlow, snapshotOrigin: SnapshotOrigin) -> Bool {
+        if DHCPTraffic.isAddressConfiguration(transportProtocol: flow.socketProtocol,
+                                              localPort: localPort(of: flow),
+                                              remotePort: conn.remotePort,
+                                              remoteIP: conn.remoteIP,
+                                              senderIsRoot: flow.sourceAppAuditToken.flatMap(auditTokenEUID).map { $0 == 0 }) { return true }
         guard conn.remotePort == 53, snapshotOrigin == .boot else { return false }
         let lookup = conn.remoteIP.isEmpty ? FlowDestination.unspecifiedLookupToken : conn.remoteIP
         return resolverBypass.allowsDNS(to: lookup)
@@ -888,6 +895,28 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         let legacy = flow.remoteEndpoint as? NWHostEndpoint
         return (legacy?.hostname ?? "", Int(legacy?.port ?? "0") ?? 0)
+    }
+
+    /// The port this end of the flow is bound to, or 0 when it is not bound
+    /// yet. Same endpoint API split as `remoteAddress(of:)`, except that a
+    /// new endpoint without a port (missing, or port 0) falls back to the old
+    /// one: missing a DHCP client's port would put address configuration
+    /// under the app's rules.
+    private func localPort(of flow: NEFilterSocketFlow) -> Int {
+        if #available(macOS 15.0, *), case let .hostPort(_, port) = flow.localFlowEndpoint, port.rawValue != 0 {
+            return Int(port.rawValue)
+        }
+        let legacy = flow.localEndpoint as? NWHostEndpoint
+        return Int(legacy?.port ?? "0") ?? 0
+    }
+
+    /// The effective user id in an audit token (val.1), read the same way as
+    /// the pid below.
+    private func auditTokenEUID(_ data: Data) -> UInt32? {
+        guard data.count >= MemoryLayout<audit_token_t>.size else { return nil }
+        var token = audit_token_t()
+        _ = withUnsafeMutableBytes(of: &token) { data.copyBytes(to: $0, count: $0.count) }
+        return token.val.1
     }
 
     private func auditTokenToPID(_ data: Data) -> Int? {
