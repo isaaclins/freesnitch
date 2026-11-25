@@ -128,10 +128,12 @@ if "$PB" -c "Print :$key" "$ENTITLEMENTS" >/dev/null 2>&1; then
     n=$((n + 1))
   done
 fi
-# Nothing else may be loosened: no write exceptions, no unsandboxed reads.
-if grep -E 'temporary-exception\.files\.[a-z-]+\.read-write|temporary-exception\.files\.home-relative' "$ENTITLEMENTS"; then
-  fail "the extension's sandbox allows more than reading files"
-fi
+# Nothing else may be loosened: the read-only exception for / is the only
+# sandbox exception the extension has.
+others="$(grep -oE 'com\.apple\.security\.(temporary-exception|files|network|device|personal-information|automation|assets|print|cs)[a-zA-Z0-9.-]*' "$ENTITLEMENTS" | grep -vx "$key" || true)"
+[[ -z "$others" ]] || fail "the extension's sandbox has other exceptions: $others"
+[[ "$("$PB" -c "Print :$key" "$ENTITLEMENTS" | grep -c '^ ')" == 1 ]] || fail "the read-only exception names more than one path"
+
 make_tool plain "$TMP/plain.plist"
 make_tool extension "$TMP/extension.plist"
 
