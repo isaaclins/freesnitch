@@ -189,6 +189,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let insightsQuerySlots = DispatchSemaphore(value: 8)
     private let insightsContactCacheLock = NSLock()
     private var insightsContactSnapshot: InsightsContactSnapshot?
+    /// Set when Delete History failed: the old database may still be open, so
+    /// no known-destination list is built from it until a delete works (#229).
+    /// Guarded by insightsMaintenanceQueue.
+    private var insightsContactHistoryDeleteFailed = false
     private let insightsDropLock = NSLock()
     private var insightsDropCount = 0
     private var lastInsightsDropLog = Date.distantPast
@@ -524,6 +528,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// swapped atomically only after the store query and validation succeed.
     private func refreshInsightsContactSnapshot() {
         guard let insights else { return }
+        guard !insightsContactHistoryDeleteFailed else {
+            insightsContactCacheLock.lock()
+            insightsContactSnapshot = nil
+            insightsContactCacheLock.unlock()
+            return
+        }
         do {
             let snapshot = try insights.contactSnapshot()
             insightsContactCacheLock.lock()
@@ -1623,11 +1633,13 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             if let insights {
                 do {
                     try insights.purge()
+                    insightsContactHistoryDeleteFailed = false
                     refreshInsightsContactSnapshot()
                 } catch {
-                    // The old database may still be open. Leave the list
+                    // The old database may still be open. Keep the list
                     // unavailable, so alert mode asks, rather than rebuild
                     // known destinations from history the user deleted.
+                    insightsContactHistoryDeleteFailed = true
                     PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
                     failures.append(error.localizedDescription)
                 }

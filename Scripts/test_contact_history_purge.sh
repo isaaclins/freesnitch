@@ -41,7 +41,10 @@ reply_line="$(grep -n 'reply(failures.isEmpty' <<<"$body" | head -1 | cut -d: -f
 [[ -n "$purge_line" && -n "$refresh_line" && -n "$reply_line" ]] || fail "purge, rebuild or reply is missing from purgeInsights"
 (( purge_line < refresh_line && refresh_line < reply_line )) || fail "the contact list is not rebuilt after the purge and before the reply"
 try_block="$(awk '/try insights.purge\(\)/{on=1} on{print} on&&/\} catch \{/{exit}' <<<"$body")"
-grep -q 'refreshInsightsContactSnapshot()' <<<"$try_block" || fail "the contact list is rebuilt even when the purge failed"
+grep -q 'refreshInsightsContactSnapshot()' <<<"$try_block" || fail "the contact list is not rebuilt after a successful purge"
+grep -q 'insightsContactHistoryDeleteFailed = true' <<<"$body" || fail "a failed purge does not stop later rebuilds from the old database"
+refresh_body="$(awk '/private func refreshInsightsContactSnapshot\(\)/{on=1} on{print} on&&/^    }$/{exit}' "$SERVICE")"
+grep -q 'guard !insightsContactHistoryDeleteFailed' <<<"$refresh_body" || fail "a later connection can rebuild known destinations after a failed purge"
 pass "the helper rebuilds the contact list from the emptied store before it answers, and only when the purge worked"
 
 # The app forgets its copy when Delete History is pressed, and the Insights
@@ -51,7 +54,8 @@ if grep -q 'helper.purgeInsights' "$INSIGHTS_VIEW"; then
   fail "the Insights window still purges without clearing the contact cache"
 fi
 app_body="$(awk '/func purgeInsightsHistory\(/{on=1} on{print} on&&/^    }$/{exit}' "$APPSTATE")"
-[[ "$(grep -c 'contactCache.forget()' <<<"$app_body")" -ge 2 ]] || fail "the app does not forget known destinations before and after the purge"
+grep -q 'contactCache.beginDelete()' <<<"$app_body" || fail "the app does not forget known destinations when the delete starts"
+grep -q 'contactCache.endDelete()' <<<"$app_body" || fail "the app does not drop answers asked for during the delete"
 grep -q 'refreshContactClassifier()' <<<"$app_body" || fail "the app does not fetch the emptied list after the purge"
 if grep -qE 'contactClassifier[[:space:]]*=' "$APPSTATE"; then
   fail "the contact classifier is set outside the cache, which can bring a stale list back"
@@ -111,9 +115,18 @@ struct ContactPurgeHarness {
         let staleSnapshot = try store.contactSnapshot(now: now)
 
         // Step 2: Delete History. The app forgets first, then the store is purged.
-        cache.forget()
+        cache.beginDelete()
         check(cache.classifier.decision(for: again) != .knownContact,
               "while deleting, the old destination is not allowed as known")
+
+        // The 30-second refresh fires while the helper is still deleting and
+        // the helper answers it with the old list. That answer is the newest
+        // request, and it must still not be taken.
+        let duringToken = cache.beginRefresh()
+        check(!cache.apply(staleSnapshot, for: duringToken, now: now),
+              "an answer to a refresh started during the delete is dropped")
+        check(cache.classifier.decision(for: again) != .knownContact,
+              "a refresh during the delete does not bring the old destination back")
         try store.purge()
 
         // The stale answer arrives after the delete and must not bring the
@@ -123,8 +136,10 @@ struct ContactPurgeHarness {
         check(cache.classifier.decision(for: again) != .knownContact,
               "the stale answer does not make the old destination known again")
 
-        // The helper's reply arrives: forget again and fetch the emptied list.
-        cache.forget()
+        // The helper's reply arrives: fetch the emptied list.
+        cache.endDelete()
+        check(!cache.apply(staleSnapshot, for: duringToken, now: now),
+              "a refresh from during the delete that answers after it is dropped")
         let fresh = cache.beginRefresh()
         check(cache.apply(try store.contactSnapshot(now: now), for: fresh, now: now),
               "the answer from after the delete is applied")

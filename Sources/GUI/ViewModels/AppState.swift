@@ -370,10 +370,10 @@ final class AppState: ObservableObject {
     /// is asked, and fetched again from the emptied history as soon as it
     /// answers, so no connection in between is allowed as known (#229).
     func purgeInsightsHistory(completion: @MainActor @escaping (Bool, String?) -> Void) {
-        contactCache.forget()
+        contactCache.beginDelete()
         helper.purgeInsights { [weak self] ok, message in
             if let self {
-                self.contactCache.forget()
+                self.contactCache.endDelete()
                 self.refreshContactClassifier()
             }
             completion(ok, message)

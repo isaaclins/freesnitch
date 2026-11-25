@@ -516,12 +516,13 @@ public struct InsightsContactClassifier: Sendable {
 }
 
 /// The GUI's copy of the helper's contact history. Deleting the history drops
-/// it at once, and an answer to a request made before or during the delete is
-/// thrown away, so the next connection is judged against the emptied history
-/// instead of a copy that is up to 30 seconds old (#229).
+/// it at once, and no answer is taken while the delete runs or from a request
+/// made before it finished, so the next connection is judged against the
+/// emptied history instead of a copy that is up to 30 seconds old (#229).
 public struct InsightsContactCache: Sendable {
     public private(set) var classifier = InsightsContactClassifier(snapshot: nil)
     private var generation: UInt64 = 0
+    private var deletesRunning = 0
 
     public init() {}
 
@@ -531,20 +532,32 @@ public struct InsightsContactCache: Sendable {
         return generation
     }
 
-    /// Applies the helper's answer unless a newer request or a delete came
-    /// after it. Returns whether it was applied.
+    /// Applies the helper's answer unless a newer request came after it, or a
+    /// delete is running or finished after it was asked. Returns whether it
+    /// was applied.
     @discardableResult
     public mutating func apply(_ snapshot: InsightsContactSnapshot?, for token: UInt64,
                                now: Date = Date()) -> Bool {
-        guard token == generation else { return false }
+        guard deletesRunning == 0, token == generation else { return false }
         classifier = InsightsContactClassifier(snapshot: snapshot, now: now)
         return true
     }
 
-    /// The history is being deleted, or was just deleted: forget every known
-    /// destination (alert mode asks while nothing is known) and drop any
-    /// answer still on its way.
-    public mutating func forget() {
+    /// Delete History was pressed: forget every known destination (alert
+    /// mode asks while nothing is known) until `endDelete()`.
+    public mutating func beginDelete() {
+        deletesRunning += 1
+        forget()
+    }
+
+    /// The helper answered the delete. Answers asked for before this point
+    /// are dropped; refresh afterwards to load the emptied history.
+    public mutating func endDelete() {
+        deletesRunning = max(0, deletesRunning - 1)
+        forget()
+    }
+
+    private mutating func forget() {
         generation &+= 1
         classifier = InsightsContactClassifier(snapshot: nil)
     }
