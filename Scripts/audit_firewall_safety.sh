@@ -1746,6 +1746,19 @@ grep -Fq 'guard loaded else { return false }' <<<"$apply_body" \
   || fail "pf no longer decides under its own lock whether the anchor is loaded"
 grep -Eq 'pf\.install\(\)' "$HELPER" \
   && fail "the helper loads the pf anchor without the rules in force"
+# Turning enforcement on and off runs one request at a time, so a disable
+# that replies success cannot be followed by a paused enable starting the DNS
+# proxy with pf off (#248). The DNS proxy is only started from the steps that
+# EnforcementSwitch runs under its lock.
+enforce_body="$(swift_function_body "$HELPER" 'func setEnforcementEnabled(')"
+grep -Fq 'enforcement.setEnabled(' <<<"$enforce_body" \
+  || fail "turning enforcement on or off no longer goes through EnforcementSwitch, so two requests can interleave"
+[[ "$(grep -c 'dns\.start(' "$HELPER")" == 1 ]] && grep -Fq 'startDNS: { [dns] in try dns.start(' "$HELPER" \
+  || fail "the helper starts the DNS proxy outside the serialized enforcement steps"
+for direct in 'func installPF(' 'func uninstallPF(' 'func flushAll('; do
+  grep -Fq 'enforcement.serialized' <<<"$(swift_function_body "$HELPER" "$direct")" \
+    || fail "\`$direct\` changes pf without waiting for an enforcement transition in progress"
+done
 gate_body="$(swift_function_body "$HELPER" 'private func applyRulesIfEnforcing(')"
 grep -Fq 'pf.isLoaded' <<<"$gate_body" \
   && fail "the helper skips recording rules in pf while enforcement is off"
@@ -1770,4 +1783,4 @@ grep -Fq -- '"-F", "all"' <<<"$unload_body" \
 grep -Eq 'removeItem|"-d"' <<<"$unload_body" \
   && fail "turning enforcement off deletes the anchor file pf.conf names or disables pf for the whole Mac"
 
-printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, a DNS proxy reachable only over loopback, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off are present.\n'
+printf 'Firewall safety audit passed: fail-open GUI handling, code-signature self exemption, loopback ordering, timeout, XPC snapshots, peer validation, bounded CIDR matching with validated rule ingest, bounded DNS asks that always complete, activation ordering, authoritative helper-owned policy snapshots, atomic DNS policy publication, a DNS proxy reachable only over loopback, bounded offline Insights queries, a bundle-absence stand-down that can neither unregister nor delete, a pf anchor that never carries a deny naming an app, refusal of rules that name an app only by name, expired temporary rules leaving pf on time, pf lines in matcher priority order, pf and the DNS proxy enforcing exactly the current rules of the active profile, and no FreeSnitch rules left in pf once enforcement is off, and enforcement turned on and off one request at a time are present.\n'
