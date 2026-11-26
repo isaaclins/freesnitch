@@ -1063,7 +1063,14 @@ final class CLIRunner {
         }
     }
 
-    private func appendExtensionFindings(findings: inout [DoctorFinding], inspection: ExtensionInspection) {
+    func appendExtensionFindings(findings: inout [DoctorFinding], inspection: ExtensionInspection) {
+        if let error = inspection.bundleInspectionError {
+            findings.append(DoctorFinding(id: "extension_approval", state: "unknown", message: "Could not tell whether this build embeds the network extension, so its approval was not checked. \(error).", action: "Check that Contents/Library/SystemExtensions in the FreeSnitch app is readable (reinstall the app if it is damaged), then rerun doctor.", exitCode: nil))
+            findings.append(DoctorFinding(id: "filter_configuration", state: "unknown", message: "The content filter configuration was not checked because the app bundle's system extension folder could not be read.", action: "Fix the app bundle inspection error above, then rerun doctor.", exitCode: nil))
+            findings.append(DoctorFinding(id: "extension_running", state: "unknown", message: "The network extension's running state was not checked because the app bundle's system extension folder could not be read.", action: "Fix the app bundle inspection error above, then rerun doctor.", exitCode: nil))
+            findings.append(DoctorFinding(id: "filter_snapshot", state: "unknown", message: "The rule snapshot was not checked because the app bundle's system extension folder could not be read.", action: "Fix the app bundle inspection error above, then rerun doctor.", exitCode: nil))
+            return
+        }
         switch inspection.approvalState {
         case "not-in-build": findings.append(DoctorFinding(id: "extension_approval", state: "ok", message: "This monitor-only build intentionally does not embed the network extension.", action: "Use the firewall build generated from project-netext.yml to diagnose per-process filtering.", exitCode: nil))
         case "approved": findings.append(DoctorFinding(id: "extension_approval", state: "ok", message: "The network extension is approved.", action: "No action needed.", exitCode: nil))

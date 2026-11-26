@@ -7,6 +7,9 @@ struct ExtensionInspection {
     let filterEnabledState: String
     let snapshotState: String
     let runningState: String
+    /// Set when the app bundle's extension folder exists but could not be
+    /// listed, so whether this is a firewall build is unknown (#256).
+    var bundleInspectionError: String? = nil
 }
 
 struct SystemExtensionObservation: Sendable {
@@ -21,15 +24,22 @@ struct FilterObservation: Sendable {
 }
 
 enum ExtensionInspector {
-    static func inspect() async -> ExtensionInspection {
+    static func inspect(presence: EmbeddedExtensionPresence = CLIAppBundle.embeddedNetworkExtension) async -> ExtensionInspection {
         let system: SystemExtensionObservation
         let filter: FilterObservation
-        if CLIAppBundle.hasEmbeddedNetworkExtension {
+        var bundleInspectionError: String?
+        switch presence {
+        case .present:
             system = await Task.detached { SystemExtensionProbe.read() }.value
             filter = await FilterPreferencesProbe.read()
-        } else {
+        case .absent:
             system = SystemExtensionObservation(state: "not-in-build", detail: "This FreeSnitch app build does not embed the network extension.")
             filter = FilterObservation(configuration: "not-in-build", enabled: "no", detail: "The monitor-only build has no content filter configuration.")
+        case .unreadable(let error):
+            bundleInspectionError = error
+            let detail = "The app bundle's system extension folder could not be inspected, so it is unknown whether this build embeds the network extension: \(error)."
+            system = SystemExtensionObservation(state: "unknown", detail: detail)
+            filter = FilterObservation(configuration: "unknown", enabled: "unknown", detail: "")
         }
 
         let xpcMessage = "The bare CLI cannot inspect the network extension's app-group XPC service on the live shipping setup. Direct extension running and rule snapshot state are unknown; approval and filter configuration are reported separately."
@@ -56,7 +66,8 @@ enum ExtensionInspector {
                                    filterConfigurationState: filter.configuration,
                                    filterEnabledState: filter.enabled,
                                    snapshotState: snapshot.state,
-                                   runningState: "unknown")
+                                   runningState: "unknown",
+                                   bundleInspectionError: bundleInspectionError)
     }
 }
 
@@ -138,11 +149,8 @@ enum SystemExtensionProbe {
 
 enum FilterPreferencesProbe {
     static func read() async -> FilterObservation {
-        guard CLIAppBundle.hasEmbeddedNetworkExtension else {
-            return FilterObservation(configuration: "not-in-build",
-                                     enabled: "no",
-                                     detail: "The monitor-only build has no content filter configuration.")
-        }
+        // Only called by ExtensionInspector once the bundle is known to embed
+        // the network extension; absent and unreadable are handled there.
         guard let state = AppPreferences.string(forKey: AppPreferences.Key.filterConfigurationState) else {
             return FilterObservation(configuration: "unknown",
                                      enabled: "unknown",
