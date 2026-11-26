@@ -34,6 +34,13 @@ if grep -rnE '\\\(public: *[^)]*(domain|[Pp]ath|[Hh]ost|url|URL|bundleId|storedV
   fail "a host name, path, URL or name is logged as public"
 fi
 
+# The monitor build leaves out the network extension, so typecheck it here:
+# a log line it builds with the wrong type must fail this check, not only the
+# signed release build.
+xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos13.0 \
+  "$ROOT"/Sources/NetExt/*.swift "$ROOT"/Sources/Shared/*.swift \
+  || fail "the network extension sources do not compile"
+
 mkdir -p "$TMP/build"
 cat > "$TMP/verify.swift" <<'SWIFT'
 import Foundation
@@ -115,6 +122,10 @@ struct LogPrivacyHarness {
         check(mine.contains("many: <private> <private> <private> <private> 42 end"),
               "values past the fourth stay private")
 
+        let missing: String? = nil
+        let present: String? = "x"
+        let optionals: PSLogMessage = "\(missing) \(present) \(public: present)"
+        check(optionals.unredacted == "nil x x", "optionals log their value, not Optional(...)")
         let message: PSLogMessage = "a \(1) b \(public: 2) c"
         check(message.redacted == "a <private> b 2 c" && message.unredacted == "a 1 b 2 c",
               "redacted and full text")

@@ -57,6 +57,11 @@ public struct PSLogMessage: ExpressibleByStringInterpolation {
             texts.append("")
         }
 
+        /// An optional logs its value, or `nil`, instead of `Optional(...)`.
+        public mutating func appendInterpolation<T>(_ value: T?) {
+            appendInterpolation(value.map { String(describing: $0) } ?? "nil")
+        }
+
         /// For values that carry no user data: counts, process ids, versions,
         /// states, flags, fixed names chosen by FreeSnitch.
         public mutating func appendInterpolation<T>(public value: T) {
@@ -70,6 +75,10 @@ public struct PSLogMessage: ExpressibleByStringInterpolation {
                 values.append(value)
                 texts.append(message.texts[index + 1])
             }
+        }
+
+        public mutating func appendInterpolation<T>(public value: T?) {
+            appendInterpolation(public: value.map { String(describing: $0) } ?? "nil")
         }
 
         /// The error's domain and code stay readable; its description, which

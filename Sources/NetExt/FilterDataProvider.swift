@@ -298,7 +298,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             setSnapshotLocked(nil)
             snapshotOrigin = .none
             savedBootPolicy = nil
-            snapshotStatus = .unavailable(message)
+            snapshotStatus = .unavailable(message.unredacted)
         }
         snapshotLock.unlock()
         if liveSnapshotAlreadyLoaded {
