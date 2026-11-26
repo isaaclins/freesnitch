@@ -6,12 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A new push to a pull request supersedes the run before it, so the stale
-# harness jobs stop instead of holding macOS runners. Pushes to main each
-# keep their own run.
+# A newer run supersedes an older one of the same kind on the same ref, so
+# stale jobs stop instead of holding the few macOS runners: a new push to a
+# pull request, a new push to main and a new dispatch for the same branch
+# each cancel the run before it. Pushes and dispatches get separate groups,
+# so a dispatch on main never cancels the push run it was started next to.
+# Every run still checks out exactly the commit its event names.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: true
 
 jobs:
   firewall-safety:

@@ -20,9 +20,11 @@ on:
       - project.yml
   workflow_dispatch:
 
+# Same rule as build.yml: a newer run of the same kind on the same ref
+# cancels the older one.
 concurrency:
-  group: app-icon-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: app-icon-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: true
 
 jobs:
   icon-build:

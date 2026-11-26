@@ -15,6 +15,13 @@ a run takes five of them; a skipped job counts as passed in the check list, so
 the manual run is the one to look at. Pull requests from forks run them right
 away.
 
+A newer run replaces an older one of the same kind on the same ref: a push to
+`main` cancels the queued or running jobs of the previous `main` push, and a
+new `gh workflow run` for a branch cancels the previous dispatch for it. So an
+older `main` commit, including a release commit followed quickly by another
+push, can show a cancelled run; the newest `main` commit always gets a full
+one.
+
 The monitor build job builds the monitor flavour from `project.yml`. It does not use
 `project-netext.yml`, provisioning profiles, or a Developer ID signature. It
 sets `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` and checks that restricted Network
