@@ -142,7 +142,10 @@ enum PrivilegedUninstall {
         guard let step = Step(rawValue: code) else {
             return message.isEmpty ? String(localized: "The privileged uninstall did not complete.") : message
         }
-        return message.isEmpty ? step.failureDescription : step.failureDescription + "\n" + message
+        // With nothing on stderr, AppleScript fills in its own generic text;
+        // under a sentence that already names the step it only adds noise.
+        let generic = message.isEmpty || message == "The command exited with a non-zero status."
+        return generic ? step.failureDescription : step.failureDescription + "\n" + message
     }
 
     /// User-level leftovers. No authorization needed, so this is separate:
