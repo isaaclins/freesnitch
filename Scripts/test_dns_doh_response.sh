@@ -15,7 +15,13 @@
 #     does a resolver address that does not parse,
 #   - none of those reach onResolve,
 #   - a good answer is passed through unchanged and reported to onResolve,
-#   - a good answer that carries ID 0 comes back with the client's ID.
+#   - a good answer that carries ID 0 comes back with the client's ID,
+#   - an answer larger than a DNS message can be (#249), announced with a
+#     Content-Length or streamed without one, is SERVFAIL over UDP and TCP,
+#     and a streamed one is cut off while it arrives instead of being read
+#     to the end, while an answer of exactly 65,535 bytes still comes back
+#     over TCP whole and behind a matching length prefix,
+#   - a reply too big for the TCP length prefix is framed as SERVFAIL.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -85,9 +91,23 @@ func answer(to q: Data, id: UInt16? = nil, name: String? = nil) -> Data {
     return r
 }
 
+/// `answer(to:)` padded with trailing bytes to `size` in all. The padding
+/// sits after the records the header counts, so it still reads as a reply.
+func padded(_ q: Data, to size: Int) -> Data {
+    var r = answer(to: q)
+    r.append(Data(repeating: 0, count: size - r.count))
+    return r
+}
+
 /// Plain HTTP/1.1 DoH stand-in. The request path picks the reply.
 final class FakeDoH {
     let listener: NWListener
+    /// Bytes of the streamed oversized body the proxy accepted before it
+    /// stopped reading.
+    let streamLock = NSLock()
+    var streamedBytes = 0
+    var streamFinished = false
+    static let streamTotal = 256 * 1024 * 1024
     let port: UInt16
     let queue = DispatchQueue(label: "fake-doh")
     init() throws {
@@ -130,11 +150,32 @@ final class FakeDoH {
         case "/empty": (status, type, body) = ("200 OK", "application/dns-message", Data())
         case "/otherq": (status, type, body) = ("200 OK", "application/dns-message", answer(to: q, name: "other.example"))
         case "/id0": (status, type, body) = ("200 OK", "application/dns-message", answer(to: q, id: 0))
+        case "/max": (status, type, body) = ("200 OK", "application/dns-message", padded(q, to: 65_535))
+        case "/huge": (status, type, body) = ("200 OK", "application/dns-message", padded(q, to: 65_536))
+        case "/stream":
+            // No Content-Length: the body runs until the connection closes,
+            // so only counting it while it arrives can stop it.
+            let head = Data("HTTP/1.1 200 OK\r\nContent-Type: application/dns-message\r\nConnection: close\r\n\r\n".utf8)
+            streamLock.lock(); streamedBytes = 0; streamFinished = false; streamLock.unlock()
+            c.send(content: head, completion: .contentProcessed { _ in })
+            stream(c, first: padded(q, to: 64 * 1024), sent: 0)
+            return
         default: (status, type, body) = ("200 OK", "application/dns-message", answer(to: q))
         }
         var out = Data("HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
         out.append(body)
         c.send(content: out, completion: .contentProcessed { _ in c.cancel() })
+    }
+    func stream(_ c: NWConnection, first: Data, sent: Int) {
+        let chunk = sent == 0 ? first : Data(repeating: 0, count: 64 * 1024)
+        c.send(content: chunk, completion: .contentProcessed { error in
+            let total = sent + chunk.count
+            if error != nil || total >= FakeDoH.streamTotal {
+                self.streamLock.lock(); self.streamedBytes = total; self.streamFinished = error == nil; self.streamLock.unlock()
+                c.cancel(); return
+            }
+            self.stream(c, first: first, sent: total)
+        })
     }
 }
 
@@ -147,10 +188,23 @@ func exchange(_ q: Data, port: UInt16, tcp: Bool) -> Data? {
     if tcp {
         var framed = Data([UInt8(q.count >> 8), UInt8(q.count & 0xff)]); framed.append(q)
         conn.send(content: framed, completion: .contentProcessed { _ in })
-        conn.receive(minimumIncompleteLength: 2, maximumLength: 65535) { data, _, _, _ in
-            if let data, data.count >= 2 { result = data.subdata(in: 2..<data.count) }
-            got.signal()
+        // Reads one whole frame: the length prefix, then that many bytes.
+        // A prefix that promises fewer bytes than arrive is reported as the
+        // frame plus whatever followed it, so a mismatch shows.
+        func read(_ acc: Data) {
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, done, _ in
+                var buf = acc; if let data { buf.append(data) }
+                if buf.count >= 2 {
+                    let len = Int(buf[0]) << 8 | Int(buf[1])
+                    if buf.count >= 2 + len && (len > 0 || done || data == nil) {
+                        result = buf.subdata(in: 2..<buf.count); got.signal(); return
+                    }
+                }
+                if done || data == nil { if buf.count >= 2 { result = buf.subdata(in: 2..<buf.count) }; got.signal(); return }
+                read(buf)
+            }
         }
+        read(Data())
     } else {
         conn.send(content: q, completion: .contentProcessed { _ in })
         conn.receiveMessage { data, _, _, _ in result = data; got.signal() }
@@ -237,6 +291,48 @@ struct Verify {
                       "a good answer with ID 0 comes back with the client's ID")
         checks.expect(reply0.map { $0.subdata(in: 2..<$0.count) } == answer(to: q0).subdata(in: 2..<answer(to: q0).count),
                       "a good answer with ID 0 is otherwise unchanged")
+
+        // #249: an answer larger than a DNS message can be.
+        for (path, what) in [("/huge", "an announced 65,536 byte answer"), ("/stream", "an unannounced endless answer")] {
+            for tcp in [false, true] {
+                let via = tcp ? "TCP" : "UDP"
+                let started = Date()
+                let (q, reply) = ask(path, tcp: tcp)
+                guard let reply else { checks.expect(false, "\(what) over \(via): the client got no reply"); continue }
+                checks.expect(reply.count >= 12 && rcode(reply) == 2 && id(reply) == id(q),
+                              "\(what) over \(via): the client gets SERVFAIL with its ID")
+                checks.expect(reply.count < 512, "\(what) over \(via): no part of the oversized body reaches the client")
+                checks.expect(!wasResolved(q), "\(what) over \(via): nothing is reported to onResolve")
+                checks.expect(Date().timeIntervalSince(started) < 5, "\(what) over \(via): the failure comes back at once")
+                if path == "/stream" {
+                    let stopBy = Date().addingTimeInterval(5)
+                    var sent = 0, finished = true
+                    repeat {
+                        usleep(20_000)
+                        doh.streamLock.lock(); sent = doh.streamedBytes; finished = doh.streamFinished; doh.streamLock.unlock()
+                    } while sent == 0 && Date() < stopBy
+                    checks.expect(sent > 0 && !finished && sent < FakeDoH.streamTotal / 4,
+                                  "\(what) over \(via): the proxy stops reading it early (\(sent / 1024) KiB of \(FakeDoH.streamTotal / 1024) KiB sent)")
+                }
+            }
+        }
+        let (qMax, replyMax) = ask("/max", tcp: true)
+        checks.expect(replyMax == padded(qMax, to: 65_535),
+                      "a 65,535 byte answer over TCP comes back whole behind a matching length")
+
+        let bigQuery = query(id: 0x4242, name: "big.example")
+        let tooBig = padded(bigQuery, to: 65_536)
+        let frame = DNSWire.tcpFrame(tooBig, for: bigQuery)
+        checks.expect(frame.map { Int($0[0]) << 8 | Int($0[1]) == $0.count - 2 } == true,
+                      "a reply too big for the TCP prefix is framed with a matching length")
+        checks.expect(frame.map { $0.count >= 14 && rcode($0.subdata(in: 2..<$0.count)) == 2 } == true,
+                      "a reply too big for the TCP prefix is framed as SERVFAIL")
+        let fits = padded(bigQuery, to: 65_535)
+        checks.expect(DNSWire.tcpFrame(fits, for: bigQuery) == Data([0xff, 0xff]) + fits,
+                      "a 65,535 byte reply is framed unchanged")
+        checks.expect(DNSProxy.upstreamAnswer(data: tooBig, response: HTTPURLResponse(url: URL(string: "https://x.example")!, statusCode: 200, httpVersion: nil, headerFields: nil),
+                                              error: nil, query: bigQuery) != .answer(tooBig),
+                      "a 65,536 byte body is never accepted as an answer")
 
         if checks.failures > 0 {
             print("dns doh response: \(checks.failures) failure(s)")
