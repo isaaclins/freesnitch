@@ -71,10 +71,14 @@ enum PrivilegedUninstall {
     /// only: a pf flush that failed was hidden by a removal that worked, and
     /// the app moved itself to the Trash and said it was gone (#271). The
     /// codes are the cases of `Step`.
+    /// pfctl's output is dropped, as `Scripts/uninstall_freesnitch.sh` does:
+    /// it writes "rules cleared" and ALTQ notes to stderr even when it works,
+    /// and `do shell script` would show all of that as the error message of a
+    /// later step that failed. The step sentence says what went wrong.
     private static let keepDatabase = """
     do shell script "if [ -f /etc/pf.anchors/puresnitch ]; then /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch || exit 81; fi; \
-    /sbin/pfctl -a puresnitch -F all || exit 82; \
-    /sbin/pfctl -a puresnitch -f /dev/null || exit 83; \
+    /sbin/pfctl -a puresnitch -F all >/dev/null 2>&1 || exit 82; \
+    /sbin/pfctl -a puresnitch -f /dev/null >/dev/null 2>&1 || exit 83; \
     if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch || exit 84; fi; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' || exit 85" with administrator privileges
     """
@@ -86,8 +90,8 @@ enum PrivilegedUninstall {
     /// the main file left policy records behind (#237).
     private static let removeDatabase = """
     do shell script "if [ -f /etc/pf.anchors/puresnitch ]; then /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch || exit 81; fi; \
-    /sbin/pfctl -a puresnitch -F all || exit 82; \
-    /sbin/pfctl -a puresnitch -f /dev/null || exit 83; \
+    /sbin/pfctl -a puresnitch -F all >/dev/null 2>&1 || exit 82; \
+    /sbin/pfctl -a puresnitch -f /dev/null >/dev/null 2>&1 || exit 83; \
     if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch || exit 84; fi; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' || exit 85; \
     /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-wal' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-shm' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-journal' || exit 86" with administrator privileges

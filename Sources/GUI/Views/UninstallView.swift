@@ -249,7 +249,7 @@ final class UninstallFlowModel: ObservableObject {
                 if ending == "rules" {
                     self.phase = .failed(.helperKept(PrivilegedUninstall.failureReason(
                         code: PrivilegedUninstall.Step.flushAnchor.rawValue,
-                        message: "pfctl: DIOCXBEGIN: Operation not permitted")))
+                        message: "")))
                     return
                 }
                 if ending == "helper" {

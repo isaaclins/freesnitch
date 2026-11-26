@@ -1326,7 +1326,7 @@ require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
 # that worked: the steps used to be joined by bare semicolons, so the script
 # reported success with rules still loaded and the app went to the Trash
 # (#271). Every step stops the script with its own exit code.
-for step in "pfctl -a puresnitch -F all || exit 82; " "pfctl -a puresnitch -f /dev/null || exit 83; " \
+for step in "pfctl -a puresnitch -F all >/dev/null 2>&1 || exit 82; " "pfctl -a puresnitch -f /dev/null >/dev/null 2>&1 || exit 83; " \
             "/bin/rm -f /usr/local/bin/freesnitch || exit 84; fi; " "/bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' || exit 85"; do
   [[ "$(rg -F -c "$step" "$PRIVILEGED_UNINSTALL" || true)" == 2 ]] \
     || fail "a privileged uninstall form no longer stops when a step fails: $step"
