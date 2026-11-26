@@ -206,9 +206,12 @@ final class DNSProxy: @unchecked Sendable {
     /// transport and reason, so the status can say which transports are
     /// still serving (#265). Cleared by each start and stop.
     private var failures: [DNSListenerFailure] = []
-    var failedListeners: [DNSListenerFailure] {
+    var failedListeners: [DNSListenerFailure] { listenerState.failed }
+    /// `running` and the failures read together, so a status never pairs
+    /// one generation's flag with another's list.
+    var listenerState: (running: Bool, failed: [DNSListenerFailure]) {
         stateLock.lock(); defer { stateLock.unlock() }
-        return failures
+        return (isRunning, failures)
     }
 
     /// Starts a new generation with the given running state.
