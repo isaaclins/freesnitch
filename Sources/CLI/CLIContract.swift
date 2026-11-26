@@ -63,6 +63,12 @@ struct CLIErrorPayload: Encodable {
     let exitCode: Int
 }
 
+extension CLIErrorPayload {
+    init(_ error: CLIError) {
+        self.init(code: error.code, message: error.message, remediation: error.remediation, exitCode: error.exitCode.rawValue)
+    }
+}
+
 struct CLIEnvelope<T: Encodable>: Encodable {
     static var schema: String { "freesnitch.cli.v1" }
 

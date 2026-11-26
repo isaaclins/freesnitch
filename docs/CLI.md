@@ -158,6 +158,26 @@ and an error summary. If several failure classes are present, the first
 actionable finding in helper, extension, snapshot, and pf order selects the exit
 code.
 
+### A change that was saved, but whose snapshot could not be read
+
+`mode`, `rules add`, `enable`, `disable`, `rm`, and `import` first change the
+helper and then read its policy snapshot to send to the network extension. If
+the helper confirmed the change but that snapshot read fails (for example it
+times out, or an older helper does not support it), the command exits `72`
+with `error.code` `snapshot_after_commit_failed` and still returns its normal
+report in `data` as a receipt: the rule and its ID, the changed or imported IDs
+and count, or the mode that was set. The snapshot failure itself is in
+`data.snapshotError` (`code`, `message`, `remediation`, `exitCode`),
+`extensionSync` is `not-attempted`, and `generation` (and `ruleCount` for
+`mode`) is omitted. The change is
+already saved, so do not repeat the command; run `freesnitch rules list` or
+`freesnitch status` to confirm it.
+
+If the helper stops answering partway through a multi-rule `enable`, `disable`,
+or `rm`, the rules it already confirmed stay in `succeeded` and the rest are
+listed in `failed` (those never sent read `not attempted: ...`). Only when
+nothing was changed yet is the helper error returned on its own.
+
 ## Status and diagnosis
 
 ```sh
