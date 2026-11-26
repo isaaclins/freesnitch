@@ -21,43 +21,115 @@ read_all_then() {
   fi
 }
 
-FILTER="$ROOT/Sources/NetExt/FilterDataProvider.swift"
-BRIDGE="$ROOT/Sources/Shared/SharedRuleBridge.swift"
-SAVE_CYCLE="$ROOT/Sources/Shared/BootPolicySaveCycle.swift"
-RULE_STORE="$ROOT/Sources/Shared/RuleStore.swift"
-HELPER_PROTOCOL="$ROOT/Sources/Shared/HelperProtocol.swift"
-IPC="$ROOT/Sources/Shared/IPCConnection.swift"
-PEER_VALIDATOR="$ROOT/Sources/Shared/XPCPeerValidator.swift"
-CLI_HELPER="$ROOT/Sources/CLI/CLIHelperClient.swift"
-CLI_RUNNER="$ROOT/Sources/CLI/CLIRunner.swift"
-CLI_EXTENSION="$ROOT/Sources/CLI/CLIExtensionClient.swift"
-GUI_HELPER="$ROOT/Sources/GUI/App/HelperClient.swift"
+# A Swift file with its comments blanked out, line for line, so a check that
+# needs a piece of code is not satisfied by the same text left in a comment
+# (#236), and a brace in a comment does not move a block's end. `//` and
+# nested `/* */` comments are removed; string literals, including `"""`
+# strings and the strings inside `\( )` interpolation, are kept as they are,
+# so a URL such as "https://..." is not cut at its `//`.
+swift_code() {
+  awk '
+    {
+      line = $0
+      n = length(line)
+      out = ""
+      i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        c2 = substr(line, i, 2)
+        c3 = substr(line, i, 3)
+        if (block > 0) {
+          if (c2 == "/*") { block++; out = out "  "; i += 2; continue }
+          if (c2 == "*/") { block--; out = out "  "; i += 2; continue }
+          out = out " "; i++; continue
+        }
+        if (inner) {
+          if (c == "\\") { out = out c2; i += 2; continue }
+          if (c == "\"") inner = 0
+          out = out c; i++; continue
+        }
+        if (interp > 0) {
+          if (c == "\"") { inner = 1; out = out c; i++; continue }
+          if (c == "(") interp++
+          if (c == ")") interp--
+          out = out c; i++; continue
+        }
+        if (str || multi) {
+          if (c2 == "\\(") { interp = 1; out = out c2; i += 2; continue }
+          if (c == "\\") { out = out c2; i += 2; continue }
+          if (multi && c3 == "\"\"\"") { multi = 0; out = out c3; i += 3; continue }
+          if (str && c == "\"") str = 0
+          out = out c; i++; continue
+        }
+        if (c2 == "//") break
+        if (c2 == "/*") { block = 1; out = out "  "; i += 2; continue }
+        if (c3 == "\"\"\"") { multi = 1; out = out c3; i += 3; continue }
+        if (c == "\"") str = 1
+        out = out c; i++
+      }
+      # A single-line string never runs past its line; resetting keeps one
+      # unbalanced quote from swallowing the rest of the file.
+      str = 0; interp = 0; inner = 0
+      print out
+    }
+  ' "$1"
+}
+
+# Every check below reads the sources from CODE_ROOT: a copy of Sources in
+# which each Swift file has its comments blanked out. A requirement is then met
+# only by live code, never by the same text left in a comment (#236), and a
+# brace or a forbidden word in a comment cannot change a check's outcome.
+CODE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/freesnitch-audit.XXXXXX")"
+trap 'rm -rf "$CODE_ROOT"' EXIT
+while IFS= read -r -d '' source_file; do
+  mkdir -p "$CODE_ROOT/$(dirname "$source_file")"
+  if [[ "$source_file" == *.swift ]]; then
+    swift_code "$ROOT/$source_file" >"$CODE_ROOT/$source_file"
+  else
+    cp "$ROOT/$source_file" "$CODE_ROOT/$source_file"
+  fi
+done < <(cd "$ROOT" && find Sources -type f -print0)
+
+FILTER="$CODE_ROOT/Sources/NetExt/FilterDataProvider.swift"
+BRIDGE="$CODE_ROOT/Sources/Shared/SharedRuleBridge.swift"
+SAVE_CYCLE="$CODE_ROOT/Sources/Shared/BootPolicySaveCycle.swift"
+RULE_STORE="$CODE_ROOT/Sources/Shared/RuleStore.swift"
+HELPER_PROTOCOL="$CODE_ROOT/Sources/Shared/HelperProtocol.swift"
+IPC="$CODE_ROOT/Sources/Shared/IPCConnection.swift"
+PEER_VALIDATOR="$CODE_ROOT/Sources/Shared/XPCPeerValidator.swift"
+CLI_HELPER="$CODE_ROOT/Sources/CLI/CLIHelperClient.swift"
+CLI_RUNNER="$CODE_ROOT/Sources/CLI/CLIRunner.swift"
+CLI_EXTENSION="$CODE_ROOT/Sources/CLI/CLIExtensionClient.swift"
+GUI_HELPER="$CODE_ROOT/Sources/GUI/App/HelperClient.swift"
 PROJECT_SPEC="$ROOT/project.yml"
-HELPER="$ROOT/Sources/Helper/HelperService.swift"
-DNS_PROXY="$ROOT/Sources/Helper/DNSProxy.swift"
-APP_STATE="$ROOT/Sources/GUI/ViewModels/AppState.swift"
-ALERT_RULE="$ROOT/Sources/Shared/AlertRememberedRule.swift"
-SYSTEM_EXTENSION_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
-LAUNCHD_PLIST="$ROOT/Sources/Helper/Launchd.plist"
-MODELS="$ROOT/Sources/Shared/Models.swift"
-WIRE_CODEC="$ROOT/Sources/Shared/WireCodec.swift"
-RULE_TRANSPORT="$ROOT/Sources/Shared/RuleTransport.swift"
-INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
-INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
-INSIGHTS_VIEW="$ROOT/Sources/GUI/Views/InsightsView.swift"
-CLI_CONTRACT="$ROOT/Sources/CLI/CLIContract.swift"
-INSIGHTS_STORE="$ROOT/Sources/Helper/InsightsStore.swift"
-INSIGHTS_MODELS="$ROOT/Sources/Shared/InsightsModels.swift"
-OBSERVATION_QUEUE="$ROOT/Sources/NetExt/ObservationQueue.swift"
+HELPER="$CODE_ROOT/Sources/Helper/HelperService.swift"
+DNS_PROXY="$CODE_ROOT/Sources/Helper/DNSProxy.swift"
+APP_STATE="$CODE_ROOT/Sources/GUI/ViewModels/AppState.swift"
+ALERT_RULE="$CODE_ROOT/Sources/Shared/AlertRememberedRule.swift"
+SYSTEM_EXTENSION_MANAGER="$CODE_ROOT/Sources/GUI/App/SystemExtensionManager.swift"
+LAUNCHD_PLIST="$CODE_ROOT/Sources/Helper/Launchd.plist"
+MODELS="$CODE_ROOT/Sources/Shared/Models.swift"
+WIRE_CODEC="$CODE_ROOT/Sources/Shared/WireCodec.swift"
+RULE_TRANSPORT="$CODE_ROOT/Sources/Shared/RuleTransport.swift"
+INSIGHTS_MODELS="$CODE_ROOT/Sources/Shared/InsightsModels.swift"
+INSIGHTS_STORE="$CODE_ROOT/Sources/Helper/InsightsStore.swift"
+INSIGHTS_VIEW="$CODE_ROOT/Sources/GUI/Views/InsightsView.swift"
+CLI_CONTRACT="$CODE_ROOT/Sources/CLI/CLIContract.swift"
+INSIGHTS_STORE="$CODE_ROOT/Sources/Helper/InsightsStore.swift"
+INSIGHTS_MODELS="$CODE_ROOT/Sources/Shared/InsightsModels.swift"
+OBSERVATION_QUEUE="$CODE_ROOT/Sources/NetExt/ObservationQueue.swift"
 UNINSTALL="$ROOT/Scripts/uninstall_freesnitch.sh"
-RULE_MATCHER="$ROOT/Sources/Shared/RuleMatcher.swift"
-CLI_PARSER="$ROOT/Sources/CLI/CLIParser.swift"
-POLICY_EPOCH="$ROOT/Sources/Shared/PolicyEpoch.swift"
-SNAPSHOT_RECOVERY="$ROOT/Sources/Shared/SnapshotRecovery.swift"
-PF_MANAGER="$ROOT/Sources/Helper/PFManager.swift"
+RULE_MATCHER="$CODE_ROOT/Sources/Shared/RuleMatcher.swift"
+CLI_PARSER="$CODE_ROOT/Sources/CLI/CLIParser.swift"
+POLICY_EPOCH="$CODE_ROOT/Sources/Shared/PolicyEpoch.swift"
+SNAPSHOT_RECOVERY="$CODE_ROOT/Sources/Shared/SnapshotRecovery.swift"
+PF_MANAGER="$CODE_ROOT/Sources/Helper/PFManager.swift"
 
 fail() {
-  printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "$*" >&2
+  # Name source files by their place in the repository, not by the
+  # comment-free copy the checks read, which is gone once the audit exits.
+  local message="$*"
+  printf 'FIREWALL SAFETY AUDIT FAILED: %s\n' "${message//"$CODE_ROOT"/$ROOT}" >&2
   exit 1
 }
 
@@ -184,7 +256,7 @@ require_text "$FILTER" 'let senderToken = socketFlow.sourceProcessAuditToken ?? 
   "the extension no longer identifies the resolver by the process that sent the flow"
 require_text "$FILTER" 'systemResolverIdentity.isSystemResolver(processAuditToken: senderToken)' \
   "the extension no longer checks the process that sent the flow against the resolver identity"
-RESOLVER_IDENTITY="$ROOT/Sources/NetExt/SystemResolverIdentity.swift"
+RESOLVER_IDENTITY="$CODE_ROOT/Sources/NetExt/SystemResolverIdentity.swift"
 require_text "$RESOLVER_IDENTITY" 'guard path == RuleMatcher.systemResolverPath else { return false }' \
   "the extension no longer checks the sending process's path before vouching for the resolver"
 require_text "$RESOLVER_IDENTITY" 'passes = SecCodeCheckValidity(code, [], requirement) == errSecSuccess' \
@@ -507,7 +579,7 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "unsavable: removesBootSnapshot ? self.
   "a failed save of the boot-policy removal swaps the over-limit banner for the Send Rules Again one"
 # Removing rules only helps when the count or size is the cause; a policy
 # dated after the clock (or any other failure) must not say so (#341).
-if grep -Fq 'Remove some rules' "$ROOT/Sources/GUI/Views/HelperBanner.swift"; then
+if grep -Fq 'Remove some rules' "$CODE_ROOT/Sources/GUI/Views/HelperBanner.swift"; then
   fail "the won't-survive-a-restart banner tells the user to remove rules whatever the cause"
 fi
 grep -Fq 'Self.unsavableReason(SharedRuleBridge.BootSnapshotProblem(error, ruleCount: snapshot.rules.count)' <<<"$request_body" \
@@ -519,7 +591,7 @@ for problem_case in datedInFuture other; do
 done
 require_text "$SYSTEM_EXTENSION_MANAGER" "if result.reportFailure {" \
   "a save the user cancelled by turning the filter on, off or removing it can bring the warning back"
-require_text "$ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? String(localized: "The filter is using them now.") : nil' \
+require_text "$CODE_ROOT/Sources/GUI/Views/HelperBanner.swift" 'liveRulesReady ? String(localized: "The filter is using them now.") : nil' \
   "the over-limit banner says the filter is using the rules when the extension does not hold them"
 grep -Fq 'clearFilterPersistenceFailure()' <<<"$remove_body" \
   || fail "removing the filter configuration leaves the could-not-save banner up"
@@ -636,7 +708,7 @@ outside_writers="$(awk '
 # request is submitted.
 grep -Fq 'filterPreferences = FilterPreferencesLine(closed: demo)' "$SYSTEM_EXTENSION_MANAGER" \
   || fail "demo mode can read or save the real content filter configuration"
-grep -Fq 'guard !closed else { return }' "$ROOT/Sources/Shared/FilterPreferencesLine.swift" \
+grep -Fq 'guard !closed else { return }' "$CODE_ROOT/Sources/Shared/FilterPreferencesLine.swift" \
   || fail "a closed filter preferences line still runs operations"
 init_body="$(awk '/^    init\(state: AppState[,)]/ {a=1} a {print} a && /^    }$/ {exit}' "$SYSTEM_EXTENSION_MANAGER")"
 printf '%s\n' "$init_body" | read_all_then awk '/guard !demo else [{] return [}]/ { g = 1 } /NEFilterConfigurationDidChange/ { ok = g; exit } END { exit !ok }' \
@@ -646,14 +718,14 @@ grep -Fq 'guard !demo else { return false }' <<<"$embedded_body" \
   || fail "demo mode can submit system extension requests"
 # #389: the same for the helper, the extension, the login item and files.
 # Each of these acts on the real install and must check demo mode first.
-DEMO_MODE_FILE="$ROOT/Sources/GUI/App/DemoMode.swift"
+DEMO_MODE_FILE="$CODE_ROOT/Sources/GUI/App/DemoMode.swift"
 grep -Fq 'static let isOn = ProcessInfo.processInfo.environment["FREESNITCH_DEMO"] == "1"' "$DEMO_MODE_FILE" \
   || fail "demo mode is not read from FREESNITCH_DEMO in one place"
 grep -Fq 'init(state: AppState, demo: Bool = DemoMode.isOn)' "$SYSTEM_EXTENSION_MANAGER" \
   || fail "the content filter manager does not know it runs in demo mode"
 demo_guard() {
   local file="$1" entry="$2" guard="$3" what="$4"
-  swift_function_body "$ROOT/$file" "$entry" | sed -n '2,5p' | read_all_then grep -Fq "$guard" \
+  swift_function_body "$CODE_ROOT/$file" "$entry" | sed -n '2,5p' | read_all_then grep -Fq "$guard" \
     || fail "demo mode can $what"
 }
 demo_guard Sources/GUI/App/SystemExtensionManager.swift 'func deactivateForUninstall()' 'guard !demo else {' \
@@ -705,7 +777,7 @@ require_text "$SYSTEM_EXTENSION_MANAGER" "turnOffsNow: self.filterTurnOffs," \
 require_text "$SYSTEM_EXTENSION_MANAGER" "if completion == .stayedOff {" \
   "an enabling save overtaken by a turn-off leaves the status as it was"
 if grep -R -E -q 'io\.isaaclins\.freesnitch\.boot(["<]|$)|BHAF4L4726\.io\.isaaclins\.freesnitch\.boot(["<]|$)|boot-snapshot\.json' \
-  "$ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
+  "$CODE_ROOT/Sources" "$ROOT/project.yml" "$ROOT/project-netext.yml"; then
   fail "an old or experimental boot transport name or cache path is still present"
 fi
 if ! grep -Fq '<key>io.isaaclins.freesnitch.helper</key>' "$LAUNCHD_PLIST" \
@@ -761,9 +833,9 @@ require_text "$FILTER" "promptAndResume(flow: flow, conn: conn, observe: observe
 # unsigned Info.plist anyone can write next to a binary (#351).
 require_text "$FILTER" "CodeSigningIdentity.resolve(executablePath:" \
   "the extension no longer takes bundle identifiers from the code signature"
-require_text "$ROOT/Sources/Helper/NetMonitor.swift" "CodeSigningIdentity.resolve(executablePath:" \
+require_text "$CODE_ROOT/Sources/Helper/NetMonitor.swift" "CodeSigningIdentity.resolve(executablePath:" \
   "the monitor no longer takes bundle identifiers from the code signature"
-if grep -Fq 'CFBundleIdentifier' "$ROOT/Sources/Helper/NetMonitor.swift"; then
+if grep -Fq 'CFBundleIdentifier' "$CODE_ROOT/Sources/Helper/NetMonitor.swift"; then
   fail "the monitor reads a bundle identifier from an unsigned Info.plist"
 fi
 
@@ -909,13 +981,13 @@ require_text "$CLI_HELPER" "proxy.flushAll" \
   "the CLI flush path does not go through HelperProtocol"
 require_text "$PROJECT_SPEC" "Contents/Helpers/freesnitch" \
   "the CLI is not embedded inside the app bundle"
-if grep -R -E -q "SecRequirementCreateWithString|SecCodeCheckValidity" "$ROOT/Sources/CLI" --include='*.swift'; then
+if grep -R -E -q "SecRequirementCreateWithString|SecCodeCheckValidity" "$CODE_ROOT/Sources/CLI" --include='*.swift'; then
   fail "the CLI contains a second peer-validation or code-signature bypass"
 fi
 # grep exits 1 when the requirement has been deleted outright, which is exactly
 # the case this gate exists to catch. Without the guard, pipefail would abort
 # the script with no message instead of naming the missing requirement.
-requirement_count="$( { grep -RohF 'let requirementText = "anchor apple generic"' "$ROOT/Sources" --include='*.swift' || true; } | wc -l | tr -d ' ')"
+requirement_count="$( { grep -RohF 'let requirementText = "anchor apple generic"' "$CODE_ROOT/Sources" --include='*.swift' || true; } | wc -l | tr -d ' ')"
 [[ "$requirement_count" == "1" ]] || fail "the GUI XPC requirement is duplicated or missing"
 accept_body="$(awk '
   /shouldAcceptNewConnection newConnection: NSXPCConnection/ {
@@ -952,7 +1024,9 @@ fi
 # Each fail-open check is scoped to its own brace block. A window of N lines
 # would let one block borrow another block's allow verdict and hide a
 # fail-closed regression, so the block is delimited by brace depth instead.
-# Same idea, for any literal that has to appear inside one brace block.
+# Same idea, for any literal that has to appear inside one brace block. The
+# sources are read without their comments (see CODE_ROOT), so the literal has
+# to be live code, not a leftover in a comment (#236).
 text_within_block() {
   local file="$1"
   local start_regex="$2"
@@ -1254,7 +1328,7 @@ require_text "$ALERT_RULE" "remoteHost: scopedHost" \
 # fixed command. If a later change ever assembles this script from a variable,
 # a path, or a version string, this stops being "restart my own helper" and
 # becomes "run something as root" (#69).
-PRIVILEGED_REPAIR="$ROOT/Sources/GUI/App/PrivilegedRepair.swift"
+PRIVILEGED_REPAIR="$CODE_ROOT/Sources/GUI/App/PrivilegedRepair.swift"
 [[ -f "$PRIVILEGED_REPAIR" ]] || fail "missing $PRIVILEGED_REPAIR"
 require_text "$PRIVILEGED_REPAIR" "private static let script" \
   "the privileged repair command is not a single constant"
@@ -1278,7 +1352,7 @@ fi
 # The `freesnitch` command link (#423) runs as root, so like the repair it
 # stays two fixed commands: ln without -f never replaces a file it did not
 # make, and the removal only deletes a link that points into the app.
-COMMAND_LINE_TOOL="$ROOT/Sources/GUI/App/CommandLineTool.swift"
+COMMAND_LINE_TOOL="$CODE_ROOT/Sources/GUI/App/CommandLineTool.swift"
 [[ -f "$COMMAND_LINE_TOOL" ]] || fail "missing $COMMAND_LINE_TOOL"
 require_text "$COMMAND_LINE_TOOL" '/bin/ln -sh /Applications/FreeSnitch.app/Contents/Helpers/freesnitch /usr/local/bin/freesnitch\" with administrator privileges' \
   "the command link install is no longer one fixed ln -s into the installed app"
@@ -1291,8 +1365,8 @@ fi
 # `sudo bash Scripts/uninstall_freesnitch.sh`, a file that exists only in a
 # source checkout, so anyone who installed from the DMG was given instructions
 # they could not follow.
-PRIVILEGED_UNINSTALL="$ROOT/Sources/GUI/App/PrivilegedUninstall.swift"
-UNINSTALL_VIEW="$ROOT/Sources/GUI/Views/UninstallView.swift"
+PRIVILEGED_UNINSTALL="$CODE_ROOT/Sources/GUI/App/PrivilegedUninstall.swift"
+UNINSTALL_VIEW="$CODE_ROOT/Sources/GUI/Views/UninstallView.swift"
 [[ -f "$PRIVILEGED_UNINSTALL" ]] || fail "missing $PRIVILEGED_UNINSTALL"
 # Comments stripped first: the view's own documentation explains why it no
 # longer names that script, and checking the raw file matched that prose.
@@ -1351,7 +1425,7 @@ require_text "$UNINSTALL_VIEW" "trashApplicationBundle" \
 # it. macOS keeps a system extension record alive while a
 # NEFilterProviderConfiguration still references it, which is why uninstalling
 # always ended in "waiting to uninstall on reboot".
-SYSEXT_MANAGER="$ROOT/Sources/GUI/App/SystemExtensionManager.swift"
+SYSEXT_MANAGER="$CODE_ROOT/Sources/GUI/App/SystemExtensionManager.swift"
 require_text "$SYSEXT_MANAGER" "removeFromPreferences" \
   "the uninstall path does not remove the content filter configuration"
 # Look at the whole function body, and check for the WRONG call rather than
@@ -1407,7 +1481,7 @@ require_text "$ALERT_RULE" "hasDestination" \
 if rg -n "remoteHost: (alert\\.connection\\.)?remoteHost," "$APP_STATE" "$ALERT_RULE" >/dev/null; then
   fail "the remembered alert rule passes the raw connection host, which is empty for an address-only destination"
 fi
-if rg -n "SharedRuleBridge\\.Snapshot\\(" "$ROOT/Sources/GUI" >/dev/null; then
+if rg -n "SharedRuleBridge\\.Snapshot\\(" "$CODE_ROOT/Sources/GUI" >/dev/null; then
   fail "the GUI constructs a sendable SharedRuleBridge.Snapshot instead of using the helper"
 fi
 if rg -n "SharedRuleBridge\\.Snapshot\\(" "$CLI_RUNNER" "$CLI_HELPER" >/dev/null; then
@@ -1611,8 +1685,8 @@ fi
 # invariant that matters most is therefore: the bundle-absence path may only
 # stop enforcing, never unregister anything and never delete anything, and it
 # may never conclude a removal from a single unlucky read.
-BUNDLE_WATCHER="$ROOT/Sources/Helper/BundlePresenceWatcher.swift"
-HELPER_MAIN="$ROOT/Sources/Helper/main.swift"
+BUNDLE_WATCHER="$CODE_ROOT/Sources/Helper/BundlePresenceWatcher.swift"
+HELPER_MAIN="$CODE_ROOT/Sources/Helper/main.swift"
 [[ -f "$BUNDLE_WATCHER" ]] || fail "missing $BUNDLE_WATCHER"
 [[ -f "$HELPER_MAIN" ]] || fail "missing $HELPER_MAIN"
 
@@ -1661,7 +1735,7 @@ for ingest in 'func addRule(ruleJSON' 'func reloadRules(rulesJSON' 'func replace
   swift_function_body "$HELPER" "$ingest" | read_all_then grep -Fq 'rejectionReason(for:' \
     || fail "the helper's $ingest path skips rule content validation"
 done
-swift_function_body "$ROOT/Sources/Shared/RuleExportFormat.swift" 'public static func validate(_ rules: [Rule])' \
+swift_function_body "$CODE_ROOT/Sources/Shared/RuleExportFormat.swift" 'public static func validate(_ rules: [Rule])' \
   | read_all_then grep -Fq 'rule.nameOnlyRejectionReason' \
   || fail "rule import accepts an enabled rule that names its app only by name"
 # A rule remembered from a DNS alert carries the proxy's name and no app, and
