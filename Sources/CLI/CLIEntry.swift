@@ -19,7 +19,7 @@ struct FreeSnitchCLI {
                                            cliBundleIdentifier: AppConstants.bundleIdCLI)
                 if arguments.contains("--json") {
                     let envelope = CLIEnvelope<VersionReport>.success(command: "version", data: report)
-                    CLIOutput.writeStdout(CLIOutput.encode(envelope))
+                    CLIOutput.writeEnvelope(envelope)
                 } else {
                     CLIOutput.writeStdout(Data("FreeSnitch CLI \(report.version) (\(report.cliBundleIdentifier))\n".utf8))
                 }
