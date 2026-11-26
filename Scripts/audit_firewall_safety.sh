@@ -1384,7 +1384,7 @@ fi
 # so rules left in it came back after FreeSnitch was gone (issue #192). The one
 # mention of the file allowed is that write of a comment-only anchor; it is
 # removed before the check, so any other use of the path still fails.
-EMPTY_ANCHOR_WRITE="[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; "
+EMPTY_ANCHOR_WRITE="if [ -f /etc/pf.anchors/puresnitch ]; then /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch || exit 81; fi; "
 privileged_uninstall_code="$(rg -v '^[[:space:]]*//' "$PRIVILEGED_UNINSTALL")"
 if printf '%s\n' "${privileged_uninstall_code//"$EMPTY_ANCHOR_WRITE"/}" | read_all_then rg -q 'pfctl -d|rm -f /etc/pf|rm -rf /etc/pf|pf\.anchors|/private/etc/pf'; then
   fail "the privileged uninstall disables pf globally or removes the shared anchor file"
@@ -1396,6 +1396,15 @@ if printf '%s\n' "$privileged_uninstall_code" | rg -o 'pfctl[^;"]*' | read_all_t
 fi
 require_text "$PRIVILEGED_UNINSTALL" "pfctl -a puresnitch -F all" \
   "the privileged uninstall no longer flushes the FreeSnitch anchor"
+# A failed flush must stop the uninstall, not be hidden by a later command
+# that worked: the steps used to be joined by bare semicolons, so the script
+# reported success with rules still loaded and the app went to the Trash
+# (#271). Every step stops the script with its own exit code.
+for step in "pfctl -a puresnitch -F all >/dev/null 2>&1 || exit 82; " "pfctl -a puresnitch -f /dev/null >/dev/null 2>&1 || exit 83; " \
+            "/bin/rm -f /usr/local/bin/freesnitch || exit 84; fi; " "/bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' || exit 85"; do
+  [[ "$(rg -F -c "$step" "$PRIVILEGED_UNINSTALL" || true)" == 2 ]] \
+    || fail "a privileged uninstall form no longer stops when a step fails: $step"
+done
 # Both scripts (keep or remove the database) must start with that write, so
 # it runs before the flush and before anything is removed.
 [[ "$(rg -F -c "do shell script \"$EMPTY_ANCHOR_WRITE" "$PRIVILEGED_UNINSTALL" || true)" == 2 ]] \

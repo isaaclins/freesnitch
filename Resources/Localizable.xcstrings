@@ -15067,6 +15067,56 @@
           }
         }
       }
+    },
+    "FreeSnitch couldn’t empty the firewall rules file macOS loads at startup." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось очистить файл правил брандмауэра, который macOS загружает при запуске."
+          }
+        }
+      }
+    },
+    "FreeSnitch couldn’t clear its firewall rules from the packet filter." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось убрать свои правила брандмауэра из пакетного фильтра."
+          }
+        }
+      }
+    },
+    "FreeSnitch couldn’t remove the freesnitch command from /usr/local/bin." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось удалить команду freesnitch из /usr/local/bin."
+          }
+        }
+      }
+    },
+    "FreeSnitch couldn’t delete its connection history." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось удалить историю соединений."
+          }
+        }
+      }
+    },
+    "FreeSnitch couldn’t delete its rules database." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось удалить базу данных правил."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

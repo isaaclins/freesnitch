@@ -514,6 +514,99 @@ test_app_uninstall_removes_database_companions() {
   expect_absent "$keep_form" "freesnitch.sqlite" "the app's keep-database uninstall touches the policy database"
 }
 
+# --- 4f. a failed step stops the app's uninstall ---------------------------
+#
+# The app's two forms used to join their steps with bare semicolons, so the
+# script's exit status was the last command's: a pf flush that failed was
+# hidden by a removal that worked, the uninstall reported success and the app
+# went to the Trash with rules still loaded (#271). Each form runs here, as
+# /bin/sh would run it, against a fake root with a pfctl stub that fails.
+
+# The shell command inside one form, with every absolute path moved under a
+# fake root and pfctl replaced by a stub.
+app_uninstall_command() {
+  local form="$1" root="$2" pfctl="$3"
+  awk "/private static let $form = \"\"\"/,/^    \"\"\"\$/" "$ROOT/Sources/GUI/App/PrivilegedUninstall.swift" \
+    | sed -e '1d' -e '$d' -e 's/^    //' -e 's/ \\$//' | tr -d '\n' \
+    | sed -e 's/^do shell script "//' -e 's/" with administrator privileges$//' \
+          -e "s#/sbin/pfctl#$pfctl#g" \
+          -e "s#/etc/pf.anchors#$root/etc/pf.anchors#g" \
+          -e "s#/Library/Application Support#$root/Library/Application Support#g" \
+          -e "s#/usr/local/bin#$root/usr/local/bin#g" \
+          -e "s#/Applications/FreeSnitch.app#$root/Applications/FreeSnitch.app#g"
+}
+
+test_app_uninstall_stops_at_failed_step() {
+  local form failing root stubs cmd status expected
+  for form in keepDatabase removeDatabase; do
+    for failing in "-F all:82" "-f /dev/null:83"; do
+      root="$WORK/app-$form-${failing%%:*}/root"; root="${root// /_}"
+      stubs="$(dirname "$root")/stubs"
+      expected="${failing##*:}"
+      mkdir -p "$root/etc/pf.anchors" "$root/Library/Application Support/FreeSnitch/Insights" "$stubs"
+      printf 'pass out all\n' >"$root/etc/pf.anchors/puresnitch"
+      : >"$root/Library/Application Support/FreeSnitch/Insights/insights.sqlite"
+      printf 'fake policy database\n' >"$root/Library/Application Support/FreeSnitch/freesnitch.sqlite"
+      cat >"$stubs/pfctl" <<STUB
+#!/bin/sh
+printf 'pfctl %s\n' "\$*" >>"$stubs/stub.log"
+case "\$*" in *"${failing%%:*}"*) echo "pfctl: DIOCXBEGIN: Operation not permitted" >&2; exit 1 ;; esac
+exit 0
+STUB
+      chmod +x "$stubs/pfctl"
+      cmd="$(app_uninstall_command "$form" "$root" "$stubs/pfctl")"
+      [[ "$cmd" == *"$root/etc/pf.anchors/puresnitch"* && "$cmd" != *" /Library/"* && "$cmd" != *"/sbin/pfctl"* ]] \
+        || { fail "could not move the app's $form uninstall onto a fake root"; continue; }
+      status=0
+      /bin/sh -c "$cmd" 2>/dev/null || status=$?
+      [[ "$status" == "$expected" ]] \
+        || fail "the app's $form uninstall exited $status, not $expected, when 'pfctl ${failing%%:*}' failed"
+      [[ -f "$root/Library/Application Support/FreeSnitch/Insights/insights.sqlite" ]] \
+        || fail "the app's $form uninstall went on to delete Insights after the pf step failed"
+      [[ -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] \
+        || fail "the app's $form uninstall went on to delete the database after the pf step failed"
+      grep -q 'uninstalled, so it holds no rules' "$root/etc/pf.anchors/puresnitch" \
+        || fail "the app's $form uninstall did not empty the anchor file before flushing"
+    done
+    # And with every step working, the run succeeds and removes what it should.
+    root="$WORK/app-$form-ok/root"; stubs="$(dirname "$root")/stubs"
+    mkdir -p "$root/etc/pf.anchors" "$root/Library/Application Support/FreeSnitch/Insights" "$stubs"
+    : >"$root/Library/Application Support/FreeSnitch/Insights/insights.sqlite"
+    printf 'fake policy database\n' >"$root/Library/Application Support/FreeSnitch/freesnitch.sqlite"
+    printf '#!/bin/sh\nexit 0\n' >"$stubs/pfctl"; chmod +x "$stubs/pfctl"
+    cmd="$(app_uninstall_command "$form" "$root" "$stubs/pfctl")"
+    status=0
+    /bin/sh -c "$cmd" 2>/dev/null || status=$?
+    [[ "$status" == 0 ]] || fail "the app's $form uninstall failed ($status) with every step working"
+    [[ ! -e "$root/Library/Application Support/FreeSnitch/Insights" ]] \
+      || fail "the app's $form uninstall left Insights behind"
+    if [[ "$form" == removeDatabase ]]; then
+      [[ ! -e "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] \
+        || fail "the app's removeDatabase uninstall left the database behind"
+    else
+      [[ -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] \
+        || fail "the app's keepDatabase uninstall deleted the database"
+    fi
+  done
+  # A database that can't be deleted fails the run too, as the last step.
+  root="$WORK/app-db-fail/root"; stubs="$(dirname "$root")/stubs"
+  mkdir -p "$root/etc/pf.anchors" "$root/Library/Application Support/FreeSnitch" "$stubs"
+  printf '#!/bin/sh\nexit 0\n' >"$stubs/pfctl"; chmod +x "$stubs/pfctl"
+  printf 'fake policy database\n' >"$root/Library/Application Support/FreeSnitch/freesnitch.sqlite"
+  chmod 555 "$root/Library/Application Support/FreeSnitch"
+  cmd="$(app_uninstall_command removeDatabase "$root" "$stubs/pfctl")"
+  status=0
+  /bin/sh -c "$cmd" 2>/dev/null || status=$?
+  chmod 755 "$root/Library/Application Support/FreeSnitch"
+  [[ "$status" == 86 ]] || fail "the app's removeDatabase uninstall exited $status, not 86, when the database could not be deleted"
+  # Every exit code the scripts use names a step the Uninstall screen can show.
+  local code
+  for code in $(grep -o 'exit [0-9][0-9]*' "$ROOT/Sources/GUI/App/PrivilegedUninstall.swift" | awk '{print $2}' | sort -u); do
+    grep -Eq "case [a-zA-Z]+ = $code\$" "$ROOT/Sources/GUI/App/PrivilegedUninstall.swift" \
+      || fail "exit $code in the app's uninstall has no Step the screen can name"
+  done
+}
+
 # --- 5. no real system path may appear in any privileged call ---------------
 
 test_never_touched_the_real_system() {
@@ -540,6 +633,7 @@ test_refuses_symlinked_anchor
 test_command_link
 test_refuses_symlinked_database_companion
 test_app_uninstall_removes_database_companions
+test_app_uninstall_stops_at_failed_step
 test_never_touched_the_real_system
 
 if (( failures > 0 )); then
