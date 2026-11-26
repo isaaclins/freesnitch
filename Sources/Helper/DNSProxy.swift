@@ -341,7 +341,7 @@ final class DNSProxy: @unchecked Sendable {
                 started += try startListeners(on: host, port: p, primary: primary, generation: gen)
                 hosts.append("\(host)")
             } catch where !primary {
-                PSLog.error(PSLog.dns, "dns proxy could not create its listeners on \(host): \(error)")
+                PSLog.error(PSLog.dns, "dns proxy could not create its listeners on \(public: host): \(error: error)")
             } catch {
                 started.forEach { $0.cancel() }
                 _ = beginGeneration(running: false)
@@ -349,7 +349,7 @@ final class DNSProxy: @unchecked Sendable {
             }
         }
         self.listeners = started
-        PSLog.info(PSLog.dns, "dns proxy listening on \(hosts.joined(separator: " and ")) port \(port) (udp+tcp)")
+        PSLog.info(PSLog.dns, "dns proxy listening on \(public: hosts.joined(separator: " and ")) port \(public: port) (udp+tcp)")
     }
 
     func stop() {
@@ -388,7 +388,7 @@ final class DNSProxy: @unchecked Sendable {
                                      onPrimaryFailure: @escaping () -> Void) -> (NWListener.State) -> Void {
         return { state in
             guard case let .failed(err) = state else { return }
-            PSLog.error(PSLog.dns, "\(proto) listener on \(host) failed: \(err)")
+            PSLog.error(PSLog.dns, "\(public: proto) listener on \(public: host) failed: \(error: err)")
             if primary { onPrimaryFailure() }
         }
     }

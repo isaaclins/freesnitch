@@ -291,7 +291,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         preparedRules = PreparedRuleSet(rules: newValue?.rules ?? [])
     }
 
-    private func clearBootSnapshot(_ message: String) {
+    private func clearBootSnapshot(_ message: PSLogMessage) {
         snapshotLock.lock()
         let liveSnapshotAlreadyLoaded = snapshotOrigin == .live
         if !liveSnapshotAlreadyLoaded {
@@ -506,7 +506,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         guard !identityWaitTimeoutLogged else { return }
         identityWaitTimeoutLogged = true
         PSLog.error(PSLog.netext,
-                    "The bundle identity of \(conn.processPath) was not known after \(Int(identityWait)) s, so its flow was decided without it: bundle id rules did not apply to it. Logged once.")
+                    "The bundle identity of \(conn.processPath) was not known after \(public: Int(identityWait)) s, so its flow was decided without it: bundle id rules did not apply to it. Logged once.")
     }
 
     /// The compact evidence event, queued without waiting: trylock-only, a
@@ -610,7 +610,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
         PSLog.info(
             PSLog.netext,
-            "The \(skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(conn.pid)): \(reason), so only deny and ask rules for that id apply."
+            "The \(public: skipped.action.rawValue) rule for \(skipped.processBundleId ?? "") did not apply to \(conn.processPath) (pid \(public: conn.pid)): \(reason), so only deny and ask rules for that id apply."
         )
     }
 
@@ -634,7 +634,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         guard due else { return }
         PSLog.error(
             PSLog.netext,
-            "Ignored \(count) unusable remote hostnames so far, most recently '\(rejected)': \(PFHostValidator.rejectionReason(for: rejected)); the endpoint address is used instead."
+            "Ignored \(public: count) unusable remote hostnames so far, most recently '\(rejected)': \(public: PFHostValidator.rejectionReason(for: rejected)); the endpoint address is used instead."
         )
     }
 
@@ -655,14 +655,10 @@ final class FilterDataProvider: NEFilterDataProvider {
         // the tallies below undercount by at most that much. Say so rather than
         // presenting a short count as complete.
         let evictionNote = evicted == 0 ? "." : ", and \(evicted) were forgotten before closing, so the counts above are lower bounds."
+        // Counts and socket numbers only: nothing here names a host or an app.
         PSLog.error(
             PSLog.netext,
-            "\(flagged) flows had no destination at verdict time: IP and CIDR rules cannot be evaluated for them, "
-            + "only process, bundle, port, and direction rules apply. "
-            + "Latest such flow: socket family \(flow.socketFamily), type \(flow.socketType), "
-            + "protocol \(flow.socketProtocol), remote port \(port). "
-            + "Of those same flows, an address arrived later for \(lateAtVerdict) before close and \(lateAtClose) at close, "
-            + "while \(stillUnknown) closed with no address at all\(evictionNote)"
+            "\(public: flagged) flows had no destination at verdict time: IP and CIDR rules cannot be evaluated for them, only process, bundle, port, and direction rules apply. Latest such flow: socket family \(public: flow.socketFamily), type \(public: flow.socketType), protocol \(public: flow.socketProtocol), remote port \(public: port). Of those same flows, an address arrived later for \(public: lateAtVerdict) before close and \(public: lateAtClose) at close, while \(public: stillUnknown) closed with no address at all\(public: evictionNote)"
         )
     }
 
@@ -729,7 +725,7 @@ final class FilterDataProvider: NEFilterDataProvider {
         guard dropped > 0, Date().timeIntervalSince(lastObservationDropLog) >= 60 else { return }
         lastObservationDropLog = Date()
         PSLog.error(PSLog.netext,
-                    "insights observation queue dropped \(dropped) full-ring observations; contention drops are immediate and uncounted")
+                    "insights observation queue dropped \(public: dropped) full-ring observations; contention drops are immediate and uncounted")
     }
 
     // MARK: - Ask flow
@@ -947,9 +943,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                let watermark = SharedRuleBridge.LivePolicyWatermark.read(from: watermarkURL),
                watermark.supersedes(decoded) {
                 clearBootSnapshot(
-                    "persisted boot policy (session \(decoded.epoch), generation \(decoded.generation)) is older than the last live policy "
-                    + "(session \(watermark.epoch), generation \(watermark.generation)), usually because the app's last save failed, "
-                    + "so it is not loaded and filtering will fail open until the app sends the current rules"
+                    "persisted boot policy (session \(public: decoded.epoch), generation \(public: decoded.generation)) is older than the last live policy (session \(public: watermark.epoch), generation \(public: watermark.generation)), usually because the app's last save failed, so it is not loaded and filtering will fail open until the app sends the current rules"
                 )
                 return
             }
@@ -977,7 +971,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             }
             PSLog.info(
                 PSLog.netext,
-                "boot policy snapshot loaded from persisted provider configuration: mode \(received.mode.rawValue), \(received.rules.count) rules"
+                "boot policy snapshot loaded from persisted provider configuration: mode \(public: received.mode.rawValue), \(public: received.rules.count) rules"
             )
         } catch {
             let status = SharedRuleBridge.SnapshotStatus.invalid(
@@ -996,7 +990,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 PSLog.info(PSLog.netext, "ignoring invalid boot policy snapshot because a trusted live GUI snapshot is already active")
                 return
             }
-            PSLog.error(PSLog.netext, status.message ?? "Network extension persisted boot policy was invalid.")
+            PSLog.error(PSLog.netext, "Network extension persisted boot policy was invalid. \(status.message ?? "")")
         }
     }
 
@@ -1013,7 +1007,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             do {
                 try watermark.write(to: url)
             } catch {
-                PSLog.error(PSLog.netext, "live policy watermark write failed: \(error.localizedDescription); a failed boot policy save cannot be detected at the next start")
+                PSLog.error(PSLog.netext, "live policy watermark write failed: \(error: error); a failed boot policy save cannot be detected at the next start")
             }
         }
     }
@@ -1052,7 +1046,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older helper session's snapshot.")
+                PSLog.error(PSLog.netext, "Network extension rejected an older helper session's snapshot. \(status.message ?? "")")
                 return status
             }
             if let current, received.generation < current.generation {
@@ -1068,7 +1062,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                     )
                     snapshotStatus = status
                     snapshotLock.unlock()
-                    PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older live rule snapshot.")
+                    PSLog.error(PSLog.netext, "Network extension rejected an older live rule snapshot. \(status.message ?? "")")
                     return status
                 }
             }
@@ -1086,7 +1080,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an invalid split-brain snapshot.")
+                PSLog.error(PSLog.netext, "Network extension rejected an invalid split-brain snapshot. \(status.message ?? "")")
                 return status
             }
 
@@ -1115,8 +1109,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 let askCount = accepted.rules.filter { $0.action == .ask }.count
                 let idempotentNote = decision == .idempotent ? " (idempotent)" : ""
                 PSLog.info(PSLog.netext,
-                           "filter snapshot received over XPC: session \(accepted.epoch), generation \(accepted.generation), mode \(accepted.mode.rawValue), "
-                           + "\(accepted.rules.count) rules (allow \(allowCount), deny \(denyCount), ask \(askCount))\(idempotentNote)")
+                           "filter snapshot received over XPC: session \(public: accepted.epoch), generation \(public: accepted.generation), mode \(public: accepted.mode.rawValue), \(public: accepted.rules.count) rules (allow \(public: allowCount), deny \(public: denyCount), ask \(public: askCount))\(public: idempotentNote)")
                 // Persistence is owned by the GUI through NEFilterManager. A
                 // live XPC update changes only this in-memory policy and never
                 // waits on disk, XPC, or another transport.
@@ -1130,7 +1123,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an invalid live snapshot.")
+                PSLog.error(PSLog.netext, "Network extension rejected an invalid live snapshot. \(status.message ?? "")")
                 return status
             case .rejectedOlderSession(let currentEpoch):
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
@@ -1142,7 +1135,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, status.message ?? "Network extension rejected an older helper session's snapshot.")
+                PSLog.error(PSLog.netext, "Network extension rejected an older helper session's snapshot. \(status.message ?? "")")
                 return status
             }
         } catch {
@@ -1152,7 +1145,7 @@ final class FilterDataProvider: NEFilterDataProvider {
             snapshotLock.lock()
             snapshotStatus = status
             snapshotLock.unlock()
-            PSLog.error(PSLog.netext, status.message ?? "Network extension received an invalid rule snapshot.")
+            PSLog.error(PSLog.netext, "Network extension received an invalid rule snapshot. \(status.message ?? "")")
             return status
         }
     }
@@ -1572,10 +1565,10 @@ final class BundleIdentifierCache: @unchecked Sendable {
             let kept = entry.plist?.bundleIdentifier.map { "keeps answering '\($0)'" }
                 ?? "has no bundle identifier from its Info.plist yet"
             PSLog.error(PSLog.netext,
-                        "Could not read the app bundle identity for \(path): \(reason). The app \(kept); retrying in \(Int(failureRetryInterval.rounded(.up))) s.")
+                        "Could not read the app bundle identity for \(path): \(reason). The app \(kept); retrying in \(public: Int(failureRetryInterval.rounded(.up))) s.")
         case .read(let metadata)? where (previous?.plistFailures ?? 0) > 0:
             PSLog.info(PSLog.netext,
-                       "App bundle identity for \(path) readable again after \(previous!.plistFailures) failed reads: \(metadata?.bundleIdentifier ?? "no bundle identifier").")
+                       "App bundle identity for \(path) readable again after \(public: previous!.plistFailures) failed reads: \(metadata?.bundleIdentifier ?? "no bundle identifier").")
         default:
             break
         }

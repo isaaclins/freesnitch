@@ -32,8 +32,8 @@ import os.log
 
 enum PSLog {
     static let netext = OSLog.disabled
-    static func error(_ log: OSLog, _ msg: String) {}
-    static func info(_ log: OSLog, _ msg: String) {}
+    static func error(_ log: OSLog, _ msg: PSLogMessage) {}
+    static func info(_ log: OSLog, _ msg: PSLogMessage) {}
 }
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -119,6 +119,6 @@ print("wrapped ios harness: all checks passed")
 SWIFT
 
 xcrun swiftc -swift-version 5 -O -o "$TMP/harness" \
-  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$ROOT/Sources/Shared/CodeSigningIdentity.swift" \
+  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$ROOT/Sources/Shared/CodeSigningIdentity.swift" "$ROOT/Sources/Shared/LogMessage.swift" \
   "$TMP/cache.swift" "$TMP/main.swift"
 "$TMP/harness" "$TMP/fixtures"

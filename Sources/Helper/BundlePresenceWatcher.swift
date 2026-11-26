@@ -53,9 +53,14 @@ struct BundleAbsenceEvidence: Equatable {
     }
 
     var summary: String {
+        logSummary.unredacted
+    }
+
+    /// The same summary for the system log, with the bundle path private (#264).
+    var logSummary: PSLogMessage {
         let formatter = ISO8601DateFormatter()
         let stamps = observations.map { formatter.string(from: $0) }.joined(separator: ", ")
-        return "bundle=\(bundlePath) absent_observations=\(count) span=\(Int(span))s observed_at=[\(stamps)]"
+        return "bundle=\(bundlePath) absent_observations=\(public: count) span=\(public: Int(span))s observed_at=[\(public: stamps)]"
     }
 }
 
@@ -344,9 +349,7 @@ final class HelperBundleWatchdog: @unchecked Sendable {
         lock.unlock()
         source.resume()
         PSLog.info(PSLog.helper,
-                   "bundle watchdog: watching \(probe.bundleURL?.path ?? "") every \(Int(Self.pollInterval))s; "
-                       + "\(BundleAbsenceTracker.requiredConsecutiveAbsences) separated absences over "
-                       + "\(Int(BundleAbsenceTracker.minimumAbsenceSpan))s are required before enforcement is stood down")
+                   "bundle watchdog: watching \(probe.bundleURL?.path ?? "") every \(public: Int(Self.pollInterval))s; \(public: BundleAbsenceTracker.requiredConsecutiveAbsences) separated absences over \(public: Int(BundleAbsenceTracker.minimumAbsenceSpan))s are required before enforcement is stood down")
     }
 
     func stop() {
@@ -371,9 +374,7 @@ final class HelperBundleWatchdog: @unchecked Sendable {
             // Logged BEFORE anything is acted on, so a wrong decision survives
             // in the log even if the action itself goes badly.
             PSLog.error(PSLog.helper,
-                        "AUDIT: the containing app bundle is gone; standing down enforcement. \(evidence.summary). "
-                            + "The launchd registration and the policy database are left untouched and the shared pf anchor file is emptied, not removed; "
-                            + "reinstalling FreeSnitch restores enforcement.")
+                        "AUDIT: the containing app bundle is gone; standing down enforcement. \(evidence.logSummary). The launchd registration and the policy database are left untouched and the shared pf anchor file is emptied, not removed; reinstalling FreeSnitch restores enforcement.")
             guard let action else {
                 PSLog.error(PSLog.helper, "AUDIT: no stand-down action is wired; enforcement was left as it was")
                 break
@@ -389,12 +390,12 @@ final class HelperBundleWatchdog: @unchecked Sendable {
             }
         case .accumulating(let count, let required):
             PSLog.info(PSLog.helper,
-                       "bundle watchdog: app bundle absent, observation \(count) of \(required); taking no action yet")
+                       "bundle watchdog: app bundle absent, observation \(public: count) of \(public: required); taking no action yet")
         case .standingBy(let reason):
             PSLog.debug(PSLog.helper, "bundle watchdog: standing by: \(reason)")
         case .tooSoon(let sinceLast):
             PSLog.debug(PSLog.helper,
-                        "bundle watchdog: absence seen \(Int(sinceLast))s after the previous one; not an independent observation")
+                        "bundle watchdog: absence seen \(public: Int(sinceLast))s after the previous one; not an independent observation")
         case .alreadyStoodDown:
             break
         }
