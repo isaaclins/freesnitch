@@ -1080,7 +1080,7 @@ final class CLIRunner {
         case "not-in-build": findings.append(DoctorFinding(id: "extension_approval", state: "ok", message: "This monitor-only build intentionally does not embed the network extension.", action: "Use the firewall build generated from project-netext.yml to diagnose per-process filtering.", exitCode: nil))
         case "approved": findings.append(DoctorFinding(id: "extension_approval", state: "ok", message: "The network extension is approved.", action: "No action needed.", exitCode: nil))
         case "not-approved": findings.append(DoctorFinding(id: "extension_approval", state: "problem", message: "The network extension is not approved or is not installed.", action: "Use a signed firewall build, activate FreeSnitch, and approve the extension in System Settings > Privacy & Security when macOS asks.", exitCode: CLIExitCode.extensionNotApproved.rawValue))
-        default: findings.append(DoctorFinding(id: "extension_approval", state: "unknown", message: "macOS did not provide a reliable network extension approval state.", action: "Run doctor from the signed app bundle on the firewall build and inspect System Settings > Privacy & Security.", exitCode: nil))
+        default: findings.append(DoctorFinding(id: "extension_approval", state: "unknown", message: (["macOS did not provide a reliable network extension approval state."] + (inspection.approvalDetail.isEmpty ? [] : [inspection.approvalDetail])).joined(separator: " "), action: "Run doctor from the signed app bundle on the firewall build and inspect System Settings > Privacy & Security.", exitCode: nil))
         }
 
         switch inspection.filterConfigurationState {

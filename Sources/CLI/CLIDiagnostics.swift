@@ -3,6 +3,8 @@ import Foundation
 struct ExtensionInspection {
     let report: ExtensionReport
     let approvalState: String
+    /// Why approval reads as it does; doctor shows it when approval is unknown (#255).
+    var approvalDetail: String = ""
     let filterConfigurationState: String
     let filterEnabledState: String
     let snapshotState: String
@@ -63,6 +65,7 @@ enum ExtensionInspector {
         )
         return ExtensionInspection(report: report,
                                    approvalState: system.state,
+                                   approvalDetail: system.detail,
                                    filterConfigurationState: filter.configuration,
                                    filterEnabledState: filter.enabled,
                                    snapshotState: snapshot.state,
@@ -98,10 +101,12 @@ enum SystemExtensionProbe {
         let lines = text.components(separatedBy: .newlines)
         let matchingLines = lines.filter { $0.contains(AppConstants.bundleIdNetExt) }
         guard !matchingLines.isEmpty else {
-            let detail = exitStatus == 0
-                ? "The FreeSnitch network extension is not listed as installed or approved."
-                : "The system extension listing did not contain FreeSnitch (exit status \(exitStatus))."
-            return SystemExtensionObservation(state: "not-approved", detail: detail)
+            // Only a listing that succeeded can show the extension is missing.
+            // A failed query proves nothing about approval (#255).
+            guard exitStatus == 0 else {
+                return SystemExtensionObservation(state: "unknown", detail: "The system extension approval query failed (systemextensionsctl exit status \(exitStatus)) and listed no FreeSnitch extension, so approval could not be determined.")
+            }
+            return SystemExtensionObservation(state: "not-approved", detail: "The FreeSnitch network extension is not listed as installed or approved.")
         }
 
         let statuses = matchingLines.map { $0.lowercased() }
