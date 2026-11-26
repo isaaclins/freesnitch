@@ -178,11 +178,13 @@ final class InsightsStore: @unchecked Sendable {
 
     /// Deletes the oldest slice of history. Returns false when nothing is left.
     ///
-    /// The newest batch of raw events is never trimmed (#579). Once a single
-    /// day fills the budget, the oldest raw events are that day's, and "raw
-    /// before its day's rollup" would otherwise delete the batch that was just
-    /// written, so recording would keep going and the last 14 days would show
-    /// nothing new. Past that point the day's rollups go instead.
+    /// The newest batch of raw events is never trimmed, unless nothing else
+    /// is left (#579). Once a single day fills the budget, the oldest raw
+    /// events are that day's, and "raw before its day's rollup" would
+    /// otherwise delete the batch that was just written, so recording would
+    /// keep going and the last 14 days would show nothing new. Past that point
+    /// the DNS answers of that day or older go, then the day's rollups, and
+    /// the newest batch only when nothing else is left.
     private func trimOldestLocked() throws -> Bool {
         // Raw events at or after this time are the newest batch and stay.
         var keepFrom: Double?
@@ -243,6 +245,18 @@ final class InsightsStore: @unchecked Sendable {
             }
             return true
         }
+        // Only the newest batch, DNS answers newer than its first event and
+        // rollups are left. Like everywhere else, the DNS answers go before
+        // the rollups of their own or a later day (#588), so a DNS flood with
+        // almost no connections never costs today's totals first.
+        if let oldestDNS,
+           oldestDay.map({ utcDay(for: Date(timeIntervalSince1970: oldestDNS)) <= $0 }) ?? true {
+            try executeLocked("""
+                DELETE FROM dns_mappings WHERE rowid IN
+                    (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
+                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
+            return true
+        }
         if let oldestDay {
             // At most a slice per table, so a day with very many rollups is
             // spread over several passes like the raw events.
@@ -257,16 +271,8 @@ final class InsightsStore: @unchecked Sendable {
             }
             return true
         }
-        // Only the newest batch and DNS answers newer than its first event
-        // are left. Never refuse every write over them: the oldest answers go
-        // first, then the newest batch itself.
-        if oldestDNS != nil {
-            try executeLocked("""
-                DELETE FROM dns_mappings WHERE rowid IN
-                    (SELECT rowid FROM dns_mappings ORDER BY observed_at LIMIT ?);
-                """) { statement in try self.bindInt(statement, index: 1, value: self.trimSliceRows) }
-            return true
-        }
+        // Never refuse every write over the newest batch: as a last resort
+        // it goes too.
         if oldestAnyRaw != nil {
             try executeLocked("""
                 DELETE FROM flow_observations WHERE rowid IN
