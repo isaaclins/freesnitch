@@ -60,11 +60,18 @@ enum UninstallCleanup {
     /// because `removeItem` returned: a folder with one locked file inside
     /// loses everything else and stays, and that must be reported, not
     /// dropped (#272). The check does not follow a symbolic link, so a link
-    /// that was removed is not mistaken for its target.
+    /// that was removed is not mistaken for its target, and only "no such
+    /// file" counts as gone: a path that can't even be looked at is reported.
     static func remove(_ targets: [URL], fileManager: FileManager = .default) -> [URL] {
         for target in targets {
             try? fileManager.removeItem(at: target)
         }
-        return targets.filter { (try? fileManager.attributesOfItem(atPath: $0.path)) != nil }
+        return targets.filter { !isGone($0) }
+    }
+
+    private static func isGone(_ url: URL) -> Bool {
+        var info = stat()
+        if lstat(url.path, &info) == 0 { return false }
+        return errno == ENOENT || errno == ENOTDIR
     }
 }

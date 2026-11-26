@@ -493,7 +493,7 @@ struct UninstallFlowSheet: View {
         } else if leftovers.helper != nil {
             failureHeadline(String(localized: "FreeSnitch couldn’t remove its background helper"))
         } else {
-            failureHeadline(String(localized: "FreeSnitch couldn’t delete some of your FreeSnitch files"))
+            failureHeadline(String(localized: "FreeSnitch couldn’t delete some of its files"))
         }
         Text("FreeSnitch isn’t filtering anything, and everything not listed here is removed.")
             .fixedSize(horizontal: false, vertical: true)
