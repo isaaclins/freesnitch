@@ -512,6 +512,10 @@ test_app_uninstall_removes_database_companions() {
       "the app's remove-database uninstall does not delete freesnitch.sqlite$suffix"
   done
   expect_absent "$keep_form" "freesnitch.sqlite" "the app's keep-database uninstall touches the policy database"
+  # A history folder that could not be deleted must fail the step, not be
+  # dropped by a following command whose success becomes the result (#272).
+  expect_contains "$remove_form" "/bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' && " \
+    "the app's remove-database uninstall goes on silently when the history could not be deleted"
 }
 
 # --- 4f. a failed step stops the app's uninstall ---------------------------
