@@ -47,13 +47,16 @@ enum PrivilegedUninstall {
 
     /// The same, plus the policy database. Separate constant rather than a
     /// flag spliced into a string, so both forms stay literal and auditable.
+    /// The database goes with its SQLite companion files: in WAL mode recent
+    /// writes live in `-wal` beside it until a checkpoint, so deleting only
+    /// the main file left policy records behind (#237).
     private static let removeDatabase = """
     do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
     /sbin/pfctl -a puresnitch -F all; \
     /sbin/pfctl -a puresnitch -f /dev/null; \
     if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
     /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'; \
-    /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite'" with administrator privileges
+    /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-wal' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-shm' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-journal'" with administrator privileges
     """
 
     /// Move the app bundle to the Trash instead of deleting it.

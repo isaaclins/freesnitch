@@ -16,7 +16,13 @@
 #   5. An unknown city degrades to the country centroid and is reported as
 #      country level, never presented as a precise place.
 #   6. A malformed, truncated, oversized or unreachable database leaves the
-#      previously loaded data intact and never crashes or hangs.
+#      previously loaded data intact, never crashes or hangs, and leaves no
+#      rejected download behind in the cache (issue #232).
+#  6b. The shipping HTTP fetcher stops an oversized response while it streams:
+#      an announced length over the ceiling is refused before anything is
+#      written, and an unannounced endless body is cut off at the ceiling.
+#      This runs against a loopback server inside the harness, never the
+#      internet.
 #   7. The text parser agrees with inet_pton across a wide address sample.
 #   8. Loading never blocks the caller and the ready callback always fires.
 #   9. Lookups are bounded: cost does not scale with the database, the search
@@ -101,6 +107,7 @@ CSV
 cat > "$TMP/verify.swift" <<'SWIFT'
 import Foundation
 import Darwin
+import Network
 
 final class Checks {
     private var failures: [String] = []
@@ -162,7 +169,9 @@ final class FixtureFetcher: @unchecked Sendable {
     }
 
     var fetcher: IPGeoCache.SourceFetcher {
-        { [self] url, destination in
+        // Deliberately ignores the ceiling, standing in for a fetcher that does
+        // not enforce it, so the cache's own check is exercised too.
+        { [self] url, destination, _ in
             lock.lock()
             fetchCount += 1
             let source = mapping[url]
@@ -185,6 +194,81 @@ final class FixtureFetcher: @unchecked Sendable {
     var count: Int {
         lock.lock(); defer { lock.unlock() }
         return fetchCount
+    }
+}
+
+/// A minimal HTTP/1.1 server on 127.0.0.1 so the real `httpFetcher` can be
+/// driven without the internet. It serves four paths: a small body, a body
+/// whose Content-Length is over any test ceiling, an endless body with no
+/// length at all, and a 404.
+final class LoopbackServer: @unchecked Sendable {
+    static let smallBody = 4096
+    static let announcedLength = 64 * 1024 * 1024
+    static let endlessLimit = 512 * 1024 * 1024
+    private let queue = DispatchQueue(label: "ipgeo.loopback")
+    private var listener: NWListener?
+    private let lock = NSLock()
+    private var endlessSent = 0
+
+    var endlessBytesSent: Int {
+        lock.lock(); defer { lock.unlock() }
+        return endlessSent
+    }
+
+    func start() -> UInt16? {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        guard let listener = try? NWListener(using: parameters) else { return nil }
+        self.listener = listener
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { state in
+            if case .ready = state { ready.signal() }
+        }
+        listener.newConnectionHandler = { [self] connection in
+            connection.start(queue: queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] data, _, _, _ in
+                let request = String(decoding: data ?? Data(), as: UTF8.self)
+                let path = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                respond(path, on: connection)
+            }
+        }
+        listener.start(queue: queue)
+        guard ready.wait(timeout: .now() + 10) == .success else { return nil }
+        return listener.port?.rawValue
+    }
+
+    func stop() { listener?.cancel() }
+
+    private func respond(_ path: String, on connection: NWConnection) {
+        switch path {
+        case "/small":
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: \(Self.smallBody)\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(head.utf8) + Data(repeating: 0x61, count: Self.smallBody),
+                            completion: .contentProcessed { _ in connection.cancel() })
+        case "/announced":
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: \(Self.announcedLength)\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(head.utf8), completion: .contentProcessed { [self] _ in
+                stream(on: connection, remaining: Self.announcedLength, counting: false)
+            })
+        case "/endless":
+            let head = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(head.utf8), completion: .contentProcessed { [self] _ in
+                stream(on: connection, remaining: Self.endlessLimit, counting: true)
+            })
+        default:
+            let head = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+
+    private func stream(on connection: NWConnection, remaining: Int, counting: Bool) {
+        guard remaining > 0 else { connection.cancel(); return }
+        let chunk = Data(repeating: 0x62, count: min(65536, remaining))
+        connection.send(content: chunk, completion: .contentProcessed { [self] error in
+            if error != nil { connection.cancel(); return }
+            if counting { lock.lock(); endlessSent += chunk.count; lock.unlock() }
+            stream(on: connection, remaining: remaining - chunk.count, counting: counting)
+        })
     }
 }
 
@@ -313,6 +397,9 @@ struct IPGeoHarness {
                           "\(label) must leave IPv6 answering too")
             checks.expect(fileSize(indexPath) == originalSize, "\(label) must not replace the installed index")
             checks.expect(cache.status.hasDatabase, "\(label) must not clear the loaded database")
+            let leftovers = ((try? FileManager.default.contentsOfDirectory(atPath: root + "/small")) ?? [])
+                .filter { $0.hasSuffix(".download") || $0.hasSuffix(".building") }
+            checks.expect(leftovers.isEmpty, "\(label) must not leave rejected downloads in the cache, found \(leftovers)")
         }
 
         fetcher.failureMessage = "simulated network unreachable"
@@ -359,6 +446,53 @@ struct IPGeoHarness {
         loadSynchronously(cache, force: true)
         expectStillWorking("an oversized database")
         fetcher.set(IPGeoCache.countrySource.url, to: path("countries.csv"))
+
+        // 6b. The shipping fetcher enforces the ceiling while bytes arrive.
+        let server = LoopbackServer()
+        guard let port = server.start() else {
+            FileHandle.standardError.write(Data("ipgeo harness: FAIL: the loopback server did not start\n".utf8))
+            exit(1)
+        }
+        let base = "http://127.0.0.1:\(port)"
+        let ceiling = 1024 * 1024
+        let downloadDirectory = root + "/http"
+        try? FileManager.default.createDirectory(atPath: downloadDirectory, withIntermediateDirectories: true)
+        let target = URL(fileURLWithPath: downloadDirectory + "/source.download")
+
+        let small = IPGeoCache.httpFetcher(base + "/small", target, ceiling)
+        checks.expect(small == nil, "a response under the ceiling must download, got \(small ?? "nil")")
+        checks.expect(fileSize(target.path) == LoopbackServer.smallBody,
+                      "a response under the ceiling must arrive whole, got \(fileSize(target.path)) bytes")
+        let exact = IPGeoCache.httpFetcher(base + "/small", target, LoopbackServer.smallBody)
+        checks.expect(exact == nil && fileSize(target.path) == LoopbackServer.smallBody,
+                      "a response exactly at the ceiling must download, got \(exact ?? "nil")")
+
+        let announced = IPGeoCache.httpFetcher(base + "/announced", target, ceiling)
+        checks.expect(announced?.contains("ceiling") == true,
+                      "an announced length over the ceiling must be refused, got \(announced ?? "nil")")
+        checks.expect(!FileManager.default.fileExists(atPath: target.path),
+                      "a refused announced download must leave no file behind")
+
+        let endlessStart = Date()
+        let endless = IPGeoCache.httpFetcher(base + "/endless", target, ceiling)
+        let endlessSeconds = Date().timeIntervalSince(endlessStart)
+        checks.expect(endless?.contains("ceiling") == true,
+                      "an unannounced body past the ceiling must be refused, got \(endless ?? "nil")")
+        checks.expect(!FileManager.default.fileExists(atPath: target.path),
+                      "a body cut off at the ceiling must leave no partial file behind")
+        // The server would send 512 MB. Stopping at the ceiling means it gets
+        // nowhere near that: only socket buffers past the 1 MB ceiling.
+        let sent = server.endlessBytesSent
+        checks.expect(sent < 64 * 1024 * 1024,
+                      "the transfer must stop at the ceiling, but the server delivered \(sent) of \(LoopbackServer.endlessLimit) bytes")
+        checks.expect(endlessSeconds < 30, String(format: "cutting off an endless body took %.1fs", endlessSeconds))
+        checks.note(String(format: "an endless body was cut off after the server sent %.1f MB of %d MB, in %.2fs",
+                           Double(sent) / 1_048_576, LoopbackServer.endlessLimit / 1_048_576, endlessSeconds))
+
+        let missing = IPGeoCache.httpFetcher(base + "/missing", target, ceiling)
+        checks.expect(missing?.contains("404") == true, "an HTTP error must be reported, got \(missing ?? "nil")")
+        checks.expect(!FileManager.default.fileExists(atPath: target.path), "an HTTP error must leave no file behind")
+        server.stop()
 
         // A corrupt index on disk must be rejected on open rather than mapped
         // and trusted.

@@ -346,7 +346,9 @@ still active (a record macOS keeps as "terminated waiting to uninstall on
 reboot" no longer counts), or while the privileged helper is still
 running from that bundle. `--remove-database` additionally deletes
 `/Library/Application Support/FreeSnitch/freesnitch.sqlite`, which holds every
-rule, profile and blocklist and can exceed 300 MB; without it that file is kept.
+rule, profile and blocklist and can exceed 300 MB, together with the
+`freesnitch.sqlite-wal`, `-shm` and `-journal` files SQLite keeps beside it;
+without it those files are kept.
 Only the shared `puresnitch` anchor is flushed, pf is never disabled globally,
 and the empty anchor file stays because `/etc/pf.conf` still references it.
 

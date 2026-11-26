@@ -28,6 +28,12 @@ readonly APP="${TEST_ROOT}/Applications/FreeSnitch.app"
 readonly SUPPORT="${TEST_ROOT}/Library/Application Support/FreeSnitch"
 readonly INSIGHTS="${SUPPORT}/Insights"
 readonly DATABASE="${SUPPORT}/freesnitch.sqlite"
+# SQLite keeps recent writes beside the database in WAL mode (RuleStore turns
+# it on), and a rollback journal can be left by an interrupted write. They hold
+# policy records too, so removing the database removes them with it (#237).
+readonly DATABASE_WAL="${DATABASE}-wal"
+readonly DATABASE_SHM="${DATABASE}-shm"
+readonly DATABASE_JOURNAL="${DATABASE}-journal"
 readonly HELPER_PLIST="${APP}/Contents/Library/LaunchDaemons/${HELPER_LABEL}.plist"
 readonly PF_ANCHOR="${TEST_ROOT}/etc/pf.anchors/puresnitch"
 # The `freesnitch` command link Settings > Command Line installs (#423), and
@@ -53,7 +59,8 @@ the app while macOS still holds a record for the extension. Deactivation
 usually completes only after a restart.
 
   --yes                Do not prompt for confirmation.
-  --remove-database    Also delete freesnitch.sqlite, which holds your rules,
+  --remove-database    Also delete freesnitch.sqlite (and its -wal, -shm and
+                       -journal files), which holds your rules,
                        profiles and blocklists and the record of every
                        connection FreeSnitch has seen. It can exceed 300 MB. Without
                        this flag the database is kept and a later reinstall
@@ -153,7 +160,7 @@ assert_exact_path() {
   local path="$1"
   [[ -n "$path" && "$path" == /* ]] || die "refusing a non-absolute path: $path"
   case "$path" in
-    "$APP"|"$SUPPORT"|"$INSIGHTS"|"$DATABASE"|"$HELPER_PLIST"|"$PF_ANCHOR"|"$COMMAND_LINK") ;;
+    "$APP"|"$SUPPORT"|"$INSIGHTS"|"$DATABASE"|"$DATABASE_WAL"|"$DATABASE_SHM"|"$DATABASE_JOURNAL"|"$HELPER_PLIST"|"$PF_ANCHOR"|"$COMMAND_LINK") ;;
     *) die "refusing an unexpected uninstall path: $path" ;;
   esac
 }
@@ -189,17 +196,28 @@ safe_remove_directory() {
   fi
 }
 
+# The database and every SQLite companion file of it. All are checked before
+# any is removed, so a refusal never leaves the database half deleted.
 safe_remove_database() {
-  local path="$DATABASE"
-  assert_exact_path "$path"
-  [[ "$path" == "$DATABASE" ]] || die "refusing to remove a non-removable path: $path"
-  [[ -L "$path" ]] && die "refusing to remove a symlink: $path"
-  if [[ -e "$path" ]]; then
-    run_privileged rm -f -- "$path"
-    log "Removed $path"
+  local path
+  local -a paths=("$DATABASE" "$DATABASE_WAL" "$DATABASE_SHM" "$DATABASE_JOURNAL")
+  for path in "${paths[@]}"; do
+    assert_exact_path "$path"
+    [[ "$path" == "$DATABASE"* ]] || die "refusing to remove a non-removable path: $path"
+    [[ -L "$path" ]] && die "refusing to remove a symlink: $path"
+  done
+  if [[ -e "$DATABASE" ]]; then
+    run_privileged rm -f -- "$DATABASE"
+    log "Removed $DATABASE"
   else
-    log "Path already absent: $path"
+    log "Path already absent: $DATABASE"
   fi
+  for path in "$DATABASE_WAL" "$DATABASE_SHM" "$DATABASE_JOURNAL"; do
+    if [[ -e "$path" ]]; then
+      run_privileged rm -f -- "$path"
+      log "Removed $path"
+    fi
+  done
 }
 
 # Only a symlink to the tool inside the app is FreeSnitch's. Anything else at
