@@ -106,7 +106,7 @@ final class Fetcher: @unchecked Sendable {
     var failure: String?
     var count = 0
     var fetcher: IPGeoCache.SourceFetcher {
-        { [self] url, destination in
+        { [self] url, destination, _ in
             lock.lock(); count += 1
             let source = mapping[url]; let failure = failure
             lock.unlock()

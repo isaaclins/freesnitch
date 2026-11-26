@@ -179,11 +179,12 @@ public final class IPASNCache: @unchecked Sendable {
         for source in Self.sources {
             let destination = cacheDirectory.appendingPathComponent(source.fileName + ".download")
             try? fileManager.removeItem(at: destination)
-            if let failure = fetcher(source.url, destination) {
-                try? fileManager.removeItem(at: destination)
+            // Tracked before the fetch, so a rejected or partial download is
+            // removed on every exit path.
+            downloaded.append(destination)
+            if let failure = fetcher(source.url, destination, source.maxBytes) {
                 throw IPGeoCache.GeoError("\(source.fileName): \(failure)")
             }
-            downloaded.append(destination)
             guard let size = try? fileManager.attributesOfItem(atPath: destination.path)[.size] as? Int, size > 0 else {
                 throw IPGeoCache.GeoError("\(source.fileName): the download produced no readable file")
             }
