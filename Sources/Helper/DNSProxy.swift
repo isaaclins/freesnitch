@@ -434,11 +434,7 @@ final class DNSProxy: @unchecked Sendable {
                 let payload = buf.subdata(in: 2..<(2+len))
                 buf.removeSubrange(0..<(2+len))
                 self.process(payload: payload, isTCP: true) { reply in
-                    guard let reply else { return }
-                    var framed = Data()
-                    framed.append(UInt8((reply.count >> 8) & 0xff))
-                    framed.append(UInt8(reply.count & 0xff))
-                    framed.append(reply)
+                    guard let reply, let framed = DNSWire.tcpFrame(reply, for: payload) else { return }
                     conn.send(content: framed, completion: .contentProcessed { _ in })
                 }
             }
@@ -521,7 +517,10 @@ final class DNSProxy: @unchecked Sendable {
         req.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")
         req.setValue("application/dns-message", forHTTPHeaderField: "Accept")
         req.httpBody = payload
-        let task = URLSession.shared.dataTask(with: req) { data, response, error in
+        // The body is collected with a ceiling of one DNS message (#249), so a
+        // resolver that sends more is cut off while it streams instead of
+        // being buffered in full.
+        BoundedDoH.shared.send(req) { data, response, error in
             switch Self.upstreamAnswer(data: data, response: response, error: error, query: payload) {
             case .answer(let answer):
                 // The name was allowed, but the answer may lead to a name
@@ -546,7 +545,6 @@ final class DNSProxy: @unchecked Sendable {
                 reply(DNSWire.servFailResponse(for: payload))
             }
         }
-        task.resume()
     }
 
     enum UpstreamAnswer: Equatable {
@@ -564,10 +562,109 @@ final class DNSProxy: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else { return .failed("no HTTP response") }
         guard (200..<300).contains(http.statusCode) else { return .failed("HTTP \(http.statusCode)") }
         guard let data, !data.isEmpty else { return .failed("HTTP \(http.statusCode) with an empty body") }
+        guard data.count <= DNSWire.maxMessageBytes else {
+            return .failed("HTTP \(http.statusCode) body of \(data.count) bytes is larger than a DNS message can be")
+        }
         guard let answer = DNSWire.validatedResponse(data, for: query) else {
             return .failed("HTTP \(http.statusCode) body of \(data.count) bytes is not a DNS reply to the query")
         }
         return .answer(answer)
+    }
+}
+
+/// DoH exchanges whose response body is capped at one DNS message (#249).
+///
+/// `URLSession.dataTask(with:completionHandler:)` holds the whole body in
+/// memory before the handler sees any of it, whatever its size. Here every
+/// chunk is counted as it arrives: a response that announces or delivers more
+/// than `maxBytes` is cancelled at that point and completes with an
+/// `oversizedResponse` error, which the proxy answers with SERVFAIL.
+final class BoundedDoH: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    static let shared = BoundedDoH(maxBytes: DNSWire.maxMessageBytes)
+
+    struct OversizedResponse: LocalizedError {
+        let maxBytes: Int
+        var errorDescription: String? { "the response is larger than \(maxBytes) bytes, the most a DNS message can be" }
+    }
+
+    typealias Completion = (Data?, URLResponse?, Error?) -> Void
+
+    private final class Exchange {
+        let completion: Completion
+        var body = Data()
+        var response: URLResponse?
+        var failure: Error?
+        init(completion: @escaping Completion) { self.completion = completion }
+    }
+
+    let maxBytes: Int
+    private let lock = NSLock()
+    private var exchanges: [Int: Exchange] = [:]
+    private lazy var session: URLSession = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.name = "io.isaaclins.freesnitch.dns.doh"
+        return URLSession(configuration: .ephemeral, delegate: self, delegateQueue: queue)
+    }()
+
+    init(maxBytes: Int) {
+        self.maxBytes = maxBytes
+    }
+
+    /// Sends `request`; `completion` runs exactly once, on the session's
+    /// delegate queue, with the body collected so far, the response and the
+    /// error that ended the exchange.
+    func send(_ request: URLRequest, completion: @escaping Completion) {
+        lock.lock()
+        let task = session.dataTask(with: request)
+        exchanges[task.taskIdentifier] = Exchange(completion: completion)
+        lock.unlock()
+        task.resume()
+    }
+
+    private func exchange(for task: URLSessionTask) -> Exchange? {
+        lock.lock(); defer { lock.unlock() }
+        return exchanges[task.taskIdentifier]
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let exchange = exchange(for: dataTask) else { completionHandler(.cancel); return }
+        exchange.response = response
+        // A resolver that says up front it will send too much is refused
+        // before a single body byte is read.
+        if response.expectedContentLength > Int64(maxBytes) {
+            exchange.failure = OversizedResponse(maxBytes: maxBytes)
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let exchange = exchange(for: dataTask), exchange.failure == nil else { return }
+        // Counted before appending, so the buffer never grows past the
+        // ceiling even when the length was not announced or was a lie.
+        guard data.count <= maxBytes - exchange.body.count else {
+            exchange.failure = OversizedResponse(maxBytes: maxBytes)
+            exchange.body = Data()
+            dataTask.cancel()
+            return
+        }
+        exchange.body.append(data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let exchange = exchanges.removeValue(forKey: task.taskIdentifier)
+        lock.unlock()
+        guard let exchange else { return }
+        if let failure = exchange.failure {
+            exchange.completion(nil, exchange.response, failure)
+        } else {
+            exchange.completion(exchange.body, exchange.response ?? task.response, error)
+        }
     }
 }
 
@@ -587,6 +684,28 @@ final class DNSStats: @unchecked Sendable {
 
 enum DNSWire {
     struct Question { let name: String; let type: UInt16; let cls: UInt16 }
+
+    /// The largest DNS message there can be: DNS over TCP carries each one
+    /// behind a two byte length (RFC 1035 section 4.2.2), and a UDP payload
+    /// is smaller still.
+    static let maxMessageBytes = 65_535
+
+    /// `reply` behind its two byte TCP length prefix. A reply that does not
+    /// fit the prefix becomes SERVFAIL for `query` instead, so the client
+    /// never gets a length that does not match the bytes after it (#249).
+    static func tcpFrame(_ reply: Data, for query: Data) -> Data? {
+        let message: Data
+        if reply.count <= maxMessageBytes {
+            message = reply
+        } else if let servFail = servFailResponse(for: query), servFail.count <= maxMessageBytes {
+            message = servFail
+        } else {
+            return nil
+        }
+        var framed = Data([UInt8(message.count >> 8), UInt8(message.count & 0xff)])
+        framed.append(message)
+        return framed
+    }
 
     static func firstQuestion(_ data: Data) -> Question? {
         guard data.count > 12 else { return nil }
