@@ -49,7 +49,7 @@ enum RuleMutationBatch {
                 for rest in ids[(index + 1)...] {
                     outcome.failed.append(RuleMutationFailure(
                         id: rest,
-                        message: "Not attempted: the helper stopped answering before this rule was reached."))
+                        message: "Not attempted: the helper could not be used any more before this rule was reached."))
                 }
                 break
             }
@@ -57,8 +57,31 @@ enum RuleMutationBatch {
         return outcome
     }
 
-    /// The command's answer. `sync` is nil when no snapshot was read because
-    /// nothing changed; `syncError` is set when reading it failed.
+    /// Hands the helper's new rules to the extension after the batch. A
+    /// failure here must not hide which rules already changed, so it is
+    /// returned next to them instead of thrown. Nothing is read when nothing
+    /// changed, or when the helper already stopped answering.
+    static func sync<Snapshot>(after outcome: RuleMutationOutcome,
+                               readSnapshot: () async throws -> Snapshot,
+                               deliver: (Snapshot) async -> (state: String, message: String?, generation: UInt64?))
+        async -> (sync: (state: String, message: String?, generation: UInt64?), error: CLIError?) {
+        guard !outcome.succeeded.isEmpty else { return (("not-needed", nil, nil), nil) }
+        guard outcome.interruption == nil else {
+            return (("not-checked", "The helper could not be used any more, so the changed rules were not sent to the network extension from here. Rerun the command for the failed IDs once the helper answers again.", nil), nil)
+        }
+        do {
+            let snapshot = try await readSnapshot()
+            return (await deliver(snapshot), nil)
+        } catch let error as CLIError {
+            return (("not-checked", "The rules changed in the helper, but their snapshot could not be read for the network extension: \(error.message)", nil), error)
+        } catch {
+            let wrapped = CLIError(.operationFailed, message: "The rules changed in the helper, but their snapshot could not be read: \(error.localizedDescription)")
+            return (("not-checked", wrapped.message, nil), wrapped)
+        }
+    }
+
+    /// The command's answer. `sync` is "not-needed" when nothing changed;
+    /// `syncError` is set when reading the snapshot failed.
     static func result(operation: String,
                        pastTense: String,
                        ids: [UUID],
@@ -80,8 +103,8 @@ enum RuleMutationBatch {
         if let stop = outcome.interruption {
             error = CLIError(stop.exitCode,
                              code: "rule_mutation_interrupted",
-                             message: "The helper stopped answering after \(outcome.succeeded.count) of \(ids.count) rules were changed: \(stop.message)",
-                             remediation: (stop.remediation.map { $0 + " " } ?? "") + "Then rerun the command for the IDs listed as failed.")
+                             message: "The command stopped after \(outcome.succeeded.count) of \(ids.count) rules were changed: \(stop.message)",
+                             remediation: (stop.remediation.map { $0 + " " } ?? "") + "Once the helper works again, rerun the command for the IDs listed as failed.")
         } else if !outcome.failed.isEmpty {
             error = CLIError(.operationFailed,
                              code: "rule_mutation_partial_failure",

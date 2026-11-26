@@ -109,6 +109,27 @@ struct Check {
         let clean = RuleMutationBatch.result(operation: "remove", pastTense: "Removed", ids: [a, b], outcome: all, sync: ("ready", nil, 7))
         expect(clean.exitCode == .success && clean.error == nil, "a clean batch must exit 0")
 
+        // The extension sync step, as CLIRunner runs it after the batch.
+        var reads = 0
+        func read() async throws -> Int { reads += 1; return 1 }
+        func deliver(_: Int) async -> (state: String, message: String?, generation: UInt64?) { ("ready", nil, 9) }
+        let interrupted = RuleMutationOutcome(succeeded: [a], failed: [RuleMutationFailure(id: b, message: "x")], interruption: gone)
+        let skipped = await RuleMutationBatch.sync(after: interrupted, readSnapshot: read, deliver: deliver)
+        expect(reads == 0 && skipped.sync.state == "not-checked" && skipped.error == nil,
+               "after an interruption the snapshot must not be read again")
+        let none = await RuleMutationBatch.sync(after: RuleMutationOutcome(), readSnapshot: read, deliver: deliver)
+        expect(reads == 0 && none.sync.state == "not-needed", "nothing changed: no snapshot is needed")
+        let delivered = await RuleMutationBatch.sync(after: all, readSnapshot: read, deliver: deliver)
+        expect(reads == 1 && delivered.sync.state == "ready" && delivered.sync.generation == 9 && delivered.error == nil,
+               "after a clean batch the snapshot must be read and delivered")
+        let unreadable = await RuleMutationBatch.sync(after: all, readSnapshot: { () async throws -> Int in throw gone }, deliver: deliver)
+        expect(unreadable.error?.exitCode == .helperUnreachable && unreadable.sync.state == "not-checked",
+               "a failed snapshot read must be returned, not thrown")
+        let afterUnreadable = RuleMutationBatch.result(operation: "remove", pastTense: "Removed", ids: [a, b], outcome: all,
+                                                       sync: unreadable.sync, syncError: unreadable.error)
+        expect(afterUnreadable.exitCode == .helperUnreachable && afterUnreadable.human.contains("Removed 2 of 2 rules."),
+               "a failed snapshot read must exit nonzero and still report the changes")
+
         guard failures.isEmpty else {
             failures.forEach { FileHandle.standardError.write(Data("cli partial mutation: FAIL: \($0)\n".utf8)) }
             exit(1)

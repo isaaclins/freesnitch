@@ -201,24 +201,11 @@ final class CLIRunner {
                                         syncError: syncError)
     }
 
-    /// Hands the helper's new rules to the extension after a multi-rule
-    /// command. A failure here must not hide which rules already changed, so it
-    /// is reported next to them instead of thrown.
     private func syncAfterMutation(_ outcome: RuleMutationOutcome,
                                    helper: CLIHelperClient) async -> ((state: String, message: String?, generation: UInt64?), CLIError?) {
-        guard !outcome.succeeded.isEmpty else { return (("not-needed", nil, nil), nil) }
-        guard outcome.interruption == nil else {
-            return (("not-checked", "The helper stopped answering, so the changed rules were not sent to the network extension from here. Rerun the command for the failed IDs once the helper answers again.", nil), nil)
-        }
-        do {
-            let snapshot = try await helper.authoritativeSnapshot()
-            return (await syncSnapshot(snapshot), nil)
-        } catch let error as CLIError {
-            return (("not-checked", "The rules changed in the helper, but their snapshot could not be read for the network extension: \(error.message)", nil), error)
-        } catch {
-            let wrapped = CLIError(.operationFailed, message: "The rules changed in the helper, but their snapshot could not be read: \(error.localizedDescription)")
-            return (("not-checked", wrapped.message, nil), wrapped)
-        }
+        await RuleMutationBatch.sync(after: outcome,
+                                     readSnapshot: { try await helper.authoritativeSnapshot() },
+                                     deliver: { await self.syncSnapshot($0) })
     }
 
     private func importRules(_ path: String) async throws -> CommandResult {
