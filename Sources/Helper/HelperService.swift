@@ -165,6 +165,9 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
     private let insights: InsightsStore?
     private let pf = PFManager()
+    /// Every enforcement on or off, and every direct pf install or flush,
+    /// runs under this one at a time (#248).
+    private let enforcement = EnforcementSwitch()
     /// Profiles are helper-owned: the coordinator decides which profile is
     /// active and the service is the only door into it from outside.
     private let profiles: ProfileCommandService
@@ -1052,37 +1055,21 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     func setEnforcementEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
         let requestedState = enabled ? "on" : "off"
         PSLog.error(PSLog.helper, "AUDIT: enforcement \(requestedState) requested")
-        if enabled {
-            do {
-                do {
-                    try pf.install(rules: dns.rules)
-                    clearPFError()
-                } catch {
-                    recordPFError(error)
-                    throw error
-                }
-                try dns.start(port: AppConstants.dnsProxyPort)
-                reply(true, nil)
-            } catch {
-                // A rollback that cannot empty the anchor leaves pf on, so it
-                // is recorded like a failed turn-off (issue #211).
-                do { try pf.uninstall() } catch let rollbackError { recordPFError(rollbackError) }
-                dns.stop()
-                reply(false, error.localizedDescription)
-            }
-        } else {
-            dns.stop()
-            do {
-                try pf.uninstall()
-                clearPFError()
-                reply(true, nil)
-            } catch {
-                // The old rules may still be in pf, so this is not "off":
-                // keep the error in status and tell the caller (issue #211).
-                recordPFError(error)
-                reply(false, error.localizedDescription)
-            }
-        }
+        let (ok, message) = enforcement.setEnabled(enabled, steps: enforcementSteps)
+        reply(ok, message)
+    }
+
+    /// What turning enforcement on and off does, in the helper. The ordering
+    /// and rollback live in `EnforcementSwitch`, which runs them one request
+    /// at a time (#248).
+    private var enforcementSteps: EnforcementSwitch.Steps {
+        EnforcementSwitch.Steps(
+            installPF: { [pf, dns] in try pf.install(rules: dns.rules) },
+            uninstallPF: { [pf] in try pf.uninstall() },
+            startDNS: { [dns] in try dns.start(port: AppConstants.dnsProxyPort) },
+            stopDNS: { [dns] in dns.stop() },
+            pfSucceeded: { [weak self] in self?.clearPFError() },
+            pfFailed: { [weak self] error in self?.recordPFError(error) })
     }
 
     func stopMonitoring(reply: @escaping (Bool, String?) -> Void) {
@@ -1223,38 +1210,47 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func installPF(reply: @escaping (Bool, String?) -> Void) {
         PSLog.error(PSLog.helper, "AUDIT: pf install requested")
-        do {
-            try pf.install(rules: dns.rules)
-            clearPFError()
-            reply(true, nil)
-        } catch {
-            recordPFError(error)
-            reply(false, error.localizedDescription)
+        let (ok, message) = enforcement.serialized { () -> (Bool, String?) in
+            do {
+                try pf.install(rules: dns.rules)
+                clearPFError()
+                return (true, nil)
+            } catch {
+                recordPFError(error)
+                return (false, error.localizedDescription)
+            }
         }
+        reply(ok, message)
     }
 
     func uninstallPF(reply: @escaping (Bool, String?) -> Void) {
         PSLog.error(PSLog.helper, "AUDIT: pf uninstall requested")
-        do {
-            try pf.uninstall()
-            clearPFError()
-            reply(true, nil)
-        } catch {
-            recordPFError(error)
-            reply(false, error.localizedDescription)
+        let (ok, message) = enforcement.serialized { () -> (Bool, String?) in
+            do {
+                try pf.uninstall()
+                clearPFError()
+                return (true, nil)
+            } catch {
+                recordPFError(error)
+                return (false, error.localizedDescription)
+            }
         }
+        reply(ok, message)
     }
 
     func flushAll(reply: @escaping (Bool, String?) -> Void) {
         PSLog.error(PSLog.helper, "AUDIT: firewall flush requested")
-        do {
-            try pf.uninstall()
-            clearPFError()
-            reply(true, nil)
-        } catch {
-            recordPFError(error)
-            reply(false, error.localizedDescription)
+        let (ok, message) = enforcement.serialized { () -> (Bool, String?) in
+            do {
+                try pf.uninstall()
+                clearPFError()
+                return (true, nil)
+            } catch {
+                recordPFError(error)
+                return (false, error.localizedDescription)
+            }
         }
+        reply(ok, message)
     }
 
     func recentBlocked(limit: Int, reply: @escaping (Data) -> Void) {
