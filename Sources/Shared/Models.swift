@@ -466,7 +466,9 @@ public struct HelperStatus: Codable, Sendable {
         let detail = failed
             .map { "\($0.transport.uppercased()) on \($0.address) failed (\($0.reason))" }
             .joined(separator: ", ")
-        let all = Set([DNSProxyAddress.ipv4, DNSProxyAddress.ipv6].flatMap { address in
+        // The proxy's two loopback addresses (DNSProxyAddress). Spelled out
+        // here because harnesses compile this file without that one.
+        let all = Set(["127.0.0.1", "::1"].flatMap { address in
             ["udp", "tcp"].map { "\($0) \(address)" }
         })
         let down = Set(failed.map { "\($0.transport) \($0.address)" })
