@@ -104,7 +104,7 @@ struct InsightsView: View {
                 // switch can't claim either state, so it waits for a read that
                 // works (#267).
                 .disabled(model.recordingEnabled == nil)
-                .help(model.recordingEnabled == nil
+                .help(model.recordingUnreadable
                       ? Text("FreeSnitch could not read whether history is being recorded.")
                       : Text("Record connection history. Rules and blocking are unaffected."))
 
@@ -1046,6 +1046,9 @@ final class InsightsViewModel: ObservableObject {
     /// nil while the helper hasn't said, or when it could not read the
     /// setting (#267). Never assumed to be on.
     @Published var recordingEnabled: Bool?
+    /// The helper answered, and the answer was that it couldn't read the
+    /// setting. Separate from nil so first load isn't shown as a failure.
+    @Published private(set) var recordingUnreadable = false
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var acceptMessage: String?
@@ -1081,7 +1084,9 @@ final class InsightsViewModel: ObservableObject {
         switch recordingEnabled {
         case true?: return String(localized: "\(source.explanation) Recording is on and runs in every mode.")
         case false?: return String(localized: "\(source.explanation) Recording is off and runs in every mode.")
-        case nil: return String(localized: "\(source.explanation) Whether recording is on could not be read.")
+        case nil: return recordingUnreadable
+            ? String(localized: "\(source.explanation) Whether recording is on could not be read.")
+            : source.explanation
         }
     }
 
@@ -1372,10 +1377,12 @@ final class InsightsViewModel: ObservableObject {
             guard let self else { return }
             guard let report else {
                 self.recordingEnabled = nil
+                self.recordingUnreadable = true
                 if let error, self.errorMessage == nil { self.errorMessage = error }
                 return
             }
             self.overview = report.overview
+            self.recordingUnreadable = false
             self.recordingEnabled = report.recordingEnabled
         }
     }
