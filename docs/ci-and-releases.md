@@ -153,7 +153,10 @@ Scripts/uninstall_puresnitch.sh
 
 The migration script requests deactivation and uninstall of the legacy
 system extension, unloads and removes the old helper LaunchDaemon, and removes
-`/Applications/PureSnitch.app`. It reports the old
+`/Applications/PureSnitch.app`. The plist and the app are only removed once
+`launchctl print` confirms the old helper is no longer loaded; if it is still
+loaded, or its state can't be read, the script stops, leaves both in place and
+says how to stop the helper by hand. It reports the old
 user Application Support directory and app-group container without deleting
 them. Pass `--remove-user-data` only when intentionally resetting that legacy
 state:

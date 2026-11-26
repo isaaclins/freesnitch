@@ -6,8 +6,35 @@ readonly TEAM_ID="BHAF4L4726"
 readonly OLD_APP_BUNDLE_ID="io.isaaclins.puresnitch"
 readonly OLD_NETEXT_BUNDLE_ID="io.isaaclins.puresnitch.netext"
 readonly OLD_HELPER_LABEL="io.isaaclins.puresnitch.helper"
-readonly OLD_APP="/Applications/PureSnitch.app"
-readonly OLD_DAEMON_PLIST="/Library/LaunchDaemons/${OLD_HELPER_LABEL}.plist"
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+# Scripts/test_uninstall_puresnitch.sh runs this script against a fake root
+# with stub tools. Outside a test root every path and tool is the real one.
+TEST_ROOT="${PURESNITCH_UNINSTALL_TEST_ROOT:-}"
+if [[ -n "$TEST_ROOT" ]]; then
+  [[ "$TEST_ROOT" == /* && "$TEST_ROOT" != */ && -d "$TEST_ROOT" ]] \
+    || die "the test root must be an existing absolute directory without a trailing slash: $TEST_ROOT"
+  case "$TEST_ROOT" in
+    /|/Applications|/Library|/System|/usr|/bin|/sbin|/etc|/var|/Users|/opt|/private)
+      die "refusing a system path as the test root: $TEST_ROOT"
+      ;;
+  esac
+  LAUNCHCTL="${PURESNITCH_LAUNCHCTL:-launchctl}"
+  SYSTEMEXTENSIONSCTL="${PURESNITCH_SYSTEMEXTENSIONSCTL:-systemextensionsctl}"
+  CONFIRM_DELAY=0
+else
+  LAUNCHCTL="launchctl"
+  SYSTEMEXTENSIONSCTL="systemextensionsctl"
+  CONFIRM_DELAY=1
+fi
+readonly TEST_ROOT LAUNCHCTL SYSTEMEXTENSIONSCTL CONFIRM_DELAY
+
+readonly OLD_APP="${TEST_ROOT}/Applications/PureSnitch.app"
+readonly OLD_DAEMON_PLIST="${TEST_ROOT}/Library/LaunchDaemons/${OLD_HELPER_LABEL}.plist"
 
 if [[ -z "${HOME:-}" || "${HOME:-}" != /* ]]; then
   printf 'ERROR: HOME must be a non-empty absolute path.\n' >&2
@@ -33,11 +60,6 @@ or Application Support directories.
 EOF
 }
 
-die() {
-  printf 'ERROR: %s\n' "$*" >&2
-  exit 1
-}
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --remove-user-data)
@@ -54,7 +76,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if (( EUID == 0 )); then
+if [[ -n "$TEST_ROOT" ]] || (( EUID == 0 )); then
   run_privileged() {
     "$@"
   }
@@ -106,9 +128,9 @@ remove_directory() {
 printf 'Removing the pre-FreeSnitch installation only.\n'
 printf 'FreeSnitch paths are never modified by this script.\n'
 
-if command -v systemextensionsctl >/dev/null 2>&1; then
+if command -v "$SYSTEMEXTENSIONSCTL" >/dev/null 2>&1; then
   printf 'Requesting uninstall of system extension %s.\n' "$OLD_NETEXT_BUNDLE_ID"
-  if run_privileged systemextensionsctl uninstall "$TEAM_ID" "$OLD_NETEXT_BUNDLE_ID" >/dev/null 2>&1; then
+  if run_privileged "$SYSTEMEXTENSIONSCTL" uninstall "$TEAM_ID" "$OLD_NETEXT_BUNDLE_ID" >/dev/null 2>&1; then
     printf 'Uninstall request accepted for %s; removal is not complete yet.\n' "$OLD_NETEXT_BUNDLE_ID"
   else
     printf 'systemextensionsctl cannot remove a system extension while System Integrity Protection is enabled; this is expected on a normal macOS installation.\n'
@@ -120,15 +142,60 @@ else
   printf 'systemextensionsctl is unavailable; no system extension was changed.\n'
 fi
 
+# What launchd says about the old helper right now: loaded, absent, or unknown
+# when launchctl could not be asked or gave an answer that says neither.
+HELPER_STATE=""
+read_helper_state() {
+  HELPER_STATE="unknown"
+  command -v "$LAUNCHCTL" >/dev/null 2>&1 || return 0
+  local output status
+  set +e
+  output="$(run_privileged "$LAUNCHCTL" print "system/${OLD_HELPER_LABEL}" 2>&1)"
+  status=$?
+  set -e
+  if (( status == 0 )); then
+    HELPER_STATE="loaded"
+  elif (( status == 113 )) || [[ "$output" == *"Could not find service"* ]]; then
+    HELPER_STATE="absent"
+  fi
+}
+
+# The plist and the app are what a user needs to find and stop a running root
+# daemon, so neither is removed until launchd confirms the helper is gone
+# (#262). A bootout can take a moment to finish, so a loaded answer is asked
+# again a few times; an unknown answer is never taken as stopped.
+require_helper_stopped() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    read_helper_state
+    [[ "$HELPER_STATE" == "loaded" ]] || break
+    if (( attempt < 5 )); then
+      sleep "$CONFIRM_DELAY"
+    fi
+  done
+  case "$HELPER_STATE" in
+    absent)
+      printf 'Confirmed LaunchDaemon %s is not loaded.\n' "$OLD_HELPER_LABEL"
+      ;;
+    loaded)
+      die "LaunchDaemon ${OLD_HELPER_LABEL} is still loaded, so ${OLD_DAEMON_PLIST} and ${OLD_APP} were left in place. Stop it with 'sudo launchctl bootout system/${OLD_HELPER_LABEL}', check that 'sudo launchctl print system/${OLD_HELPER_LABEL}' says it could not find the service, then run this script again."
+      ;;
+    *)
+      die "could not confirm that LaunchDaemon ${OLD_HELPER_LABEL} is stopped, so ${OLD_DAEMON_PLIST} and ${OLD_APP} were left in place. Check with 'sudo launchctl print system/${OLD_HELPER_LABEL}'. If it is still listed, stop it with 'sudo launchctl bootout system/${OLD_HELPER_LABEL}'. Once print says it could not find the service, run this script again."
+      ;;
+  esac
+}
+
 assert_old_path "$OLD_DAEMON_PLIST"
 printf 'Unloading LaunchDaemon %s.\n' "$OLD_HELPER_LABEL"
-if run_privileged launchctl bootout system "$OLD_DAEMON_PLIST"; then
-  printf 'LaunchDaemon unloaded from its plist.\n'
-elif run_privileged launchctl bootout "system/${OLD_HELPER_LABEL}"; then
-  printf 'LaunchDaemon unloaded by label.\n'
+if run_privileged "$LAUNCHCTL" bootout system "$OLD_DAEMON_PLIST"; then
+  printf 'launchctl accepted the unload from the plist.\n'
+elif run_privileged "$LAUNCHCTL" bootout "system/${OLD_HELPER_LABEL}"; then
+  printf 'launchctl accepted the unload by label.\n'
 else
-  printf 'LaunchDaemon was not loaded, or launchctl could not unload it.\n'
+  printf 'launchctl did not unload the LaunchDaemon; checking whether it is loaded at all.\n'
 fi
+require_helper_stopped
 if [[ -e "$OLD_DAEMON_PLIST" || -L "$OLD_DAEMON_PLIST" ]]; then
   run_privileged rm -f -- "$OLD_DAEMON_PLIST"
   printf 'Removed %s.\n' "$OLD_DAEMON_PLIST"
