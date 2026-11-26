@@ -14565,6 +14565,128 @@
           }
         }
       }
+    },
+    "The helper did not say why." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Служба не сообщила причину."
+          }
+        }
+      }
+    },
+    "Could not reach the FreeSnitch helper: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться со службой FreeSnitch: %@"
+          }
+        }
+      }
+    },
+    "this destination" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "этому адресу"
+          }
+        }
+      }
+    },
+    "%@ was allowed to reach %@ this time, but remembering the answer failed, so the next connection like it may be asked about again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ на этот раз разрешено подключиться к %2$@, но запомнить ответ не удалось, поэтому о следующем таком же соединении могут спросить снова."
+          }
+        }
+      }
+    },
+    "%@ was blocked from reaching %@ this time, but remembering the answer failed, so the next connection like it may be asked about again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ на этот раз запрещено подключаться к %2$@, но запомнить ответ не удалось, поэтому о следующем таком же соединении могут спросить снова."
+          }
+        }
+      }
+    },
+    "Your answer was not remembered" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш ответ не запомнен"
+          }
+        }
+      }
+    },
+    "Your last answer was not remembered" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш последний ответ не запомнен"
+          }
+        }
+      }
+    },
+    "%lld more answers were not remembered either." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more answer was not remembered either."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more answers were not remembered either."
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld ответ тоже не запомнен."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld ответа тоже не запомнены."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld ответов тоже не запомнены."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Ещё %lld ответа тоже не запомнены."
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

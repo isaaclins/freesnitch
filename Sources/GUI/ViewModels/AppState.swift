@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
     @Published var unconfirmedCount: Int = 0
     @Published var incomingCount: Int = 0
     @Published var pendingAlerts: [PendingAlert] = []
+    /// Remembered answers whose rule the helper did not save, shown in the
+    /// alert window until each is retried or dismissed (#246).
+    @Published var unsavedRememberedAnswers = UnsavedRememberedAnswers()
     @Published private(set) var firstContactAskedToday = 0
     @Published private(set) var knownContactsAllowedToday = 0
     /// Connections allowed because the question queue was full. This used to
@@ -848,14 +851,56 @@ final class AppState: ObservableObject {
             }
             return
         }
-        helper.addRule(rule) { [weak self] ok, message in
+        saveRememberedRule(UnsavedRememberedAnswer(processName: alert.connection.processName,
+                                                   destination: alert.connection.remoteHost.isEmpty
+                                                       ? alert.connection.remoteIP
+                                                       : alert.connection.remoteHost,
+                                                   allow: allow,
+                                                   rule: rule,
+                                                   reason: ""))
+    }
+
+    /// Saves the rule a remembered answer made. The alert has already closed
+    /// and the connection has its answer, so a save that fails is brought back
+    /// to the alert window with the reason, instead of only a log line in
+    /// Settings that nobody answering an alert would see (#246).
+    private func saveRememberedRule(_ answer: UnsavedRememberedAnswer) {
+        helper.addRule(answer.rule) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(message ?? String(localized: "unknown error"))"))
+                let reason = message.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? String(localized: "The helper did not say why.")
+                self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(reason)"))
+                self.unsavedRememberedAnswers.record(UnsavedRememberedAnswer(processName: answer.processName,
+                                                                             destination: answer.destination,
+                                                                             allow: answer.allow,
+                                                                             rule: answer.rule,
+                                                                             reason: reason))
+                // A refusal can come after the rule was stored ("saved but
+                // the firewall refused it"), so the Rules list is read again
+                // either way rather than guessed.
+                self.refreshRules()
                 return
             }
+            // A retry that worked clears its notice.
+            self.unsavedRememberedAnswers.take(id: answer.id)
             self.refreshRules()
         }
+    }
+
+    /// Sends the same rule again. It keeps its id, and the helper replaces a
+    /// rule with the same id, so a retry after a partial save cannot leave two.
+    func retryUnsavedRememberedAnswer(id: UUID) {
+        guard let answer = unsavedRememberedAnswers.beginRetry(id: id) else { return }
+        saveRememberedRule(answer)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(UnsavedRememberedAnswers.retryPatience))
+            self?.unsavedRememberedAnswers.endRetry(id: id)
+        }
+    }
+
+    func dismissUnsavedRememberedAnswer(id: UUID) {
+        unsavedRememberedAnswers.take(id: id)
     }
 
     func appendLog(level: String, message: String) {

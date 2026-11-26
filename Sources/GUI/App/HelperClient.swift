@@ -908,12 +908,29 @@ final class HelperClient: NSObject, ObservableObject {
             completion(false, String(localized: "Could not encode the rule within the single-rule transport limits."))
             return
         }
-        guard let proxy = remote else {
+        // `remote` swallows transport errors, so a helper that went away
+        // mid-call left this completion uncalled and a remembered alert answer
+        // looked saved (#246). The error is reported instead, exactly once.
+        let lock = NSLock()
+        var finished = false
+        let finish: (Bool, String?) -> Void = { ok, message in
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            lock.unlock()
+            Task { @MainActor in completion(ok, message) }
+        }
+        guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ error in
+            finish(false, String(localized: "Could not reach the FreeSnitch helper: \(error.sentence)"))
+        }) as? HelperProtocol else {
             completion(false, String(localized: "The FreeSnitch helper is not connected."))
             return
         }
         proxy.addRule(ruleJSON: data) { ok, message in
-            Task { @MainActor in completion(ok, message) }
+            finish(ok, message)
         }
     }
 
