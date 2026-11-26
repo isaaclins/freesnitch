@@ -1603,8 +1603,22 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                                           message: "\(base) Remembered \(remembered) with \(scope) scope in the \(storedProfile) profile.")
     }
 
+    /// Kept for apps from before #267; the app now reads the switch from the
+    /// overview report, which fails with the reason when the setting can't be
+    /// read. This reply has no room for a reason, so a failed read is logged
+    /// and answered as off, the same answer as a store that never opened,
+    /// rather than as on.
     func getInsightsRecordingEnabled(reply: @escaping (Bool) -> Void) {
-        reply(insights?.recordingEnabled ?? false)
+        guard let insights else {
+            reply(false)
+            return
+        }
+        do {
+            reply(try insights.recordingEnabled())
+        } catch {
+            PSLog.error(PSLog.helper, "Insights recording setting could not be read: \(error.localizedDescription)")
+            reply(false)
+        }
     }
 
     func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {

@@ -276,6 +276,16 @@
         }
       }
     },
+    "%@ Whether recording is on could not be read." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ Не удалось узнать, включена ли запись."
+          }
+        }
+      }
+    },
     "%@ wrote more than %lld bytes" : {
       "localizations" : {
         "ru" : {
@@ -6193,6 +6203,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "FreeSnitch не удалось передать правила"
+          }
+        }
+      }
+    },
+    "FreeSnitch could not read whether history is being recorded." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch не удалось узнать, записывается ли история."
           }
         }
       }

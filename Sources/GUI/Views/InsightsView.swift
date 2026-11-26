@@ -96,11 +96,17 @@ struct InsightsView: View {
             // A switch is named for what it does, not for the state it is in,
             // and deleting history is called deleting history. "Recording" and
             // "Purge…" were the developer's words for both (#136).
-            Toggle("Record history", isOn: Binding(get: { model.recordingEnabled },
+            Toggle("Record history", isOn: Binding(get: { model.recordingEnabled ?? false },
                                                    set: { model.setRecording($0) }))
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .help("Record connection history. Rules and blocking are unaffected.")
+                // Unknown is not on: when the helper can't read the setting the
+                // switch can't claim either state, so it waits for a read that
+                // works (#267).
+                .disabled(model.recordingEnabled == nil)
+                .help(model.recordingEnabled == nil
+                      ? Text("FreeSnitch could not read whether history is being recorded.")
+                      : Text("Record connection history. Rules and blocking are unaffected."))
 
             // The domains each app reached in this range, for an inventory or a
             // DNS filter elsewhere (#195). Every app, not just the loaded page.
@@ -1037,7 +1043,9 @@ final class InsightsViewModel: ObservableObject {
     @Published var reachingError: String?
     /// The Apps-tab destination whose apps the sheet is showing.
     @Published var sharedDestination: InsightsDestinationSummary?
-    @Published var recordingEnabled = true
+    /// nil while the helper hasn't said, or when it could not read the
+    /// setting (#267). Never assumed to be on.
+    @Published var recordingEnabled: Bool?
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var acceptMessage: String?
@@ -1070,9 +1078,11 @@ final class InsightsViewModel: ObservableObject {
     }
 
     var sourceNote: String {
-        recordingEnabled
-            ? String(localized: "\(source.explanation) Recording is on and runs in every mode.")
-            : String(localized: "\(source.explanation) Recording is off and runs in every mode.")
+        switch recordingEnabled {
+        case true?: return String(localized: "\(source.explanation) Recording is on and runs in every mode.")
+        case false?: return String(localized: "\(source.explanation) Recording is off and runs in every mode.")
+        case nil: return String(localized: "\(source.explanation) Whether recording is on could not be read.")
+        }
     }
 
     var namingNote: String {
@@ -1091,7 +1101,6 @@ final class InsightsViewModel: ObservableObject {
             loadDemoData()
             return
         }
-        refreshRecordingState()
         loadOverview()
         if section != .findings {
             findings = []
@@ -1356,16 +1365,18 @@ final class InsightsViewModel: ObservableObject {
 
     private func loadOverview() {
         guard let helper = state?.helper, let request = query(.overview, offset: 0) else { return }
-        helper.insightsReport(request) { [weak self] report, _ in
-            guard let self, let report else { return }
+        // The switch's state comes from this report: when the helper can't
+        // read the setting the report fails with the reason, and the switch
+        // shows that it doesn't know instead of showing on (#267).
+        helper.insightsReport(request) { [weak self] report, error in
+            guard let self else { return }
+            guard let report else {
+                self.recordingEnabled = nil
+                if let error, self.errorMessage == nil { self.errorMessage = error }
+                return
+            }
             self.overview = report.overview
             self.recordingEnabled = report.recordingEnabled
-        }
-    }
-
-    private func refreshRecordingState() {
-        state?.helper.queryInsightsRecordingEnabled { [weak self] enabled in
-            self?.recordingEnabled = enabled
         }
     }
 
@@ -1445,11 +1456,12 @@ final class InsightsViewModel: ObservableObject {
     // MARK: Actions
 
     func setRecording(_ enabled: Bool) {
+        let previous = recordingEnabled
         recordingEnabled = enabled
         state?.helper.setInsightsRecordingEnabled(enabled) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.recordingEnabled = !enabled
+                self.recordingEnabled = previous
                 self.errorMessage = message ?? String(localized: "The helper refused the recording change.")
                 return
             }

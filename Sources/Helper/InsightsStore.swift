@@ -32,8 +32,15 @@ final class InsightsStore: @unchecked Sendable {
         if let db { sqlite3_close(db) }
     }
 
-    var recordingEnabled: Bool {
-        queue.sync { (try? settingLocked("recording_enabled")) != "0" }
+    /// Whether history is being recorded. Only a missing setting means the
+    /// default (on); a failed read throws, so nobody is told recording is on
+    /// while the store cannot even answer the question (#267).
+    func recordingEnabled() throws -> Bool {
+        try queue.sync { try recordingEnabledLocked() }
+    }
+
+    private func recordingEnabledLocked() throws -> Bool {
+        try settingLocked("recording_enabled") != "0"
     }
 
     func setRecordingEnabled(_ enabled: Bool) throws {
@@ -47,7 +54,7 @@ final class InsightsStore: @unchecked Sendable {
     func record(_ observations: [FlowObservation]) throws {
         guard !observations.isEmpty else { return }
         try queue.sync {
-            guard try settingLocked("recording_enabled") != "0" else { return }
+            guard try recordingEnabledLocked() else { return }
             for observation in observations { try observation.validate() }
             try writeWithinBudgetLocked {
                 for observation in observations {
@@ -62,7 +69,7 @@ final class InsightsStore: @unchecked Sendable {
     func recordDNSMappings(_ mappings: [DNSMapping]) throws {
         guard !mappings.isEmpty else { return }
         try queue.sync {
-            guard try settingLocked("recording_enabled") != "0" else { return }
+            guard try recordingEnabledLocked() else { return }
             for mapping in mappings { try mapping.validate() }
             try writeWithinBudgetLocked {
                 for mapping in mappings { try self.upsertDNSMappingLocked(mapping) }
@@ -792,7 +799,7 @@ extension InsightsStore {
         try query.validate(now: now)
         return try queue.sync {
             let source = Self.source(for: query, now: now)
-            let recording = (try? settingLocked("recording_enabled")) != "0"
+            let recording = try recordingEnabledLocked()
             let page: (apps: [InsightsAppSummary],
                        destinations: [InsightsDestinationSummary],
                        unresolved: [InsightsUnresolvedDestination],
