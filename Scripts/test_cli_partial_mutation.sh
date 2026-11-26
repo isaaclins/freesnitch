@@ -103,7 +103,9 @@ struct Check {
         let all = RuleMutationOutcome(succeeded: [a, b], failed: [], interruption: nil)
         let snapshotFailed = RuleMutationBatch.result(operation: "remove", pastTense: "Removed", ids: [a, b], outcome: all,
                                                       sync: ("not-checked", "snapshot unreadable", nil), syncError: gone)
-        expect(snapshotFailed.exitCode == .helperUnreachable, "a failed snapshot read after the changes must exit nonzero")
+        // #257: the error says the changes were saved; the snapshot failure rides apart.
+        expect(snapshotFailed.exitCode == .operationFailed && snapshotFailed.error?.code == "snapshot_after_commit_failed",
+               "a failed snapshot read after the changes must exit nonzero as a saved change")
         expect(snapshotFailed.human.contains("Removed 2 of 2 rules."), "a failed snapshot read must still report the changes")
 
         let clean = RuleMutationBatch.result(operation: "remove", pastTense: "Removed", ids: [a, b], outcome: all, sync: ("ready", nil, 7))
@@ -127,7 +129,7 @@ struct Check {
                "a failed snapshot read must be returned, not thrown")
         let afterUnreadable = RuleMutationBatch.result(operation: "remove", pastTense: "Removed", ids: [a, b], outcome: all,
                                                        sync: unreadable.sync, syncError: unreadable.error)
-        expect(afterUnreadable.exitCode == .helperUnreachable && afterUnreadable.human.contains("Removed 2 of 2 rules."),
+        expect(afterUnreadable.error?.code == "snapshot_after_commit_failed" && afterUnreadable.human.contains("Removed 2 of 2 rules."),
                "a failed snapshot read must exit nonzero and still report the changes")
 
         guard failures.isEmpty else {

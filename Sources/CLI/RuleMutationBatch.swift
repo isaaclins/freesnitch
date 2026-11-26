@@ -13,6 +13,21 @@ struct RuleMutationOutcome {
 }
 
 enum RuleMutationBatch {
+    /// `extensionSync` when the rules were not sent to the extension from
+    /// here: the helper stopped answering, or its snapshot could not be read.
+    static let syncNotChecked = "not-checked"
+
+    /// The command error for a change the helper confirmed whose snapshot read
+    /// failed afterwards. Its own code, so a caller can tell "saved, do not
+    /// retry" from "nothing happened"; the snapshot error itself travels in
+    /// the report's `snapshotError` (#257).
+    static func savedButSnapshotFailed(_ snapshotError: CLIError) -> CLIError {
+        CLIError(.operationFailed,
+                 code: "snapshot_after_commit_failed",
+                 message: "The change was saved in the helper, but its policy snapshot could not be read afterwards: \(snapshotError.message)",
+                 remediation: "Do not repeat the command for the changes already saved. Run `freesnitch rules list` or `freesnitch status` to confirm them, and `freesnitch doctor` for the snapshot failure.")
+    }
+
     /// Errors that mean the helper can no longer be asked anything, so asking
     /// it about the next ID would only repeat the same failure.
     static func stopsTheBatch(_ error: CLIError) -> Bool {
@@ -94,7 +109,8 @@ enum RuleMutationBatch {
                                         failed: outcome.failed,
                                         generation: sync.generation,
                                         extensionSync: sync.state,
-                                        extensionMessage: sync.message)
+                                        extensionMessage: sync.message,
+                                        snapshotError: syncError.map(CLIErrorPayload.init))
         let failureText = outcome.failed.isEmpty ? "" : "\nFailures: " + outcome.failed.map { "\($0.id): \($0.message)" }.joined(separator: "; ")
         let warning = sync.message.map { "\nWarning: \($0)" } ?? ""
         let human = "\(pastTense) \(outcome.succeeded.count) of \(ids.count) rules.\(failureText)\nExtension synchronization: \(sync.state)\(sync.generation.map { " (generation \($0))" } ?? "").\(warning)"
@@ -111,7 +127,7 @@ enum RuleMutationBatch {
                              message: operation == "remove" ? "One or more rule removals failed." : "One or more rule mutations failed.",
                              remediation: "Review the failed IDs in the response and rerun the operation after fixing the helper error.")
         } else {
-            error = syncError
+            error = syncError.map(savedButSnapshotFailed)
         }
         return CommandResult(data: report, human: human, exitCode: error?.exitCode ?? .success, error: error)
     }

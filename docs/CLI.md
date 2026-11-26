@@ -117,9 +117,9 @@ Command-specific `data` shapes are:
 | `doctor` | `healthy`, `findings`, `helper`, `extensionStatus`, `pf` |
 | `rules list` | filter values, `count`, `rules`, and optional `blocklistInfo` |
 | `rules show` | one complete `Rule` object |
-| `rules add` | `rule`, `extensionSync`, and optional `extensionMessage` |
+| `rules add` | `rule`, `extensionSync`, and optional `extensionMessage` and `snapshotError` |
 | `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, and extension sync state. If the helper stops answering partway, the IDs already changed stay in `succeeded`, the rest are in `failed` with a reason, and `error.code` is `rule_mutation_interrupted` with the helper's exit status (66 or 67) |
-| `rules import` | imported count, IDs, source, and extension sync state |
+| `rules import` | imported count, IDs, source, extension sync state, and optional `snapshotError` |
 | `rules export` | a `freesnitch.rules.v1` document, or count and output path when writing a file |
 | monitor views | `requestedLimit`, `returned`, and the relevant array |
 | `monitor summary` | `topProcesses`, `topDomains`, `topCountries`, and country metadata status |
@@ -157,6 +157,25 @@ The values are defined in `Sources/CLI/CLIContract.swift` and are stable:
 and an error summary. If several failure classes are present, the first
 actionable finding in helper, extension, snapshot, and pf order selects the exit
 code.
+
+### A change that was saved, but whose snapshot could not be read
+
+`mode`, `rules add`, `enable`, `disable`, `rm`, and `import` first change the
+helper and then read its policy snapshot to send to the network extension. If
+the helper confirmed the change but that snapshot read fails (for example it
+times out, or an older helper does not support it), the command exits `72`
+with `error.code` `snapshot_after_commit_failed` and still returns its normal
+report in `data` as a receipt: the rule and its ID, the changed or imported IDs
+and count, or the mode that was set. The snapshot failure itself is in
+`data.snapshotError` (`code`, `message`, `remediation`, `exitCode`),
+`extensionSync` is `not-checked`, and `generation` (and `ruleCount` for
+`mode`) is omitted. The change is
+already saved, so do not repeat the command; run `freesnitch rules list` or
+`freesnitch status` to confirm it.
+
+If the helper stops answering partway through a multi-rule `enable`, `disable`,
+or `rm`, that is `rule_mutation_interrupted` instead, as described in the data
+table above; no snapshot is read then.
 
 ## Status and diagnosis
 

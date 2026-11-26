@@ -77,6 +77,9 @@ struct RuleMutationReport: Encodable {
     let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
+    /// Set only when the helper confirmed the change but the snapshot read
+    /// right after it failed; the rest of the report is the receipt (#257).
+    let snapshotError: CLIErrorPayload?
 }
 
 struct RuleMutationFailure: Encodable {
@@ -89,6 +92,9 @@ struct RuleAddedReport: Encodable {
     let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
+    /// Set only when the helper confirmed the change but the snapshot read
+    /// right after it failed; the rest of the report is the receipt (#257).
+    let snapshotError: CLIErrorPayload?
 }
 
 struct RuleImportReport: Encodable {
@@ -98,15 +104,21 @@ struct RuleImportReport: Encodable {
     let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
+    /// Set only when the helper confirmed the change but the snapshot read
+    /// right after it failed; the rest of the report is the receipt (#257).
+    let snapshotError: CLIErrorPayload?
 }
 
 struct PolicyChangeReport: Encodable {
     let operation: String
     let mode: String
-    let ruleCount: Int
+    let ruleCount: Int?
     let generation: UInt64?
     let extensionSync: String
     let extensionMessage: String?
+    /// Set only when the helper confirmed the change but the snapshot read
+    /// right after it failed; the rest of the report is the receipt (#257).
+    let snapshotError: CLIErrorPayload?
 }
 
 // The export document itself lives in Sources/Shared/RuleExportFormat.swift so
