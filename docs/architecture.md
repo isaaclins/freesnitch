@@ -200,3 +200,31 @@ one. A geolocated coordinate is an estimate in either case.
 
 `Scripts/test_ipgeo.sh` asserts all of the above against the real shared
 sources, entirely offline.
+
+## Network owner and on-demand lookups (`Sources/Shared/IPASN.swift`, `Sources/Shared/RDAPRecord.swift`)
+
+Selecting a destination in the Network Monitor shows a **Selected Destination**
+section: the address, the name FreeSnitch saw for it, the network owner, the AS
+number, the address range and the estimated location.
+
+The owner, ASN and range come from **DB-IP ASN Lite** (IPv4 and IPv6, CC BY
+4.0, same credit as the city data), downloaded from the same
+sapics/ip-location-db release as plain CSV (about 24 MB + 7 MB) and converted
+into its own memory-mapped index, `dbip-asn.index` (about 12 MB), next to the
+city index. It is refreshed on the same 30-day cycle and follows the same
+failure rules: a failed or malformed download keeps the index already in place,
+and without one the section says the data is still downloading or unavailable.
+Unlike the city index each row keeps its end address, because ASN data has real
+holes and the range itself is shown.
+
+**Look Up Owner…** is the only part that sends anything, and only when clicked:
+the system resolver is asked for the reverse name (PTR) of that one address, and
+`https://rdap.org/ip/<address>` is fetched, which redirects to the regional
+registry (ARIN, RIPE, APNIC, LACNIC, AFRINIC) holding it. The answer is parsed
+by `RDAPNetworkRecord` (bounded size, single-line bounded strings; RIPE
+maintainer objects are not shown as the owner). Nothing is retried or looked up
+in the background.
+
+Anycast is not labelled: offline data can't tell it apart reliably. The location
+row says instead that shared or anycast addresses can be served from many
+places.

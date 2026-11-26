@@ -131,7 +131,7 @@ FreeSnitch is the fourth choice:
 
 - **Little Snitch-style UI.** Menubar status item, world map, rules manager, and connection alert popups. If you've used LS, you already know how to use this.
 - **Free under MIT.** Read the code, fork it, audit it. The matcher, DNS proxy, pf integration, and UI are all open.
-- **No telemetry.** No analytics SDKs. No crash reporters phoning home. No "anonymous usage" pings. Network requests are limited to enabled blocklists, the DoH resolver you choose, offline geolocation data sources, and Sparkle update checks.
+- **No telemetry.** No analytics SDKs. No crash reporters phoning home. No "anonymous usage" pings. Network requests are limited to enabled blocklists, the DoH resolver you choose, offline geolocation and network owner data sources, and Sparkle update checks. Looking up who owns an address in the Network Monitor asks your DNS server and rdap.org only when you click Look Up Owner.
 - **Built like a Mac app, not a port.** Native SwiftUI for the windows, real `NSStatusItem` for the menubar, `SMAppService` for the privileged helper, and XPC over a Mach service for the GUI to daemon bridge.
 - **Signed and notarized.** [Version 1.1.0](https://github.com/isaaclins/freesnitch/releases/tag/v1.1.0) is the firewall build, signed with a Developer ID and notarized by Apple.
 
@@ -253,7 +253,7 @@ What FreeSnitch does **not** do:
 
 - It does not collect telemetry, crash reports, or usage analytics.
 - It does not require an account, license check, or any kind of identity.
-- It sends network requests only to enabled blocklist sources, the DoH resolver you pick, the offline geolocation data sources used for the map, and the configured Sparkle update feed.
+- It sends network requests only to enabled blocklist sources, the DoH resolver you pick, the offline geolocation and network owner data sources used for the Network Monitor, rdap.org when you click Look Up Owner, and the configured Sparkle update feed.
 - It does not modify your firewall or DNS settings until you turn on Enforcement in Settings.
 
 ## Screenshots
@@ -299,7 +299,7 @@ There is no fixed roadmap here, and pretending otherwise ages badly. Direction i
 
 **Is this a Little Snitch clone?** It is an independent open-source alternative with a deliberately similar user interface. The blocking engine, DNS proxy, and matcher are written from scratch. No Little Snitch source, assets, or proprietary plist formats are used. "Little Snitch" is a registered trademark of Objective Development Software GmbH. This project is not affiliated with or endorsed by Objective Development.
 
-**Does FreeSnitch send my traffic anywhere?** FreeSnitch itself has no telemetry, analytics, or phone-home service. It contacts enabled blocklist sources, the DoH upstream you choose, the offline geolocation data sources used for the map, and the configured Sparkle update feed. IP-to-country lookups use downloaded local data rather than a per-connection lookup service.
+**Does FreeSnitch send my traffic anywhere?** FreeSnitch itself has no telemetry, analytics, or phone-home service. It contacts enabled blocklist sources, the DoH upstream you choose, the offline geolocation and network owner data sources used for the Network Monitor, and the configured Sparkle update feed. IP-to-country and network owner lookups use downloaded local data rather than a per-connection lookup service. The registration record for one address is fetched from rdap.org only when you click Look Up Owner.
 
 **How does per-process filtering work?** The shipping build embeds a Network System Extension built from `Sources/NetExt/FilterDataProvider.swift`. It evaluates each new socket flow against the shared rules and can allow, drop, or pause it for a GUI decision. It needs user approval of the system extension on first launch. The contributor build, generated from `project.yml`, leaves that extension out so it can be built without provisioning profiles, and falls back to observation plus DNS and pfctl enforcement.
 
