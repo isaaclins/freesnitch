@@ -243,15 +243,9 @@ struct ConnectionMapPane: View {
         }
     }
 
-    /// Cheap stand-in for comparing the whole connection array. Traffic totals
-    /// move even when the count does not, and both change the picture.
+    /// Changes whenever anything the clusterer draws from changes (#230).
     private var inputFingerprint: Int {
-        var total: Int64 = 0
-        for connection in connections { total &+= connection.bytesIn &+ connection.bytesOut }
-        var hasher = Hasher()
-        hasher.combine(connections.count)
-        hasher.combine(total)
-        return hasher.finalize()
+        MapClusterEngine.inputFingerprint(connections)
     }
 
     private func refresh() {
