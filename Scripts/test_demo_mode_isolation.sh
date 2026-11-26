@@ -75,7 +75,7 @@ mutate_and_expect_failure registers-helper "$HELPER" \
   $'    func registerDaemon() {\n        guard !DemoMode.isOn else { return }' \
   $'    func registerDaemon() {'
 mutate_and_expect_failure repairs-helper "$HELPER" \
-  'guard !DemoMode.isOn, !isRepairing else { return }' 'guard !isRepairing else { return }'
+  'guard !DemoMode.isOn, repairGate.begin(state: repairState) else { return }' 'guard repairGate.begin(state: repairState) else { return }'
 mutate_and_expect_failure kickstarts-helper "$HELPER" \
   $'    private func performPrivilegedKickstart() {\n        guard !DemoMode.isOn else { return }' \
   $'    private func performPrivilegedKickstart() {'

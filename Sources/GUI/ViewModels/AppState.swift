@@ -51,6 +51,8 @@ final class AppState: ObservableObject {
     @Published var helperInstallState: HelperInstallState = .unknown
     @Published var helperVersionState: HelperVersionState = .unknown
     @Published var helperRepairState: HelperRepairState = .idle
+    /// A Repair Helper attempt still holds the gate, so another click would do nothing (#216).
+    @Published var helperRepairRunning: Bool = false
     @Published var helperNeedsRepair: Bool = false
     /// The other FreeSnitch copy the helper is running from, when the helper
     /// reports one that isn't this app (#418). Nil when they match or when the

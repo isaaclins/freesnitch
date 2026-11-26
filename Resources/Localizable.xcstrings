@@ -6864,6 +6864,16 @@
         }
       }
     },
+    "It is approved but not responding. FreeSnitch is restarting it. If macOS asks, authorize the restart. The enabled service is never unregistered and your approval stays intact." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она одобрена, но не отвечает. FreeSnitch перезапускает её. Если macOS попросит, подтвердите перезапуск. Включённая служба не отменяет регистрацию, и ваше одобрение сохраняется."
+          }
+        }
+      }
+    },
     "It is approved but not responding. Repair Helper restarts it for you, and macOS will ask you to authorize that. It is non-destructive: the enabled service is never unregistered and your approval stays intact." : {
       "localizations" : {
         "ru" : {
@@ -6990,6 +7000,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Открывать FreeSnitch при входе"
+          }
+        }
+      }
+    },
+    "Repairing…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление…"
           }
         }
       }
