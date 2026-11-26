@@ -806,16 +806,6 @@ final class HelperClient: NSObject, ObservableObject {
         }
     }
 
-    func queryInsightsRecordingEnabled(completion: @MainActor @escaping (Bool) -> Void) {
-        guard let proxy = remote else {
-            completion(false)
-            return
-        }
-        proxy.getInsightsRecordingEnabled { enabled in
-            Task { @MainActor in completion(enabled) }
-        }
-    }
-
     func setInsightsRecordingEnabled(_ enabled: Bool,
                                      completion: @MainActor @escaping (Bool, String?) -> Void) {
         guard let proxy = remote else {

@@ -386,6 +386,33 @@ struct InsightsHarness {
         equal(overview().rawObservationCount, 1, "nothing is recorded while the off switch is off")
         try! store.setRecordingEnabled(true)
 
+        // MARK: a failed read of the off switch (#267)
+        // The store stays open while its settings query fails: another
+        // connection takes the table away. The switch must come back as an
+        // error, never as "on", and the report must fail rather than carry a
+        // guessed state. Only a missing row means the default.
+        func rawExec(_ sql: String) {
+            var raw: OpaquePointer?
+            defer { sqlite3_close(raw) }
+            check(sqlite3_open(path, &raw) == SQLITE_OK && sqlite3_exec(raw, sql, nil, nil, nil) == SQLITE_OK,
+                  "test setup ran: \(sql)")
+        }
+        try! store.setRecordingEnabled(false)
+        rawExec("ALTER TABLE settings RENAME TO settings_unreadable;")
+        expectThrow("a recording-setting read that fails") { _ = try store.recordingEnabled() }
+        expectThrow("an overview whose recording setting cannot be read") {
+            _ = try store.report(for: InsightsQuery(kind: .overview, since: Date().addingTimeInterval(-day), limit: 1))
+        }
+        expectThrow("an apps report whose recording setting cannot be read") {
+            _ = try store.report(for: InsightsQuery(kind: .apps, since: Date().addingTimeInterval(-day), limit: 1))
+        }
+        rawExec("ALTER TABLE settings_unreadable RENAME TO settings;")
+        check((try? store.recordingEnabled()) == false, "the switch reads off again once the setting can be read")
+        rawExec("DELETE FROM settings WHERE key='recording_enabled';")
+        check((try? store.recordingEnabled()) == true, "a missing setting means the documented default, on")
+        check(overview().recordingEnabled, "the overview reports the default when the setting is missing")
+        try! store.setRecordingEnabled(true)
+
         // MARK: coverage by an existing rule (#316)
         // A proposal for an address must count as covered when an enabled rule
         // already covers that address the way the matcher would, so Insights
