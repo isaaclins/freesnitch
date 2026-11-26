@@ -118,7 +118,7 @@ Command-specific `data` shapes are:
 | `rules list` | filter values, `count`, `rules`, and optional `blocklistInfo` |
 | `rules show` | one complete `Rule` object |
 | `rules add` | `rule`, `extensionSync`, and optional `extensionMessage` |
-| `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, and extension sync state |
+| `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, and extension sync state. If the helper stops answering partway, the IDs already changed stay in `succeeded`, the rest are in `failed` with a reason, and `error.code` is `rule_mutation_interrupted` with the helper's exit status (66 or 67) |
 | `rules import` | imported count, IDs, source, and extension sync state |
 | `rules export` | a `freesnitch.rules.v1` document, or count and output path when writing a file |
 | monitor views | `requestedLimit`, `returned`, and the relevant array |
