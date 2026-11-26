@@ -1292,7 +1292,8 @@ final class GeoIndexWriter {
     }
 
     /// Rewrites the header in place once the counts are known, then closes.
-    func finish(header: GeoIndexHeader) throws {
+    /// Generic so the ASN index (#194) writes its own header the same way.
+    func finish<Header>(header: Header) throws {
         try drain()
         var header = header
         let ok: Bool = withUnsafeBytes(of: &header) { bytes in

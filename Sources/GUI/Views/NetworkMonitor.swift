@@ -43,6 +43,7 @@ struct NetworkMonitorView: View {
             tree.updateDecisions(rules: state.rules, profile: state.activeProfile)
         }
         .onReceive(state.$connections) { tree.ingest(connections: $0) }
+        .onReceive(tree.$snapshot) { revealRequestedRow(in: $0) }
         .onReceive(state.$rules) { tree.updateDecisions(rules: $0, profile: state.activeProfile) }
         .onReceive(state.$activeProfile) { tree.updateDecisions(rules: state.rules, profile: $0) }
         // The title says what failed, not that something was rejected, and
@@ -224,6 +225,9 @@ struct NetworkMonitorView: View {
             Divider()
 
             List {
+                if let destination = selectedDestination {
+                    EndpointDetailsSection(destination: destination)
+                }
                 Section("Throughput") {
                     LabeledContent("Down", value: PSFormat.bytesPerSec(state.currentIn))
                     LabeledContent("Up", value: PSFormat.bytesPerSec(state.currentOut))
@@ -246,6 +250,27 @@ struct NetworkMonitorView: View {
             }
             .listStyle(.inset)
             .monospacedDigit()
+        }
+    }
+
+    /// The destination row that is selected, if the selection is one.
+    private var selectedDestination: MonitorDestinationNode? {
+        guard let id = selectedProcess else { return nil }
+        for app in tree.snapshot.apps {
+            if let destination = app.destinations.first(where: { $0.id == id }) { return destination }
+        }
+        return nil
+    }
+
+    /// Selects and reveals the row a demo asked for, once it exists.
+    private func revealRequestedRow(in snapshot: MonitorTreeSnapshot) {
+        guard let ip = model.monitorRevealIP else { return }
+        for app in snapshot.apps {
+            guard let destination = app.destinations.first(where: { $0.remoteIP == ip }) else { continue }
+            if !tree.isExpanded(app) { tree.toggleExpansion(app) }
+            selectedProcess = destination.id
+            model.monitorRevealIP = nil
+            return
         }
     }
 

@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
     @Published var unconfirmedCount: Int = 0
     @Published var incomingCount: Int = 0
     @Published var pendingAlerts: [PendingAlert] = []
+    /// Remembered answers whose rule the helper did not save, shown in the
+    /// alert window until each is retried or dismissed (#246).
+    @Published var unsavedRememberedAnswers = UnsavedRememberedAnswers()
     @Published private(set) var firstContactAskedToday = 0
     @Published private(set) var knownContactsAllowedToday = 0
     /// Connections allowed because the question queue was full. This used to
@@ -51,6 +54,8 @@ final class AppState: ObservableObject {
     @Published var helperInstallState: HelperInstallState = .unknown
     @Published var helperVersionState: HelperVersionState = .unknown
     @Published var helperRepairState: HelperRepairState = .idle
+    /// A Repair Helper attempt still holds the gate, so another click would do nothing (#216).
+    @Published var helperRepairRunning: Bool = false
     @Published var helperNeedsRepair: Bool = false
     /// The other FreeSnitch copy the helper is running from, when the helper
     /// reports one that isn't this app (#418). Nil when they match or when the
@@ -77,6 +82,10 @@ final class AppState: ObservableObject {
     /// this to say "still downloading" or "unavailable" instead of drawing an
     /// empty map as though there were no traffic.
     @Published private(set) var geoStatus: IPGeoCache.Status = IPGeoCache.shared.status
+    /// What the offline network owner database (ASN, organisation, range)
+    /// knows, so the Monitor can say "still downloading" rather than nothing
+    /// (#194).
+    @Published private(set) var asnStatus: IPASNCache.Status = IPASNCache.shared.status
     @Published var searchQuery: String = ""
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         String(localized: "Network extension IPC is not connected.")
@@ -166,7 +175,8 @@ final class AppState: ObservableObject {
     private var lastSnapshotFailure: String?
     /// Prepared by the helper from retained Insights history. This cache is
     /// memory-only on the alert path; an unavailable or stale classifier asks.
-    private var contactClassifier = InsightsContactClassifier(snapshot: nil)
+    private var contactCache = InsightsContactCache()
+    private var contactClassifier: InsightsContactClassifier { contactCache.classifier }
     private var contactRefreshTimer: Timer?
 
     /// Puts the toggle back where reality is after the helper refuses or rolls
@@ -301,6 +311,11 @@ final class AppState: ObservableObject {
                 self.updateConnections(self.connections)
             }
         }
+        IPASNCache.shared.onReady { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                self?.asnStatus = IPASNCache.shared.status
+            }
+        }
         // One writer for the active profile, fed by the helper's snapshot
         // rather than by a hardcoded default (#127).
         activeProfile = ProfileClient.shared.activeProfileName
@@ -356,12 +371,43 @@ final class AppState: ObservableObject {
     }
 
     private func refreshContactClassifier() {
+        let token = contactCache.beginRefresh()
         helper.insightsContactSnapshot { [weak self] snapshot in
             guard let self else { return }
             // The classifier validates freshness and fields again. A helper
             // transport error therefore cannot turn into a silent allow.
-            self.contactClassifier = InsightsContactClassifier(snapshot: snapshot)
+            self.contactCache.apply(snapshot, for: token)
         }
+    }
+
+    /// Delete History. The known destinations are forgotten before the helper
+    /// is asked, and fetched again from the emptied history as soon as it
+    /// answers, so no connection in between is allowed as known (#229).
+    ///
+    /// If the helper never answers (the connection dropped), the delete ends
+    /// after `contactDeleteTimeout` anyway, so known destinations don't stay
+    /// switched off until the app is relaunched.
+    func purgeInsightsHistory(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        let id = UUID()
+        runningContactDeletes.insert(id)
+        contactCache.beginDelete()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.contactDeleteTimeout)
+            self?.finishContactDelete(id)
+        }
+        helper.purgeInsights { [weak self] ok, message in
+            self?.finishContactDelete(id)
+            completion(ok, message)
+        }
+    }
+
+    private static let contactDeleteTimeout: UInt64 = 60 * 1_000_000_000
+    private var runningContactDeletes: Set<UUID> = []
+
+    private func finishContactDelete(_ id: UUID) {
+        guard runningContactDeletes.remove(id) != nil else { return }
+        contactCache.endDelete()
+        refreshContactClassifier()
     }
 
     /// Refreshes the display cache and synchronizes the extension from one
@@ -846,14 +892,56 @@ final class AppState: ObservableObject {
             }
             return
         }
-        helper.addRule(rule) { [weak self] ok, message in
+        saveRememberedRule(UnsavedRememberedAnswer(processName: alert.connection.processName,
+                                                   destination: alert.connection.remoteHost.isEmpty
+                                                       ? alert.connection.remoteIP
+                                                       : alert.connection.remoteHost,
+                                                   allow: allow,
+                                                   rule: rule,
+                                                   reason: ""))
+    }
+
+    /// Saves the rule a remembered answer made. The alert has already closed
+    /// and the connection has its answer, so a save that fails is brought back
+    /// to the alert window with the reason, instead of only a log line in
+    /// Settings that nobody answering an alert would see (#246).
+    private func saveRememberedRule(_ answer: UnsavedRememberedAnswer) {
+        helper.addRule(answer.rule) { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
-                self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(message ?? String(localized: "unknown error"))"))
+                let reason = message.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? String(localized: "The helper did not say why.")
+                self.appendLog(level: "error", message: String(localized: "The helper rejected the remembered rule: \(reason)"))
+                self.unsavedRememberedAnswers.record(UnsavedRememberedAnswer(processName: answer.processName,
+                                                                             destination: answer.destination,
+                                                                             allow: answer.allow,
+                                                                             rule: answer.rule,
+                                                                             reason: reason))
+                // A refusal can come after the rule was stored ("saved but
+                // the firewall refused it"), so the Rules list is read again
+                // either way rather than guessed.
+                self.refreshRules()
                 return
             }
+            // A retry that worked clears its notice.
+            self.unsavedRememberedAnswers.take(id: answer.id)
             self.refreshRules()
         }
+    }
+
+    /// Sends the same rule again. It keeps its id, and the helper replaces a
+    /// rule with the same id, so a retry after a partial save cannot leave two.
+    func retryUnsavedRememberedAnswer(id: UUID) {
+        guard let answer = unsavedRememberedAnswers.beginRetry(id: id) else { return }
+        saveRememberedRule(answer)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(UnsavedRememberedAnswers.retryPatience))
+            self?.unsavedRememberedAnswers.endRetry(id: id)
+        }
+    }
+
+    func dismissUnsavedRememberedAnswer(id: UUID) {
+        unsavedRememberedAnswers.take(id: id)
     }
 
     func appendLog(level: String, message: String) {

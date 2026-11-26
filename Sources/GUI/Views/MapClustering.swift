@@ -1,22 +1,5 @@
 import Foundation
 
-/// Forward compatibility seam for the city-level geolocation work in #60.
-/// `Connection` does not carry a city yet. When it gains one, the stored
-/// property satisfies this requirement and the default below stops being used,
-/// so the map starts labelling cities without another change here. Declaring
-/// the default on the protocol rather than on `Connection` is deliberate: an
-/// `extension Connection { var city: String? }` would collide with the real
-/// stored property the moment it lands.
-protocol MapCityNaming {
-    var city: String? { get }
-}
-
-extension MapCityNaming {
-    var city: String? { nil }
-}
-
-extension Connection: MapCityNaming {}
-
 /// How much detail the current camera earns. Everything the clusterer needs is
 /// derived from one integer, so panning never changes the tier and a zoom only
 /// changes it in discrete steps. That is what keeps nodes from sliding out from

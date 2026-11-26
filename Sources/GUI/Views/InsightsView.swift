@@ -798,6 +798,9 @@ struct InsightsView: View {
                     }
                     }
                 }
+                listFooter(hasMore: model.hasMoreFindings,
+                           title: String(localized: "Load more changes"),
+                           action: { model.loadMoreFindings() })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1051,6 +1054,7 @@ final class InsightsViewModel: ObservableObject {
     @Published var hasMoreDestinations = false
     @Published var hasMoreUnresolved = false
     @Published var hasMoreProposals = false
+    @Published var hasMoreFindings = false
     @Published private(set) var source: InsightsDataSource = .rawEvents
 
     var changedAppCount: Int { Set(findings.map(\.appIdentity)).count }
@@ -1136,6 +1140,7 @@ final class InsightsViewModel: ObservableObject {
         hasMoreDestinations = false
         hasMoreUnresolved = false
         hasMoreProposals = false
+        hasMoreFindings = false
         hasMoreReachingApps = false
         apps = InsightsDemoData.apps
         unresolved = InsightsDemoData.unresolved
@@ -1305,15 +1310,30 @@ final class InsightsViewModel: ObservableObject {
         }
     }
 
+    /// The offset of the "load more" request still waiting for its answer. A
+    /// second click for the same page would come back with nothing new and
+    /// hide the button before the end (#231).
+    private var findingsPageInFlight: Int?
+
     private func loadFindings(offset: Int) {
+        if offset > 0 && findingsPageInFlight == offset { return }
         guard let helper = state?.helper, let request = query(.findings, offset: offset) else { return }
         isLoading = true
+        findingsPageInFlight = offset
         helper.insightsReport(request) { [weak self] report, error in
             guard let self else { return }
             self.isLoading = false
+            if self.findingsPageInFlight == offset { self.findingsPageInFlight = nil }
             guard let report else { self.errorMessage = error; return }
             self.source = report.source
-            self.findings = offset == 0 ? report.findings : self.findings + report.findings
+            // A helper from before #231 ignored the offset and sent the first
+            // page again; never list the same finding twice.
+            let known = offset == 0 ? [] : Set(self.findings.map(\.id))
+            let fresh = report.findings.filter { !known.contains($0.id) }
+            self.findings = offset == 0 ? report.findings : self.findings + fresh
+            // A page that brought nothing new cannot be followed by one that
+            // does, so the button goes instead of staying and doing nothing.
+            self.hasMoreFindings = report.hasMore && (offset == 0 || !fresh.isEmpty)
         }
     }
 
@@ -1438,7 +1458,7 @@ final class InsightsViewModel: ObservableObject {
     }
 
     func purge() {
-        state?.helper.purgeInsights { [weak self] ok, message in
+        state?.purgeInsightsHistory { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
                 self.errorMessage = message ?? String(localized: "The helper refused the purge.")

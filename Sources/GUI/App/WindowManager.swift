@@ -227,18 +227,30 @@ final class WindowManager {
     // MARK: - Connection alerts
 
     private func observeAlerts() {
+        // An answer whose rule was not saved keeps the window open too, so a
+        // failed save is said where the answer was given (#246).
         alertCancellable = state.$pendingAlerts
+            .combineLatest(state.$unsavedRememberedAnswers)
             .receive(on: RunLoop.main)
-            .sink { [weak self] alerts in
-                self?.syncAlertWindow(hasAlert: !alerts.isEmpty)
+            .sink { [weak self] alerts, unsaved in
+                self?.syncAlertWindow(hasAlert: !alerts.isEmpty || !unsaved.isEmpty)
             }
     }
+
+    /// Where the alert window's top-left corner was when it last closed, and
+    /// when. A remembered answer refused just after its question closed opens
+    /// the window again there, where the user left it, instead of re-centred
+    /// (#246).
+    private var lastAlertFrame: NSRect?
+    private var lastAlertClosedAt: Date?
 
     private func syncAlertWindow(hasAlert: Bool) {
         if hasAlert {
             if alertWindow == nil { presentAlertWindow() }
-        } else {
-            alertWindow?.close()
+        } else if let window = alertWindow {
+            lastAlertFrame = window.frame
+            lastAlertClosedAt = Date()
+            window.close()
             alertWindow = nil
         }
     }
@@ -287,6 +299,16 @@ final class WindowManager {
             ? [.canJoinAllSpaces, .fullScreenAuxiliary]
             : [.moveToActiveSpace, .fullScreenAuxiliary]
         window.center()
+        // Only onto a screen that is still there: a display unplugged in the
+        // meantime would put a question nobody can see off screen.
+        if let last = lastAlertFrame, let closedAt = lastAlertClosedAt,
+           Date().timeIntervalSince(closedAt) < 30,
+           NSScreen.screens.contains(where: { $0.visibleFrame.insetBy(dx: -1, dy: -1).contains(last) }) {
+            // Reopened right after closing: back where it was, and not
+            // centred again once it has measured itself.
+            window.setFrameTopLeftPoint(NSPoint(x: last.minX, y: last.maxY))
+            alertHasBeenCentered = true
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         // The card may have measured itself before the window was on screen.

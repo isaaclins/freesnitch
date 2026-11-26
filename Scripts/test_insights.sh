@@ -45,7 +45,7 @@ struct InsightsHarness {
     static func observation(app: String, bundle: String?, path: String, host: String, ip: String,
                             at date: Date, port: Int = 443,
                             bytesIn: Int64 = 100, bytesOut: Int64 = 50,
-                            decision: FlowDecision? = nil) -> FlowObservation {
+                            decision: FlowDecision? = nil, version: String? = nil) -> FlowObservation {
         let connection = Connection(pid: 501,
                                     processName: app,
                                     processPath: path,
@@ -57,7 +57,7 @@ struct InsightsHarness {
                                     protocolName: "tcp",
                                     bytesIn: bytesIn,
                                     bytesOut: bytesOut)
-        return FlowObservation(connection: connection, observedAt: date, decision: decision)
+        return FlowObservation(connection: connection, observedAt: date, processVersion: version, decision: decision)
     }
 
     static func rowStatus(_ row: InsightsDestinationSummary?) -> InsightsDecisionCounts.Status? {
@@ -830,7 +830,9 @@ struct InsightsHarness {
 
         // A DNS flood after a single batch, with nothing older to trim: the
         // answers newer than that batch still make room, so the store never
-        // refuses every write at its ceiling.
+        // refuses every write at its ceiling. They go before that day's
+        // rollups (#588). Everything is on one UTC day, noon yesterday,
+        // whatever time the harness runs.
         let lateDNSSupport = root.appendingPathComponent("Late DNS Support")
         try! FileManager.default.createDirectory(at: lateDNSSupport, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o755])
@@ -838,7 +840,9 @@ struct InsightsHarness {
         do {
             let lateCeiling: Int64 = 512 * 1024
             let late = try InsightsStore(path: lateDNSPath, expectedUID: getuid(), maxDatabaseBytes: lateCeiling)
-            let lateNow = Date()
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(identifier: "UTC")!
+            let lateNow = utc.date(bySettingHour: 12, minute: 0, second: 0, of: now.addingTimeInterval(-24 * 3600))!
             try late.record(floodBatch(0, at: lateNow.addingTimeInterval(-120)))
             var refused = 0
             for index in 0..<80 {
@@ -852,6 +856,8 @@ struct InsightsHarness {
             }
             equal(refused, 0, "a DNS flood after a single batch keeps landing")
             check(fileBytes(lateDNSPath) <= lateCeiling, "a DNS flood after a single batch stays under the ceiling")
+            equal(count(lateDNSPath, "SELECT COUNT(*) FROM daily_rollups;"), InsightsLimits.maxBatchCount,
+                  "a DNS flood after a single batch trims its own answers before that day's rollups")
             try late.record(floodBatch(1, at: lateNow))
             equal(count(lateDNSPath, "SELECT COUNT(*) FROM flow_observations WHERE remote_host LIKE 'host-1-%';"),
                   InsightsLimits.maxBatchCount, "a connection batch after that DNS flood is recorded")
@@ -932,6 +938,44 @@ struct InsightsHarness {
                   "only the new connection counts as blocked; the old one stays unknown")
         } catch {
             check(false, "a pre-#447 store opens and upgrades: \(error)")
+        }
+
+        // MARK: Changed findings page past the first 50 (#231)
+        let pagedSupport = root.appendingPathComponent("Paged Support")
+        try! FileManager.default.createDirectory(at: pagedSupport.appendingPathComponent("Insights"),
+                                                 withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        do {
+            let paged = try InsightsStore(path: pagedSupport.appendingPathComponent("Insights/insights.sqlite").path,
+                                          expectedUID: getuid())
+            let pagedNow = Date()
+            var seeded = [observation(app: "Updater", bundle: "com.example.updater",
+                                      path: "/Applications/Updater.app",
+                                      host: "old.example.com", ip: "192.0.2.1",
+                                      at: pagedNow.addingTimeInterval(-7200), version: "1.0")]
+            for index in 0..<60 {
+                let at = pagedNow.addingTimeInterval(-3600 + Double(index))
+                seeded.append(observation(app: "Updater", bundle: "com.example.updater",
+                                          path: "/Applications/Updater.app",
+                                          host: "new\(index).example.com", ip: "198.51.100.\(index + 1)",
+                                          at: at, version: "2.0"))
+            }
+            try paged.record(seeded)
+            let since = pagedNow.addingTimeInterval(-day)
+            let first = try paged.report(for: InsightsQuery(kind: .findings, since: since, limit: 50))
+            let second = try paged.report(for: InsightsQuery(kind: .findings, since: since, limit: 50, offset: 50))
+            equal(first.findings.count, 50, "the first page of changed destinations holds 50")
+            check(first.hasMore, "the first page says more changed destinations follow")
+            equal(second.findings.count, 10, "the second page holds the remaining 10")
+            check(!second.hasMore, "the second page is the last one")
+            let firstKeys = Set(first.findings.map(\.destination))
+            let secondKeys = Set(second.findings.map(\.destination))
+            check(firstKeys.isDisjoint(with: secondKeys), "the second page returns different rows than the first")
+            equal(firstKeys.union(secondKeys).count, 60, "every changed destination is reachable across the pages")
+            let past = try paged.report(for: InsightsQuery(kind: .findings, since: since, limit: 50, offset: 100))
+            check(past.findings.isEmpty && !past.hasMore, "a page past the end is empty")
+        } catch {
+            check(false, "changed findings can be paged: \(error)")
         }
 
         try? FileManager.default.removeItem(at: root)

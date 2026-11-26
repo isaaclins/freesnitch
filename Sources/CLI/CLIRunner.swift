@@ -128,7 +128,7 @@ final class CLIRunner {
                                             mode: canonicalMode(mode),
                                             ruleCount: nil,
                                             generation: nil,
-                                            extensionSync: Self.syncNotAttempted,
+                                            extensionSync: RuleMutationBatch.syncNotChecked,
                                             extensionMessage: nil,
                                             snapshotError: CLIErrorPayload(snapshotError))
             return committedWithoutSnapshot(report,
@@ -206,7 +206,7 @@ final class CLIRunner {
         case .failure(let snapshotError):
             let report = RuleAddedReport(rule: rule,
                                          generation: nil,
-                                         extensionSync: Self.syncNotAttempted,
+                                         extensionSync: RuleMutationBatch.syncNotChecked,
                                          extensionMessage: nil,
                                          snapshotError: CLIErrorPayload(snapshotError))
             return committedWithoutSnapshot(report,
@@ -227,124 +227,43 @@ final class CLIRunner {
     private func setRulesEnabled(_ ids: [UUID], enabled: Bool) async throws -> CommandResult {
         let helper = makePolicyHelper()
         _ = try await helper.prepare()
-        var succeeded: [UUID] = []
-        var failures: [RuleMutationFailure] = []
-        for (index, id) in ids.enumerated() {
-            do {
-                let rules = try await helper.listRules()
-                guard var rule = rules.first(where: { $0.id == id }) else {
-                    failures.append(RuleMutationFailure(id: id, message: "rule not found"))
-                    continue
-                }
-                rule.enabled = enabled
-                try await helper.addRule(rule)
-                succeeded.append(id)
-            } catch let error as CLIError {
-                if try stopAfterLostHelper(error, at: index, of: ids, succeeded: succeeded, failures: &failures) { break }
-                failures.append(RuleMutationFailure(id: id, message: error.message))
-            }
+        let outcome = try await RuleMutationBatch.run(ids) { id in
+            let rules = try await helper.listRules()
+            guard var rule = rules.first(where: { $0.id == id }) else { return "rule not found" }
+            rule.enabled = enabled
+            try await helper.addRule(rule)
+            return nil
         }
-        return await finishRuleMutation(helper: helper,
-                                        operation: enabled ? "enable" : "disable",
-                                        verb: enabled ? "Enabled" : "Disabled",
-                                        failureMessage: "One or more rule mutations failed.",
-                                        requested: ids,
-                                        succeeded: succeeded,
-                                        failures: failures)
+        let (sync, syncError) = await syncAfterMutation(outcome, helper: helper)
+        return RuleMutationBatch.result(operation: enabled ? "enable" : "disable",
+                                        pastTense: enabled ? "Enabled" : "Disabled",
+                                        ids: ids,
+                                        outcome: outcome,
+                                        sync: sync,
+                                        syncError: syncError)
     }
 
     private func removeRules(_ ids: [UUID]) async throws -> CommandResult {
         let helper = makePolicyHelper()
         _ = try await helper.prepare()
-        var succeeded: [UUID] = []
-        var failures: [RuleMutationFailure] = []
-        for (index, id) in ids.enumerated() {
-            do {
-                try await helper.removeRule(id)
-                succeeded.append(id)
-            } catch let error as CLIError {
-                if try stopAfterLostHelper(error, at: index, of: ids, succeeded: succeeded, failures: &failures) { break }
-                failures.append(RuleMutationFailure(id: id, message: error.message))
-            }
+        let outcome = try await RuleMutationBatch.run(ids) { id in
+            try await helper.removeRule(id)
+            return nil
         }
-        return await finishRuleMutation(helper: helper,
-                                        operation: "remove",
-                                        verb: "Removed",
-                                        failureMessage: "One or more rule removals failed.",
-                                        requested: ids,
-                                        succeeded: succeeded,
-                                        failures: failures)
+        let (sync, syncError) = await syncAfterMutation(outcome, helper: helper)
+        return RuleMutationBatch.result(operation: "remove",
+                                        pastTense: "Removed",
+                                        ids: ids,
+                                        outcome: outcome,
+                                        sync: sync,
+                                        syncError: syncError)
     }
 
-    /// A lost or mismatched helper ends a multi-rule change. Before anything
-    /// changed it is the command's error, as before. After a rule already
-    /// changed it must not hide that rule: the rest are reported as not
-    /// attempted and the receipt still lists what the helper confirmed (#257).
-    private func stopAfterLostHelper(_ error: CLIError,
-                                     at index: Int,
-                                     of ids: [UUID],
-                                     succeeded: [UUID],
-                                     failures: inout [RuleMutationFailure]) throws -> Bool {
-        guard error.exitCode == .helperUnreachable || error.exitCode == .helperVersionMismatch else { return false }
-        guard !succeeded.isEmpty else { throw error }
-        failures.append(RuleMutationFailure(id: ids[index], message: error.message))
-        for id in ids[(index + 1)...] {
-            failures.append(RuleMutationFailure(id: id, message: "not attempted: \(error.message)"))
-        }
-        return true
-    }
-
-    private func finishRuleMutation(helper: CLIPolicyHelper,
-                                    operation: String,
-                                    verb: String,
-                                    failureMessage: String,
-                                    requested ids: [UUID],
-                                    succeeded: [UUID],
-                                    failures: [RuleMutationFailure]) async -> CommandResult {
-        let failureText = failures.isEmpty ? "" : "\nFailures: " + failures.map { "\($0.id): \($0.message)" }.joined(separator: "; ")
-        let summary = "\(verb) \(succeeded.count) of \(ids.count) rules.\(failureText)"
-        let mutationError = failures.isEmpty
-            ? nil
-            : CLIError(.operationFailed,
-                       code: "rule_mutation_partial_failure",
-                       message: failureMessage,
-                       remediation: "Review the failed IDs in the response and rerun the operation after fixing the helper error.")
-        var snapshot: SharedRuleBridge.Snapshot?
-        if !succeeded.isEmpty {
-            switch await snapshotAfterCommit(helper) {
-            case .success(let value): snapshot = value
-            case .failure(let snapshotError):
-                let report = RuleMutationReport(operation: operation,
-                                                requested: ids,
-                                                succeeded: succeeded,
-                                                failed: failures,
-                                                generation: nil,
-                                                extensionSync: Self.syncNotAttempted,
-                                                extensionMessage: nil,
-                                                snapshotError: CLIErrorPayload(snapshotError))
-                return committedWithoutSnapshot(report, human: summary, snapshotError: snapshotError,
-                                                failedIDs: failures.map(\.id))
-            }
-        }
-        let sync: (state: String, message: String?, generation: UInt64?)
-        if let snapshot {
-            sync = await syncSnapshot(snapshot)
-        } else {
-            sync = ("not-needed", nil, nil)
-        }
-        let report = RuleMutationReport(operation: operation,
-                                        requested: ids,
-                                        succeeded: succeeded,
-                                        failed: failures,
-                                        generation: snapshot?.generation,
-                                        extensionSync: sync.state,
-                                        extensionMessage: sync.message,
-                                        snapshotError: nil)
-        let warning = sync.message.map { "\nWarning: \($0)" } ?? ""
-        return CommandResult(data: report,
-                             human: "\(summary)\nExtension synchronization: \(sync.state)\(sync.generation.map { " (generation \($0))" } ?? "").\(warning)",
-                             exitCode: failures.isEmpty ? .success : .operationFailed,
-                             error: mutationError)
+    private func syncAfterMutation(_ outcome: RuleMutationOutcome,
+                                   helper: CLIPolicyHelper) async -> ((state: String, message: String?, generation: UInt64?), CLIError?) {
+        await RuleMutationBatch.sync(after: outcome,
+                                     readSnapshot: { try await helper.authoritativeSnapshot() },
+                                     deliver: { await self.syncSnapshot($0) })
     }
 
     private func importRules(_ path: String) async throws -> CommandResult {
@@ -390,7 +309,7 @@ final class CLIRunner {
                                           ids: rules.map(\.id),
                                           source: path,
                                           generation: nil,
-                                          extensionSync: Self.syncNotAttempted,
+                                          extensionSync: RuleMutationBatch.syncNotChecked,
                                           extensionMessage: nil,
                                           snapshotError: CLIErrorPayload(snapshotError))
             return committedWithoutSnapshot(report,
@@ -796,10 +715,6 @@ final class CLIRunner {
         "unknown-from-cli"
     }
 
-    /// `extensionSync` when the change is saved but no snapshot could be read
-    /// to send to the extension.
-    static let syncNotAttempted = "not-attempted"
-
     /// Reads the helper's policy after a change the helper already confirmed.
     /// A failure here is returned, not thrown, so the caller still reports the
     /// saved change instead of a bare error that invites a retry (#257).
@@ -816,27 +731,11 @@ final class CLIRunner {
     /// The receipt for a confirmed change whose follow-up snapshot failed:
     /// the report keeps what changed, the snapshot failure rides alongside in
     /// `snapshotError`, and the command still exits nonzero.
-    private func committedWithoutSnapshot<T: Encodable>(_ report: T,
-                                                        human: String,
-                                                        snapshotError: CLIError,
-                                                        failedIDs: [UUID] = []) -> CommandResult {
-        // Only what the helper confirmed is saved. When some rules of a
-        // multi-rule change failed or were never sent, rerunning for those IDs
-        // is the right next step; repeating the confirmed part is what to avoid.
-        let advice = failedIDs.isEmpty
-            ? "Do not repeat the command; the change is already saved."
-            : "Do not repeat the command for the rules already changed. Rerun it only for the failed IDs: \(failedIDs.map(\.uuidString).joined(separator: " "))"
-        let remediation = failedIDs.isEmpty
-            ? "Do not repeat the command: the change is already saved. Run `freesnitch rules list` or `freesnitch status` to confirm it, and `freesnitch doctor` for the snapshot failure."
-            : "The IDs in `succeeded` are saved; do not repeat them. Rerun the command only for the IDs in `failed` once the helper answers again, and run `freesnitch doctor` for the snapshot failure."
-        let error = CLIError(.operationFailed,
-                             code: "snapshot_after_commit_failed",
-                             message: "The change was saved in the helper, but its policy snapshot could not be read afterwards: \(snapshotError.message)",
-                             remediation: remediation)
-        return CommandResult(data: report,
-                             human: "\(human)\nSaved in the helper. The policy snapshot could not be read afterwards (\(snapshotError.code)), so the network extension was not updated from this command.\n\(advice)",
-                             exitCode: .operationFailed,
-                             error: error)
+    private func committedWithoutSnapshot<T: Encodable>(_ report: T, human: String, snapshotError: CLIError) -> CommandResult {
+        CommandResult(data: report,
+                      human: "\(human)\nSaved in the helper. The policy snapshot could not be read afterwards (\(snapshotError.code)), so the network extension was not updated from this command.\nDo not repeat the command; the change is already saved.",
+                      exitCode: .operationFailed,
+                      error: RuleMutationBatch.savedButSnapshotFailed(snapshotError))
     }
 
     private func syncSnapshot(_ snapshot: SharedRuleBridge.Snapshot) async -> (state: String, message: String?, generation: UInt64?) {

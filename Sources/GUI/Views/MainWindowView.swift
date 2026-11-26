@@ -109,6 +109,9 @@ final class MainWindowModel: ObservableObject {
     @Published var isSidebarVisible = true
     /// Whether the Monitor is narrowed to apps with denied connections.
     @Published var monitorDeniedOnly = false
+    /// The Monitor row a demo opens with selected, by address, so the
+    /// destination details can be reviewed without clicking (#194).
+    @Published var monitorRevealIP: String? = DemoMode.isOn ? ProcessInfo.processInfo.environment["FREESNITCH_DEMO_MONITOR_SELECT"] : nil
     /// Whether the Monitor shows its map. On a small screen the map is the
     /// biggest of the three panes, so it can be hidden and the app list takes
     /// its room (#473). Remembered across launches, like the sidebar width.

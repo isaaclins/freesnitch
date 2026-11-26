@@ -118,7 +118,7 @@ Command-specific `data` shapes are:
 | `rules list` | filter values, `count`, `rules`, and optional `blocklistInfo` |
 | `rules show` | one complete `Rule` object |
 | `rules add` | `rule`, `extensionSync`, and optional `extensionMessage` and `snapshotError` |
-| `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, extension sync state, and optional `snapshotError` |
+| `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, and extension sync state. If the helper stops answering partway, the IDs already changed stay in `succeeded`, the rest are in `failed` with a reason, and `error.code` is `rule_mutation_interrupted` with the helper's exit status (66 or 67) |
 | `rules import` | imported count, IDs, source, extension sync state, and optional `snapshotError` |
 | `rules export` | a `freesnitch.rules.v1` document, or count and output path when writing a file |
 | monitor views | `requestedLimit`, `returned`, and the relevant array |
@@ -168,16 +168,14 @@ with `error.code` `snapshot_after_commit_failed` and still returns its normal
 report in `data` as a receipt: the rule and its ID, the changed or imported IDs
 and count, or the mode that was set. The snapshot failure itself is in
 `data.snapshotError` (`code`, `message`, `remediation`, `exitCode`),
-`extensionSync` is `not-attempted`, and `generation` (and `ruleCount` for
+`extensionSync` is `not-checked`, and `generation` (and `ruleCount` for
 `mode`) is omitted. The change is
 already saved, so do not repeat the command; run `freesnitch rules list` or
 `freesnitch status` to confirm it.
 
 If the helper stops answering partway through a multi-rule `enable`, `disable`,
-or `rm`, the rules it already confirmed stay in `succeeded` and the rest are
-listed in `failed` (those never sent read `not attempted: ...`). Rerun the
-command only for the IDs in `failed`. Only when nothing was changed yet is the
-helper error returned on its own.
+or `rm`, that is `rule_mutation_interrupted` instead, as described in the data
+table above; no snapshot is read then.
 
 ## Status and diagnosis
 

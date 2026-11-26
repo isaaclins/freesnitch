@@ -63,6 +63,9 @@ struct MonitorDestinationNode: Identifiable, Hashable, Sendable {
     let remoteHost: String?
     /// The literal address to write into a rule, when there is no name.
     let remoteIP: String?
+    /// True when connections grouped under this row went to more than one
+    /// address; `remoteIP` is the first one seen (#194).
+    var hasOtherAddresses: Bool = false
     let countryCode: String?
     let connectionCount: Int
     /// How many of those connections the filter denied. The Monitor never
@@ -273,6 +276,7 @@ enum MonitorTreeBuilder {
         var labelIsSeenName = false
         var remoteHost: String?
         var remoteIP: String?
+        var hasOtherAddresses = false
         var countryCode: String?
         var connectionCount: Int = 0
         var deniedCount: Int = 0
@@ -321,6 +325,10 @@ enum MonitorTreeBuilder {
                 destination.traffic.add(bytesIn: connection.bytesIn, bytesOut: connection.bytesOut)
                 if destination.countryCode == nil {
                     destination.countryCode = MonitorTreeKey.normalized(connection.countryCode)
+                }
+                let ip = connection.remoteIP.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !ip.isEmpty, let first = destination.remoteIP, ip.lowercased() != first.lowercased() {
+                    destination.hasOtherAddresses = true
                 }
                 if !destination.labelIsSeenName, let name = seenName(for: connection) {
                     destination.label = name
@@ -375,6 +383,7 @@ enum MonitorTreeBuilder {
                                        labelIsSeenName: entry.value.labelIsSeenName,
                                        remoteHost: entry.value.remoteHost,
                                        remoteIP: entry.value.remoteIP,
+                                       hasOtherAddresses: entry.value.hasOtherAddresses,
                                        countryCode: entry.value.countryCode,
                                        connectionCount: entry.value.connectionCount,
                                        deniedCount: entry.value.deniedCount,

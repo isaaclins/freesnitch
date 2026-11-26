@@ -192,6 +192,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let insightsQuerySlots = DispatchSemaphore(value: 8)
     private let insightsContactCacheLock = NSLock()
     private var insightsContactSnapshot: InsightsContactSnapshot?
+    /// Set when Delete History failed: the old database may still be open, so
+    /// no known-destination list is built from it until a delete works (#229).
+    /// Guarded by insightsMaintenanceQueue.
+    private var insightsContactHistoryDeleteFailed = false
     private let insightsDropLock = NSLock()
     private var insightsDropCount = 0
     private var lastInsightsDropLog = Date.distantPast
@@ -527,6 +531,12 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     /// swapped atomically only after the store query and validation succeed.
     private func refreshInsightsContactSnapshot() {
         guard let insights else { return }
+        guard !insightsContactHistoryDeleteFailed else {
+            insightsContactCacheLock.lock()
+            insightsContactSnapshot = nil
+            insightsContactCacheLock.unlock()
+            return
+        }
         do {
             let snapshot = try insights.contactSnapshot()
             insightsContactCacheLock.lock()
@@ -1615,16 +1625,31 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         // the policy database, which records every connection whether or not
         // Insights recording is on (#294). The second runs even when the
         // first fails, so one failure never leaves more behind than it has to.
+        //
+        // The known-destination list the GUI asks for is rebuilt from the
+        // emptied store before the reply, on the queue every rebuild runs on,
+        // so no rebuild that read the old history can land after it (#229).
         var failures: [String] = []
-        if let insights {
-            do {
-                try insights.purge()
-            } catch {
-                PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
-                failures.append(error.localizedDescription)
+        insightsMaintenanceQueue.sync {
+            insightsContactCacheLock.lock()
+            insightsContactSnapshot = nil
+            insightsContactCacheLock.unlock()
+            if let insights {
+                do {
+                    try insights.purge()
+                    insightsContactHistoryDeleteFailed = false
+                    refreshInsightsContactSnapshot()
+                } catch {
+                    // The old database may still be open. Keep the list
+                    // unavailable, so alert mode asks, rather than rebuild
+                    // known destinations from history the user deleted.
+                    insightsContactHistoryDeleteFailed = true
+                    PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
+                    failures.append(error.localizedDescription)
+                }
+            } else {
+                failures.append("insights store is unavailable")
             }
-        } else {
-            failures.append("insights store is unavailable")
         }
         do {
             try store.purgeConnections()

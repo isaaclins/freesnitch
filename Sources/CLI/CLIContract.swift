@@ -79,6 +79,23 @@ struct CLIEnvelope<T: Encodable>: Encodable {
     let data: T?
     let error: CLIErrorPayload?
 
+    private enum CodingKeys: String, CodingKey {
+        case schema, command, ok, exitCode, data, error
+    }
+
+    /// Written by hand so `data` and `error` are always present: the field that
+    /// does not apply is an explicit JSON null, as docs/CLI.md promises.
+    /// Synthesized encoding would leave a nil optional out entirely.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schema, forKey: .schema)
+        try container.encode(command, forKey: .command)
+        try container.encode(ok, forKey: .ok)
+        try container.encode(exitCode, forKey: .exitCode)
+        if let data { try container.encode(data, forKey: .data) } else { try container.encodeNil(forKey: .data) }
+        if let error { try container.encode(error, forKey: .error) } else { try container.encodeNil(forKey: .error) }
+    }
+
     static func success(command: String, data: T, exitCode: CLIExitCode = .success) -> Self {
         Self(schema: Self.schema, command: command, ok: exitCode == .success, exitCode: exitCode.rawValue, data: data, error: nil)
     }
@@ -171,13 +188,13 @@ enum CLIOutput {
         if json {
             if result.exitCode == .success {
                 let envelope = CLIEnvelope<AnyEncodable>.success(command: command, data: result.data)
-                writeStdout(encode(envelope))
+                writeEnvelope(envelope)
             } else {
                 let error = result.error ?? CLIError(result.exitCode,
                                                       message: "The command completed with \(result.exitCode.name).",
                                                       remediation: "Run `freesnitch doctor` for the relevant recovery steps.")
                 let envelope = CLIEnvelope<AnyEncodable>.failure(command: command, error: error, data: result.data)
-                writeStdout(encode(envelope))
+                writeEnvelope(envelope)
                 writeStderr("freesnitch: \(error.message)\n")
             }
         } else {
@@ -191,7 +208,7 @@ enum CLIOutput {
     static func failure(command: String, error: CLIError, json: Bool) {
         if json {
             let envelope = CLIEnvelope<EmptyPayload>.failure(command: command, error: error)
-            writeStdout(encode(envelope))
+            writeEnvelope(envelope)
         }
         var message = "freesnitch: \(error.message)"
         if let remediation = error.remediation {
@@ -200,8 +217,33 @@ enum CLIOutput {
         writeStderr(message + "\n")
     }
 
-    static func encode<T: Encodable>(_ value: T) -> Data {
-        (try? CLIJSON.encode(value)) ?? Data("{\"error\":\"could not encode CLI response\"}\n".utf8)
+    /// Writes the envelope to stdout. If the payload cannot be encoded, the
+    /// response is still a whole envelope (an internal failure with
+    /// `data: null`, never bare text) and the process exits 73, so the JSON
+    /// and the exit code agree.
+    static func writeEnvelope<T: Encodable>(_ envelope: CLIEnvelope<T>) {
+        if let data = try? CLIJSON.encode(envelope) {
+            writeStdout(data)
+            return
+        }
+        writeStdout(encodingFailure(command: envelope.command))
+        writeStderr("freesnitch: \(encodingFailureMessage) The command may still have run; check with `freesnitch status`.\n")
+        exit(Int32(CLIExitCode.internalFailure.rawValue))
+    }
+
+    static let encodingFailureMessage = "The CLI response could not be encoded."
+
+    static func encodingFailure(command: String) -> Data {
+        let error = CLIError(.internalFailure, message: encodingFailureMessage)
+        if let data = try? CLIJSON.encode(CLIEnvelope<EmptyPayload>.failure(command: command, error: error)) {
+            return data
+        }
+        let object: [String: Any] = [
+            "schema": CLIEnvelope<EmptyPayload>.schema, "command": command, "ok": false,
+            "exitCode": error.exitCode.rawValue, "data": NSNull(),
+            "error": ["code": error.code, "message": error.message, "exitCode": error.exitCode.rawValue],
+        ]
+        return (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])) ?? Data()
     }
 
     static func writeStdout(_ data: Data) {
