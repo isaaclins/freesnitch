@@ -1012,6 +1012,9 @@ final class FilterDataProvider: NEFilterDataProvider {
         }
     }
 
+    // The rejection messages below carry only session and generation numbers
+    // and fixed text, so they are logged public to keep a split brain
+    // diagnosable (#264). A decode error's text stays private.
     private func receiveSnapshot(_ data: Data) -> SharedRuleBridge.SnapshotStatus {
         do {
             try RuleTransportBoundary.validateSnapshotBytes(data)
@@ -1046,7 +1049,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, "Network extension rejected an older helper session's snapshot. \(status.message ?? "")")
+                PSLog.error(PSLog.netext, "\(public: status.message ?? "Network extension rejected an older helper session's snapshot.")")
                 return status
             }
             if let current, received.generation < current.generation {
@@ -1062,7 +1065,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                     )
                     snapshotStatus = status
                     snapshotLock.unlock()
-                    PSLog.error(PSLog.netext, "Network extension rejected an older live rule snapshot. \(status.message ?? "")")
+                    PSLog.error(PSLog.netext, "\(public: status.message ?? "Network extension rejected an older live rule snapshot.")")
                     return status
                 }
             }
@@ -1080,7 +1083,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, "Network extension rejected an invalid split-brain snapshot. \(status.message ?? "")")
+                PSLog.error(PSLog.netext, "\(public: status.message ?? "Network extension rejected an invalid split-brain snapshot.")")
                 return status
             }
 
@@ -1123,7 +1126,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, "Network extension rejected an invalid live snapshot. \(status.message ?? "")")
+                PSLog.error(PSLog.netext, "\(public: status.message ?? "Network extension rejected an invalid live snapshot.")")
                 return status
             case .rejectedOlderSession(let currentEpoch):
                 let status = SharedRuleBridge.SnapshotStatus.invalid(
@@ -1135,7 +1138,7 @@ final class FilterDataProvider: NEFilterDataProvider {
                 )
                 snapshotStatus = status
                 snapshotLock.unlock()
-                PSLog.error(PSLog.netext, "Network extension rejected an older helper session's snapshot. \(status.message ?? "")")
+                PSLog.error(PSLog.netext, "\(public: status.message ?? "Network extension rejected an older helper session's snapshot.")")
                 return status
             }
         } catch {
