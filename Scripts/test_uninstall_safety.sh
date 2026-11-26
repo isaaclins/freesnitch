@@ -44,6 +44,12 @@ make_fake_root() {
   : >"$root/Applications/FreeSnitch.app/Contents/Helpers/freesnitch-helper"
   : >"$root/Library/Application Support/FreeSnitch/Insights/insights.sqlite"
   printf 'fake policy database\n' >"$root/Library/Application Support/FreeSnitch/freesnitch.sqlite"
+  # What SQLite leaves beside it when the helper stopped mid-write (#237): the
+  # WAL with recent policy records, its index, and a rollback journal.
+  local companion
+  for companion in wal shm journal; do
+    printf 'fake %s\n' "$companion" >"$root/Library/Application Support/FreeSnitch/freesnitch.sqlite-$companion"
+  done
   # The anchor file holds the last rules, as it does when the helper was not
   # reachable to turn enforcement off before the uninstall (issue #192).
   printf 'table <freesnitch_feed> persist { 203.0.113.7 }\nblock drop out quick proto tcp to 198.51.100.4 port 443\n' \
@@ -382,6 +388,11 @@ test_flushes_only_named_anchor() {
   [[ -d "$root/Library/Application Support/FreeSnitch/Insights" ]] && fail "Insights was not removed on the clean path"
   [[ -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] || fail "the policy database was deleted without --remove-database"
   expect_contains "$output" "Kept $root/Library/Application Support/FreeSnitch/freesnitch.sqlite" "kept-database message"
+  local companion
+  for companion in wal shm journal; do
+    [[ -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite-$companion" ]] \
+      || fail "freesnitch.sqlite-$companion was deleted without --remove-database"
+  done
   [[ -f "$root/etc/pf.anchors/puresnitch" ]] || fail "the shared anchor file was deleted"
   expect_anchor_file_empty "$root" "a clean uninstall"
 
@@ -405,6 +416,27 @@ test_flushes_only_named_anchor() {
   (( status == 0 )) || fail "the uninstall with --remove-database failed: $output"
   [[ -f "$root2/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] && fail "--remove-database did not delete the policy database"
   expect_contains "$output" "Removed $root2/Library/Application Support/FreeSnitch/freesnitch.sqlite" "database removal message"
+  for companion in wal shm journal; do
+    [[ -e "$root2/Library/Application Support/FreeSnitch/freesnitch.sqlite-$companion" ]] \
+      && fail "--remove-database left freesnitch.sqlite-$companion behind (#237)"
+    expect_contains "$output" "Removed $root2/Library/Application Support/FreeSnitch/freesnitch.sqlite-$companion" \
+      "removal message for freesnitch.sqlite-$companion"
+  done
+  # Nothing of the policy store may remain, whatever SQLite named it.
+  local leftover
+  leftover="$(find "$root2/Library/Application Support/FreeSnitch" -maxdepth 1 -name 'freesnitch.sqlite*' -print)"
+  [[ -z "$leftover" ]] || fail "--remove-database left policy store files: $leftover"
+
+  # A database whose files are already gone (or only partly there) is fine.
+  local root3; root3="$(make_fake_root purge-db-partial)"
+  rm -f "$root3/Library/Application Support/FreeSnitch/freesnitch.sqlite" \
+        "$root3/Library/Application Support/FreeSnitch/freesnitch.sqlite-shm"
+  export FAKE_SIP=enabled FAKE_EXT_PRESENT=0 FAKE_HELPER_RUNNING=0
+  run_uninstall purge-db-partial --yes --remove-database
+  unset FAKE_SIP FAKE_EXT_PRESENT FAKE_HELPER_RUNNING
+  (( RUN_STATUS == 0 )) || fail "--remove-database failed with only a WAL left: $RUN_OUTPUT"
+  leftover="$(find "$root3/Library/Application Support/FreeSnitch" -maxdepth 1 -name 'freesnitch.sqlite*' -print)"
+  [[ -z "$leftover" ]] || fail "--remove-database left an orphaned WAL behind: $leftover"
   expect_anchor_file_empty "$root2" "the uninstall with --remove-database"
 }
 
@@ -447,6 +479,41 @@ test_command_link() {
   expect_contains "$RUN_OUTPUT" "Left $root2/usr/local/bin/freesnitch alone" "kept user file message"
 }
 
+# --- 4d. a symlinked database companion is refused before anything goes ----
+
+test_refuses_symlinked_database_companion() {
+  local root; root="$(make_fake_root symlinked-wal)"
+  local target="$WORK/symlinked-wal/elsewhere"
+  printf 'not FreeSnitch\n' >"$target"
+  rm -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite-wal"
+  ln -s "$target" "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite-wal"
+  export FAKE_SIP=enabled FAKE_EXT_PRESENT=0 FAKE_HELPER_RUNNING=0
+  run_uninstall symlinked-wal --yes --remove-database
+  unset FAKE_SIP FAKE_EXT_PRESENT FAKE_HELPER_RUNNING
+  (( RUN_STATUS != 0 )) || fail "the uninstall removed through a symlinked database companion"
+  [[ "$(cat "$target")" == "not FreeSnitch" ]] || fail "the symlink target was changed"
+  [[ -f "$root/Library/Application Support/FreeSnitch/freesnitch.sqlite" ]] \
+    || fail "the database was deleted before the symlinked companion was refused"
+}
+
+# --- 4e. the app's own uninstall removes the same files ---------------------
+#
+# The Uninstall screen runs a fixed AppleScript, not this script. Its
+# remove-database form must delete the same set of files (#237).
+
+test_app_uninstall_removes_database_companions() {
+  local src="$ROOT/Sources/GUI/App/PrivilegedUninstall.swift"
+  local remove_form keep_form suffix
+  remove_form="$(awk '/private static let removeDatabase = """/,/^    """$/' "$src")"
+  keep_form="$(awk '/private static let keepDatabase = """/,/^    """$/' "$src")"
+  [[ -n "$remove_form" && -n "$keep_form" ]] || { fail "could not read the app's uninstall scripts"; return; }
+  for suffix in "" -wal -shm -journal; do
+    expect_contains "$remove_form" "'/Library/Application Support/FreeSnitch/freesnitch.sqlite$suffix'" \
+      "the app's remove-database uninstall does not delete freesnitch.sqlite$suffix"
+  done
+  expect_absent "$keep_form" "freesnitch.sqlite" "the app's keep-database uninstall touches the policy database"
+}
+
 # --- 5. no real system path may appear in any privileged call ---------------
 
 test_never_touched_the_real_system() {
@@ -471,6 +538,8 @@ test_unknown_extension_state
 test_flushes_only_named_anchor
 test_refuses_symlinked_anchor
 test_command_link
+test_refuses_symlinked_database_companion
+test_app_uninstall_removes_database_companions
 test_never_touched_the_real_system
 
 if (( failures > 0 )); then
