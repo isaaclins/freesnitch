@@ -7134,6 +7134,16 @@
         }
       }
     },
+    "Load more changes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузить ещё изменения"
+          }
+        }
+      }
+    },
     "Load more destinations" : {
       "localizations" : {
         "ru" : {

@@ -1400,7 +1400,10 @@ extension InsightsStore {
             if $0.firstSeen != $1.firstSeen { return $0.firstSeen < $1.firstSeen }
             return $0.destination < $1.destination
         }
-        return trim(findings, limit: query.limit)
+        // Findings are derived in memory, so the page is cut here: without the
+        // offset every "next page" returned the first one again (#231).
+        let offset = min(query.offset, InsightsLimits.maxQueryOffset)
+        return trim(Array(findings.dropFirst(offset)), limit: query.limit)
     }
 
     // MARK: Overview
