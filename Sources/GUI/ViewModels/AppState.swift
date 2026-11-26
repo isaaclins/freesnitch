@@ -82,6 +82,10 @@ final class AppState: ObservableObject {
     /// this to say "still downloading" or "unavailable" instead of drawing an
     /// empty map as though there were no traffic.
     @Published private(set) var geoStatus: IPGeoCache.Status = IPGeoCache.shared.status
+    /// What the offline network owner database (ASN, organisation, range)
+    /// knows, so the Monitor can say "still downloading" rather than nothing
+    /// (#194).
+    @Published private(set) var asnStatus: IPASNCache.Status = IPASNCache.shared.status
     @Published var searchQuery: String = ""
     @Published var filterSnapshotStatus = SharedRuleBridge.SnapshotStatus.unavailable(
         String(localized: "Network extension IPC is not connected.")
@@ -305,6 +309,11 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 self.geoStatus = IPGeoCache.shared.status
                 self.updateConnections(self.connections)
+            }
+        }
+        IPASNCache.shared.onReady { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                self?.asnStatus = IPASNCache.shared.status
             }
         }
         // One writer for the active profile, fed by the helper's snapshot

@@ -189,8 +189,20 @@ if let apiRow = beeper.destinations.first(where: { $0.label == "api.beeper.com" 
     equal(apiRow.traffic.bytesOut, 12, "the destination row rolls up sent bytes")
     equal(apiRow.remoteHost, "api.beeper.com", "a named destination keeps its domain for a rule")
     check(apiRow.remoteIP == "203.0.113.10", "a named destination also remembers the address it used")
+    check(!apiRow.hasOtherAddresses, "a name that always used one address does not claim more")
 } else {
     check(false, "api.beeper.com has a destination row")
+}
+
+let spread = MonitorTreeBuilder.build(connections: [
+    connection(app: "Beeper", bundle: "com.beeper.app", host: "api.beeper.com", ip: "203.0.113.10"),
+    connection(app: "Beeper", bundle: "com.beeper.app", host: "api.beeper.com", ip: "203.0.113.11")
+], order: MonitorRowOrder())
+if let spreadRow = spread.snapshot.apps.first?.destinations.first {
+    equal(spreadRow.remoteIP, "203.0.113.10", "a name with several addresses keeps the first one")
+    check(spreadRow.hasOtherAddresses, "a name with several addresses says so (#194)")
+} else {
+    check(false, "the two-address name has a destination row")
 }
 
 if let bareRow = beeper.destinations.first(where: { $0.label == "203.0.113.77" }) {

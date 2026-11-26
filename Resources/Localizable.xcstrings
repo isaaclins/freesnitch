@@ -4,6 +4,16 @@
     "" : {
       "shouldTranslate" : false
     },
+    "%@ (country only)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (только страна)"
+          }
+        }
+      }
+    },
     "%@ (helper offline)" : {
       "localizations" : {
         "ru" : {
@@ -2545,6 +2555,16 @@
         }
       }
     },
+    "A local, private or carrier-internal address. It is not a public internet address, so it has no network owner." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальный, частный или внутренний адрес оператора. Это не публичный адрес в интернете, поэтому у него нет владельца сети."
+          }
+        }
+      }
+    },
     "A new profile is never empty: it inherits every Always rule immediately, without copying them." : {
       "localizations" : {
         "ru" : {
@@ -2591,6 +2611,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Для этой строки есть правило, но оно выключено в разделе «Правила» и ничего не решает."
+          }
+        }
+      }
+    },
+    "ASN" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ASN"
           }
         }
       }
@@ -2831,6 +2861,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавлено в ваши правила"
+          }
+        }
+      }
+    },
+    "Address" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес"
+          }
+        }
+      }
+    },
+    "Address range" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диапазон адресов"
           }
         }
       }
@@ -3905,6 +3955,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Спрашивать об адресах, которые приложение уже использует"
+          }
+        }
+      }
+    },
+    "Ask your DNS server for this address's name and a public registry (RDAP) for who registered it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запросить у DNS-сервера имя этого адреса, а у публичного реестра (RDAP) — кто его зарегистрировал."
           }
         }
       }
@@ -6217,6 +6277,16 @@
         }
       }
     },
+    "FreeSnitch has not seen the address for this destination yet." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FreeSnitch ещё не видел адрес этого назначения."
+          }
+        }
+      }
+    },
     "FreeSnitch is already in Applications" : {
       "localizations" : {
         "ru" : {
@@ -6423,6 +6493,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "HTTP разрешён только для явно внедрённой тестовой среды на localhost."
+          }
+        }
+      }
+    },
+    "Handle" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Идентификатор"
           }
         }
       }
@@ -7104,6 +7184,16 @@
         }
       }
     },
+    "Location" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Местоположение"
+          }
+        }
+      }
+    },
     "Location Services is off. Turn it on in Settings under Map." : {
       "localizations" : {
         "ru" : {
@@ -7120,6 +7210,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Службы геолокации включены в Настройках в разделе «Карта»."
+          }
+        }
+      }
+    },
+    "Location data is still downloading." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о местоположении ещё загружаются."
           }
         }
       }
@@ -7161,6 +7261,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось изменить объект входа: %@"
+          }
+        }
+      }
+    },
+    "Look Up Again" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Узнать снова"
+          }
+        }
+      }
+    },
+    "Look Up Owner" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Узнать владельца"
+          }
+        }
+      }
+    },
+    "Looking up…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск…"
           }
         }
       }
@@ -7409,12 +7539,42 @@
         }
       }
     },
+    "Network" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сеть"
+          }
+        }
+      }
+    },
     "Network Monitor" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Монитор сети"
+          }
+        }
+      }
+    },
+    "Network and location data by DB-IP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о сетях и местоположении: DB-IP"
+          }
+        }
+      }
+    },
+    "Network and location data by DB-IP, updated %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о сетях и местоположении: DB-IP, обновлено %@"
           }
         }
       }
@@ -7555,6 +7715,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "В этой сборке фильтрация сети недоступна"
+          }
+        }
+      }
+    },
+    "Network owner data could not be downloaded. FreeSnitch tries again on the next launch." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить данные о владельцах сетей. FreeSnitch попробует снова при следующем запуске."
+          }
+        }
+      }
+    },
+    "Network owner data is still downloading." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные о владельцах сетей ещё загружаются."
           }
         }
       }
@@ -7766,6 +7946,146 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "macOS завершит удаление сетевого фильтра при следующей перезагрузке."
+          }
+        }
+      }
+    },
+    "No location estimate for this address." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого адреса нет оценки местоположения."
+          }
+        }
+      }
+    },
+    "None" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет"
+          }
+        }
+      }
+    },
+    "Registered as" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зарегистрировано как"
+          }
+        }
+      }
+    },
+    "Registered range" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зарегистрированный диапазон"
+          }
+        }
+      }
+    },
+    "Registered to" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Владелец регистрации"
+          }
+        }
+      }
+    },
+    "Registration record from %@. It says who registered the range, not where the server is." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись о регистрации из %@. Она говорит, кто зарегистрировал диапазон, а не где находится сервер."
+          }
+        }
+      }
+    },
+    "Registry country" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Страна в реестре"
+          }
+        }
+      }
+    },
+    "Reverse DNS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обратный DNS"
+          }
+        }
+      }
+    },
+    "Selected Destination" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранное назначение"
+          }
+        }
+      }
+    },
+    "Sends this address to your DNS server, to rdap.org and to the regional registry it points to. Nothing is sent until you click." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляет этот адрес вашему DNS-серверу, на rdap.org и в региональный реестр, на который он указывает. Пока вы не нажмёте, ничего не отправляется."
+          }
+        }
+      }
+    },
+    "The location is an estimate. Shared or anycast addresses can be served from many places." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Местоположение приблизительное. Общие адреса и адреса anycast могут обслуживаться из многих мест."
+          }
+        }
+      }
+    },
+    "The registry lookup failed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос к реестру не удался: %@"
+          }
+        }
+      }
+    },
+    "This destination connected to more than one address. The details below are for the first one, %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это назначение подключалось к нескольким адресам. Сведения ниже относятся к первому из них, %@."
+          }
+        }
+      }
+    },
+    "This address is not in the network owner data." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этого адреса нет в данных о владельцах сетей."
           }
         }
       }
@@ -11005,6 +11325,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Брандмауэр отклонил таблицу адресов, поэтому источники ничего не блокируют. Ваши собственные правила по-прежнему действуют."
+          }
+        }
+      }
+    },
+    "not a public address" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "это не публичный адрес"
           }
         }
       }
@@ -14410,6 +14740,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "служба не вернула эталонную политику"
+          }
+        }
+      }
+    },
+    "the registry answered with HTTP %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "реестр ответил с кодом HTTP %lld"
+          }
+        }
+      }
+    },
+    "the registry's answer could not be read" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ответ реестра не удалось прочитать"
           }
         }
       }
