@@ -407,12 +407,20 @@ public struct RuleImportPlan: Sendable {
 
     /// What the log keeps of an import: the summary, then one line per rule it
     /// deleted or moved, so a large import is not one line the log truncates.
-    public var logLines: [String] {
+    public var logLines: [String] { logMessages.map(\.unredacted) }
+
+    /// The same lines for the system log: counts and rule IDs are public, the
+    /// rules' apps, destinations and profile names are private (#264).
+    public var logMessages: [PSLogMessage] {
         let kept = keptByProfile.map { "\($0.profile)=\($0.count)" }.joined(separator: ", ")
-        return ["rule import: \(resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; "
-                + "\(removed.count) removed, \(moved.count) moved to another profile, \(self.kept.count) kept in other profiles [\(kept)]"]
-            + removed.map { "rule import removed: \(Self.describe($0)) in \($0.profile) (\($0.id.uuidString))" }
-            + moved.map { "rule import moved: \(Self.describe($0)) from \($0.profile) to \(movedTo[$0.id] ?? "?") (\($0.id.uuidString))" }
+        let summary: PSLogMessage = "rule import: \(public: resulting.count - self.kept.count) rules imported into profiles [\(replacedProfiles.joined(separator: ", "))]; \(public: removed.count) removed, \(public: moved.count) moved to another profile, \(public: self.kept.count) kept in other profiles [\(kept)]"
+        let removedLines: [PSLogMessage] = removed.map {
+            "rule import removed: \(Self.describe($0)) in \($0.profile) (\(public: $0.id.uuidString))"
+        }
+        let movedLines: [PSLogMessage] = moved.map {
+            "rule import moved: \(Self.describe($0)) from \($0.profile) to \(movedTo[$0.id] ?? "?") (\(public: $0.id.uuidString))"
+        }
+        return [summary] + removedLines + movedLines
     }
 
     /// Kept rules counted per profile, sorted by profile name.

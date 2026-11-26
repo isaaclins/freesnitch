@@ -108,7 +108,7 @@ final class DNSAskCoordinator: @unchecked Sendable {
         askLock.lock()
         if waiterCount >= Self.capacity {
             askLock.unlock()
-            PSLog.error(PSLog.dns, "DNS ask table is at its \(Self.capacity) entry bound; resolving '\(domain)' with the fail-open default.")
+            PSLog.error(PSLog.dns, "DNS ask table is at its \(public: Self.capacity) entry bound; resolving '\(domain)' with the fail-open default.")
             completion(Self.defaultDecision)
             return .resolvedImmediately
         }
@@ -280,12 +280,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
         if session.persisted {
             PSLog.info(PSLog.helper,
-                       "policy session \(session.epoch) opened at generation \(session.generation)")
+                       "policy session \(public: session.epoch) opened at generation \(public: session.generation)")
         } else {
             PSLog.error(
                 PSLog.helper,
-                "policy session \(session.epoch) could not be persisted; this session stays authoritative, "
-                + "but a later helper start may reuse epoch \(session.epoch) and be compared by generation alone."
+                "policy session \(public: session.epoch) could not be persisted; this session stays authoritative, but a later helper start may reuse epoch \(public: session.epoch) and be compared by generation alone."
             )
         }
 
@@ -348,7 +347,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 try self.pf.setIPBlocklist(set, resolverAddresses: self.configuredResolverAddresses())
             } catch {
                 PSLog.error(PSLog.pf,
-                            "address feed could not be published to the pf anchor: \(error.localizedDescription)")
+                            "address feed could not be published to the pf anchor: \(error: error)")
             }
         }
         netmon.onConnections = { [weak self] conns in
@@ -412,8 +411,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 // Keep enforcing the last policy that was read in full. An
                 // empty or partial one would drop the user's rules (#279).
                 PSLog.error(PSLog.helper,
-                            "the active profile's policy could not be read; the previous policy stays in force: "
-                            + error.localizedDescription)
+                            "the active profile's policy could not be read; the previous policy stays in force: \(error: error)")
                 return false
             }
             teamlessBundleIds = nil
@@ -434,7 +432,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         // profile's rules until some unrelated rule change (issue #184).
         do { try applyRulesIfEnforcing() } catch {
             PSLog.error(PSLog.pf,
-                        "the profile switch could not be applied to the pf anchor: \(error.localizedDescription)")
+                        "the profile switch could not be applied to the pf anchor: \(error: error)")
         }
         broadcast { client in
             client.notifyLog(level: "info", message: AppConstants.profilePolicyChangedLogMessage)
@@ -488,7 +486,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func pruneInsights() {
         guard let insights else { return }
         do { try insights.prune() }
-        catch { PSLog.error(PSLog.helper, "Insights prune failed: \(error.localizedDescription)") }
+        catch { PSLog.error(PSLog.helper, "Insights prune failed: \(error: error)") }
     }
 
     private func enqueueDNSMappings(_ mappings: [DNSMapping]) {
@@ -500,7 +498,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         insightsDNSQueue.async { [weak self] in
             defer { self?.insightsDNSSlots.signal() }
             do { try insights.recordDNSMappings(mappings) }
-            catch { PSLog.error(PSLog.helper, "DNS mapping recording failed: \(error.localizedDescription)") }
+            catch { PSLog.error(PSLog.helper, "DNS mapping recording failed: \(error: error)") }
         }
     }
 
@@ -521,7 +519,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 try insights.record(observations)
                 self?.insightsMaintenanceQueue.async { [weak self] in self?.refreshInsightsContactSnapshot() }
             } catch {
-                PSLog.error(PSLog.helper, "Insights observation recording failed: \(error.localizedDescription)")
+                PSLog.error(PSLog.helper, "Insights observation recording failed: \(error: error)")
             }
         }
         reply(true, nil)
@@ -546,7 +544,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             insightsContactCacheLock.lock()
             insightsContactSnapshot = nil
             insightsContactCacheLock.unlock()
-            PSLog.error(PSLog.helper, "Insights contact history unavailable: \(error.localizedDescription)")
+            PSLog.error(PSLog.helper, "Insights contact history unavailable: \(error: error)")
         }
     }
 
@@ -564,7 +562,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         insightsDropLock.unlock()
         if let count {
-            PSLog.error(PSLog.helper, "Dropped \(count) queued \(kind) insights batches because the bounded writer queue was full.")
+            PSLog.error(PSLog.helper, "Dropped \(public: count) queued \(public: kind) insights batches because the bounded writer queue was full.")
         }
     }
 
@@ -623,7 +621,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 ruleHost = ""
                 PSLog.error(
                     PSLog.dns,
-                    "DNS query name '\(domain)' is not a connectable PF destination: \(PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
+                    "DNS query name '\(domain)' is not a connectable PF destination: \(public: PFHostValidator.rejectionReason(for: domain)); no remembered host will be offered."
                 )
             }
             let stub = Connection(pid: 0, processName: Connection.dnsLookupProcessName, processPath: "", remoteHost: ruleHost, status: .pending)
@@ -651,7 +649,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         PSLog.error(
             PSLog.helper,
-            "Rejected stored DoH upstream `\(storedValue)`: \(reason). Falling back to `\(AppConstants.defaultDoHUpstream)`."
+            "Rejected stored DoH upstream `\(storedValue)`: \(public: reason). Falling back to `\(public: AppConstants.defaultDoHUpstream)`."
         )
         return AppConstants.defaultDoHUpstream
     }
@@ -700,7 +698,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         }
         PSLog.info(
             PSLog.helper,
-            "Restarting for update: running \(Self.runningVersion), installed \(Self.installedVersion). Using launchctl kickstart -k; the service stays registered."
+            "Restarting for update: running \(public: Self.runningVersion), installed \(public: Self.installedVersion). Using launchctl kickstart -k; the service stays registered."
         )
         reply(true, nil)
         // Answer first, then restart. launchd keeps the registration and starts
@@ -714,7 +712,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             } catch {
                 PSLog.error(
                     PSLog.helper,
-                    "launchctl kickstart failed: \(error.localizedDescription). The helper stays registered; run `\(AppConstants.helperKickstartCommand)`."
+                    "launchctl kickstart failed: \(error: error). The helper stays registered; run `\(public: AppConstants.helperKickstartCommand)`."
                 )
             }
         }
@@ -730,8 +728,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 return (state.mode, state.generation, state.rules.count)
             } catch {
                 PSLog.error(PSLog.helper,
-                            "status could not read the saved policy; reporting the policy in force: "
-                            + error.localizedDescription)
+                            "status could not read the saved policy; reporting the policy in force: \(error: error)")
                 return (mode, policyGeneration, adoptedRuleCount)
             }
         }
@@ -751,7 +748,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             try store.recordPolicyGeneration(atLeast: state.generation)
         } catch {
             PSLog.error(PSLog.helper,
-                        "policy generation \(state.generation) could not be persisted: \(error.localizedDescription)")
+                        "policy generation \(public: state.generation) could not be persisted: \(error: error)")
         }
     }
 
@@ -809,7 +806,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             // The caller reports an empty reply as a failed snapshot and keeps
             // the policy it already has. The reason is logged here.
             PSLog.error(PSLog.helper,
-                        "authoritative snapshot not published: \(error.localizedDescription)")
+                        "authoritative snapshot not published: \(error: error)")
             reply(Data())
             return
         }
@@ -820,8 +817,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             // to the caller as a corrupt payload, which sent users chasing a
             // version mismatch that did not exist. See #57.
             PSLog.error(PSLog.helper,
-                        "authoritative snapshot for session \(snapshot.epoch) generation \(snapshot.generation) "
-                        + "could not be encoded: \(error.localizedDescription)")
+                        "authoritative snapshot for session \(public: snapshot.epoch) generation \(public: snapshot.generation) could not be encoded: \(error: error)")
             reply(Data())
         }
     }
@@ -962,10 +958,10 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                                                     to: &draft)
                 }
             } catch let conflict as RuleImportConflict {
-                PSLog.error(PSLog.helper, "rule import refused: \(conflict.localizedDescription)")
+                PSLog.error(PSLog.helper, "rule import refused: \(public: conflict.localizedDescription)")
                 throw conflict
             }
-            plan?.logLines.forEach { PSLog.notice(PSLog.helper, $0) }
+            plan?.logMessages.forEach { PSLog.notice(PSLog.helper, $0) }
             do {
                 try applyRulesIfEnforcing()
                 clearPFError()
@@ -1035,7 +1031,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(try RuleTransportBoundary.encodeRuleBatch(rules))
         } catch {
             PSLog.error(PSLog.helper,
-                        "rule list could not be read or encoded for a caller: \(error.localizedDescription)")
+                        "rule list could not be read or encoded for a caller: \(error: error)")
             reply(Data())
         }
     }
@@ -1064,7 +1060,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func setEnforcementEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
         let requestedState = enabled ? "on" : "off"
-        PSLog.error(PSLog.helper, "AUDIT: enforcement \(requestedState) requested")
+        PSLog.error(PSLog.helper, "AUDIT: enforcement \(public: requestedState) requested")
         let (ok, message) = enforcement.setEnabled(enabled, steps: enforcementSteps)
         reply(ok, message)
     }
@@ -1163,7 +1159,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             reply(Data(), "The feed id is not valid.")
             return
         }
-        PSLog.error(PSLog.helper, "AUDIT: address feed \(idString) \(enabled ? "enable" : "disable") requested")
+        PSLog.error(PSLog.helper, "AUDIT: address feed \(idString) \(public: enabled ? "enable" : "disable") requested")
         Task {
             guard await self.blocklists.setIPFeedEnabledAndRefresh(idString: idString, enabled: enabled) else {
                 reply(Data(), "No address feed has that id.")
@@ -1290,7 +1286,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             }
             enqueueObservations(batch.observations, reply: reply)
         } catch {
-            PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error.localizedDescription)")
+            PSLog.error(PSLog.helper, "Insights observation batch rejected: \(error: error)")
             reply(false, error.localizedDescription)
         }
     }
@@ -1307,7 +1303,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         do {
             try store.recordRuleHits(hits)
         } catch {
-            PSLog.error(PSLog.helper, "Rule hit counts could not be saved: \(error.localizedDescription)")
+            PSLog.error(PSLog.helper, "Rule hit counts could not be saved: \(error: error)")
         }
     }
 
@@ -1353,7 +1349,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         } catch is NothingLearned {
             return
         } catch {
-            PSLog.error(PSLog.helper, "the signing team of an app could not be saved on its rules: \(error.localizedDescription)")
+            PSLog.error(PSLog.helper, "the signing team of an app could not be saved on its rules: \(error: error)")
             return
         }
         for sighting in taught {
@@ -1483,7 +1479,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         switch outcome {
         case .answered(let alert):
             PSLog.error(PSLog.helper,
-                        "AUDIT: pending alert \(alert.id.uuidString) answered \(decoded.answer.allow ? "allow" : "deny") from the command line")
+                        "AUDIT: pending alert \(public: alert.id.uuidString) answered \(public: decoded.answer.allow ? "allow" : "deny") from the command line")
             response = storeRememberedRule(for: alert, answer: decoded.answer, now: now)
         case .alreadyAnswered(let answerer, let at):
             response = PendingAlertAnswerResponse(
@@ -1644,7 +1640,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                     // unavailable, so alert mode asks, rather than rebuild
                     // known destinations from history the user deleted.
                     insightsContactHistoryDeleteFailed = true
-                    PSLog.error(PSLog.helper, "Insights purge failed: \(error.localizedDescription)")
+                    PSLog.error(PSLog.helper, "Insights purge failed: \(error: error)")
                     failures.append(error.localizedDescription)
                 }
             } else {
@@ -1654,7 +1650,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         do {
             try store.purgeConnections()
         } catch {
-            PSLog.error(PSLog.helper, "connection history purge failed: \(error.localizedDescription)")
+            PSLog.error(PSLog.helper, "connection history purge failed: \(error: error)")
             failures.append(error.localizedDescription)
         }
         reply(failures.isEmpty, failures.isEmpty ? nil : failures.joined(separator: "; "))
@@ -1712,7 +1708,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                 try report.validateBounds(payloadBytes: data.count)
                 reply(data, nil)
             } catch {
-                PSLog.error(PSLog.helper, "Insights query failed: \(error.localizedDescription)")
+                PSLog.error(PSLog.helper, "Insights query failed: \(error: error)")
                 reply(Data(), error.localizedDescription)
             }
         }
@@ -1722,7 +1718,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         diagnosticsLock.lock()
         lastPFError = error.localizedDescription
         diagnosticsLock.unlock()
-        PSLog.error(PSLog.helper, "PF diagnostic: \(error.localizedDescription)")
+        PSLog.error(PSLog.helper, "PF diagnostic: \(error: error)")
     }
 
     private func clearPFError() {
@@ -1735,7 +1731,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 extension HelperService: NSXPCListenerDelegate {
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
         guard XPCPeerValidator.isTrustedGUI(newConnection) else {
-            PSLog.error(PSLog.helper, "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement (pid \(newConnection.processIdentifier))")
+            PSLog.error(PSLog.helper, "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement (pid \(public: newConnection.processIdentifier))")
             return false
         }
         newConnection.exportedInterface = HelperBridge.remoteInterface()

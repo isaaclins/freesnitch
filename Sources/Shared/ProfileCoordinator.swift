@@ -296,11 +296,10 @@ public final class ProfileCoordinator: @unchecked Sendable {
             let handler = pendingHandler
             lock.unlock()
             if changed {
-                let target = failure.profileName.isEmpty
+                let target: PSLogMessage = failure.profileName.isEmpty
                     ? "this network's profile" : "the profile \(failure.profileName)"
                 PSLog.error(PSLog.helper,
-                            "Could not switch to \(target) for gateway \(mac): "
-                            + "\(failure.problem). Retrying on every gateway check until it works.")
+                            "Could not switch to \(target) for gateway \(mac): \(failure.problem). Retrying on every gateway check until it works.")
                 handler?(failure)
             }
             return false

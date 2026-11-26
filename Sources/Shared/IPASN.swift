@@ -146,7 +146,7 @@ public final class IPASNCache: @unchecked Sendable {
                 stateQueue.sync { index = opened }
                 haveIndex = true
             } catch {
-                PSLog.error(PSLog.app, "offline network owner index unusable, rebuilding: \(error)")
+                PSLog.error(PSLog.app, "offline network owner index unusable, rebuilding: \(error: error)")
             }
         }
 
@@ -164,7 +164,7 @@ public final class IPASNCache: @unchecked Sendable {
             let message = "offline network owner database unavailable: \(error.localizedDescription)"
             if haveIndex {
                 stateQueue.sync { lastError = message }
-                PSLog.error(PSLog.app, message)
+                PSLog.error(PSLog.app, "offline network owner database unavailable: \(error: error)")
             } else {
                 finishLoading(error: message)
             }
@@ -222,7 +222,7 @@ public final class IPASNCache: @unchecked Sendable {
             callbacks = readyCallbacks
             readyCallbacks.removeAll()
         }
-        if let error { PSLog.error(PSLog.app, error) }
+        if let error { PSLog.error(PSLog.app, "offline network owner database could not load: \(error)") }
         callbacks.forEach { $0() }
     }
 

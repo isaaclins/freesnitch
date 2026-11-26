@@ -36,8 +36,8 @@ enum PSLog {
     nonisolated(unsafe) static var errors: [String] = []
     nonisolated(unsafe) static var infos: [String] = []
     private static let lock = NSLock()
-    static func error(_ log: OSLog, _ msg: String) { lock.lock(); errors.append(msg); lock.unlock() }
-    static func info(_ log: OSLog, _ msg: String) { lock.lock(); infos.append(msg); lock.unlock() }
+    static func error(_ log: OSLog, _ msg: PSLogMessage) { lock.lock(); errors.append(msg.unredacted); lock.unlock() }
+    static func info(_ log: OSLog, _ msg: PSLogMessage) { lock.lock(); infos.append(msg.unredacted); lock.unlock() }
     static func reset() { lock.lock(); errors = []; infos = []; lock.unlock() }
 }
 
@@ -191,7 +191,7 @@ xcrun swiftc -O \
   -sdk "$(xcrun --show-sdk-path)" \
   -target arm64-apple-macos13.0 \
   -o "$TMP/build/run" \
-  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$ROOT/Sources/Shared/CodeSigningIdentity.swift" \
+  "$ROOT/Sources/Shared/AppBundleIdentity.swift" "$ROOT/Sources/Shared/CodeSigningIdentity.swift" "$ROOT/Sources/Shared/LogMessage.swift" \
   "$TMP/cache.swift" "$TMP/main.swift"
 
 "$TMP/build/run" "$TMP/apps"

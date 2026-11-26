@@ -206,7 +206,7 @@ final class NetMonitor: @unchecked Sendable {
         // spun at over 100% CPU on an idle Mac (#142, #144). A pipe that stays
         // open and never carries data keeps it asleep between samples.
         let input = Pipe(); p.standardInput = input
-        do { try p.run() } catch { PSLog.error(PSLog.netmon, "nettop failed: \(error)"); return }
+        do { try p.run() } catch { PSLog.error(PSLog.netmon, "nettop failed: \(error: error)"); return }
         nettopProc = p
         nettopInput = input
         nettopOutput = pipe.fileHandleForReading

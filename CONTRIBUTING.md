@@ -24,6 +24,7 @@ Build target: FreeSnitch. Hit ⌘R. A local contributor build may fail to instal
 - **No emoji in code or commits.** Yes, even there.
 - **Match the existing style.** SwiftUI views split into small private computed properties. No mega-views.
 - **Comments are for *why*, not *what*.** Identifier names should carry the *what*.
+- **Log through `PSLog`, and keep user data private.** Values interpolated into a `PSLog` line show up as `<private>` in the system log. Mark a value `\(public: x)` only when it carries nothing about the user (a count, a pid, a state); host names, paths, addresses, URLs and list names stay private. Errors go in as `\(error: error)`, which keeps the domain and code readable.
 
 ## Areas where help is most welcome
 
@@ -48,7 +49,7 @@ Open an issue. Include:
 - macOS version
 - FreeSnitch version from Settings under About
 - Reproduction steps
-- Console output from `log stream --predicate 'subsystem == "io.isaaclins.freesnitch"'`
+- Console output from `log stream --predicate 'subsystem == "io.isaaclins.freesnitch"'` (host names and paths show as `<private>` there, which is expected)
 
 ## License
 

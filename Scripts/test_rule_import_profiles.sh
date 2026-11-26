@@ -38,7 +38,7 @@ grep -Fq 'confirmedIDs: Set(expectedRemovedIDs),' "$HELPER" \
   || fail "the helper import does not check the deletions the user confirmed"
 grep -Fq 'expectedRemovedIDs: plan?.confirmedIDs ?? []' "$RULES_MANAGER" \
   || fail "the app does not send the deletions it showed in the dialog"
-grep -Fq 'plan?.logLines.forEach { PSLog.notice(PSLog.helper, $0) }' "$HELPER" \
+grep -Fq 'plan?.logMessages.forEach { PSLog.notice(PSLog.helper, $0) }' "$HELPER" \
   || fail "the helper import does not log what it removed, at a level the log store keeps"
 # An older helper drops the new import request without answering. The app
 # must give up on its own instead of waiting forever.

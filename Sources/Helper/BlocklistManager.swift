@@ -214,7 +214,7 @@ final class BlocklistManager: @unchecked Sendable {
                 } catch {
                     failed.append(list.name)
                     PSLog.error(PSLog.helper,
-                                "blocklist entries for \(list.name) could not be stored: \(error.localizedDescription)")
+                                "blocklist entries for \(list.name) could not be stored: \(error: error)")
                     continue
                 }
                 downloaded[list.id] = (list.url, source)
@@ -304,19 +304,19 @@ final class BlocklistManager: @unchecked Sendable {
             // Without this check an error page parses into junk "domains":
             // GitHub's 404 body alone yields an entry called "Found".
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                PSLog.error(PSLog.dns, "blocklist \(list.name) returned HTTP \(http.statusCode)")
+                PSLog.error(PSLog.dns, "blocklist \(list.name) returned HTTP \(public: http.statusCode)")
                 return nil
             }
             let limit = DomainListLimits.maxBytes
             if response.expectedContentLength > Int64(limit) {
-                PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(limit) byte limit; not loaded")
+                PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(public: limit) byte limit; not loaded")
                 return nil
             }
             var data = Data()
             data.reserveCapacity(min(limit, 1 * 1024 * 1024))
             for try await byte in bytes {
                 guard data.count < limit else {
-                    PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(limit) byte limit; not loaded")
+                    PSLog.error(PSLog.dns, "blocklist \(list.name) is larger than the \(public: limit) byte limit; not loaded")
                     return nil
                 }
                 data.append(byte)
@@ -325,12 +325,12 @@ final class BlocklistManager: @unchecked Sendable {
             data = Data()
             guard let names = BlocklistManager.parse(text, maxEntries: DomainListLimits.maxEntries) else {
                 PSLog.error(PSLog.dns,
-                            "blocklist \(list.name) has more than \(DomainListLimits.maxEntries) names; not loaded")
+                            "blocklist \(list.name) has more than \(public: DomainListLimits.maxEntries) names; not loaded")
                 return nil
             }
             return names
         } catch {
-            PSLog.error(PSLog.dns, "blocklist fetch failed: \(list.name) - \(error)")
+            PSLog.error(PSLog.dns, "blocklist fetch failed: \(list.name) - \(error: error)")
             return nil
         }
     }

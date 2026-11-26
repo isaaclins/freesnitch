@@ -11,7 +11,7 @@ UserDefaults.standard.setVolatileDomain(["AppleLanguages": ["en"]], forName: Use
 // version comes from this capture.
 AppBundleIdentity.captureRunningIdentity()
 
-PSLog.info(PSLog.helper, "FreeSnitchHelper starting running=\(HelperService.runningVersion) installed=\(HelperService.installedVersion) pid=\(getpid())")
+PSLog.info(PSLog.helper, "FreeSnitchHelper starting running=\(public: HelperService.runningVersion) installed=\(public: HelperService.installedVersion) pid=\(public: getpid())")
 
 let listener = NSXPCListener(machServiceName: AppConstants.xpcMachServiceName)
 
@@ -25,7 +25,7 @@ let service: HelperService
 do {
     service = try HelperService(listener: listener)
 } catch {
-    PSLog.error(PSLog.helper, "service init failed: \(error)")
+    PSLog.error(PSLog.helper, "service init failed: \(error: error)")
     exit(1)
 }
 service.start()

@@ -111,7 +111,7 @@ final class PFManager: @unchecked Sendable {
             do {
                 try PFManager.emptyAnchor.write(toFile: anchorPath, atomically: true, encoding: .utf8)
             } catch {
-                PSLog.error(PSLog.pf, "could not empty \(anchorPath): \(error.localizedDescription)")
+                PSLog.error(PSLog.pf, "could not empty \(public: anchorPath): \(error: error)")
                 onWarning?("PF could not empty \(anchorPath), so a later load of /etc/pf.conf could bring "
                     + "back FreeSnitch's last rules: \(error.localizedDescription)")
             }
@@ -123,11 +123,9 @@ final class PFManager: @unchecked Sendable {
             emptyLoadError = error
         }
         if let flushError, let emptyLoadError {
-            let message = "FreeSnitch could not empty its pf anchor, so its last firewall rules may still be "
-                + "active. Flushing it failed: \(flushError.localizedDescription). Loading an empty rule set "
-                + "failed: \(emptyLoadError.localizedDescription)"
+            let message: PSLogMessage = "FreeSnitch could not empty its pf anchor, so its last firewall rules may still be active. Flushing it failed: \(error: flushError). Loading an empty rule set failed: \(error: emptyLoadError)"
             PSLog.error(PSLog.pf, message)
-            return NSError(domain: "PFManager", code: 211, userInfo: [NSLocalizedDescriptionKey: message])
+            return NSError(domain: "PFManager", code: 211, userInfo: [NSLocalizedDescriptionKey: message.unredacted])
         }
         expiryTimer?.cancel()
         expiryTimer = nil
@@ -583,9 +581,9 @@ final class PFManager: @unchecked Sendable {
     }
 
     private func reportRejected(rule: Rule, reason: String) {
-        let message = "Skipped PF rule \(rule.id.uuidString) from anchor \(PFManager.anchorName): \(reason)"
+        let message: PSLogMessage = "Skipped PF rule \(public: rule.id.uuidString) from anchor \(public: PFManager.anchorName): \(reason)"
         PSLog.error(PSLog.pf, message)
-        onWarning?(message)
+        onWarning?(message.unredacted)
     }
 
     /// Makes pf.conf attach the anchor to packet processing and load it from
@@ -739,9 +737,9 @@ final class PFManager: @unchecked Sendable {
         let out = String(data: outData, encoding: .utf8) ?? ""
         let err = String(data: errData, encoding: .utf8) ?? ""
         if p.terminationStatus != 0 {
-            let message = "\(exec) \(args.joined(separator: " ")) -> rc=\(p.terminationStatus) err=\(err)"
+            let message: PSLogMessage = "\(public: exec) \(args.joined(separator: " ")) -> rc=\(public: p.terminationStatus) err=\(err)"
             PSLog.error(PSLog.pf, message)
-            onWarning?("PF command failed: \(message)")
+            onWarning?("PF command failed: \(message.unredacted)")
             throw NSError(domain: "PFManager", code: Int(p.terminationStatus), userInfo: [NSLocalizedDescriptionKey: err.isEmpty ? out : err])
         }
         return out

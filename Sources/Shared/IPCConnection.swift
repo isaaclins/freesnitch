@@ -204,9 +204,7 @@ extension IPCConnection: NSXPCListenerDelegate {
     public func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
         guard XPCPeerValidator.isTrustedGUI(newConnection) else {
             PSLog.error(PSLog.netext,
-                        "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement "
-                        + "(pid \(newConnection.processIdentifier)); no snapshot was accepted and "
-                        + "filtering will fail open if no trusted GUI is connected.")
+                        "SECURITY: rejected XPC peer failing the FreeSnitch GUI code requirement (pid \(public: newConnection.processIdentifier)); no snapshot was accepted and filtering will fail open if no trusted GUI is connected.")
             return false
         }
         // Extension side: the signed GUI connected. Export ProviderCommunication
