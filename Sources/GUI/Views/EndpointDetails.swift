@@ -61,11 +61,11 @@ private struct EndpointAddressDetails: View {
             LabeledContent("Name") { CopyableValue(value: name) }
         }
         if hasOtherAddresses {
-            note("This destination connected to more than one address. The details below are for the first one, \(ip).")
+            note(String(localized: "This destination connected to more than one address. The details below are for the first one, \(ip)."))
         }
 
         if !isPublic {
-            note("A local or private address. It belongs to your own network, not to anyone on the internet.")
+            note(String(localized: "A local or private address. It belongs to your own network, not to anyone on the internet."))
         } else {
             if let network {
                 if let organization = network.organization {
@@ -144,7 +144,7 @@ private struct EndpointAddressDetails: View {
         case .idle:
             Button("Look Up Owner") { runLookup() }
                 .help("Ask your DNS server for this address's name and a public registry (RDAP) for who registered it.")
-            note("Sends this address to your DNS server and to rdap.org. Nothing is sent until you click.")
+            note(String(localized: "Sends this address to your DNS server and to rdap.org. Nothing is sent until you click."))
         case .running:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
