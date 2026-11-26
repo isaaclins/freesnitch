@@ -82,9 +82,11 @@ public final class IPGeoCache: @unchecked Sendable {
     }
 
     /// Writes the bytes at `url` to `destination`, or returns why it could not.
-    /// The default implementation is a bounded HTTPS download. Tests supply a
-    /// local one so that nothing in the test path can reach the network.
-    public typealias SourceFetcher = @Sendable (_ url: String, _ destination: URL) -> String?
+    /// A fetcher must stop once more than `maxBytes` would be written, so an
+    /// oversized response never fills the disk. The default implementation is
+    /// a bounded HTTPS download. Tests supply a local one so that nothing in
+    /// the test path can reach the network.
+    public typealias SourceFetcher = @Sendable (_ url: String, _ destination: URL, _ maxBytes: Int) -> String?
 
     public static let shared = IPGeoCache()
 
@@ -280,16 +282,19 @@ public final class IPGeoCache: @unchecked Sendable {
         for source in Self.sources {
             let destination = cacheDirectory.appendingPathComponent(source.fileName + ".download")
             try? fileManager.removeItem(at: destination)
-            if let failure = fetcher(source.url, destination) {
+            // Tracked before the fetch, so a rejected or partial download is
+            // removed on every exit path instead of lingering in the cache.
+            downloaded.append(destination)
+            if let failure = fetcher(source.url, destination, source.maxBytes) {
                 throw GeoError("\(source.fileName): \(failure)")
             }
             guard let size = try? fileManager.attributesOfItem(atPath: destination.path)[.size] as? Int, size > 0 else {
                 throw GeoError("\(source.fileName): the download produced no readable file")
             }
+            // Second line of defence for a fetcher that ignored the ceiling.
             guard size <= source.maxBytes else {
                 throw GeoError("\(source.fileName): \(size) bytes exceeds the \(source.maxBytes) byte ceiling")
             }
-            downloaded.append(destination)
         }
 
         let staging = indexURL.appendingPathExtension("building")
@@ -359,43 +364,140 @@ public final class IPGeoCache: @unchecked Sendable {
         return Date().timeIntervalSince(date) > cacheLifetime
     }
 
-    /// Bounded HTTPS download straight to a file, so a large database never
-    /// sits in memory as a `Data`.
-    static let httpFetcher: SourceFetcher = { urlString, destination in
+    /// Bounded HTTPS download streamed straight to a file, so a large database
+    /// never sits in memory as a `Data`. The ceiling is enforced while the
+    /// bytes arrive: a response that announces or delivers more than
+    /// `maxBytes` is cancelled at that point and its partial file deleted, so
+    /// an oversized or endless response cannot consume more disk than the
+    /// ceiling allows.
+    static let httpFetcher: SourceFetcher = { urlString, destination, maxBytes in
         guard let url = URL(string: urlString) else { return "invalid source URL" }
-        var request = URLRequest(url: url, timeoutInterval: 120)
-        request.setValue("FreeSnitch/0.2", forHTTPHeaderField: "User-Agent")
-        let semaphore = DispatchSemaphore(value: 0)
-        var failure: String?
-        let task = URLSession.shared.downloadTask(with: request) { temporary, response, error in
-            defer { semaphore.signal() }
-            if let error {
-                failure = error.localizedDescription
+        return BoundedDownload.run(url: url, to: destination, maxBytes: maxBytes)
+    }
+
+    /// One streamed download. Every delegate callback runs on the session's
+    /// serial delegate queue, and the caller reads the state only after `done`
+    /// has been signalled, so it is never touched concurrently. The one
+    /// exception is `abandoned`, which the caller sets on a timeout and which
+    /// is guarded by its own lock.
+    final class BoundedDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private let destination: URL
+        private let maxBytes: Int
+        private var handle: FileHandle?
+        private var written = 0
+        private var failure: String?
+        private let done = DispatchSemaphore(value: 0)
+        private let abandonLock = NSLock()
+        private var abandonedFlag = false
+        /// Set when the caller gave up, so a response that arrives late never
+        /// recreates a file the caller has already removed.
+        private var abandoned: Bool {
+            get { abandonLock.lock(); defer { abandonLock.unlock() }; return abandonedFlag }
+            set { abandonLock.lock(); abandonedFlag = newValue; abandonLock.unlock() }
+        }
+
+        private init(destination: URL, maxBytes: Int) {
+            self.destination = destination
+            self.maxBytes = maxBytes
+        }
+
+        static func run(url: URL, to destination: URL, maxBytes: Int,
+                        timeout: TimeInterval = 600) -> String? {
+            var request = URLRequest(url: url, timeoutInterval: 120)
+            request.setValue("FreeSnitch/0.2", forHTTPHeaderField: "User-Agent")
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForResource = timeout
+            let delegateQueue = OperationQueue()
+            delegateQueue.maxConcurrentOperationCount = 1
+            let download = BoundedDownload(destination: destination, maxBytes: maxBytes)
+            let session = URLSession(configuration: configuration, delegate: download, delegateQueue: delegateQueue)
+            // The session holds its delegate until invalidated.
+            defer { session.finishTasksAndInvalidate() }
+            let task = session.dataTask(with: request)
+            task.resume()
+            // The transfer runs on its own queue and the request is capped, so
+            // a stalled server cannot hold the caller forever.
+            if download.done.wait(timeout: .now() + timeout) == .timedOut {
+                download.abandoned = true
+                task.cancel()
+                _ = download.done.wait(timeout: .now() + 10)
+                try? FileManager.default.removeItem(at: destination)
+                return "timed out"
+            }
+            if let failure = download.failure {
+                try? FileManager.default.removeItem(at: destination)
+                return failure
+            }
+            return nil
+        }
+
+        private func fail(_ message: String) {
+            if failure == nil { failure = message }
+        }
+
+        private var ceilingMessage: String {
+            "the download exceeds the \(maxBytes) byte ceiling"
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                        didReceive response: URLResponse,
+                        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+            if abandoned {
+                fail("timed out")
+                completionHandler(.cancel)
                 return
             }
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                failure = "HTTP status \((response as? HTTPURLResponse)?.statusCode ?? 0)"
+                fail("HTTP status \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                completionHandler(.cancel)
                 return
             }
-            guard let temporary else {
-                failure = "no downloaded file"
+            // A server that says up front it will send too much is refused
+            // before a single byte is written.
+            if response.expectedContentLength > Int64(maxBytes) {
+                fail("the server announced \(response.expectedContentLength) bytes, over the \(maxBytes) byte ceiling")
+                completionHandler(.cancel)
+                return
+            }
+            let fileManager = FileManager.default
+            try? fileManager.removeItem(at: destination)
+            guard fileManager.createFile(atPath: destination.path, contents: nil),
+                  let opened = try? FileHandle(forWritingTo: destination) else {
+                fail("cannot write \(destination.lastPathComponent)")
+                completionHandler(.cancel)
+                return
+            }
+            handle = opened
+            completionHandler(.allow)
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            guard failure == nil, let handle else { return }
+            // Counted before writing, so the file never grows past the ceiling
+            // even when the length was not announced or was a lie.
+            guard data.count <= maxBytes - written else {
+                fail(ceilingMessage)
+                dataTask.cancel()
                 return
             }
             do {
-                try? FileManager.default.removeItem(at: destination)
-                try FileManager.default.moveItem(at: temporary, to: destination)
+                try handle.write(contentsOf: data)
+                written += data.count
             } catch {
-                failure = error.localizedDescription
+                fail(error.localizedDescription)
+                dataTask.cancel()
             }
         }
-        task.resume()
-        // The transfer is on a utility queue and the request itself is capped,
-        // so a stalled server cannot hold the queue forever.
-        if semaphore.wait(timeout: .now() + 600) == .timedOut {
-            task.cancel()
-            return "timed out"
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            try? handle?.close()
+            handle = nil
+            if let error { fail(error.localizedDescription) }
+            if failure == nil, written == 0, !FileManager.default.fileExists(atPath: destination.path) {
+                fail("no downloaded file")
+            }
+            done.signal()
         }
-        return failure
     }
 
     // MARK: - Address parsing
