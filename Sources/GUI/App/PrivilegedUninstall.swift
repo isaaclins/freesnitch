@@ -151,20 +151,26 @@ enum PrivilegedUninstall {
     /// User-level leftovers. No authorization needed, so this is separate:
     /// asking for a password to delete files the user already owns would be
     /// theatre.
-    static func removeUserData() {
+    ///
+    /// Returns the paths that are still on disk afterwards, written the way a
+    /// person reads them (`~/Library/...`). Each one is checked after the
+    /// attempt rather than trusted from the absence of an error, so the
+    /// ending never says the data is gone while some of it is not (#272).
+    static func removeUserData() -> [String] {
         // A demo never deletes the real install's data (#389).
-        guard !DemoMode.isOn else { return }
+        guard !DemoMode.isOn else { return [] }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let targets = [
             home.appendingPathComponent("Library/Group Containers/BHAF4L4726.io.isaaclins.freesnitch"),
             home.appendingPathComponent("Library/Application Support/FreeSnitch"),
             home.appendingPathComponent("Library/Preferences/io.isaaclins.freesnitch.plist")
         ]
-        for target in targets {
-            try? FileManager.default.removeItem(at: target)
-        }
         // The preferences daemon keeps its own copy and would write the plist
-        // back; dropping the domain is what actually forgets it.
+        // back; dropping the domain is what actually forgets it. Done first,
+        // so the plist is not written again after it was checked.
         UserDefaults.standard.removePersistentDomain(forName: AppConstants.bundleIdGUI)
+        UserDefaults.standard.synchronize()
+        let left = UninstallCleanup.remove(targets)
+        return left.map { (($0.path) as NSString).abbreviatingWithTildeInPath }
     }
 }

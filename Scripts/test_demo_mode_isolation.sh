@@ -82,8 +82,8 @@ mutate_and_expect_failure kickstarts-helper "$HELPER" \
 mutate_and_expect_failure runs-privileged-uninstall "$PRIV" \
   '        guard !DemoMode.isOn else { return .success(()) }' ''
 mutate_and_expect_failure removes-user-data "$PRIV" \
-  $'    static func removeUserData() {\n        // A demo never deletes the real install\'s data (#389).\n        guard !DemoMode.isOn else { return }' \
-  $'    static func removeUserData() {'
+  $'    static func removeUserData() -> [String] {\n        // A demo never deletes the real install\'s data (#389).\n        guard !DemoMode.isOn else { return [] }' \
+  $'    static func removeUserData() -> [String] {'
 mutate_and_expect_failure trashes-app "$PRIV" \
   '        guard !DemoMode.isOn else { completion(nil); return }' ''
 mutate_and_expect_failure uninstall-begin-acts "$UNINSTALL" \
