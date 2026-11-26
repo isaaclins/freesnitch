@@ -16,7 +16,10 @@
 #      so the full evidence is required again afterwards,
 #   5. an install in flight, a half-copied bundle and an unreadable parent are
 #      all inconclusive and never accumulate,
-#   6. nothing on disk is deleted, in particular not the policy database.
+#   6. an app moved to another folder (such as /Applications/Utilities) is
+#      followed and never stood down (#251), while one moved to the Trash or
+#      deleted after a move still is,
+#   7. nothing on disk is deleted, in particular not the policy database.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -350,7 +353,64 @@ struct BundleWatchdogHarness {
             try? fm.removeItem(at: sealed)
         }
 
-        // --- 6. nothing was deleted ------------------------------------------
+        // --- 6. a moved app is followed, a trashed one is not (#251) ---------
+        restoreBundle(appURL)
+        let utilities = stage.appendingPathComponent("Utilities")
+        let movedApp = utilities.appendingPathComponent("FreeSnitch.app")
+        let trash = stage.appendingPathComponent(".Trash")
+        let trashedApp = trash.appendingPathComponent("FreeSnitch.app")
+        try? fm.createDirectory(at: utilities, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        // Started while the app is in its original place, as the helper is.
+        let moving = HelperBundleWatchdog(bundleURL: appURL)
+        let movingRecorder = StandDownRecorder()
+        moving.start(standDown: movingRecorder.action)
+        do { try fm.moveItem(at: appURL, to: movedApp) } catch { die("could not move the test bundle: \(error)") }
+        ageParent(of: appURL)
+        for at in schedule(from: base, count: required * 2) {
+            let outcome = moving.poll(at: at)
+            if case .standingBy = outcome {} else {
+                failures.expect(false, "an app moved into a subfolder produced \(outcome)")
+            }
+        }
+        failures.expect(movingRecorder.invocations == 0,
+                        "an app moved into a subfolder stood the helper down")
+        failures.expect(moving.absenceCount == 0,
+                        "an app moved into a subfolder counted \(moving.absenceCount) absences")
+
+        // Moved on into the Trash: that is removing it, so it still counts.
+        do { try fm.moveItem(at: movedApp, to: trashedApp) } catch { die("could not trash the test bundle: \(error)") }
+        ageParent(of: appURL)
+        let trashStart = base.addingTimeInterval(step * Double(required * 2))
+        for at in schedule(from: trashStart, count: required) {
+            _ = moving.poll(at: at)
+        }
+        failures.expect(movingRecorder.invocations == 1,
+                        "an app moved on to the Trash produced \(movingRecorder.invocations) stand-downs")
+
+        // Moved and then deleted: the held folder has no path any more, and a
+        // stale path must never count as the app being there.
+        let deleting = HelperBundleWatchdog(bundleURL: trashedApp)
+        let deletingRecorder = StandDownRecorder()
+        deleting.start(standDown: deletingRecorder.action)
+        do { try fm.moveItem(at: trashedApp, to: movedApp) } catch { die("could not move the test bundle back: \(error)") }
+        try? fm.removeItem(at: movedApp)
+        ageParent(of: trashedApp)
+        for at in schedule(from: base, count: required) {
+            _ = deleting.poll(at: at)
+        }
+        failures.expect(deletingRecorder.invocations == 1,
+                        "an app moved and then deleted produced \(deletingRecorder.invocations) stand-downs")
+        failures.expect(BundlePresenceProbe.isInTrash("/Users/someone/.Trash/FreeSnitch.app"),
+                        "the user's Trash was not recognised")
+        failures.expect(BundlePresenceProbe.isInTrash("/Volumes/Disk/.Trashes/501/FreeSnitch.app"),
+                        "a volume's Trash was not recognised")
+        failures.expect(!BundlePresenceProbe.isInTrash("/Applications/Utilities/FreeSnitch.app"),
+                        "/Applications/Utilities was taken for the Trash")
+        try? fm.removeItem(at: utilities)
+        try? fm.removeItem(at: trash)
+
+        // --- 7. nothing was deleted ------------------------------------------
         restoreBundle(appURL)
         let policyDatabase = tmp.appendingPathComponent("support/freesnitch.sqlite")
         failures.expect(fm.fileExists(atPath: policyDatabase.path),
@@ -373,6 +433,7 @@ struct BundleWatchdogHarness {
         print("bundle watchdog harness: \(required) separated observations over \(Int(span))s stood enforcement down exactly once")
         print("bundle watchdog harness: a reappearing bundle cleared the evidence and the latch")
         print("bundle watchdog harness: staged installs, half-copied bundles and unreadable parents stayed inconclusive")
+        print("bundle watchdog harness: an app moved into a subfolder was followed; moved to the Trash or deleted, it was not")
         print("bundle watchdog harness: the policy database and every other file survived")
         print("bundle watchdog harness: PASS")
     }
