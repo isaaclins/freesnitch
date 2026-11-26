@@ -32,6 +32,25 @@ final class InsightsStore: @unchecked Sendable {
         if let db { sqlite3_close(db) }
     }
 
+    /// Opens the store at helper start and keeps the concrete reason when it
+    /// cannot (#266): a wrong owner, an insecure mode or a corrupt database
+    /// each need a different repair, and "unavailable" alone names none.
+    static func openForHelper(_ open: () throws -> InsightsStore = { try InsightsStore() })
+        -> (store: InsightsStore?, failure: String?) {
+        do {
+            return (try open(), nil)
+        } catch {
+            return (nil, error.localizedDescription)
+        }
+    }
+
+    /// What every helper reply says while the store could not be opened, so a
+    /// failed call names the repair instead of a generic refusal (#266).
+    static func unavailableMessage(_ failure: String?) -> String {
+        guard let failure, !failure.isEmpty else { return "insights store is unavailable" }
+        return "insights store is unavailable: \(failure)"
+    }
+
     /// Whether history is being recorded. Only a missing setting means the
     /// default (on); a failed read throws, so nobody is told recording is on
     /// while the store cannot even answer the question (#267).

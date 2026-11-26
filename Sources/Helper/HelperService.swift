@@ -164,6 +164,12 @@ final class DNSAskCoordinator: @unchecked Sendable {
 final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private let store: RuleStore
     private let insights: InsightsStore?
+    /// Why `insights` is nil: the error the store threw at startup, kept so
+    /// the log and every refused Insights call, the overview report the app
+    /// reads the switch from included, name the repair (#266). Nil while the
+    /// store is open.
+    private let insightsOpenFailure: String?
+    private var insightsUnavailable: String { InsightsStore.unavailableMessage(insightsOpenFailure) }
     private let pf = PFManager()
     /// Every enforcement on or off, and every direct pf install or flush,
     /// runs under this one at a time (#248).
@@ -234,9 +240,11 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         let dbPath = (dbDir as NSString).appendingPathComponent("freesnitch.sqlite")
         // Root only: the store holds every rule and the connection history.
         self.store = try RuleStore(path: dbPath, owner: 0)
-        self.insights = try? InsightsStore()
-        if self.insights == nil {
-            PSLog.error(PSLog.helper, "Insights store failed to open; observation recording is unavailable.")
+        let openedInsights = InsightsStore.openForHelper()
+        self.insights = openedInsights.store
+        self.insightsOpenFailure = openedInsights.failure
+        if let failure = openedInsights.failure {
+            PSLog.error(PSLog.helper, "Insights store failed to open: \(failure). Observation recording is unavailable.")
         }
         // Opening the session first advances the epoch and makes the current
         // generation durable, so the policy state read below already carries
@@ -507,7 +515,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
     private func enqueueObservations(_ observations: [FlowObservation],
                                      reply: @escaping (Bool, String?) -> Void) {
         guard let insights else {
-            reply(false, "insights store is unavailable")
+            reply(false, insightsUnavailable)
             return
         }
         guard insightsObservationSlots.wait(timeout: .now()) == .success else {
@@ -1625,7 +1633,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
 
     func setInsightsRecordingEnabled(_ enabled: Bool, reply: @escaping (Bool, String?) -> Void) {
         guard let insights else {
-            reply(false, "insights store is unavailable")
+            reply(false, insightsUnavailable)
             return
         }
         do {
@@ -1664,7 +1672,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
                     failures.append(error.localizedDescription)
                 }
             } else {
-                failures.append("insights store is unavailable")
+                failures.append(insightsUnavailable)
             }
         }
         do {
@@ -1704,7 +1712,7 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
             return
         }
         guard let insights else {
-            reply(Data(), "insights store is unavailable")
+            reply(Data(), insightsUnavailable)
             return
         }
         let query: InsightsQuery
