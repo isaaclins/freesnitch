@@ -157,7 +157,7 @@ final class MonitorTreeController: ObservableObject {
         }
     }
 
-    /// Removes the rule this row created, which is what makes a decision made
+    /// Removes the rule that decides this row, which is what makes a decision made
     /// here reversible from here.
     func clearDecision(for target: MonitorRuleTarget, state: AppState) {
         guard let rule = decisions.rule(for: target) else { return }

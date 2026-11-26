@@ -9561,12 +9561,12 @@
         }
       }
     },
-    "Remove the rule this row created and go back to no decision." : {
+    "Remove the rule that decides this row and go back to no decision." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Удалить правило, созданное этой строкой, и вернуться к состоянию без решения."
+            "value" : "Удалить правило, которое определяет эту строку, и вернуться к состоянию без решения."
           }
         }
       }
