@@ -471,7 +471,7 @@ struct MonitorDecisionControls: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(onSelection ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                 .disabled(pending || !canDecide)
-                .help(unavailableReason ?? String(localized: "Remove the rule this row created and go back to no decision."))
+                .help(unavailableReason ?? String(localized: "Remove the rule that decides this row and go back to no decision."))
             }
         }
         .imageScale(.large)

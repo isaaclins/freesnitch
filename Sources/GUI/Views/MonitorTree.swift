@@ -474,13 +474,32 @@ struct MonitorRuleTarget: Hashable, Sendable {
     let processPath: String?
     let remoteHost: String?
     let remoteIP: String?
+    /// The team that signed the row's connections, when they agree (#364).
+    /// Not part of the identity: it only decides whether an allow rule tied
+    /// to a team by bundle id alone applies to this row.
+    let signerTeamID: String?
 
-    private init(kind: Kind, processBundleID: String?, processPath: String?, remoteHost: String?, remoteIP: String?) {
+    private init(kind: Kind, processBundleID: String?, processPath: String?, remoteHost: String?, remoteIP: String?,
+                 signerTeamID: String? = nil) {
         self.kind = kind
         self.processBundleID = processBundleID
         self.processPath = processPath
         self.remoteHost = remoteHost
         self.remoteIP = remoteIP
+        self.signerTeamID = signerTeamID
+    }
+
+    static func == (lhs: MonitorRuleTarget, rhs: MonitorRuleTarget) -> Bool {
+        lhs.kind == rhs.kind && lhs.processBundleID == rhs.processBundleID && lhs.processPath == rhs.processPath
+            && lhs.remoteHost == rhs.remoteHost && lhs.remoteIP == rhs.remoteIP
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(processBundleID)
+        hasher.combine(processPath)
+        hasher.combine(remoteHost)
+        hasher.combine(remoteIP)
     }
 
     /// Every app connection, wherever it goes.
@@ -490,7 +509,8 @@ struct MonitorRuleTarget: Hashable, Sendable {
                                  processBundleID: node.bundleID,
                                  processPath: node.path,
                                  remoteHost: nil,
-                                 remoteIP: nil)
+                                 remoteIP: nil,
+                                 signerTeamID: node.teamID)
     }
 
     /// One destination of one app.
@@ -508,14 +528,16 @@ struct MonitorRuleTarget: Hashable, Sendable {
                                      processBundleID: app.bundleID,
                                      processPath: app.path,
                                      remoteHost: isAddress ? nil : host,
-                                     remoteIP: isAddress ? host : nil)
+                                     remoteIP: isAddress ? host : nil,
+                                     signerTeamID: app.teamID)
         }
         guard let ip = MonitorTreeKey.normalized(node.remoteIP)?.lowercased() else { return nil }
         return MonitorRuleTarget(kind: .destination,
                                  processBundleID: app.bundleID,
                                  processPath: app.path,
                                  remoteHost: nil,
-                                 remoteIP: ip)
+                                 remoteIP: ip,
+                                 signerTeamID: app.teamID)
     }
 
     /// The target an existing rule speaks about, when it speaks about a row of
@@ -575,6 +597,35 @@ struct MonitorRuleTarget: Hashable, Sendable {
         }
         guard let rawIP else { return RemoteEndpoint.none }
         return PFHostValidator.kind(for: rawIP) == nil ? nil : .address(rawIP)
+    }
+
+    /// Every process identity a rule can carry and still be about exactly
+    /// this row's process: the row's bundle id, its path, or both.
+    var ownerIdentities: [MonitorRuleTarget] {
+        var bundles: [String?] = [nil]
+        if let processBundleID { bundles.append(processBundleID) }
+        var paths: [String?] = [nil]
+        if let processPath { paths.append(processPath) }
+        var identities: [MonitorRuleTarget] = []
+        for bundle in bundles {
+            for path in paths where bundle != nil || path != nil {
+                identities.append(replacingProcess(bundleID: bundle, path: path))
+            }
+        }
+        return identities
+    }
+
+    func replacingProcess(bundleID: String?, path: String?) -> MonitorRuleTarget {
+        MonitorRuleTarget(kind: kind, processBundleID: bundleID, processPath: path,
+                          remoteHost: remoteHost, remoteIP: remoteIP, signerTeamID: signerTeamID)
+    }
+
+    /// `/Applications/Foo.app` for a rule path of `/Applications/Foo.app` or
+    /// `/Applications/Foo.app/`, the form the Rules editor saves.
+    static func appBundlePath(_ path: String) -> String? {
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
+        guard trimmed.hasSuffix(".app"), trimmed.hasPrefix("/"), trimmed.count > "/.app".count else { return nil }
+        return trimmed
     }
 
     /// Can the helper be asked about this endpoint at all. Validation itself
@@ -668,37 +719,93 @@ struct MonitorDecisionInputs: Equatable {
 /// enforced is whatever the helper and the extension hold.
 struct MonitorDecisionIndex: Sendable {
     private var byTarget: [MonitorRuleTarget: Rule] = [:]
+    private var teamBound: [MonitorRuleTarget: [Rule]] = [:]
 
     init() {}
 
-    init(rules: [Rule], profile: String) {
+    /// `mainExecutable` names the program an app bundle launches, its
+    /// `CFBundleExecutable`. A rule for a whole app bundle, which is what the
+    /// Rules editor saves (#226), is this row's decision only on the row of
+    /// that program. Other programs in the bundle, such as a second tool in
+    /// `Contents/MacOS` or a helper app, have rows of their own; seen from
+    /// there the rule is broader than the row and stays unclaimed like a
+    /// wildcard, so a change on such a row never decides for the whole app.
+    init(rules: [Rule], profile: String,
+         mainExecutable: (String) -> String? = MonitorDecisionIndex.bundleExecutable) {
+        var executables: [String: String?] = [:]
         for rule in rules {
             // Two layers can be in force at once: the always layer and the
             // selected profile. Rules of another profile are not in force and
             // must not be shown as this row's decision.
             guard rule.profile == profile || rule.profile == Profile.alwaysName else { continue }
             guard let target = MonitorRuleTarget.of(rule) else { continue }
-            guard let current = byTarget[target] else {
-                byTarget[target] = rule
+            // An allow rule that names only a bundle id and records a team
+            // applies only to code that team signed (#364). It is this row's
+            // decision only when the row was signed by that team.
+            if target.processPath == nil, rule.action == .allow,
+               let team = rule.processTeamId, !team.isEmpty {
+                teamBound[target, default: []].append(rule)
                 continue
             }
-            if wins(rule, over: current) { byTarget[target] = rule }
+            insert(rule, at: target)
+            guard let path = target.processPath,
+                  let bundle = MonitorRuleTarget.appBundlePath(path) else { continue }
+            let executable: String?
+            if let known = executables[bundle] {
+                executable = known
+            } else {
+                executable = mainExecutable(bundle)
+                executables[bundle] = executable
+            }
+            guard let name = executable, !name.isEmpty, !name.contains("/") else { continue }
+            insert(rule, at: target.replacingProcess(bundleID: target.processBundleID,
+                                                     path: bundle + "/Contents/MacOS/" + name))
         }
     }
 
-    var count: Int { byTarget.count }
-
-    func rule(for target: MonitorRuleTarget?) -> Rule? {
-        guard let target else { return nil }
-        return byTarget[target]
+    private mutating func insert(_ rule: Rule, at target: MonitorRuleTarget) {
+        if let current = byTarget[target], !wins(rule, over: current) { return }
+        byTarget[target] = rule
     }
 
-    /// Same order the matcher uses: priority first, then the newer rule, with
-    /// the id as a last tiebreak so the display never flickers between two
-    /// equally ranked rules.
+    /// The program an app bundle on this Mac launches, from its Info.plist.
+    static func bundleExecutable(_ bundlePath: String) -> String? {
+        Bundle(path: bundlePath)?.object(forInfoDictionaryKey: "CFBundleExecutable") as? String
+    }
+
+    var count: Int { byTarget.count + teamBound.count }
+
+    /// The rule that speaks for this row. Besides a rule that names the row's
+    /// exact process, that is a rule naming only its bundle id, only its
+    /// path, or the app bundle whose main program the row is (#226). The
+    /// matcher applies those to this process too, so the row shows them and
+    /// Allow, Deny and Remove change that rule instead of adding another.
+    func rule(for target: MonitorRuleTarget?) -> Rule? {
+        guard let target else { return nil }
+        var best: Rule?
+        var found: [Rule] = []
+        for candidate in target.ownerIdentities {
+            if let rule = byTarget[candidate] { found.append(rule) }
+            if let team = target.signerTeamID, let bound = teamBound[candidate] {
+                found.append(contentsOf: bound.filter { $0.processTeamId == team })
+            }
+        }
+        for rule in found {
+            if let current = best, !wins(rule, over: current) { continue }
+            best = rule
+        }
+        return best
+    }
+
+    /// Same order the matcher uses: priority first, then the always layer
+    /// before the profile (the helper hands the extension the always rules
+    /// first), then the newer rule, with the id as a last tiebreak so the
+    /// display never flickers between two equally ranked rules.
     private func wins(_ candidate: Rule, over current: Rule) -> Bool {
         if candidate.enabled != current.enabled { return candidate.enabled }
         if candidate.priority != current.priority { return candidate.priority > current.priority }
+        let candidateAlways = candidate.profile == Profile.alwaysName
+        if candidateAlways != (current.profile == Profile.alwaysName) { return candidateAlways }
         if candidate.createdAt != current.createdAt { return candidate.createdAt > current.createdAt }
         return candidate.id.uuidString > current.id.uuidString
     }
