@@ -217,7 +217,7 @@ and without one the section says the data is still downloading or unavailable.
 Unlike the city index each row keeps its end address, because ASN data has real
 holes and the range itself is shown.
 
-**Look Up Owner…** is the only part that sends anything, and only when clicked:
+**Look Up Owner** is the only part that sends anything, and only when clicked:
 the system resolver is asked for the reverse name (PTR) of that one address, and
 `https://rdap.org/ip/<address>` is fetched, which redirects to the regional
 registry (ARIN, RIPE, APNIC, LACNIC, AFRINIC) holding it. The answer is parsed

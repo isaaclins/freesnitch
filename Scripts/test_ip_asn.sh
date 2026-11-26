@@ -36,6 +36,9 @@ cat > "$FIXTURES/asn-ipv4.csv" <<'CSV'
 130.12.93.0,130.12.95.255,26954,Odd Range Networks
 140.82.112.0,140.82.127.255,36459,"GitHub, Inc."
 CSV
+# An organisation name longer than the 1024-byte cap whose cut falls inside
+# a two-byte character: the stored name must end before it, not on half of it.
+printf '150.0.0.0,150.0.0.255,64500,%s\xc3\xa9 tail\n' "$(printf 'a%.0s' $(seq 1 1023))" >> "$FIXTURES/asn-ipv4.csv"
 
 cat > "$FIXTURES/asn-ipv6.csv" <<'CSV'
 2001:200::,2001:200:5ff:ffff:ffff:ffff:ffff:ffff,2500,WIDE Project
@@ -158,6 +161,9 @@ struct Harness {
                "the neighbours answer their own networks")
         expect(cache.lookup("1.0.4.9")?.prefix == "1.0.4.0/22", "a /22 is shown as one prefix")
         expect(cache.lookup("1.0.0.1")?.organization == "Cloudflare, Inc.", "a quoted name with a comma survives")
+        let long = cache.lookup("150.0.0.1")?.organization
+        expect(long == String(repeating: "a", count: 1023),
+               "a name cut at the cap drops the split character, got \(long?.count ?? -1) characters ending \(long?.suffix(3) ?? "nil")")
         expect(cache.lookup("::ffff:130.12.92.92")?.asn == 16909, "an IPv4-mapped address uses the IPv4 table")
         let google = cache.lookup("2a00:1450:4001:82f::2003")
         expect(google?.asn == 15169 && google?.organization == "Google LLC", "an IPv6 address resolves")

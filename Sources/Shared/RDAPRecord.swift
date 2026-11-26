@@ -55,16 +55,14 @@ public struct RDAPNetworkRecord: Equatable, Sendable {
         return record.isEmpty ? nil : record
     }
 
-    /// Who the network is registered to: the first registrant, else the
-    /// administrative contact. RIPE lists its maintainer objects
+    /// Who the network is registered to: the first registrant. The
+    /// administrative contact is not used, because it is often a person
+    /// rather than the organisation that holds the range. RIPE lists its maintainer objects
     /// ("MNT-GOOG-PROD") under the registrant role, and those name an access
     /// key, not an owner, so they are skipped. Nested entities are searched
     /// too, where some registries put the registrant.
     private static func owner(in value: Any?) -> String? {
-        for role in ["registrant", "administrative"] {
-            if let name = entityName(in: value, role: role, depth: 0) { return name }
-        }
-        return nil
+        entityName(in: value, role: "registrant", depth: 0)
     }
 
     private static func entityName(in value: Any?, role: String, depth: Int) -> String? {

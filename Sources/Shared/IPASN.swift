@@ -506,7 +506,13 @@ extension IPASNCache {
 
         func organization(_ field: UnsafeBufferPointer<UInt8>) throws -> UInt32 {
             guard field.count > 0 else { return ASNIndexFormat.noOrganization }
-            let key = Array(field.prefix(1024))
+            var key = Array(field.prefix(1024))
+            // Never cut a UTF-8 character in half: drop an incomplete last one.
+            if field.count > key.count, let lead = key.lastIndex(where: { $0 & 0xC0 != 0x80 }) {
+                let byte = key[lead]
+                let width = byte < 0x80 ? 1 : byte >= 0xF0 ? 4 : byte >= 0xE0 ? 3 : 2
+                if lead + width > key.count { key.removeSubrange(lead...) }
+            }
             if let known = orgByName[key] { return known }
             guard orgRecords.count < maxOrganizationCount, names.count + key.count <= maxNameBytes else {
                 throw IPGeoCache.GeoError("the ASN organisation table exceeds its ceiling")

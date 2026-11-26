@@ -7255,7 +7255,7 @@
         }
       }
     },
-    "Look Up Owner…" : {
+    "Look Up Owner" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8046,6 +8046,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запрос к реестру не удался: %@"
+          }
+        }
+      }
+    },
+    "This destination connected to more than one address. The details below are for the first one, %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это направление подключалось к нескольким адресам. Сведения ниже относятся к первому из них, %@."
           }
         }
       }

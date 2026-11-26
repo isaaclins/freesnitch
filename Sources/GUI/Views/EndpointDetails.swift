@@ -15,7 +15,8 @@ struct EndpointDetailsSection: View {
     var body: some View {
         Section("Selected Destination") {
             if let ip = destination.remoteIP {
-                EndpointAddressDetails(ip: ip, name: nameShown(for: ip))
+                EndpointAddressDetails(ip: ip, name: nameShown(for: ip),
+                                       hasOtherAddresses: destination.hasOtherAddresses)
                     // A new address starts with no lookup result.
                     .id(ip)
             } else {
@@ -38,6 +39,7 @@ private struct EndpointAddressDetails: View {
     @EnvironmentObject var state: AppState
     let ip: String
     let name: String?
+    let hasOtherAddresses: Bool
 
     @State private var lookup: LookupState = .idle
 
@@ -57,6 +59,9 @@ private struct EndpointAddressDetails: View {
             .onAppear { runDemoLookupOnce() }
         if let name {
             LabeledContent("Name") { CopyableValue(value: name) }
+        }
+        if hasOtherAddresses {
+            note("This destination connected to more than one address. The details below are for the first one, \(ip).")
         }
 
         if !isPublic {
@@ -121,7 +126,8 @@ private struct EndpointAddressDetails: View {
     /// carries one, but the map can be hidden (#473), so this section has its
     /// own, with the age of the data the reporter asked for.
     private var credit: some View {
-        let built = [state.asnStatus.builtAt, state.geoStatus.builtAt].compactMap { $0 }.min()
+        // Read live: a background refresh replaces the data without a relaunch.
+        let built = [IPASNCache.shared.status.builtAt, IPGeoCache.shared.status.builtAt].compactMap { $0 }.min()
         let text = built.map {
             String(localized: "Network and location data by DB-IP, updated \($0.formatted(date: .abbreviated, time: .omitted))")
         } ?? String(localized: "Network and location data by DB-IP")
@@ -136,7 +142,7 @@ private struct EndpointAddressDetails: View {
     private var lookupRows: some View {
         switch lookup {
         case .idle:
-            Button("Look Up Owner…") { runLookup() }
+            Button("Look Up Owner") { runLookup() }
                 .help("Ask your DNS server for this address's name and a public registry (RDAP) for who registered it.")
             note("Sends this address to your DNS server and to rdap.org. Nothing is sent until you click.")
         case .running:
