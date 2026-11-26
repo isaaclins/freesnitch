@@ -322,7 +322,8 @@ final class CLIRunner {
                                                 extensionSync: Self.syncNotAttempted,
                                                 extensionMessage: nil,
                                                 snapshotError: CLIErrorPayload(snapshotError))
-                return committedWithoutSnapshot(report, human: summary, snapshotError: snapshotError)
+                return committedWithoutSnapshot(report, human: summary, snapshotError: snapshotError,
+                                                failedIDs: failures.map(\.id))
             }
         }
         let sync: (state: String, message: String?, generation: UInt64?)
@@ -815,13 +816,25 @@ final class CLIRunner {
     /// The receipt for a confirmed change whose follow-up snapshot failed:
     /// the report keeps what changed, the snapshot failure rides alongside in
     /// `snapshotError`, and the command still exits nonzero.
-    private func committedWithoutSnapshot<T: Encodable>(_ report: T, human: String, snapshotError: CLIError) -> CommandResult {
+    private func committedWithoutSnapshot<T: Encodable>(_ report: T,
+                                                        human: String,
+                                                        snapshotError: CLIError,
+                                                        failedIDs: [UUID] = []) -> CommandResult {
+        // Only what the helper confirmed is saved. When some rules of a
+        // multi-rule change failed or were never sent, rerunning for those IDs
+        // is the right next step; repeating the confirmed part is what to avoid.
+        let advice = failedIDs.isEmpty
+            ? "Do not repeat the command; the change is already saved."
+            : "Do not repeat the command for the rules already changed. Rerun it only for the failed IDs: \(failedIDs.map(\.uuidString).joined(separator: " "))"
+        let remediation = failedIDs.isEmpty
+            ? "Do not repeat the command: the change is already saved. Run `freesnitch rules list` or `freesnitch status` to confirm it, and `freesnitch doctor` for the snapshot failure."
+            : "The IDs in `succeeded` are saved; do not repeat them. Rerun the command only for the IDs in `failed` once the helper answers again, and run `freesnitch doctor` for the snapshot failure."
         let error = CLIError(.operationFailed,
                              code: "snapshot_after_commit_failed",
                              message: "The change was saved in the helper, but its policy snapshot could not be read afterwards: \(snapshotError.message)",
-                             remediation: "Do not repeat the command: the change is already saved. Run `freesnitch rules list` or `freesnitch status` to confirm it, and `freesnitch doctor` for the snapshot failure.")
+                             remediation: remediation)
         return CommandResult(data: report,
-                             human: "\(human)\nSaved in the helper. The policy snapshot could not be read afterwards (\(snapshotError.code)), so the network extension was not updated from this command.\nDo not repeat the command; the change is already saved.",
+                             human: "\(human)\nSaved in the helper. The policy snapshot could not be read afterwards (\(snapshotError.code)), so the network extension was not updated from this command.\n\(advice)",
                              exitCode: .operationFailed,
                              error: error)
     }

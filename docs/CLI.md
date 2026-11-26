@@ -117,9 +117,9 @@ Command-specific `data` shapes are:
 | `doctor` | `healthy`, `findings`, `helper`, `extensionStatus`, `pf` |
 | `rules list` | filter values, `count`, `rules`, and optional `blocklistInfo` |
 | `rules show` | one complete `Rule` object |
-| `rules add` | `rule`, `extensionSync`, and optional `extensionMessage` |
-| `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, and extension sync state |
-| `rules import` | imported count, IDs, source, and extension sync state |
+| `rules add` | `rule`, `extensionSync`, and optional `extensionMessage` and `snapshotError` |
+| `rules enable`, `disable`, `rm` | requested IDs, succeeded IDs, failures, extension sync state, and optional `snapshotError` |
+| `rules import` | imported count, IDs, source, extension sync state, and optional `snapshotError` |
 | `rules export` | a `freesnitch.rules.v1` document, or count and output path when writing a file |
 | monitor views | `requestedLimit`, `returned`, and the relevant array |
 | `monitor summary` | `topProcesses`, `topDomains`, `topCountries`, and country metadata status |
@@ -175,8 +175,9 @@ already saved, so do not repeat the command; run `freesnitch rules list` or
 
 If the helper stops answering partway through a multi-rule `enable`, `disable`,
 or `rm`, the rules it already confirmed stay in `succeeded` and the rest are
-listed in `failed` (those never sent read `not attempted: ...`). Only when
-nothing was changed yet is the helper error returned on its own.
+listed in `failed` (those never sent read `not attempted: ...`). Rerun the
+command only for the IDs in `failed`. Only when nothing was changed yet is the
+helper error returned on its own.
 
 ## Status and diagnosis
 

@@ -60,7 +60,8 @@ final class StandInHelper: CLIPolicyHelper {
 var failures: [String] = []
 func expect(_ ok: Bool, _ message: String) { if !ok { failures.append(message) } }
 
-let timeout = CLIError(.helperUnreachable, code: "helper_timeout", message: "The helper did not answer in time.")
+// What CLIHelperClient.perform reports when the helper does not answer in time.
+let timeout = CLIError(.helperUnreachable, message: "The helper did not answer within 15 seconds.")
 let unsupported = CLIError(.helperVersionMismatch, code: "authoritative_snapshot_unsupported",
                            message: "The helper does not support authoritative snapshots.")
 
@@ -96,6 +97,16 @@ func expectReceipt(_ outcome: Result<CommandResult, CLIError>, _ label: String, 
     expect(snapshot?["code"] as? String == snapshotCode, "\(label): snapshotError must carry \(snapshotCode) separately")
     expect(data["extensionSync"] as? String == "not-attempted", "\(label): extensionSync must say no snapshot was sent")
     expect(result.human.contains("Do not repeat the command"), "\(label): the text output must say not to retry")
+    let failed = ((json(result)["failed"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
+    for id in failed {
+        expect(result.human.contains(id), "\(label): the text output must name failed ID \(id) to rerun")
+    }
+    if !failed.isEmpty {
+        expect(result.error?.remediation?.contains("only for the IDs in `failed`") == true,
+               "\(label): with failed IDs the remediation must say to rerun those, not to stop")
+    } else {
+        expect(result.human.contains("the change is already saved"), "\(label): a complete change must say it is already saved")
+    }
     return data
 }
 
@@ -120,7 +131,7 @@ for (label, error) in [("timeout", timeout), ("unsupported", unsupported)] {
 do {
     let helper = StandInHelper()
     helper.snapshotError = timeout
-    let data = expectReceipt(await run(["mode", "silent-deny"], helper), "mode", snapshotCode: "helper_timeout")
+    let data = expectReceipt(await run(["mode", "silent-deny"], helper), "mode", snapshotCode: "helper_unreachable")
     expect(helper.mode == .silentDeny, "mode: the helper must hold the new mode")
     expect(data["mode"] as? String == "silent-deny", "mode: the receipt must name the mode that was set")
     expect(data["ruleCount"] == nil, "mode: no rule count may be invented without a snapshot")
@@ -132,12 +143,12 @@ do {
     let helper = StandInHelper(rules: [a, b])
     helper.snapshotError = timeout
     let data = expectReceipt(await run(["rules", "disable", a.id.uuidString, b.id.uuidString], helper),
-                             "rules disable", snapshotCode: "helper_timeout")
+                             "rules disable", snapshotCode: "helper_unreachable")
     expect((data["succeeded"] as? [String])?.count == 2, "rules disable: both changed IDs must be in the receipt")
     expect(helper.rules.allSatisfy { !$0.enabled }, "rules disable: the helper must hold both changes")
 
     let removed = expectReceipt(await run(["rules", "rm", a.id.uuidString, "--yes"], helper),
-                                "rules rm", snapshotCode: "helper_timeout")
+                                "rules rm", snapshotCode: "helper_unreachable")
     expect((removed["succeeded"] as? [String]) == [a.id.uuidString], "rules rm: the removed ID must be in the receipt")
 }
 
@@ -162,7 +173,7 @@ do {
     helper.dropAfterConfirmed = 1
     helper.snapshotError = timeout
     let outcome = await run(["rules", "rm"] + rules.map(\.id.uuidString) + ["--yes"], helper)
-    let data = expectReceipt(outcome, "rules rm, helper lost midway", snapshotCode: "helper_timeout")
+    let data = expectReceipt(outcome, "rules rm, helper lost midway", snapshotCode: "helper_unreachable")
     expect((data["succeeded"] as? [String]) == [rules[0].id.uuidString], "rules rm, helper lost midway: the saved removal must be listed")
     expect((data["failed"] as? [[String: Any]])?.count == 2, "rules rm, helper lost midway: the other two must be listed as failed")
 }
