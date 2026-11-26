@@ -16,6 +16,8 @@
 #     the proxy reporting itself running for 127.0.0.1 (UDP and TCP) but not
 #     for ::1 (issue #490), checked on the handler alone and on a real
 #     DNSProxy started on a squatted high port, never on port 53,
+#   - each failure is recorded with its transport, address and reason, and
+#     the helper status names which transport failed (issue #265),
 #   - overlapping start() and stop() calls from many queues at once end with
 #     exactly one set of listeners: after concurrent starts the proxy runs and
 #     answers, and after the final stop every 127.0.0.1 and ::1 port is free
@@ -305,9 +307,9 @@ struct Main {
                 }
                 let failed = DispatchSemaphore(value: 0)
                 let lock = NSLock()
-                var stoppedProxy = false
-                let helperHandler = DNSProxy.listenerStateHandler(proto, host: host, primary: primary) {
-                    lock.lock(); stoppedProxy = true; lock.unlock()
+                var reported: [DNSListenerFailure] = []
+                let helperHandler = DNSProxy.listenerStateHandler(proto, host: host) { failure in
+                    lock.lock(); reported.append(failure); lock.unlock()
                 }
                 listener.newConnectionHandler = { $0.cancel() }
                 listener.stateUpdateHandler = { state in
@@ -316,11 +318,18 @@ struct Main {
                 }
                 listener.start(queue: DispatchQueue(label: "taken"))
                 checks.expect(failed.wait(timeout: .now() + 5) == .success, "\(proto) on a taken \(host) port reports .failed")
-                lock.lock(); let stopped = stoppedProxy; lock.unlock()
+                lock.lock(); let seen = reported; lock.unlock()
+                // #265: every failure is handed on with its transport, its
+                // address and a reason, on 127.0.0.1 and ::1 alike.
+                checks.expect(seen.count == 1 && seen[0].transport == proto && seen[0].address == "\(host)"
+                              && !seen[0].reason.isEmpty,
+                              "a failed \(proto) listener on \(host) is reported with its transport and reason (\(seen))")
+                checks.expect(seen.first?.reason == "Address already in use",
+                              "the reason reads plainly (\(seen.first?.reason ?? "none"))")
                 if primary {
-                    checks.expect(stopped, "a failed \(proto) listener on \(host) stops the proxy reporting itself running")
+                    checks.expect(DNSProxy.failureStopsProxy(on: host), "a failed \(proto) listener on \(host) stops the proxy reporting itself running")
                 } else {
-                    checks.expect(!stopped, "a failed \(proto) listener on \(host) leaves the proxy running")
+                    checks.expect(!DNSProxy.failureStopsProxy(on: host), "a failed \(proto) listener on \(host) leaves the proxy running")
                 }
                 listener.cancel()
                 squatter.cancel()
@@ -372,6 +381,12 @@ struct Main {
             }
             checks.expect(settles(proxy, to: false, within: 5),
                           "a proxy whose \(proto) port on \(host) is taken stops reporting itself running")
+            // #265: the status names the transport that failed, and only it.
+            let failed = proxy.failedListeners
+            checks.expect(failed.contains { $0.transport == proto && $0.address == "\(host)" && !$0.reason.isEmpty },
+                          "the proxy records its failed \(proto) listener on \(host) with a reason (\(failed))")
+            checks.expect(!failed.contains { $0.transport != proto && $0.address == "\(host)" },
+                          "the \(proto) failure does not mark the other transport on \(host) failed (\(failed))")
             // The same proxy starts again once the port is free: the
             // leftover listeners are cancelled and the new generation
             // stays running.
@@ -382,10 +397,35 @@ struct Main {
                 try proxy.start(port: takenPort.rawValue)
                 checks.expect(proxy.running && !settles(proxy, to: false, within: 1),
                               "starting again on the freed \(proto) port keeps the proxy running")
+                checks.expect(proxy.failedListeners.isEmpty, "a clean start clears the recorded failures")
             } catch { checks.expect(false, "restart on the freed port threw: \(error)") }
             proxy.stop()
             checks.expect(!proxy.running, "stop clears running")
         }
+
+        print("the helper status says which transports failed (#265)")
+        func status(active: Bool, _ failed: [DNSListenerFailure]?) -> HelperStatus {
+            HelperStatus(version: "t", running: true, pfctlActive: true, dnsProxyActive: active, dnsProxyPort: 53,
+                         activeRules: 0, blockedToday: 0, dnsProxyFailedListeners: failed)
+        }
+        let tcp4 = DNSListenerFailure(transport: "tcp", address: "127.0.0.1", reason: "POSIXErrorCode: Address already in use")
+        let udp6 = DNSListenerFailure(transport: "udp", address: "::1", reason: "POSIXErrorCode: Can't assign requested address")
+        checks.expect(status(active: true, nil).dnsProxySummary == "running", "an older helper with no list reads running")
+        checks.expect(status(active: false, []).dnsProxySummary == "stopped", "a stopped proxy reads stopped")
+        checks.expect(status(active: false, [tcp4]).dnsProxySummary
+                      == "not fully running: TCP on 127.0.0.1 failed (POSIXErrorCode: Address already in use)",
+                      "a failed 127.0.0.1 TCP listener reads as not fully running, naming TCP")
+        checks.expect(status(active: true, [udp6]).dnsProxySummary.hasPrefix("running, but UDP on ::1 failed"),
+                      "a failed ::1 listener keeps the proxy running and names it")
+        do {
+            let encoded = try FreeSnitchWireCodec.encode(status(active: false, [tcp4]))
+            let decoded = try FreeSnitchWireCodec.decode(HelperStatus.self, from: encoded)
+            checks.expect(decoded.dnsProxyFailedListeners == [tcp4], "the failure list survives the XPC payload")
+            var old = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+            old.removeValue(forKey: "dnsProxyFailedListeners")
+            let legacy = try FreeSnitchWireCodec.decode(HelperStatus.self, from: JSONSerialization.data(withJSONObject: old))
+            checks.expect(legacy.dnsProxyFailedListeners == nil, "a payload from an older helper still decodes")
+        } catch { checks.expect(false, "status round trip: \(error)") }
 
         print("overlapping start and stop calls (#501)")
         /// True when nothing holds `proto` on host:port anymore: a squatter

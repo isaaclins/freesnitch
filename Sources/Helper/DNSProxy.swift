@@ -202,17 +202,32 @@ final class DNSProxy: @unchecked Sendable {
         return isRunning
     }
 
+    /// Every listener of the current generation that failed, with its
+    /// transport and reason, so the status can say which transports are
+    /// still serving (#265). Cleared by each start and stop.
+    private var failures: [DNSListenerFailure] = []
+    var failedListeners: [DNSListenerFailure] {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return failures
+    }
+
     /// Starts a new generation with the given running state.
     private func beginGeneration(running: Bool) -> UInt64 {
         stateLock.lock(); defer { stateLock.unlock() }
         generation &+= 1
         isRunning = running
+        failures = []
         return generation
     }
 
-    private func primaryListenerFailed(generation failed: UInt64) {
+    /// Records a failed listener for the generation that started it. Only a
+    /// 127.0.0.1 one clears `running`; a late failure from an older start
+    /// changes nothing.
+    private func listenerFailed(_ failure: DNSListenerFailure, primary: Bool, generation failed: UInt64) {
         stateLock.lock(); defer { stateLock.unlock() }
-        if generation == failed { isRunning = false }
+        guard generation == failed else { return }
+        if !failures.contains(failure) { failures.append(failure) }
+        if primary { isRunning = false }
     }
 
     /// The whole policy lives in one value behind one lock. Writers arrive on
@@ -336,7 +351,7 @@ final class DNSProxy: @unchecked Sendable {
             // the state handler (see listenerStateHandler). So these catches
             // only see malformed parameters, and they keep the same split: a
             // bad 127.0.0.1 listener stops the start, a bad ::1 one is logged.
-            let primary = host == Self.loopbackHosts[0]
+            let primary = Self.failureStopsProxy(on: host)
             do {
                 started += try startListeners(on: host, port: p, primary: primary, generation: gen)
                 hosts.append("\(host)")
@@ -364,11 +379,13 @@ final class DNSProxy: @unchecked Sendable {
     private func startListeners(on host: NWEndpoint.Host, port: NWEndpoint.Port, primary: Bool, generation: UInt64) throws -> [NWListener] {
         let udp = try NWListener(using: Self.listenerParameters(.udp, host: host, port: port))
         let tcp = try NWListener(using: Self.listenerParameters(.tcp, host: host, port: port))
-        let primaryFailed: () -> Void = { [weak self] in self?.primaryListenerFailed(generation: generation) }
+        let failed: (DNSListenerFailure) -> Void = { [weak self] failure in
+            self?.listenerFailed(failure, primary: primary, generation: generation)
+        }
         udp.newConnectionHandler = { [weak self] conn in self?.handleUDP(conn) }
-        udp.stateUpdateHandler = Self.listenerStateHandler("udp", host: host, primary: primary, onPrimaryFailure: primaryFailed)
+        udp.stateUpdateHandler = Self.listenerStateHandler("udp", host: host, onFailure: failed)
         tcp.newConnectionHandler = { [weak self] conn in self?.handleTCP(conn) }
-        tcp.stateUpdateHandler = Self.listenerStateHandler("tcp", host: host, primary: primary, onPrimaryFailure: primaryFailed)
+        tcp.stateUpdateHandler = Self.listenerStateHandler("tcp", host: host, onFailure: failed)
         udp.start(queue: queue)
         tcp.start(queue: queue)
         return [udp, tcp]
@@ -377,20 +394,36 @@ final class DNSProxy: @unchecked Sendable {
     /// How a listener reacts when its bind fails after `start`. A taken port
     /// or an unusable address only shows up here, as `.failed`.
     ///
-    /// A failed 127.0.0.1 listener, UDP or TCP alike, means the proxy is no
-    /// longer fully serving the address users point their DNS at, so the
-    /// proxy stops reporting itself running and the next `start()` binds
+    /// Every failure is logged and handed to `onFailure` with its transport,
+    /// address and reason, and the helper's status lists it (#265). A failed
+    /// 127.0.0.1 listener, UDP or TCP alike, means the proxy is no longer
+    /// fully serving the address users point their DNS at, so the proxy also
+    /// stops reporting itself running and the next `start()` binds
     /// everything again. Nothing else is torn down: the sibling listener that
     /// still works keeps answering, so a failure never blocks a lookup that
-    /// would otherwise work. A failed ::1 listener is only logged, so a Mac
-    /// without IPv6 loopback keeps its IPv4 proxy.
-    static func listenerStateHandler(_ proto: String, host: NWEndpoint.Host, primary: Bool,
-                                     onPrimaryFailure: @escaping () -> Void) -> (NWListener.State) -> Void {
+    /// would otherwise work. A failed ::1 listener leaves the proxy running,
+    /// so a Mac without IPv6 loopback keeps its IPv4 proxy.
+    static func listenerStateHandler(_ proto: String, host: NWEndpoint.Host,
+                                     onFailure: @escaping (DNSListenerFailure) -> Void) -> (NWListener.State) -> Void {
         return { state in
             guard case let .failed(err) = state else { return }
             PSLog.error(PSLog.dns, "\(proto) listener on \(host) failed: \(err)")
-            if primary { onPrimaryFailure() }
+            onFailure(DNSListenerFailure(transport: proto, address: "\(host)", reason: failureReason(err)))
         }
+    }
+
+    /// "Address already in use" reads better in a status line than
+    /// "POSIXErrorCode(rawValue: 48): Address already in use".
+    static func failureReason(_ error: NWError) -> String {
+        if case let .posix(code) = error { return String(cString: strerror(code.rawValue)) }
+        return "\(error)"
+    }
+
+    /// Only a failed 127.0.0.1 listener stops the proxy reporting itself
+    /// running: that is the address users point their DNS at. A Mac without
+    /// IPv6 loopback keeps its IPv4 proxy.
+    static func failureStopsProxy(on host: NWEndpoint.Host) -> Bool {
+        host == loopbackHosts[0]
     }
 
     // MARK: - UDP path

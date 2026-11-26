@@ -389,6 +389,21 @@ public struct ProcessUsage: Codable, Sendable {
     }
 }
 
+/// One DNS proxy listener that stopped serving: which transport, on which
+/// loopback address, and why (#265).
+public struct DNSListenerFailure: Codable, Sendable, Hashable {
+    /// "udp" or "tcp".
+    public let transport: String
+    /// The loopback address the listener was bound to, "127.0.0.1" or "::1".
+    public let address: String
+    public let reason: String
+    public init(transport: String, address: String, reason: String) {
+        self.transport = transport
+        self.address = address
+        self.reason = reason
+    }
+}
+
 public struct HelperStatus: Codable, Sendable {
     /// The build the helper process is actually running. Captured when the
     /// process started, so an in-place update cannot change it under a daemon
@@ -422,8 +437,14 @@ public struct HelperStatus: Codable, Sendable {
     /// or copied to another Applications folder (#418). Optional so status
     /// payloads from older helpers still decode.
     public var appPath: String?
-    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil, installedVersion: String? = nil, appPath: String? = nil) {
+    /// The proxy listeners that failed since the proxy last started, so the
+    /// status can say which DNS transports are still serving instead of one
+    /// running flag for all four (#265). Optional so status payloads from
+    /// older helpers still decode.
+    public var dnsProxyFailedListeners: [DNSListenerFailure]?
+    public init(version: String, running: Bool, pfctlActive: Bool, pfctlError: String? = nil, dnsProxyActive: Bool, dnsProxyPort: Int, activeRules: Int, blockedToday: Int, mode: AppMode = .alert, policyGeneration: UInt64? = nil, installedVersion: String? = nil, appPath: String? = nil, dnsProxyFailedListeners: [DNSListenerFailure]? = nil) {
         self.appPath = appPath
+        self.dnsProxyFailedListeners = dnsProxyFailedListeners
         self.mode = mode
         self.policyGeneration = policyGeneration
         self.installedVersion = installedVersion
@@ -435,6 +456,17 @@ public struct HelperStatus: Codable, Sendable {
         self.dnsProxyPort = dnsProxyPort
         self.activeRules = activeRules
         self.blockedToday = blockedToday
+    }
+
+    /// The DNS proxy's state in one phrase: "running", "stopped", or which
+    /// listeners failed, so a partial failure reads as partial (#265).
+    public var dnsProxySummary: String {
+        let failed = dnsProxyFailedListeners ?? []
+        guard !failed.isEmpty else { return dnsProxyActive ? "running" : "stopped" }
+        let detail = failed
+            .map { "\($0.transport.uppercased()) on \($0.address) failed (\($0.reason))" }
+            .joined(separator: "; ")
+        return (dnsProxyActive ? "running, but " : "not fully running: ") + detail
     }
 }
 
