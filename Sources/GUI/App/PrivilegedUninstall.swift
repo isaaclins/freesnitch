@@ -21,6 +21,33 @@ enum PrivilegedUninstall {
         case failed(String)
     }
 
+    /// The privileged steps, by the exit code each one stops the script with.
+    /// `do shell script` reports a command's exit status as the error number.
+    enum Step: Int, CaseIterable {
+        case emptyAnchorFile = 81
+        case flushAnchor = 82
+        case loadEmptyAnchor = 83
+        case commandLink = 84
+        case insights = 85
+        case database = 86
+
+        /// What was left, said so the person knows what is still on the Mac.
+        var failureDescription: String {
+            switch self {
+            case .emptyAnchorFile:
+                return String(localized: "FreeSnitch couldn’t empty the firewall rules file macOS loads at startup.")
+            case .flushAnchor, .loadEmptyAnchor:
+                return String(localized: "FreeSnitch couldn’t clear its firewall rules from the packet filter.")
+            case .commandLink:
+                return String(localized: "FreeSnitch couldn’t remove the freesnitch command from /usr/local/bin.")
+            case .insights:
+                return String(localized: "FreeSnitch couldn’t delete its connection history.")
+            case .database:
+                return String(localized: "FreeSnitch couldn’t delete its rules database.")
+            }
+        }
+    }
+
     /// Flush the shared anchor, then remove root-owned data, then the app.
     ///
     /// Order matters: the anchor is flushed while the app is still on disk,
@@ -37,12 +64,19 @@ enum PrivilegedUninstall {
     /// The `freesnitch` command link from Settings > Command Line goes too, but
     /// only while it still points into the app: a file the user put there
     /// themselves is left alone (#423).
+    ///
+    /// Every step ends in `|| exit <code>`, so the first one that fails stops
+    /// the script and reports which step it was. They used to be joined by
+    /// plain semicolons, and the exit status was that of the last command
+    /// only: a pf flush that failed was hidden by a removal that worked, and
+    /// the app moved itself to the Trash and said it was gone (#271). The
+    /// codes are the cases of `Step`.
     private static let keepDatabase = """
-    do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
-    /sbin/pfctl -a puresnitch -F all; \
-    /sbin/pfctl -a puresnitch -f /dev/null; \
-    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
-    /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'" with administrator privileges
+    do shell script "if [ -f /etc/pf.anchors/puresnitch ]; then /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch || exit 81; fi; \
+    /sbin/pfctl -a puresnitch -F all || exit 82; \
+    /sbin/pfctl -a puresnitch -f /dev/null || exit 83; \
+    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch || exit 84; fi; \
+    /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' || exit 85" with administrator privileges
     """
 
     /// The same, plus the policy database. Separate constant rather than a
@@ -51,12 +85,12 @@ enum PrivilegedUninstall {
     /// writes live in `-wal` beside it until a checkpoint, so deleting only
     /// the main file left policy records behind (#237).
     private static let removeDatabase = """
-    do shell script "[ -f /etc/pf.anchors/puresnitch ] && /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch; \
-    /sbin/pfctl -a puresnitch -F all; \
-    /sbin/pfctl -a puresnitch -f /dev/null; \
-    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch; fi; \
-    /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights'; \
-    /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-wal' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-shm' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-journal'" with administrator privileges
+    do shell script "if [ -f /etc/pf.anchors/puresnitch ]; then /bin/echo '# FreeSnitch pf anchor - FreeSnitch was uninstalled, so it holds no rules.' > /etc/pf.anchors/puresnitch || exit 81; fi; \
+    /sbin/pfctl -a puresnitch -F all || exit 82; \
+    /sbin/pfctl -a puresnitch -f /dev/null || exit 83; \
+    if /usr/bin/readlink /usr/local/bin/freesnitch | /usr/bin/grep -qxF /Applications/FreeSnitch.app/Contents/Helpers/freesnitch; then /bin/rm -f /usr/local/bin/freesnitch || exit 84; fi; \
+    /bin/rm -rf '/Library/Application Support/FreeSnitch/Insights' || exit 85; \
+    /bin/rm -f '/Library/Application Support/FreeSnitch/freesnitch.sqlite' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-wal' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-shm' '/Library/Application Support/FreeSnitch/freesnitch.sqlite-journal' || exit 86" with administrator privileges
     """
 
     /// Move the app bundle to the Trash instead of deleting it.
@@ -93,9 +127,18 @@ enum PrivilegedUninstall {
 
         let code = (errorInfo[NSAppleScript.errorNumber] as? Int) ?? 0
         if code == -128 { return .failure(.cancelled) }
-        let message = (errorInfo[NSAppleScript.errorMessage] as? String)
-            ?? String(localized: "The privileged uninstall did not complete.")
-        return .failure(.failed(message))
+        let message = (errorInfo[NSAppleScript.errorMessage] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return .failure(.failed(failureReason(code: code, message: message)))
+    }
+
+    /// The sentence the Uninstall screen shows for a failed run: which step
+    /// stopped it, then what the command itself said, if anything (#271).
+    static func failureReason(code: Int, message: String) -> String {
+        guard let step = Step(rawValue: code) else {
+            return message.isEmpty ? String(localized: "The privileged uninstall did not complete.") : message
+        }
+        return message.isEmpty ? step.failureDescription : step.failureDescription + "\n" + message
     }
 
     /// User-level leftovers. No authorization needed, so this is separate:

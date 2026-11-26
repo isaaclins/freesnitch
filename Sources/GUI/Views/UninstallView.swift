@@ -231,8 +231,9 @@ final class UninstallFlowModel: ObservableObject {
 
     /// `FREESNITCH_DEMO=1` walks through the screens without touching the
     /// system. `FREESNITCH_DEMO_UNINSTALL` picks the ending: `restart`
-    /// (default), `quit`, `refused`, `cancelled`, `trash` or `helper` (macOS
-    /// kept the helper's registration, #215).
+    /// (default), `quit`, `refused`, `cancelled`, `trash`, `helper` (macOS
+    /// kept the helper's registration, #215) or `rules` (the pf flush failed
+    /// behind the password prompt, #271).
     private func runDemo() {
         let ending = ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL"] ?? "restart"
         let hold = Double(ProcessInfo.processInfo.environment["FREESNITCH_DEMO_UNINSTALL_HOLD"] ?? "") ?? 1.5
@@ -245,6 +246,12 @@ final class UninstallFlowModel: ObservableObject {
             self.phase = .removingHelper
             DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
                 if ending == "cancelled" { self.phase = .failed(.passwordCancelled); return }
+                if ending == "rules" {
+                    self.phase = .failed(.helperKept(PrivilegedUninstall.failureReason(
+                        code: PrivilegedUninstall.Step.flushAnchor.rawValue,
+                        message: "pfctl: DIOCXBEGIN: Operation not permitted")))
+                    return
+                }
                 if ending == "helper" {
                     self.helperProblem = "domain=SMAppServiceErrorDomain, code=1, description=Operation not permitted"
                 }
