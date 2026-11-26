@@ -171,7 +171,8 @@ final class AppState: ObservableObject {
     private var lastSnapshotFailure: String?
     /// Prepared by the helper from retained Insights history. This cache is
     /// memory-only on the alert path; an unavailable or stale classifier asks.
-    private var contactClassifier = InsightsContactClassifier(snapshot: nil)
+    private var contactCache = InsightsContactCache()
+    private var contactClassifier: InsightsContactClassifier { contactCache.classifier }
     private var contactRefreshTimer: Timer?
 
     /// Puts the toggle back where reality is after the helper refuses or rolls
@@ -361,12 +362,43 @@ final class AppState: ObservableObject {
     }
 
     private func refreshContactClassifier() {
+        let token = contactCache.beginRefresh()
         helper.insightsContactSnapshot { [weak self] snapshot in
             guard let self else { return }
             // The classifier validates freshness and fields again. A helper
             // transport error therefore cannot turn into a silent allow.
-            self.contactClassifier = InsightsContactClassifier(snapshot: snapshot)
+            self.contactCache.apply(snapshot, for: token)
         }
+    }
+
+    /// Delete History. The known destinations are forgotten before the helper
+    /// is asked, and fetched again from the emptied history as soon as it
+    /// answers, so no connection in between is allowed as known (#229).
+    ///
+    /// If the helper never answers (the connection dropped), the delete ends
+    /// after `contactDeleteTimeout` anyway, so known destinations don't stay
+    /// switched off until the app is relaunched.
+    func purgeInsightsHistory(completion: @MainActor @escaping (Bool, String?) -> Void) {
+        let id = UUID()
+        runningContactDeletes.insert(id)
+        contactCache.beginDelete()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.contactDeleteTimeout)
+            self?.finishContactDelete(id)
+        }
+        helper.purgeInsights { [weak self] ok, message in
+            self?.finishContactDelete(id)
+            completion(ok, message)
+        }
+    }
+
+    private static let contactDeleteTimeout: UInt64 = 60 * 1_000_000_000
+    private var runningContactDeletes: Set<UUID> = []
+
+    private func finishContactDelete(_ id: UUID) {
+        guard runningContactDeletes.remove(id) != nil else { return }
+        contactCache.endDelete()
+        refreshContactClassifier()
     }
 
     /// Refreshes the display cache and synchronizes the extension from one

@@ -1438,7 +1438,7 @@ final class InsightsViewModel: ObservableObject {
     }
 
     func purge() {
-        state?.helper.purgeInsights { [weak self] ok, message in
+        state?.purgeInsightsHistory { [weak self] ok, message in
             guard let self else { return }
             guard ok else {
                 self.errorMessage = message ?? String(localized: "The helper refused the purge.")

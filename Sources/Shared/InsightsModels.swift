@@ -523,6 +523,54 @@ public struct InsightsContactClassifier: Sendable {
     }
 }
 
+/// The GUI's copy of the helper's contact history. Deleting the history drops
+/// it at once, and no answer is taken while the delete runs or from a request
+/// made before it finished, so the next connection is judged against the
+/// emptied history instead of a copy that is up to 30 seconds old (#229).
+public struct InsightsContactCache: Sendable {
+    public private(set) var classifier = InsightsContactClassifier(snapshot: nil)
+    private var generation: UInt64 = 0
+    private var deletesRunning = 0
+
+    public init() {}
+
+    /// Call before asking the helper; hand the token back with its answer.
+    public mutating func beginRefresh() -> UInt64 {
+        generation &+= 1
+        return generation
+    }
+
+    /// Applies the helper's answer unless a newer request came after it, or a
+    /// delete is running or finished after it was asked. Returns whether it
+    /// was applied.
+    @discardableResult
+    public mutating func apply(_ snapshot: InsightsContactSnapshot?, for token: UInt64,
+                               now: Date = Date()) -> Bool {
+        guard deletesRunning == 0, token == generation else { return false }
+        classifier = InsightsContactClassifier(snapshot: snapshot, now: now)
+        return true
+    }
+
+    /// Delete History was pressed: forget every known destination (alert
+    /// mode asks while nothing is known) until `endDelete()`.
+    public mutating func beginDelete() {
+        deletesRunning += 1
+        forget()
+    }
+
+    /// The helper answered the delete. Answers asked for before this point
+    /// are dropped; refresh afterwards to load the emptied history.
+    public mutating func endDelete() {
+        deletesRunning = max(0, deletesRunning - 1)
+        forget()
+    }
+
+    private mutating func forget() {
+        generation &+= 1
+        classifier = InsightsContactClassifier(snapshot: nil)
+    }
+}
+
 /// A finding is an observed destination difference, not a malware or causation
 /// claim. Missing version identities are displayed as unknown and never filled
 /// with a guessed marketing version.
