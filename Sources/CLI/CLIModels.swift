@@ -44,6 +44,11 @@ struct HelperReport: Encodable {
     let pfctlError: String?
     let dnsProxyActive: Bool
     let dnsProxyPort: Int
+    /// The proxy listeners that failed, with transport and reason (#265).
+    /// Absent when the helper predates the list.
+    let dnsProxyFailedListeners: [DNSListenerFailure]?
+    /// "running", "stopped", or which listeners failed.
+    let dnsProxySummary: String
     let activeRules: Int
     let blockedToday: Int
     let policyGeneration: UInt64?

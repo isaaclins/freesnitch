@@ -432,7 +432,7 @@ final class CLIRunner {
         let status = try await helper.prepare()
         let report = helperReport(status)
         return CommandResult(data: report,
-                             human: "Enforcement: \(humanBool(enabled)).\nPF anchor: \(humanBool(status.pfctlActive)); DNS proxy: \(humanBool(status.dnsProxyActive)).")
+                             human: "Enforcement: \(humanBool(enabled)).\nPF anchor: \(humanBool(status.pfctlActive)).\nDNS proxy: \(status.dnsProxySummary).")
     }
 
     private func pf(_ operation: PFCommand) async throws -> CommandResult {
@@ -478,8 +478,11 @@ final class CLIRunner {
         case .dnsStatus:
             let helper = CLIHelperClient()
             let status = try await helper.prepare()
-            let report = SettingReport(key: "dns_proxy", label: "Local DNS proxy", value: status.dnsProxyActive ? "running" : "stopped", changed: false, detail: "Port \(status.dnsProxyPort)")
-            return CommandResult(data: report, human: "Local DNS proxy: \(status.dnsProxyActive ? "running" : "stopped") on port \(status.dnsProxyPort).")
+            let failed = status.dnsProxyFailedListeners ?? []
+            let detail = (["Port \(status.dnsProxyPort)"] + failed.map { "\($0.transport.uppercased()) on \($0.address) failed (\($0.reason))" })
+                .joined(separator: "; ")
+            let report = SettingReport(key: "dns_proxy", label: "Local DNS proxy", value: status.dnsProxyActive ? "running" : "stopped", changed: false, detail: detail)
+            return CommandResult(data: report, human: "Local DNS proxy on port \(status.dnsProxyPort) is \(status.dnsProxySummary).")
         case .blocklists(let refresh):
             return refresh ? try await refreshBlocklists() : try await listBlocklists()
         case .blocklist(let id, let enabled): return try await setBlocklist(id: id, enabled: enabled)
@@ -687,6 +690,8 @@ final class CLIRunner {
                      pfctlError: status.pfctlError,
                      dnsProxyActive: status.dnsProxyActive,
                      dnsProxyPort: status.dnsProxyPort,
+                     dnsProxyFailedListeners: status.dnsProxyFailedListeners,
+                     dnsProxySummary: status.dnsProxySummary,
                      activeRules: status.activeRules,
                      blockedToday: status.blockedToday,
                      policyGeneration: status.policyGeneration)
@@ -932,7 +937,7 @@ final class CLIRunner {
           Enforcement: \(humanBool(report.enforcement))
           Helper: \(report.helper.reachable ? "reachable" : "unreachable") (running \(report.helper.running ? "yes" : "no"))
           PF anchor: \(humanBool(report.helper.pfctlActive))
-          DNS proxy: \(report.helper.dnsProxyActive ? "running" : "stopped") on port \(report.helper.dnsProxyPort)
+          DNS proxy on port \(report.helper.dnsProxyPort): \(report.helper.dnsProxySummary)
           DoH upstream: \(report.dohUpstream)
           Extension approval: \(report.extensionStatus.approval)
           Extension XPC running: \(report.extensionStatus.running)

@@ -831,19 +831,21 @@ final class HelperService: NSObject, HelperProtocol, @unchecked Sendable {
         let pfctlError = lastPFError
         diagnosticsLock.unlock()
         let policy = authoritativePolicyState()
+        let dnsState = dns.listenerState
         let s = HelperStatus(
             version: Self.runningVersion,
             running: netmon.isRunning,
             pfctlActive: pf.isLoaded,
             pfctlError: pfctlError,
-            dnsProxyActive: dns.running,
+            dnsProxyActive: dnsState.running,
             dnsProxyPort: Int(dns.port),
             activeRules: policy.ruleCount,
             blockedToday: dns.statistics.blocked,
             mode: policy.mode,
             policyGeneration: policy.generation,
             installedVersion: Self.installedVersion,
-            appPath: AppBundleIdentity.runningAppPath
+            appPath: AppBundleIdentity.runningAppPath,
+            dnsProxyFailedListeners: dnsState.failed
         )
         reply((try? FreeSnitchWireCodec.encode(s)) ?? Data())
     }
