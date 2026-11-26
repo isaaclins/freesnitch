@@ -24,10 +24,9 @@ struct FilterObservation: Sendable {
 }
 
 enum ExtensionInspector {
-    static func inspect() async -> ExtensionInspection {
+    static func inspect(presence: EmbeddedExtensionPresence = CLIAppBundle.embeddedNetworkExtension) async -> ExtensionInspection {
         let system: SystemExtensionObservation
         let filter: FilterObservation
-        let presence = CLIAppBundle.embeddedNetworkExtension
         var bundleInspectionError: String?
         switch presence {
         case .present:

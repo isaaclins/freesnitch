@@ -22,7 +22,7 @@ import Foundation
 
 @main
 struct Check {
-    static func main() {
+    static func main() async {
         var failures: [String] = []
         func expect(_ ok: Bool, _ message: String) { if !ok { failures.append(message) } }
         let fm = FileManager.default
@@ -68,7 +68,18 @@ struct Check {
                                        bundleInspectionError: error)
         }
 
-        let unreadable = findings(inspection(approval: "unknown", filter: "unknown", error: error))
+        // The inspector itself must carry the error into doctor's input.
+        let inspected = await ExtensionInspector.inspect(presence: .unreadable(error))
+        expect(inspected.bundleInspectionError == error, "the inspector must keep the unreadable error for doctor")
+        expect(inspected.approvalState == "unknown" && inspected.filterConfigurationState == "unknown",
+               "an unreadable bundle must not be inspected as \(inspected.approvalState)/\(inspected.filterConfigurationState)")
+        expect(inspected.report.approval == "unknown" && inspected.report.message?.contains("Permission denied") == true,
+               "the JSON extension report must say unknown and show the error")
+        let absentInspected = await ExtensionInspector.inspect(presence: .absent)
+        expect(absentInspected.approvalState == "not-in-build" && absentInspected.bundleInspectionError == nil,
+               "an absent extension must still read as not-in-build")
+
+        let unreadable = findings(inspected)
         for id in ["extension_approval", "filter_configuration", "extension_running", "filter_snapshot"] {
             guard let finding = unreadable[id] else { failures.append("doctor must still report \(id) when the bundle is unreadable"); continue }
             expect(finding.state == "unknown", "\(id) must be unknown when the bundle is unreadable, got \(finding.state)")

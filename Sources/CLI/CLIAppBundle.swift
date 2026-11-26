@@ -60,10 +60,9 @@ enum EmbeddedExtensionPresence: Equatable {
 
     private static func describe(_ error: Error) -> String {
         let ns = error as NSError
-        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError, underlying.domain == NSPOSIXErrorDomain,
-           let code = POSIXErrorCode(rawValue: Int32(underlying.code)) {
-            return "\(String(cString: strerror(code.rawValue))) (\(ns.domain) \(ns.code), POSIX \(underlying.code))"
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError, underlying.domain == NSPOSIXErrorDomain {
+            return String(cString: strerror(Int32(underlying.code)))
         }
-        return "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+        return ns.localizedDescription
     }
 }
