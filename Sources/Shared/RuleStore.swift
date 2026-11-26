@@ -1256,61 +1256,68 @@ public final class RuleStore: @unchecked Sendable {
     }
 
     /// Adds names to a list. They survive every later refresh of its source.
+    /// The edit and the stored names commit together or not at all (#270).
     @discardableResult
     public func addBlocklistEntries(id: UUID, domains: [String]) throws -> BlocklistInfo {
         let names = BlocklistDomain.normaliseAll(domains)
         guard !names.isEmpty else { throw StoreError.noValidBlocklistEntries }
-        var edits = blocklistEdits(id: id)
-        let namesSet = Set(names)
-        edits.removed.removeAll { namesSet.contains($0) }
-        var addedSet = Set(edits.added)
-        for name in names where addedSet.insert(name).inserted {
-            edits.added.append(name)
+        return try inTransaction {
+            var edits = blocklistEditsLocked(id: id)
+            let namesSet = Set(names)
+            edits.removed.removeAll { namesSet.contains($0) }
+            var addedSet = Set(edits.added)
+            for name in names where addedSet.insert(name).inserted {
+                edits.added.append(name)
+            }
+            guard edits.added.count <= BlocklistEdits.maximumEntries else {
+                throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
+            }
+            try writeBlocklistEditsLocked(id: id, edits)
+            try insertBlocklistEntriesLocked(id: id, domains: names)
+            return try recountBlocklistLocked(id: id)
         }
-        guard edits.added.count <= BlocklistEdits.maximumEntries else {
-            throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
-        }
-        try writeBlocklistEdits(id: id, edits)
-        try insertBlocklistEntries(id: id, domains: names)
-        return try recountBlocklist(id: id)
     }
 
     /// Removes names from a list, including one that shipped with the app. The
     /// name is remembered as removed, so the next refresh does not bring it
-    /// back (#97).
+    /// back (#97). One transaction, like adding (#270).
     @discardableResult
     public func removeBlocklistEntries(id: UUID, domains: [String]) throws -> BlocklistInfo {
         let names = BlocklistDomain.normaliseAll(domains)
         guard !names.isEmpty else { throw StoreError.noValidBlocklistEntries }
-        var edits = blocklistEdits(id: id)
-        let namesSet = Set(names)
-        edits.added.removeAll { namesSet.contains($0) }
-        var removedSet = Set(edits.removed)
-        for name in names where removedSet.insert(name).inserted {
-            edits.removed.append(name)
+        return try inTransaction {
+            var edits = blocklistEditsLocked(id: id)
+            let namesSet = Set(names)
+            edits.added.removeAll { namesSet.contains($0) }
+            var removedSet = Set(edits.removed)
+            for name in names where removedSet.insert(name).inserted {
+                edits.removed.append(name)
+            }
+            guard edits.removed.count <= BlocklistEdits.maximumEntries else {
+                throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
+            }
+            try writeBlocklistEditsLocked(id: id, edits)
+            try deleteBlocklistEntriesLocked(id: id, domains: names)
+            return try recountBlocklistLocked(id: id)
         }
-        guard edits.removed.count <= BlocklistEdits.maximumEntries else {
-            throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
-        }
-        try writeBlocklistEdits(id: id, edits)
-        try deleteBlocklistEntries(id: id, domains: names)
-        return try recountBlocklist(id: id)
     }
 
     /// Forgets every hand edit. From the next refresh the list is whatever its
     /// source says again.
     public func clearBlocklistEdits(id: UUID) throws {
-        guard blocklist(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
-        let added = blocklistEdits(id: id).added
-        try setSetting(Self.blocklistEditsKey(id), "")
-        // A download that fails keeps blocking what is saved for the list
-        // (#252). Names the user added by hand must not stay in that saved
-        // copy once the edits are gone, or they would keep blocking until the
-        // source answers again. A name that was also on the source is dropped
-        // too until then, which only ever blocks less.
-        if !added.isEmpty {
-            try deleteBlocklistEntries(id: id, domains: added)
-            _ = try recountBlocklist(id: id, markUpdated: false)
+        try inTransaction {
+            guard blocklistLocked(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
+            let added = blocklistEditsLocked(id: id).added
+            try setSettingLocked(Self.blocklistEditsKey(id), "")
+            // A download that fails keeps blocking what is saved for the list
+            // (#252). Names the user added by hand must not stay in that saved
+            // copy once the edits are gone, or they would keep blocking until the
+            // source answers again. A name that was also on the source is dropped
+            // too until then, which only ever blocks less.
+            if !added.isEmpty {
+                try deleteBlocklistEntriesLocked(id: id, domains: added)
+                _ = try recountBlocklistLocked(id: id, markUpdated: false)
+            }
         }
     }
 
@@ -1348,7 +1355,9 @@ public final class RuleStore: @unchecked Sendable {
         guard names.count <= BlocklistEdits.maximumEntries else {
             throw StoreError.tooManyBlocklistEntries(BlocklistEdits.maximumEntries)
         }
-        let blocklist: BlocklistInfo = try queue.sync {
+        // The list, its profile selection, its edits and its names are one
+        // transaction: a failure part way leaves no empty list behind (#270).
+        return try inTransaction {
             if blocklistNamedLocked(cleanName) != nil {
                 throw StoreError.blocklistAlreadyExists(cleanName)
             }
@@ -1367,41 +1376,52 @@ public final class RuleStore: @unchecked Sendable {
                 }
             }
             try syncGlobalBlocklistEnabledLocked()
-            return created
+            try writeBlocklistEditsLocked(id: created.id, BlocklistEdits(added: names))
+            try replaceBlocklistEntriesLocked(blocklistID: created.id, domains: names)
+            return try recountBlocklistLocked(id: created.id)
         }
-        try writeBlocklistEdits(id: blocklist.id, BlocklistEdits(added: names))
-        try replaceBlocklistEntries(blocklistID: blocklist.id, domains: names)
-        return try recountBlocklist(id: blocklist.id)
     }
 
     private static func blocklistEditsKey(_ id: UUID) -> String {
         "blocklist_edits_\(id.uuidString)"
     }
 
-    private func writeBlocklistEdits(id: UUID, _ edits: BlocklistEdits) throws {
-        guard blocklist(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
-        let data = try JSONEncoder().encode(edits)
-        try setSetting(Self.blocklistEditsKey(id), String(decoding: data, as: UTF8.self))
-    }
-
-    private func insertBlocklistEntries(id: UUID, domains: [String]) throws {
+    /// Runs `body` on `queue` inside one SQLite transaction: everything it
+    /// writes commits together, or nothing does.
+    private func inTransaction<T>(_ body: () throws -> T) throws -> T {
         try queue.sync {
-            for domain in domains {
-                try executeLocked("INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);") { stmt in
-                    sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
-                }
+            try execLocked("BEGIN IMMEDIATE;")
+            do {
+                let result = try body()
+                try execLocked("COMMIT;")
+                return result
+            } catch {
+                try? execLocked("ROLLBACK;")
+                throw error
             }
         }
     }
 
-    private func deleteBlocklistEntries(id: UUID, domains: [String]) throws {
-        try queue.sync {
-            for domain in domains {
-                try executeLocked("DELETE FROM blocklist_entries WHERE blocklist_id=? AND domain=?;") { stmt in
-                    sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
-                }
+    private func writeBlocklistEditsLocked(id: UUID, _ edits: BlocklistEdits) throws {
+        guard blocklistLocked(id: id) != nil else { throw StoreError.blocklistNotFound(id) }
+        let data = try JSONEncoder().encode(edits)
+        try setSettingLocked(Self.blocklistEditsKey(id), String(decoding: data, as: UTF8.self))
+    }
+
+    private func insertBlocklistEntriesLocked(id: UUID, domains: [String]) throws {
+        for domain in domains {
+            try executeLocked("INSERT OR IGNORE INTO blocklist_entries(blocklist_id, domain) VALUES(?,?);") { stmt in
+                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    private func deleteBlocklistEntriesLocked(id: UUID, domains: [String]) throws {
+        for domain in domains {
+            try executeLocked("DELETE FROM blocklist_entries WHERE blocklist_id=? AND domain=?;") { stmt in
+                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, domain, -1, SQLITE_TRANSIENT)
             }
         }
     }
@@ -1410,17 +1430,21 @@ public final class RuleStore: @unchecked Sendable {
     /// header cannot disagree with the list they describe.
     /// `markUpdated` is false when the change is not new content, so a list
     /// whose next download then fails does not look freshly updated (#252).
+    /// Caller holds `queue` and has opened a transaction. A count that cannot
+    /// be read fails the transaction instead of storing zero.
     @discardableResult
-    private func recountBlocklist(id: UUID, markUpdated: Bool = true) throws -> BlocklistInfo {
-        try queue.sync {
+    private func recountBlocklistLocked(id: UUID, markUpdated: Bool = true) throws -> BlocklistInfo {
+        do {
             guard var current = blocklistLocked(id: id) else { throw StoreError.blocklistNotFound(id) }
             var count = 0
             var stmt: OpaquePointer?
             defer { if stmt != nil { sqlite3_finalize(stmt) } }
-            if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM blocklist_entries WHERE blocklist_id=?;", -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
-                if sqlite3_step(stmt) == SQLITE_ROW { count = Int(sqlite3_column_int(stmt, 0)) }
+            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM blocklist_entries WHERE blocklist_id=?;", -1, &stmt, nil) == SQLITE_OK else {
+                throw sqliteErrorLocked(code: 3)
             }
+            sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { throw sqliteErrorLocked(code: 4) }
+            count = Int(sqlite3_column_int(stmt, 0))
             guard markUpdated else {
                 try executeLocked("UPDATE blocklists SET entry_count=? WHERE id=?;") { stmt in
                     sqlite3_bind_int(stmt, 1, Int32(count))
