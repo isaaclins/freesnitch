@@ -157,10 +157,15 @@ struct BundlePresenceProbe {
     /// let a path that resolves differently look like a removal.
     let bundleURL: URL?
     private let fileManager: FileManager
+    /// The bundle itself, held open from process start. A path names a place;
+    /// this names the folder, so it still finds the app after the user moves
+    /// it somewhere else, such as /Applications/Utilities (#251).
+    private let handle: BundleHandle?
 
     init(bundleURL: URL?, fileManager: FileManager = .default) {
         self.bundleURL = bundleURL
         self.fileManager = fileManager
+        self.handle = bundleURL.flatMap { BundleHandle(path: $0.path) }
     }
 
     func observe(at now: Date) -> BundlePresence {
@@ -184,6 +189,14 @@ struct BundlePresenceProbe {
                 return .present
             }
             return .inconclusive("\(bundlePath) is present but incomplete; a copy may be in flight")
+        }
+
+        // Not at its old path, but the same bundle may simply have been moved.
+        // An app that still exists outside the Trash is not a removed app,
+        // wherever it now lives (#251).
+        if let moved = handle?.currentPath, moved != bundlePath, !Self.isInTrash(moved),
+           isCompleteBundle(atPath: moved) {
+            return .present
         }
 
         // Absence must mean absence, not "I could not look". An unreadable or
@@ -223,11 +236,57 @@ struct BundlePresenceProbe {
         return .absent
     }
 
+    private func isCompleteBundle(atPath path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return false
+        }
+        return fileManager.fileExists(atPath: path + "/Contents/Info.plist")
+            && fileManager.fileExists(atPath: path + "/Contents/MacOS")
+    }
+
+    /// Moving an app to the Trash is how a Mac removes it (#71), so a bundle
+    /// that was moved there still counts as gone.
+    static func isInTrash(_ path: String) -> Bool {
+        path.split(separator: "/").contains { $0 == ".Trash" || $0 == ".Trashes" }
+    }
+
     private var executablePath: String? {
         guard let bundleURL else { return nil }
         // Same shape as the launchd BundleProgram, resolved from the frozen
         // bundle path rather than from argv.
         return bundleURL.appendingPathComponent("Contents/MacOS/FreeSnitchHelper").path
+    }
+}
+
+/// An open descriptor on the bundle folder, used only to ask where that folder
+/// is now. Opened for event notification only, so it never keeps a volume
+/// from being ejected, and it is never used to read or change anything.
+final class BundleHandle {
+    private let descriptor: Int32
+
+    init?(path: String) {
+        let descriptor = open(path, O_EVTONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        self.descriptor = descriptor
+    }
+
+    deinit { close(descriptor) }
+
+    /// The folder's current path, or nil when it no longer has one. The path
+    /// the kernel reports is only believed when it still leads to this very
+    /// folder, so a deleted bundle can never be mistaken for one at its old
+    /// name.
+    var currentPath: String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fcntl(descriptor, F_GETPATH, &buffer) != -1 else { return nil }
+        let path = String(cString: buffer)
+        var held = stat()
+        var named = stat()
+        guard fstat(descriptor, &held) == 0, held.st_nlink > 0,
+              stat(path, &named) == 0,
+              held.st_dev == named.st_dev, held.st_ino == named.st_ino else { return nil }
+        return path
     }
 }
 
