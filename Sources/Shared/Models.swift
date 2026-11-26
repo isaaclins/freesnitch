@@ -465,8 +465,13 @@ public struct HelperStatus: Codable, Sendable {
         guard !failed.isEmpty else { return dnsProxyActive ? "running" : "stopped" }
         let detail = failed
             .map { "\($0.transport.uppercased()) on \($0.address) failed (\($0.reason))" }
-            .joined(separator: "; ")
-        return (dnsProxyActive ? "running, but " : "not fully running: ") + detail
+            .joined(separator: ", ")
+        let all = Set([DNSProxyAddress.ipv4, DNSProxyAddress.ipv6].flatMap { address in
+            ["udp", "tcp"].map { "\($0) \(address)" }
+        })
+        let down = Set(failed.map { "\($0.transport) \($0.address)" })
+        if all.isSubset(of: down) { return "not serving, " + detail }
+        return (dnsProxyActive ? "running, but " : "only partly running, ") + detail
     }
 }
 

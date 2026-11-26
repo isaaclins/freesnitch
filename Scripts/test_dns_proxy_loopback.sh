@@ -413,8 +413,11 @@ struct Main {
         checks.expect(status(active: true, nil).dnsProxySummary == "running", "an older helper with no list reads running")
         checks.expect(status(active: false, []).dnsProxySummary == "stopped", "a stopped proxy reads stopped")
         checks.expect(status(active: false, [tcp4]).dnsProxySummary
-                      == "not fully running: TCP on 127.0.0.1 failed (POSIXErrorCode: Address already in use)",
-                      "a failed 127.0.0.1 TCP listener reads as not fully running, naming TCP")
+                      == "only partly running, TCP on 127.0.0.1 failed (POSIXErrorCode: Address already in use)",
+                      "a failed 127.0.0.1 TCP listener reads as partly running, naming TCP")
+        let everything = ["127.0.0.1", "::1"].flatMap { a in ["udp", "tcp"].map { DNSListenerFailure(transport: $0, address: a, reason: "x") } }
+        checks.expect(status(active: false, everything).dnsProxySummary.hasPrefix("not serving, UDP on 127.0.0.1 failed (x), TCP"),
+                      "all four listeners failed reads as not serving")
         checks.expect(status(active: true, [udp6]).dnsProxySummary.hasPrefix("running, but UDP on ::1 failed"),
                       "a failed ::1 listener keeps the proxy running and names it")
         do {

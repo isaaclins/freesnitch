@@ -360,6 +360,11 @@ final class DNSProxy: @unchecked Sendable {
                 hosts.append("\(host)")
             } catch where !primary {
                 PSLog.error(PSLog.dns, "dns proxy could not create its listeners on \(host): \(error)")
+                // Neither listener on this address runs, so the status lists both.
+                for proto in ["udp", "tcp"] {
+                    listenerFailed(DNSListenerFailure(transport: proto, address: "\(host)", reason: "\(error)"),
+                                   primary: false, generation: gen)
+                }
             } catch {
                 started.forEach { $0.cancel() }
                 _ = beginGeneration(running: false)
