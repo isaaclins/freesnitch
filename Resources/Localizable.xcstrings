@@ -2555,12 +2555,12 @@
         }
       }
     },
-    "A local or private address. It belongs to your own network, not to anyone on the internet." : {
+    "A local, private or carrier-internal address. It is not a public internet address, so it has no network owner." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Локальный или частный адрес. Он принадлежит вашей собственной сети, а не кому-то в интернете."
+            "value" : "Локальный, частный или внутренний адрес оператора. Это не публичный адрес в интернете, поэтому у него нет владельца сети."
           }
         }
       }
@@ -8020,12 +8020,12 @@
         }
       }
     },
-    "Sends this address to your DNS server and to rdap.org. Nothing is sent until you click." : {
+    "Sends this address to your DNS server, to rdap.org and to the regional registry it points to. Nothing is sent until you click." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Отправляет этот адрес вашему DNS-серверу и на rdap.org. Пока вы не нажмёте, ничего не отправляется."
+            "value" : "Отправляет этот адрес вашему DNS-серверу, на rdap.org и в региональный реестр, на который он указывает. Пока вы не нажмёте, ничего не отправляется."
           }
         }
       }

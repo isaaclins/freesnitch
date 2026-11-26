@@ -65,7 +65,7 @@ private struct EndpointAddressDetails: View {
         }
 
         if !isPublic {
-            note(String(localized: "A local or private address. It belongs to your own network, not to anyone on the internet."))
+            note(String(localized: "A local, private or carrier-internal address. It is not a public internet address, so it has no network owner."))
         } else {
             if let network {
                 if let organization = network.organization {
@@ -144,7 +144,7 @@ private struct EndpointAddressDetails: View {
         case .idle:
             Button("Look Up Owner") { runLookup() }
                 .help("Ask your DNS server for this address's name and a public registry (RDAP) for who registered it.")
-            note(String(localized: "Sends this address to your DNS server and to rdap.org. Nothing is sent until you click."))
+            note(String(localized: "Sends this address to your DNS server, to rdap.org and to the regional registry it points to. Nothing is sent until you click."))
         case .running:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
@@ -259,8 +259,17 @@ enum EndpointOwnerLookup {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.setValue("application/rdap+json, application/json", forHTTPHeaderField: "Accept")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            // Read at most the cap, so a huge answer is never held in memory.
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
             let host = response.url?.host
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count > RDAPNetworkRecord.maxBodyBytes {
+                    bytes.task.cancel()
+                    return (nil, host, String(localized: "the registry's answer could not be read"))
+                }
+            }
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 return (nil, host, String(localized: "the registry answered with HTTP \(code)"))
